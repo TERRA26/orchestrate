@@ -2,6 +2,7 @@ import {
   type ClaudeModelOptions,
   type CodexModelOptions,
   type ProviderKind,
+  type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -91,6 +92,7 @@ export interface TraitsMenuContentProps {
   provider: ProviderKind;
   threadId: ThreadId;
   model: string | null | undefined;
+  models?: ReadonlyArray<ServerProviderModel>;
   prompt: string;
   onPromptChange: (prompt: string) => void;
   modelOptions?: ProviderOptions | null | undefined;

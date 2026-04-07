@@ -16,7 +16,7 @@ import {
 export type ComposerProviderStateInput = {
   provider: ProviderKind;
   model: string;
-  models: ReadonlyArray<ServerProviderModel>;
+  models?: ReadonlyArray<ServerProviderModel>;
   prompt: string;
   modelOptions: ProviderModelOptions | null | undefined;
 };
@@ -53,7 +53,7 @@ type ProviderRegistryEntry = {
 function getProviderStateFromCapabilities(
   input: ComposerProviderStateInput,
 ): ComposerProviderState {
-  const { provider, model, models, prompt, modelOptions } = input;
+  const { provider, model, models = [], prompt, modelOptions } = input;
   const caps = getProviderModelCapabilities(models, model, provider);
   const providerOptions = modelOptions?.[provider];
 
@@ -165,7 +165,7 @@ export function renderProviderTraitsMenuContent(input: {
   provider: ProviderKind;
   threadId: ThreadId;
   model: string;
-  models: ReadonlyArray<ServerProviderModel>;
+  models?: ReadonlyArray<ServerProviderModel>;
   modelOptions: ProviderModelOptions[ProviderKind] | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
@@ -173,7 +173,7 @@ export function renderProviderTraitsMenuContent(input: {
   return composerProviderRegistry[input.provider].renderTraitsMenuContent({
     threadId: input.threadId,
     model: input.model,
-    models: input.models,
+    models: input.models ?? [],
     modelOptions: input.modelOptions,
     prompt: input.prompt,
     onPromptChange: input.onPromptChange,
@@ -184,7 +184,7 @@ export function renderProviderTraitsPicker(input: {
   provider: ProviderKind;
   threadId: ThreadId;
   model: string;
-  models: ReadonlyArray<ServerProviderModel>;
+  models?: ReadonlyArray<ServerProviderModel>;
   modelOptions: ProviderModelOptions[ProviderKind] | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
@@ -192,7 +192,7 @@ export function renderProviderTraitsPicker(input: {
   return composerProviderRegistry[input.provider].renderTraitsPicker({
     threadId: input.threadId,
     model: input.model,
-    models: input.models,
+    models: input.models ?? [],
     modelOptions: input.modelOptions,
     prompt: input.prompt,
     onPromptChange: input.onPromptChange,

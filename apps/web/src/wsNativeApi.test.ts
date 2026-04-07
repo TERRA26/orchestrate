@@ -436,7 +436,7 @@ describe("wsNativeApi", () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    await api.orchestrator.complete({
+    await api.orchestration.complete({
       provider: "codex",
       model: "gpt-5.4",
       modelOptions: {

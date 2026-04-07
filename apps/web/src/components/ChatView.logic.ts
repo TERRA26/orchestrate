@@ -41,6 +41,7 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    archivedAt: null,
   };
 }
 
@@ -171,6 +172,40 @@ export function shouldRenderTerminalWorkspace(options: {
   return (
     options.terminalOpen && options.presentationMode === "workspace" && options.activeProjectExists
   );
+}
+
+/**
+ * Waits for a server thread (identified by threadId) to appear in the store.
+ * Resolves `true` once the thread exists, or `false` after a timeout.
+ */
+export function waitForStartedServerThread(
+  threadId: ThreadId,
+  timeoutMs = 15_000,
+): Promise<boolean> {
+  // Dynamically import the store to avoid circular deps at module scope
+  return import("../store").then(({ useStore }) => {
+    return new Promise<boolean>((resolve) => {
+      const check = () => {
+        const state = useStore.getState();
+        return state.threads.some((t) => t.id === threadId);
+      };
+      if (check()) {
+        resolve(true);
+        return;
+      }
+      const timer = setTimeout(() => {
+        unsub();
+        resolve(false);
+      }, timeoutMs);
+      const unsub = useStore.subscribe(() => {
+        if (check()) {
+          clearTimeout(timer);
+          unsub();
+          resolve(true);
+        }
+      });
+    });
+  });
 }
 
 export function shouldAutoDeleteTerminalThreadOnLastClose(options: {

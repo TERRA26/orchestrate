@@ -318,6 +318,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           files: checkpoint.files.map((file) => ({ ...file })),
         })),
         activities: thread.activities.map((activity) => ({ ...activity })),
+        archivedAt: null,
       };
     });
   return {
@@ -462,6 +463,16 @@ if (typeof window !== "undefined") {
   window.addEventListener("beforeunload", () => {
     debouncedPersistState.flush();
   });
+}
+
+export function selectProjectById(projectId: Project["id"] | null | undefined) {
+  return (state: AppState) =>
+    projectId != null ? state.projects.find((p) => p.id === projectId) : undefined;
+}
+
+export function selectThreadById(threadId: ThreadId | null | undefined) {
+  return (state: AppState) =>
+    threadId != null ? state.threads.find((t) => t.id === threadId) : undefined;
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {

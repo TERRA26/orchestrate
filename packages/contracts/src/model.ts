@@ -51,12 +51,16 @@ export const ModelCapabilities = Schema.Struct({
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
+export type ModelSlug = string;
+
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   codex: "gpt-5.4",
   claudeAgent: "claude-sonnet-4-6",
 };
 
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
+
+export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 
 /** Per-provider text generation model defaults. */
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {

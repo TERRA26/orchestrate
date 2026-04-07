@@ -20,6 +20,8 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -62,11 +64,20 @@ import type {
   ProviderReadPluginInput,
   ProviderReadPluginResult,
 } from "./providerDiscovery";
+import type {
+  BrowserOpenSessionInput,
+  BrowserOpenSessionResult,
+  BrowserActInput,
+  BrowserActResult,
+  BrowserCloseSessionInput,
+} from "./browser";
+import type { OrchestratorCompleteInput, OrchestratorCompleteResult } from "./ws";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
   destructive?: boolean;
+  disabled?: boolean;
 }
 
 export type DesktopUpdateStatus =
@@ -190,6 +201,7 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  checkForUpdate?: () => Promise<{ checked: boolean; state: DesktopUpdateState }>;
   notifications: {
     isSupported: () => Promise<boolean>;
     show: (input: DesktopNotificationInput) => Promise<boolean>;
@@ -229,6 +241,7 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
@@ -261,6 +274,8 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    refreshProviders: () => Promise<void>;
+    updateSettings: (patch: Record<string, unknown>) => Promise<void>;
   };
   provider: {
     getComposerCapabilities: (
@@ -281,6 +296,7 @@ export interface NativeApi {
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+    complete: (input: OrchestratorCompleteInput) => Promise<OrchestratorCompleteResult>;
   };
   browser: {
     open: (input: BrowserOpenInput) => Promise<ThreadBrowserState>;
@@ -297,5 +313,8 @@ export interface NativeApi {
     selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     openDevTools: (input: BrowserTabInput) => Promise<void>;
     onState: (callback: (state: ThreadBrowserState) => void) => () => void;
+    openSession: (input: BrowserOpenSessionInput) => Promise<BrowserOpenSessionResult>;
+    act: (input: BrowserActInput) => Promise<BrowserActResult>;
+    closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
   };
 }

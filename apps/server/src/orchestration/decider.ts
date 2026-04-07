@@ -880,6 +880,40 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.archive": {
+      const now = new Date().toISOString();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: now,
+          commandId: command.commandId,
+        }),
+        type: "thread.archived",
+        payload: {
+          threadId: command.threadId,
+          archivedAt: now,
+        },
+      };
+    }
+
+    case "thread.unarchive": {
+      const now = new Date().toISOString();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: now,
+          commandId: command.commandId,
+        }),
+        type: "thread.unarchived",
+        payload: {
+          threadId: command.threadId,
+          unarchivedAt: now,
+        },
+      };
+    }
+
     default: {
       command satisfies never;
       const fallback = command as never as { type: string };

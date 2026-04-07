@@ -20,9 +20,11 @@ import { ProviderUnsupportedError } from "./provider/Errors";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
+import { ProviderDiscoveryServiceLive } from "./provider/Layers/ProviderDiscoveryService";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
+import { ProviderDiscoveryService } from "./provider/Services/ProviderDiscoveryService";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import { ServerSettingsService } from "./serverSettings";
 
@@ -58,7 +60,7 @@ const makeRuntimePtyAdapterLayer = () =>
   }).pipe(Layer.unwrap);
 
 export function makeServerProviderLayer(): Layer.Layer<
-  ProviderService,
+  ProviderService | ProviderDiscoveryService,
   ProviderUnsupportedError,
   | SqlClient.SqlClient
   | ServerConfig
@@ -88,8 +90,9 @@ export function makeServerProviderLayer(): Layer.Layer<
       Layer.provide(claudeAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
-    return makeProviderServiceLive(
-      canonicalEventLogger ? { canonicalEventLogger } : undefined,
+    return Layer.mergeAll(
+      makeProviderServiceLive(canonicalEventLogger ? { canonicalEventLogger } : undefined),
+      ProviderDiscoveryServiceLive,
     ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
   }).pipe(Layer.unwrap);
 }

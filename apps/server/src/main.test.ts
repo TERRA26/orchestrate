@@ -4,6 +4,7 @@ import { assert, it, vi } from "@effect/vitest";
 import type { OrchestrationReadModel } from "@t3tools/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -39,6 +40,7 @@ const testLayer = Layer.mergeAll(
   } satisfies CliConfigShape),
   Layer.succeed(NetService, {
     canListenOnHost: () => Effect.succeed(true),
+    canConnectToHost: () => Effect.succeed(false),
     isPortAvailableOnLoopback: () => Effect.succeed(true),
     reserveLoopbackPort: () => Effect.succeed(0),
     findAvailablePort,
@@ -253,6 +255,10 @@ it.layer(testLayer)("server CLI command", (it) => {
       yield* recordStartupHeartbeat.pipe(
         Effect.provideService(ProjectionSnapshotQuery, {
           getSnapshot,
+          getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 2 }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         }),
         Effect.provideService(AnalyticsService, {
           record: recordTelemetry,

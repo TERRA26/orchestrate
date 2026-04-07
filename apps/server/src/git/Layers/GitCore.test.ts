@@ -532,7 +532,13 @@ it.layer(TestLayer)("git integration", (it) => {
         const core = yield* makeIsolatedGitCore((input) => {
           if (input.args[0] === "fetch") {
             fetchArgs = [...input.args];
-            return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+            return Effect.succeed({
+              code: 0,
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
           }
           return realGitCore.execute(input);
         });
@@ -585,7 +591,13 @@ it.layer(TestLayer)("git integration", (it) => {
           if (input.args[0] === "fetch") {
             fetchStarted = true;
             return Effect.promise(() =>
-              waitForReleasePromise.then(() => ({ code: 0, stdout: "", stderr: "" })),
+              waitForReleasePromise.then(() => ({
+                code: 0,
+                stdout: "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              })),
             );
           }
           return realGitCore.execute(input);

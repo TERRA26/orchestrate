@@ -585,7 +585,13 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
             });
           }
 
-          return { code: exitCode, stdout, stderr } satisfies ExecuteGitResult;
+          return {
+            code: exitCode,
+            stdout,
+            stderr,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          } satisfies ExecuteGitResult;
         });
 
         return yield* commandEffect.pipe(
@@ -1444,7 +1450,13 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         if (localBranchResult.code !== 0) {
           const stderr = localBranchResult.stderr.trim();
           if (stderr.toLowerCase().includes("not a git repository")) {
-            return { branches: [], isRepo: false, hasOriginRemote: false };
+            return {
+              branches: [],
+              isRepo: false,
+              hasOriginRemote: false,
+              nextCursor: null,
+              totalCount: 0,
+            };
           }
           return yield* createGitCommandError(
             "GitCore.listBranches",
@@ -1610,7 +1622,13 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
 
         const branches = [...localBranches, ...remoteBranches];
 
-        return { branches, isRepo: true, hasOriginRemote: remoteNames.includes("origin") };
+        return {
+          branches,
+          isRepo: true,
+          hasOriginRemote: remoteNames.includes("origin"),
+          nextCursor: null,
+          totalCount: branches.length,
+        };
       });
 
     const createWorktree: GitCoreShape["createWorktree"] = (input) =>
@@ -1853,6 +1871,47 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
       checkoutBranch,
       initRepo,
       listLocalBranchNames,
+      isInsideWorkTree: (cwd) =>
+        runGitStdout(
+          "GitCore.isInsideWorkTree",
+          cwd,
+          ["rev-parse", "--is-inside-work-tree"],
+          true,
+        ).pipe(
+          Effect.map((stdout) => stdout.trim() === "true"),
+          Effect.catch(() => Effect.succeed(false)),
+        ),
+      listWorkspaceFiles: (cwd) =>
+        runGitStdout("GitCore.listWorkspaceFiles", cwd, [
+          "ls-files",
+          "--cached",
+          "--others",
+          "--exclude-standard",
+        ]).pipe(
+          Effect.map((stdout) => ({
+            paths: stdout
+              .trim()
+              .split("\n")
+              .filter((line) => line.length > 0),
+            truncated: false,
+          })),
+        ),
+      filterIgnoredPaths: (cwd, relativePaths) => {
+        if (relativePaths.length === 0) return Effect.succeed([]);
+        return executeGit("GitCore.filterIgnoredPaths", cwd, ["check-ignore", ...relativePaths], {
+          allowNonZeroExit: true,
+        }).pipe(
+          Effect.map((result) => {
+            const ignoredPaths = new Set(
+              result.stdout
+                .trim()
+                .split("\n")
+                .filter((l) => l.length > 0),
+            );
+            return relativePaths.filter((p) => !ignoredPaths.has(p));
+          }),
+        );
+      },
     } satisfies GitCoreShape;
   });
 

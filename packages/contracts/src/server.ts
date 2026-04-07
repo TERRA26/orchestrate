@@ -27,6 +27,8 @@ const ServerConfigIssues = Schema.Array(ServerConfigIssue);
 
 export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
 export type ServerProviderState = typeof ServerProviderState.Type;
+/** @deprecated Use ServerProviderState instead */
+export type ServerProviderStatus = ServerProviderState;
 
 export const ServerProviderAuthStatus = Schema.Literals([
   "authenticated",

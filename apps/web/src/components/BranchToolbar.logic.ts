@@ -98,6 +98,18 @@ export function dedupeRemoteBranchesWithLocalMatches(
   });
 }
 
+export function shouldIncludeBranchPickerItem(input: {
+  itemValue: string;
+  normalizedQuery: string;
+  createBranchItemValue: string;
+  checkoutPullRequestItemValue: string | null;
+}): boolean {
+  const { itemValue, normalizedQuery, createBranchItemValue, checkoutPullRequestItemValue } = input;
+  if (itemValue === createBranchItemValue) return true;
+  if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) return true;
+  return itemValue.toLowerCase().includes(normalizedQuery.toLowerCase());
+}
+
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeWorktreePath: string | null;

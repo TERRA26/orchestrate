@@ -7,6 +7,7 @@ import {
   type ContextMenuItem,
   type NativeApi,
   ServerConfigUpdatedPayload,
+  type ServerProviderUpdatedPayload,
   WS_CHANNELS,
   WS_METHODS,
   type WsWelcomePayload,
@@ -19,6 +20,7 @@ let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => void>();
+const providersUpdatedListeners = new Set<(payload: ServerProviderUpdatedPayload) => void>();
 const fallbackBrowserStateListeners = new Set<(state: ThreadBrowserState) => void>();
 const fallbackBrowserStates = new Map<ThreadId, ThreadBrowserState>();
 
@@ -155,6 +157,26 @@ export function onServerConfigUpdated(
   };
 }
 
+export function onServerProvidersUpdated(
+  listener: (payload: ServerProviderUpdatedPayload) => void,
+): () => void {
+  providersUpdatedListeners.add(listener);
+
+  const latestProviders =
+    instance?.transport.getLatestPush(WS_CHANNELS.serverProvidersUpdated)?.data ?? null;
+  if (latestProviders) {
+    try {
+      listener(latestProviders);
+    } catch {
+      // Swallow listener errors
+    }
+  }
+
+  return () => {
+    providersUpdatedListeners.delete(listener);
+  };
+}
+
 export function createWsNativeApi(): NativeApi {
   if (instance) return instance.api;
 
@@ -173,6 +195,16 @@ export function createWsNativeApi(): NativeApi {
   transport.subscribe(WS_CHANNELS.serverConfigUpdated, (message) => {
     const payload = message.data;
     for (const listener of serverConfigUpdatedListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+  });
+  transport.subscribe(WS_CHANNELS.serverProvidersUpdated, (message) => {
+    const payload = message.data;
+    for (const listener of providersUpdatedListeners) {
       try {
         listener(payload);
       } catch {
@@ -217,6 +249,7 @@ export function createWsNativeApi(): NativeApi {
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
+      readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>
@@ -270,6 +303,8 @@ export function createWsNativeApi(): NativeApi {
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+      refreshProviders: () => transport.request(WS_METHODS.serverRefreshProviders),
+      updateSettings: (patch) => transport.request(WS_METHODS.serverUpdateSettings, { patch }),
     },
     provider: {
       getComposerCapabilities: (input) =>
@@ -293,6 +328,8 @@ export function createWsNativeApi(): NativeApi {
         transport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (message) =>
           callback(message.data),
         ),
+      complete: (input) =>
+        transport.request(WS_METHODS.orchestratorComplete, input, { timeoutMs: 150_000 }),
     },
     browser: {
       open: async (input) => {
@@ -417,6 +454,10 @@ export function createWsNativeApi(): NativeApi {
           fallbackBrowserStateListeners.delete(callback);
         };
       },
+      openSession: (input) =>
+        transport.request(WS_METHODS.browserOpenSession, input, { timeoutMs: 90_000 }),
+      act: (input) => transport.request(WS_METHODS.browserAct, input, { timeoutMs: 90_000 }),
+      closeSession: (input) => transport.request(WS_METHODS.browserCloseSession, input),
     },
   };
 

@@ -10,6 +10,7 @@ import {
   OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationReplayEventsInput,
+  ProviderKind,
 } from "./orchestration";
 import {
   GitActionProgressEvent,
@@ -35,9 +36,12 @@ import {
   TerminalWriteInput,
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
-import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import { ProjectReadFileInput, ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
-import { ServerConfigUpdatedPayload } from "./server";
+import { BrowserActInput, BrowserCloseSessionInput, BrowserOpenSessionInput } from "./browser";
+import { ClaudeModelOptions, CodexModelOptions } from "./model";
+import { ServerConfigUpdatedPayload, ServerProviderUpdatedPayload } from "./server";
+import { ServerSettingsPatch } from "./settings";
 import {
   ProviderListCommandsInput,
   ProviderGetComposerCapabilitiesInput,
@@ -56,6 +60,7 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsReadFile: "projects.readFile",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -84,6 +89,14 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  serverRefreshProviders: "server.refreshProviders",
+  serverGetSettings: "server.getSettings",
+  serverUpdateSettings: "server.updateSettings",
+
+  // Browser automation methods
+  browserOpenSession: "browser.openSession",
+  browserAct: "browser.act",
+  browserCloseSession: "browser.closeSession",
 
   // Provider discovery
   providerGetComposerCapabilities: "provider.getComposerCapabilities",
@@ -92,6 +105,9 @@ export const WS_METHODS = {
   providerListPlugins: "provider.listPlugins",
   providerReadPlugin: "provider.readPlugin",
   providerListModels: "provider.listModels",
+
+  // Orchestrator
+  orchestratorComplete: "orchestrator.complete",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -101,6 +117,7 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  serverProvidersUpdated: "server.providersUpdated",
 } as const;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
@@ -114,6 +131,25 @@ const tagRequestBody = <const Tag extends string, const Fields extends Schema.St
     // PreserveChecks is safe here. No existing schema should have checks depending on the tag
     { unsafePreserveChecks: true },
   );
+
+// ── Orchestrator completion schemas ─────────────────────────────────
+export const OrchestratorCompleteInput = Schema.Struct({
+  provider: ProviderKind,
+  model: TrimmedNonEmptyString,
+  modelOptions: Schema.optionalKey(Schema.Union([CodexModelOptions, ClaudeModelOptions])),
+  messages: Schema.Array(
+    Schema.Struct({
+      role: Schema.Literals(["user", "assistant", "system"]),
+      content: Schema.String,
+    }),
+  ),
+});
+export type OrchestratorCompleteInput = typeof OrchestratorCompleteInput.Type;
+
+export const OrchestratorCompleteResult = Schema.Struct({
+  text: Schema.String,
+});
+export type OrchestratorCompleteResult = typeof OrchestratorCompleteResult.Type;
 
 const WebSocketRequestBody = Schema.Union([
   // Orchestration methods
@@ -129,6 +165,7 @@ const WebSocketRequestBody = Schema.Union([
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.projectsReadFile, ProjectReadFileInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
@@ -157,6 +194,9 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+  tagRequestBody(WS_METHODS.serverRefreshProviders, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverGetSettings, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverUpdateSettings, Schema.Struct({ patch: ServerSettingsPatch })),
 
   // Provider discovery
   tagRequestBody(WS_METHODS.providerGetComposerCapabilities, ProviderGetComposerCapabilitiesInput),
@@ -165,6 +205,14 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.providerListPlugins, ProviderListPluginsInput),
   tagRequestBody(WS_METHODS.providerReadPlugin, ProviderReadPluginInput),
   tagRequestBody(WS_METHODS.providerListModels, ProviderListModelsInput),
+
+  // Browser automation methods
+  tagRequestBody(WS_METHODS.browserOpenSession, BrowserOpenSessionInput),
+  tagRequestBody(WS_METHODS.browserAct, BrowserActInput),
+  tagRequestBody(WS_METHODS.browserCloseSession, BrowserCloseSessionInput),
+
+  // Orchestrator
+  tagRequestBody(WS_METHODS.orchestratorComplete, OrchestratorCompleteInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({
@@ -198,6 +246,7 @@ export type WsWelcomePayload = typeof WsWelcomePayload.Type;
 export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.serverWelcome]: WsWelcomePayload;
   readonly [WS_CHANNELS.serverConfigUpdated]: typeof ServerConfigUpdatedPayload.Type;
+  readonly [WS_CHANNELS.serverProvidersUpdated]: typeof ServerProviderUpdatedPayload.Type;
   readonly [WS_CHANNELS.gitActionProgress]: typeof GitActionProgressEvent.Type;
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
@@ -222,6 +271,10 @@ export const WsPushServerConfigUpdated = makeWsPushSchema(
   WS_CHANNELS.serverConfigUpdated,
   ServerConfigUpdatedPayload,
 );
+export const WsPushServerProvidersUpdated = makeWsPushSchema(
+  WS_CHANNELS.serverProvidersUpdated,
+  ServerProviderUpdatedPayload,
+);
 export const WsPushGitActionProgress = makeWsPushSchema(
   WS_CHANNELS.gitActionProgress,
   GitActionProgressEvent,
@@ -236,6 +289,7 @@ export const WsPushChannelSchema = Schema.Literals([
   WS_CHANNELS.gitActionProgress,
   WS_CHANNELS.serverWelcome,
   WS_CHANNELS.serverConfigUpdated,
+  WS_CHANNELS.serverProvidersUpdated,
   WS_CHANNELS.terminalEvent,
   ORCHESTRATION_WS_CHANNELS.domainEvent,
 ]);
@@ -244,6 +298,7 @@ export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
 export const WsPush = Schema.Union([
   WsPushServerWelcome,
   WsPushServerConfigUpdated,
+  WsPushServerProvidersUpdated,
   WsPushGitActionProgress,
   WsPushTerminalEvent,
   WsPushOrchestrationDomainEvent,

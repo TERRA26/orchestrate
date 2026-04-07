@@ -38,6 +38,7 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
+import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
@@ -267,6 +268,12 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(CheckpointStoreLive.pipe(Layer.provide(GitCoreLive))),
       Layer.provideMerge(ServerConfigLayer),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(
+        Layer.succeed(WorkspaceEntries, {
+          search: () => Effect.succeed({ entries: [], truncated: false }),
+          invalidate: () => Effect.void,
+        }),
+      ),
     );
 
     runtime = ManagedRuntime.make(layer);
@@ -274,7 +281,7 @@ describe("CheckpointReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(CheckpointReactor));
     const checkpointStore = await runtime.runPromise(Effect.service(CheckpointStore));
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
 
     const createdAt = new Date().toISOString();

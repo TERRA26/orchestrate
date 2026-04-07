@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { EmbeddedBrowserPane } from "../components/EmbeddedBrowserPane";
+import { OrchestratorPanel } from "../components/OrchestratorPanel";
 import ThreadSidebar from "../components/Sidebar";
 import { isElectron } from "../env";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -175,7 +177,9 @@ function ChatRouteLayout() {
         <ThreadSidebar />
         <SidebarRail />
       </Sidebar>
+      <OrchestratorPanel />
       <Outlet />
+      <EmbeddedBrowserPane currentThreadId={null} />
     </SidebarProvider>
   );
 }

@@ -16,6 +16,7 @@
 ## File Map
 
 ### New files (copy from dpcode)
+
 - `apps/web/src/composerSlashCommands.ts` (286 lines) — Slash command definitions
 - `apps/web/src/composerSlashCommands.test.ts` — Tests
 - `apps/web/src/hooks/useComposerSlashCommands.ts` (637 lines) — Slash command execution hook
@@ -37,6 +38,7 @@
 - `apps/server/src/persistence/Migrations/023_ProjectionThreadsForkSource.ts` — Migration (renumbered from dpcode's 020)
 
 ### Replace files (no orchestrator code — safe to overwrite)
+
 - `apps/web/src/components/ChatView.tsx` — dpcode adds slash commands, fork/review UI
 - `apps/web/src/components/ChatView.logic.ts` — Extracted logic helpers
 - `apps/web/src/components/ChatView.logic.test.ts` — Tests
@@ -118,6 +120,7 @@
 - Asset files in `apps/desktop/resources/`, `apps/web/public/`, `assets/`
 
 ### Replace + re-integrate files (have orchestrator-specific code)
+
 - `apps/web/src/routes/_chat.tsx` — Must re-add OrchestratorPanel + EmbeddedBrowserPane (4 lines)
 - `apps/web/src/components/Sidebar.tsx` — Must re-add embeddedBrowserStateStore import (3 lines)
 - `apps/web/src/wsNativeApi.ts` — Must re-add browser API + orchestrator API (~95 lines)
@@ -125,6 +128,7 @@
 - `packages/contracts/src/ws.ts` — Must re-add browser + orchestrator WS methods/schemas (~50 lines)
 
 ### Do NOT copy from dpcode
+
 - `apps/server/src/persistence/Migrations.ts` — Different numbering; update manually
 - `apps/server/src/persistence/Migrations/017_ThreadHandoffMetadata.ts` — Already in orchestrate as 020
 - `apps/server/src/persistence/Migrations/018_ProjectionThreadMessageMentions.ts` — Already in orchestrate as 021
@@ -134,6 +138,7 @@
 ### Task 1: Create backup branch
 
 **Files:**
+
 - None modified
 
 - [ ] **Step 1: Create a backup branch in orchestrate**
@@ -154,6 +159,7 @@ Expected: `backup/pre-dpcode-merge-2026-04-07`
 ### Task 2: Copy all new files from dpcode
 
 **Files:**
+
 - Create: All files listed in "New files" section above
 
 - [ ] **Step 1: Copy new web app files**
@@ -217,6 +223,7 @@ Expected: All files listed without errors.
 ### Task 3: Bulk replace files with no orchestrator code
 
 **Files:**
+
 - Modify: All files listed in "Replace files" section above
 
 - [ ] **Step 1: Copy all replaceable server files**
@@ -377,6 +384,7 @@ git commit -m "chore: bulk copy dpcode files (pre-reintegration)"
 ### Task 4: Re-integrate `_chat.tsx` (OrchestratorPanel + EmbeddedBrowserPane)
 
 **Files:**
+
 - Modify: `apps/web/src/routes/_chat.tsx`
 
 The dpcode version of `_chat.tsx` was already copied in Task 3. Now we must re-add the orchestrator components.
@@ -384,6 +392,7 @@ The dpcode version of `_chat.tsx` was already copied in Task 3. Now we must re-a
 - [ ] **Step 1: Read the current (dpcode) version of `_chat.tsx`**
 
 Read `apps/web/src/routes/_chat.tsx` and identify:
+
 1. Where imports are declared (top of file)
 2. Where the main layout JSX is (look for `ChatRouteLayout` or similar component with `<Outlet />`)
 
@@ -401,9 +410,11 @@ import { OrchestratorPanel } from "../components/OrchestratorPanel";
 In the layout component, find the `<Outlet />` and wrap the area so `OrchestratorPanel` renders before the main content and `EmbeddedBrowserPane` renders after:
 
 ```tsx
-<OrchestratorPanel />
-{/* ... existing layout with <Outlet /> ... */}
-<EmbeddedBrowserPane currentThreadId={null} />
+<OrchestratorPanel />;
+{
+  /* ... existing layout with <Outlet /> ... */
+}
+<EmbeddedBrowserPane currentThreadId={null} />;
 ```
 
 The exact placement: `OrchestratorPanel` goes as a sibling before the main content `<div>` containing `<Outlet />`. `EmbeddedBrowserPane` goes as the last sibling after that `<div>`.
@@ -417,6 +428,7 @@ Run: `cd /Users/christophe/Documents/Orchestrate/orchestrate && bunx tsc --noEmi
 ### Task 5: Re-integrate `Sidebar.tsx` (embeddedBrowserStateStore import)
 
 **Files:**
+
 - Modify: `apps/web/src/components/Sidebar.tsx`
 
 - [ ] **Step 1: Read the current (dpcode) Sidebar.tsx**
@@ -437,6 +449,7 @@ import {
 ### Task 6: Re-integrate `wsNativeApi.ts` (browser + orchestrator API)
 
 **Files:**
+
 - Modify: `apps/web/src/wsNativeApi.ts`
 
 - [ ] **Step 1: Read the current (dpcode) wsNativeApi.ts**
@@ -521,11 +534,13 @@ Run: `cd /Users/christophe/Documents/Orchestrate/orchestrate && bunx tsc --noEmi
 ### Task 7: Re-integrate `packages/contracts/src/ws.ts` (browser + orchestrator WS schemas)
 
 **Files:**
+
 - Modify: `packages/contracts/src/ws.ts`
 
 - [ ] **Step 1: Read the current (dpcode) ws.ts**
 
 Read `packages/contracts/src/ws.ts`. Identify:
+
 1. The `WS_METHODS` const object
 2. The `WebSocketRequestBody` union
 3. The imports section
@@ -605,6 +620,7 @@ tagRequestBody(WS_METHODS.orchestratorComplete, OrchestratorCompleteInput),
 ### Task 8: Re-integrate `apps/server/src/wsServer.ts` (BrowserAutomation + orchestrator completion)
 
 **Files:**
+
 - Modify: `apps/server/src/wsServer.ts`
 
 This is the largest re-integration. Read the FULL orchestrate backup version from git to extract the orchestrator-specific code.
@@ -617,6 +633,7 @@ git show backup/pre-dpcode-merge-2026-04-07:apps/server/src/wsServer.ts > /tmp/w
 ```
 
 Read `/tmp/wsServer_backup.ts` and extract:
+
 1. The `BrowserAutomation` import
 2. The `BrowserAutomation` in the service type union and `yield*` injection
 3. The `buildOrchestratorCompletionPrompt` helper function
@@ -628,6 +645,7 @@ Read `/tmp/wsServer_backup.ts` and extract:
 - [ ] **Step 2: Read the current (dpcode) wsServer.ts**
 
 Read the file and identify:
+
 1. Where service dependencies are declared (the type union and `yield*` lines)
 2. Where route handlers are in the `switch` statement
 3. Where helper functions can be placed (before or after the main handler)
@@ -651,7 +669,7 @@ In the service type union (where other services like `ProviderService`, `GitMana
 In the `yield*` section where services are destructured, add:
 
 ```typescript
-const browserAutomation = yield* BrowserAutomation;
+const browserAutomation = yield * BrowserAutomation;
 ```
 
 - [ ] **Step 5: Add helper functions**
@@ -735,6 +753,7 @@ case WS_METHODS.browserCloseSession: {
 - [ ] **Step 7: Add orchestrator completion route handler**
 
 This is the longest block. Extract the full `case WS_METHODS.orchestratorComplete:` handler from the backup file at `/tmp/wsServer_backup.ts` and add it to the switch statement. The handler includes:
+
 - Message parsing (system vs. conversation messages)
 - Claude agent provider path (spawns `claude` CLI)
 - Codex provider path (spawns `codex` CLI with reasoning effort handling)
@@ -753,6 +772,7 @@ Also check for any other imports needed by the orchestrator completion handler (
 ### Task 9: Update migrations registry and shared package.json
 
 **Files:**
+
 - Modify: `apps/server/src/persistence/Migrations.ts`
 - Modify: `packages/shared/package.json`
 
@@ -787,13 +807,25 @@ We need BOTH sets. Add the dpcode exports while keeping orchestrate's existing o
   "./logging": { "types": "./src/logging.ts", "import": "./src/logging.ts" },
   "./shell": { "types": "./src/shell.ts", "import": "./src/shell.ts" },
   "./Net": { "types": "./src/Net.ts", "import": "./src/Net.ts" },
-  "./DrainableWorker": { "types": "./src/DrainableWorker.ts", "import": "./src/DrainableWorker.ts" },
-  "./KeyedCoalescingWorker": { "types": "./src/KeyedCoalescingWorker.ts", "import": "./src/KeyedCoalescingWorker.ts" },
+  "./DrainableWorker": {
+    "types": "./src/DrainableWorker.ts",
+    "import": "./src/DrainableWorker.ts"
+  },
+  "./KeyedCoalescingWorker": {
+    "types": "./src/KeyedCoalescingWorker.ts",
+    "import": "./src/KeyedCoalescingWorker.ts"
+  },
   "./schemaJson": { "types": "./src/schemaJson.ts", "import": "./src/schemaJson.ts" },
   "./Struct": { "types": "./src/Struct.ts", "import": "./src/Struct.ts" },
   "./String": { "types": "./src/String.ts", "import": "./src/String.ts" },
-  "./terminalThreads": { "types": "./src/terminalThreads.ts", "import": "./src/terminalThreads.ts" },
-  "./threadEnvironment": { "types": "./src/threadEnvironment.ts", "import": "./src/threadEnvironment.ts" }
+  "./terminalThreads": {
+    "types": "./src/terminalThreads.ts",
+    "import": "./src/terminalThreads.ts"
+  },
+  "./threadEnvironment": {
+    "types": "./src/threadEnvironment.ts",
+    "import": "./src/threadEnvironment.ts"
+  }
 }
 ```
 
@@ -806,6 +838,7 @@ Run: `cd /Users/christophe/Documents/Orchestrate/orchestrate && bunx tsc --noEmi
 ### Task 10: Validate and fix
 
 **Files:**
+
 - Potentially modify: any file with type errors or lint issues
 
 - [ ] **Step 1: Run formatter**
@@ -829,6 +862,7 @@ cd /Users/christophe/Documents/Orchestrate/orchestrate && bun typecheck
 ```
 
 This is the critical step. Common type errors to expect and fix:
+
 - Missing imports for new types introduced by dpcode (e.g., `ForkThreadTarget`, `RateLimitStatus`)
 - Import paths that reference dpcode-specific migration numbers (017/018 vs our 020/021)
 - The `ProviderKind` import in ws.ts may need adjustment
@@ -843,6 +877,7 @@ cd /Users/christophe/Documents/Orchestrate/orchestrate && bun run test
 ```
 
 Investigate and fix any test failures. Common issues:
+
 - Test snapshots may need updating
 - Import paths in test files may reference old locations
 - Mock shapes may need updating for new schemas
@@ -873,6 +908,7 @@ Preserved orchestrate-specific code:
 ### Task 11: Post-merge database update
 
 **Files:**
+
 - None (database operation)
 
 - [ ] **Step 1: Update workspace_root in state database (if needed)**
@@ -890,6 +926,7 @@ cd /Users/christophe/Documents/Orchestrate/orchestrate && bun dev
 ```
 
 Verify:
+
 - App starts without errors
 - Slash command menu appears when typing `/` in composer
 - OrchestratorPanel is visible in the layout

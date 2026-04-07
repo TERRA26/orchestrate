@@ -13,6 +13,7 @@ import {
   WS_METHODS,
   OrchestrationSessionStatus,
 } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -118,13 +119,17 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
+        enabled: true,
+        installed: true,
+        version: null,
         status: "ready",
-        available: true,
-        authStatus: "authenticated",
+        auth: { status: "authenticated" },
         checkedAt: NOW_ISO,
+        models: [],
       },
     ],
     availableEditors: [],
+    settings: DEFAULT_SERVER_SETTINGS,
   };
 }
 
@@ -260,6 +265,7 @@ function createSnapshotForTargetUser(options: {
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
+        archivedAt: null,
         handoff: null,
         messages,
         activities: [],
@@ -349,6 +355,7 @@ function addThreadToSnapshot(
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
+        archivedAt: null,
         handoff: null,
         messages: [],
         activities: [],
