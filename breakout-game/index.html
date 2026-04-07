@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Breakout!</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0a1a;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family:
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      canvas {
+        display: block;
+        border-radius: 6px;
+        box-shadow: 0 0 40px rgba(80, 120, 255, 0.15);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <script>
+      "use strict";
+
+      /* ───────────────────────── constants ───────────────────────── */
+      const W = 800,
+        H = 600;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      canvas.width = W;
+      canvas.height = H;
+
+      /* ───────────────────────── difficulty presets ──────────────── */
+      const DIFFICULTY = {
+        easy: { lives: 5, paddleW: 130, ballSpeed: 4.0, label: "Easy" },
+        medium: { lives: 3, paddleW: 100, ballSpeed: 5.0, label: "Medium" },
+        hard: { lives: 1, paddleW: 75, ballSpeed: 6.0, label: "Hard" },
+      };
+
+      /* ───────────────────── colour palette ─────────────────────── */
+      const ROW_COLORS = [
+        "#ff4060",
+        "#ff7043",
+        "#ffca28",
+        "#66bb6a",
+        "#42a5f5",
+        "#ab47bc",
+        "#ec407a",
+        "#26c6da",
+        "#8d6e63",
+        "#78909c",
+        "#d4e157",
+        "#ffa726",
+      ];
+      const MULTI_HIT_COLORS = ["#ff4060", "#ff9800", "#ffeb3b", "#aed581"]; // 1-hit … 4-hit (index = hitsLeft-1)
+
+      /* ───────────────────── level definitions ──────────────────── */
+      // Each level: { rows, cols, brickH, gap, speedMul, paddleMul, pattern }
+      // pattern(r,c,rows,cols) → 0 = empty, 1-4 = hits required
+      const LEVELS = [
+        /* 1  – simple 4-row wall */
+        { rows: 4, cols: 10, brickH: 20, gap: 3, speedMul: 1.0, paddleMul: 1.0, pattern: (r) => 1 },
+        /* 2  – 5 rows, centre gap */
+        {
+          rows: 5,
+          cols: 10,
+          brickH: 20,
+          gap: 3,
+          speedMul: 1.05,
+          paddleMul: 1.0,
+          pattern: (r, c) => (c === 4 || c === 5 ? 0 : 1),
+        },
+        /* 3  – 6 rows, top row 2-hit */
+        {
+          rows: 6,
+          cols: 10,
+          brickH: 18,
+          gap: 3,
+          speedMul: 1.1,
+          paddleMul: 0.95,
+          pattern: (r) => (r === 0 ? 2 : 1),
+        },
+        /* 4  – checker pattern, 2-hit bricks */
+        {
+          rows: 6,
+          cols: 12,
+          brickH: 18,
+          gap: 3,
+          speedMul: 1.15,
+          paddleMul: 0.92,
+          pattern: (r, c) => ((r + c) % 2 === 0 ? 2 : 0),
+        },
+        /* 5  – diamond shape, top 3-hit */
+        {
+          rows: 7,
+          cols: 11,
+          brickH: 17,
+          gap: 3,
+          speedMul: 1.22,
+          paddleMul: 0.88,
+          pattern: (r, c, rows, cols) => {
+            const cx = cols / 2,
+              cy = rows / 2;
+            const d = Math.abs(c - cx) / cx + Math.abs(r - cy) / cy;
+            if (d > 1) return 0;
+            return r < 2 ? 3 : 1;
+          },
+        },
+        /* 6  – full 8-row wall, rows 0-1 are 3-hit */
+        {
+          rows: 8,
+          cols: 12,
+          brickH: 16,
+          gap: 2,
+          speedMul: 1.3,
+          paddleMul: 0.85,
+          pattern: (r) => (r < 2 ? 3 : r < 4 ? 2 : 1),
+        },
+        /* 7  – fortress: border of 3-hit, interior 1-hit, some gaps */
+        {
+          rows: 8,
+          cols: 13,
+          brickH: 16,
+          gap: 2,
+          speedMul: 1.38,
+          paddleMul: 0.82,
+          pattern: (r, c, rows, cols) => {
+            if (r === 0 || r === rows - 1 || c === 0 || c === cols - 1) return 3;
+            if ((r + c) % 3 === 0) return 0;
+            return 1;
+          },
+        },
+        /* 8  – ultimate: 9 rows, 4-hit top, mixed, small paddle */
+        {
+          rows: 9,
+          cols: 14,
+          brickH: 15,
+          gap: 2,
+          speedMul: 1.48,
+          paddleMul: 0.78,
+          pattern: (r, c, rows, cols) => {
+            if (r < 2) return 4;
+            if (r < 4) return 3;
+            if (r < 6) return c % 3 === 0 ? 0 : 2;
+            return 1;
+          },
+        },
+      ];
+
+      /* ───────────────────── game state ─────────────────────────── */
+      let state = "menu"; // menu | playing | levelComplete | gameOver | youWin
+      let diff, lives, score, level;
+      let paddle, ball, bricks;
+      let keys = {};
+      let mouseX = W / 2;
+      let levelTimer = 0;
+      let particles = [];
+      let shakeTimer = 0;
+      let combo = 0;
+      let comboTimer = 0;
+
+      /* ───────────────────── input ──────────────────────────────── */
+      document.addEventListener("keydown", (e) => {
+        keys[e.key] = true;
+      });
+      document.addEventListener("keyup", (e) => {
+        keys[e.key] = false;
+      });
+      canvas.addEventListener("mousemove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = (e.clientX - rect.left) * (W / rect.width);
+      });
+      canvas.addEventListener("click", handleClick);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "Enter") handleClick();
+      });
+
+      /* ───────────────────── menu buttons ───────────────────────── */
+      let menuButtons = [];
+      function makeMenuButtons() {
+        const bw = 180,
+          bh = 50,
+          gap = 24;
+        const total = 3 * bh + 2 * gap;
+        const startY = H / 2 + 20;
+        menuButtons = [
+          {
+            x: W / 2 - bw / 2,
+            y: startY,
+            w: bw,
+            h: bh,
+            key: "easy",
+            label: "Easy",
+            color: "#66bb6a",
+          },
+          {
+            x: W / 2 - bw / 2,
+            y: startY + bh + gap,
+            w: bw,
+            h: bh,
+            key: "medium",
+            label: "Medium",
+            color: "#ffa726",
+          },
+          {
+            x: W / 2 - bw / 2,
+            y: startY + 2 * (bh + gap),
+            w: bw,
+            h: bh,
+            key: "hard",
+            label: "Hard",
+            color: "#ef5350",
+          },
+        ];
+      }
+      makeMenuButtons();
+
+      function handleClick(e) {
+        if (state === "menu") {
+          let mx = mouseX,
+            my;
+          if (e && e instanceof MouseEvent) {
+            const rect = canvas.getBoundingClientRect();
+            my = (e.clientY - rect.top) * (H / rect.height);
+            mx = (e.clientX - rect.left) * (W / rect.width);
+          } else {
+            // keyboard – pick medium by default
+            startGame("medium");
+            return;
+          }
+          for (const b of menuButtons) {
+            if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+              startGame(b.key);
+              return;
+            }
+          }
+        } else if (state === "levelComplete") {
+          advanceLevel();
+        } else if (state === "gameOver" || state === "youWin") {
+          state = "menu";
+        }
+      }
+
+      /* ───────────────────── game init ──────────────────────────── */
+      function startGame(diffKey) {
+        diff = DIFFICULTY[diffKey];
+        lives = diff.lives;
+        score = 0;
+        level = 0;
+        combo = 0;
+        comboTimer = 0;
+        particles = [];
+        initLevel();
+        state = "playing";
+      }
+
+      function initLevel() {
+        const def = LEVELS[level];
+        const pw = diff.paddleW * def.paddleMul;
+        paddle = { x: W / 2 - pw / 2, y: H - 36, w: pw, h: 14, speed: 7 };
+        const sp = diff.ballSpeed * def.speedMul;
+        ball = {
+          x: W / 2,
+          y: paddle.y - 10,
+          r: 7,
+          dx: sp * 0.6,
+          dy: -sp * 0.8,
+          speed: sp,
+          stuck: true,
+        };
+        buildBricks(def);
+        combo = 0;
+      }
+
+      function buildBricks(def) {
+        bricks = [];
+        const totalGapX = (def.cols + 1) * def.gap;
+        const bw = (W - totalGapX) / def.cols;
+        const topOffset = 50;
+        for (let r = 0; r < def.rows; r++) {
+          for (let c = 0; c < def.cols; c++) {
+            const hits = def.pattern(r, c, def.rows, def.cols);
+            if (hits <= 0) continue;
+            bricks.push({
+              x: def.gap + c * (bw + def.gap),
+              y: topOffset + r * (def.brickH + def.gap),
+              w: bw,
+              h: def.brickH,
+              hits,
+              maxHits: hits,
+              row: r,
+              col: c,
+            });
+          }
+        }
+      }
+
+      /* ───────────────────── particles ───────────────────────────── */
+      function spawnParticles(x, y, color, count) {
+        for (let i = 0; i < count; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const speed = 1 + Math.random() * 3;
+          particles.push({
+            x,
+            y,
+            dx: Math.cos(angle) * speed,
+            dy: Math.sin(angle) * speed,
+            life: 0.6 + Math.random() * 0.5,
+            maxLife: 0.6 + Math.random() * 0.5,
+            r: 2 + Math.random() * 3,
+            color,
+          });
+        }
+      }
+
+      /* ───────────────────── update ─────────────────────────────── */
+      function update(dt) {
+        if (state !== "playing") {
+          if (state === "levelComplete") {
+            levelTimer -= dt;
+            if (levelTimer <= 0) advanceLevel();
+          }
+          updateParticles(dt);
+          return;
+        }
+
+        /* paddle movement */
+        const prevPx = paddle.x;
+        // keyboard
+        if (keys["ArrowLeft"] || keys["a"]) paddle.x -= paddle.speed * dt * 60;
+        if (keys["ArrowRight"] || keys["d"]) paddle.x += paddle.speed * dt * 60;
+        // mouse – smooth blend
+        const target = mouseX - paddle.w / 2;
+        paddle.x += (target - paddle.x) * 0.25;
+        paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+
+        /* ball stuck to paddle */
+        if (ball.stuck) {
+          ball.x = paddle.x + paddle.w / 2;
+          ball.y = paddle.y - ball.r - 1;
+          if (keys[" "] || keys["ArrowUp"]) {
+            ball.stuck = false;
+            ball.dy = -Math.abs(ball.dy);
+          }
+          return;
+        }
+
+        /* move ball */
+        ball.x += ball.dx * dt * 60;
+        ball.y += ball.dy * dt * 60;
+
+        /* wall collisions */
+        if (ball.x - ball.r < 0) {
+          ball.x = ball.r;
+          ball.dx = Math.abs(ball.dx);
+        }
+        if (ball.x + ball.r > W) {
+          ball.x = W - ball.r;
+          ball.dx = -Math.abs(ball.dx);
+        }
+        if (ball.y - ball.r < 0) {
+          ball.y = ball.r;
+          ball.dy = Math.abs(ball.dy);
+        }
+
+        /* paddle collision */
+        if (
+          ball.dy > 0 &&
+          ball.y + ball.r >= paddle.y &&
+          ball.y + ball.r <= paddle.y + paddle.h + 6 &&
+          ball.x >= paddle.x - ball.r &&
+          ball.x <= paddle.x + paddle.w + ball.r
+        ) {
+          const hit = (ball.x - paddle.x) / paddle.w; // 0..1
+          const angle = (hit - 0.5) * Math.PI * 0.75; // -67.5° .. +67.5°
+          const spd = ball.speed;
+          ball.dx = Math.sin(angle) * spd;
+          ball.dy = -Math.cos(angle) * spd;
+          ball.y = paddle.y - ball.r - 1;
+          combo = 0;
+        }
+
+        /* brick collisions */
+        for (let i = bricks.length - 1; i >= 0; i--) {
+          const b = bricks[i];
+          if (ballRect(ball, b)) {
+            /* resolve collision direction */
+            const overlapX = ball.r + b.w / 2 - Math.abs(ball.x - (b.x + b.w / 2));
+            const overlapY = ball.r + b.h / 2 - Math.abs(ball.y - (b.y + b.h / 2));
+            if (overlapX < overlapY) ball.dx = -ball.dx;
+            else ball.dy = -ball.dy;
+
+            b.hits--;
+            combo++;
+            comboTimer = 1.5;
+            const pts = 10 * b.maxHits + (combo > 1 ? combo * 5 : 0);
+            score += pts;
+            if (b.hits <= 0) {
+              const color = brickColor(b);
+              spawnParticles(b.x + b.w / 2, b.y + b.h / 2, color, 12);
+              bricks.splice(i, 1);
+            } else {
+              spawnParticles(b.x + b.w / 2, b.y + b.h / 2, brickColor(b), 5);
+            }
+            break; // one brick per frame
+          }
+        }
+
+        /* combo timer */
+        if (comboTimer > 0) comboTimer -= dt;
+        else combo = 0;
+
+        /* ball lost */
+        if (ball.y - ball.r > H) {
+          lives--;
+          shakeTimer = 0.3;
+          if (lives <= 0) {
+            state = "gameOver";
+          } else {
+            resetBall();
+          }
+        }
+
+        /* level cleared */
+        if (bricks.length === 0) {
+          score += 500 + level * 250; // level bonus
+          if (level >= LEVELS.length - 1) {
+            state = "youWin";
+          } else {
+            state = "levelComplete";
+            levelTimer = 2.0;
+          }
+        }
+
+        /* shake */
+        if (shakeTimer > 0) shakeTimer -= dt;
+
+        updateParticles(dt);
+      }
+
+      function resetBall() {
+        const sp = ball.speed;
+        ball.x = paddle.x + paddle.w / 2;
+        ball.y = paddle.y - ball.r - 1;
+        ball.dx = sp * 0.6;
+        ball.dy = -sp * 0.8;
+        ball.stuck = true;
+      }
+
+      function advanceLevel() {
+        level++;
+        if (level >= LEVELS.length) {
+          state = "youWin";
+          return;
+        }
+        initLevel();
+        state = "playing";
+      }
+
+      function ballRect(ball, r) {
+        const cx = Math.max(r.x, Math.min(ball.x, r.x + r.w));
+        const cy = Math.max(r.y, Math.min(ball.y, r.y + r.h));
+        const dx = ball.x - cx,
+          dy = ball.y - cy;
+        return dx * dx + dy * dy < ball.r * ball.r;
+      }
+
+      function updateParticles(dt) {
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.x += p.dx * dt * 60;
+          p.y += p.dy * dt * 60;
+          p.dy += 0.05 * dt * 60;
+          p.life -= dt;
+          if (p.life <= 0) particles.splice(i, 1);
+        }
+      }
+
+      /* ───────────────────── render helpers ─────────────────────── */
+      function brickColor(b) {
+        if (b.maxHits > 1) return MULTI_HIT_COLORS[Math.min(b.hits, 4) - 1];
+        return ROW_COLORS[b.row % ROW_COLORS.length];
+      }
+
+      function drawRoundRect(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.arcTo(x + w, y, x + w, y + r, r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+        ctx.lineTo(x + r, y + h);
+        ctx.arcTo(x, y + h, x, y + h - r, r);
+        ctx.lineTo(x, y + r);
+        ctx.arcTo(x, y, x + r, y, r);
+        ctx.closePath();
+      }
+
+      /* ───────────────────── draw ───────────────────────────────── */
+      function draw() {
+        ctx.save();
+
+        /* screen shake */
+        if (shakeTimer > 0) {
+          const mag = shakeTimer * 12;
+          ctx.translate(Math.random() * mag - mag / 2, Math.random() * mag - mag / 2);
+        }
+
+        /* background */
+        ctx.fillStyle = "#0d0d2b";
+        ctx.fillRect(0, 0, W, H);
+
+        /* subtle grid */
+        ctx.strokeStyle = "rgba(255,255,255,0.015)";
+        for (let x = 0; x < W; x += 40) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+        }
+        for (let y = 0; y < H; y += 40) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(W, y);
+          ctx.stroke();
+        }
+
+        if (state === "menu") {
+          drawMenu();
+        } else if (state === "playing" || state === "levelComplete") {
+          drawGame();
+          if (state === "levelComplete")
+            drawOverlay(
+              "Level " + (level + 1) + " Complete!",
+              "#66bb6a",
+              "Next level in " + Math.ceil(levelTimer) + "s — or click",
+            );
+        } else if (state === "gameOver") {
+          drawGame();
+          drawOverlay(
+            "Game Over",
+            "#ef5350",
+            "Score: " + score + "  —  Click or press Enter to restart",
+          );
+        } else if (state === "youWin") {
+          drawGame();
+          drawOverlay(
+            "You Win!",
+            "#ffd740",
+            "Final Score: " + score + "  —  Click or press Enter to play again",
+          );
+        }
+
+        /* particles – always */
+        drawParticles();
+
+        ctx.restore();
+      }
+
+      function drawMenu() {
+        /* title */
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 56px 'Segoe UI', system-ui, sans-serif";
+        ctx.fillText("BREAKOUT", W / 2, H / 2 - 80);
+        ctx.font = "18px 'Segoe UI', system-ui, sans-serif";
+        ctx.fillStyle = "#8888cc";
+        ctx.fillText("Select Difficulty", W / 2, H / 2 - 10);
+
+        for (const b of menuButtons) {
+          /* hover detection */
+          const rect = canvas.getBoundingClientRect();
+          const hover = mouseX >= b.x && mouseX <= b.x + b.w; // approximate
+
+          ctx.globalAlpha = hover ? 1 : 0.85;
+          drawRoundRect(b.x, b.y, b.w, b.h, 10);
+          ctx.fillStyle = b.color;
+          ctx.fill();
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 22px 'Segoe UI', system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 7);
+          ctx.globalAlpha = 1;
+        }
+
+        /* info */
+        ctx.fillStyle = "#556";
+        ctx.font = "14px 'Segoe UI', system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Easy: 5 lives  ·  Medium: 3 lives  ·  Hard: 1 life", W / 2, H - 40);
+      }
+
+      function drawGame() {
+        /* HUD */
+        ctx.fillStyle = "#ccc";
+        ctx.font = "bold 16px 'Segoe UI', system-ui, sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("Score: " + score, 14, 24);
+        ctx.textAlign = "center";
+        ctx.fillText("Level " + (level + 1) + " / " + LEVELS.length, W / 2, 24);
+        ctx.textAlign = "right";
+        ctx.fillText("Lives: " + "♥".repeat(lives), W - 14, 24);
+
+        /* combo */
+        if (combo > 1 && comboTimer > 0) {
+          ctx.globalAlpha = Math.min(1, comboTimer);
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#ffd740";
+          ctx.font = "bold 20px 'Segoe UI', system-ui, sans-serif";
+          ctx.fillText("Combo x" + combo + "!", W / 2, 46);
+          ctx.globalAlpha = 1;
+        }
+
+        /* bricks */
+        for (const b of bricks) {
+          const color = brickColor(b);
+          drawRoundRect(b.x, b.y, b.w, b.h, 3);
+          ctx.fillStyle = color;
+          ctx.fill();
+
+          /* glossy highlight */
+          ctx.save();
+          ctx.clip();
+          const grad = ctx.createLinearGradient(b.x, b.y, b.x, b.y + b.h);
+          grad.addColorStop(0, "rgba(255,255,255,0.25)");
+          grad.addColorStop(0.5, "rgba(255,255,255,0)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(b.x, b.y, b.w, b.h);
+          ctx.restore();
+
+          /* hit counter for multi-hit */
+          if (b.maxHits > 1) {
+            ctx.fillStyle = "rgba(255,255,255,0.85)";
+            ctx.font = "bold 11px 'Segoe UI', system-ui, sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(b.hits, b.x + b.w / 2, b.y + b.h / 2 + 4);
+          }
+        }
+
+        /* paddle */
+        const pg = ctx.createLinearGradient(paddle.x, paddle.y, paddle.x, paddle.y + paddle.h);
+        pg.addColorStop(0, "#e0e0e0");
+        pg.addColorStop(1, "#888");
+        drawRoundRect(paddle.x, paddle.y, paddle.w, paddle.h, 6);
+        ctx.fillStyle = pg;
+        ctx.fill();
+
+        /* ball */
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+        const bg = ctx.createRadialGradient(ball.x - 2, ball.y - 2, 0, ball.x, ball.y, ball.r);
+        bg.addColorStop(0, "#fff");
+        bg.addColorStop(1, "#88aaff");
+        ctx.fillStyle = bg;
+        ctx.fill();
+
+        /* ball glow */
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.r + 6, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(100,150,255,0.12)";
+        ctx.fill();
+
+        /* launch hint */
+        if (ball.stuck) {
+          ctx.fillStyle = "rgba(255,255,255,0.5)";
+          ctx.font = "15px 'Segoe UI', system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("Press SPACE or ↑ to launch", W / 2, H - 60);
+        }
+      }
+
+      function drawOverlay(title, color, sub) {
+        ctx.fillStyle = "rgba(0,0,0,0.6)";
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.textAlign = "center";
+        ctx.fillStyle = color;
+        ctx.font = "bold 48px 'Segoe UI', system-ui, sans-serif";
+        ctx.fillText(title, W / 2, H / 2 - 10);
+
+        ctx.fillStyle = "#ccc";
+        ctx.font = "20px 'Segoe UI', system-ui, sans-serif";
+        ctx.fillText(sub, W / 2, H / 2 + 36);
+      }
+
+      function drawParticles() {
+        for (const p of particles) {
+          ctx.globalAlpha = p.life / p.maxLife;
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r * (p.life / p.maxLife), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      /* ───────────────────── game loop ──────────────────────────── */
+      let lastTime = 0;
+      function loop(time) {
+        const dt = Math.min((time - lastTime) / 1000, 0.05); // cap at 50ms
+        lastTime = time;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+    </script>
+  </body>
+</html>

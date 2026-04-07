@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tic-Tac-Toe</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg-primary: #1a1a2e;
+        --bg-secondary: #16213e;
+        --bg-cell: #0f3460;
+        --color-x: #e94560;
+        --color-o: #53d8fb;
+        --color-text: #eee;
+        --color-muted: #8892b0;
+        --glow-x: 0 0 15px rgba(233, 69, 96, 0.6), 0 0 30px rgba(233, 69, 96, 0.3);
+        --glow-o: 0 0 15px rgba(83, 216, 251, 0.6), 0 0 30px rgba(83, 216, 251, 0.3);
+        --cell-size: min(24vw, 130px);
+        --gap: 6px;
+        --radius: 14px;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-primary);
+        color: var(--color-text);
+        font-family:
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        min-height: 100dvh;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      /* ── Title ── */
+      h1 {
+        font-size: clamp(1.6rem, 5vw, 2.4rem);
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.3em;
+        background: linear-gradient(135deg, var(--color-x), var(--color-o));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      /* ── Scoreboard ── */
+      .scoreboard {
+        display: flex;
+        gap: 1.6rem;
+        margin-bottom: 1rem;
+        font-size: clamp(0.85rem, 2.5vw, 1rem);
+        font-weight: 600;
+      }
+
+      .scoreboard span {
+        padding: 0.3em 0.8em;
+        border-radius: 8px;
+        background: var(--bg-secondary);
+      }
+
+      .score-x {
+        color: var(--color-x);
+      }
+      .score-o {
+        color: var(--color-o);
+      }
+      .score-d {
+        color: var(--color-muted);
+      }
+
+      /* ── Turn indicator ── */
+      .turn-indicator {
+        font-size: clamp(1rem, 3vw, 1.3rem);
+        font-weight: 700;
+        margin-bottom: 1rem;
+        min-height: 1.6em;
+        transition:
+          color 0.3s ease,
+          text-shadow 0.3s ease;
+      }
+
+      .turn-indicator.x {
+        color: var(--color-x);
+        text-shadow: 0 0 12px rgba(233, 69, 96, 0.5);
+      }
+
+      .turn-indicator.o {
+        color: var(--color-o);
+        text-shadow: 0 0 12px rgba(83, 216, 251, 0.5);
+      }
+
+      /* ── Board ── */
+      .board {
+        display: grid;
+        grid-template-columns: repeat(3, var(--cell-size));
+        grid-template-rows: repeat(3, var(--cell-size));
+        gap: var(--gap);
+        perspective: 600px;
+      }
+
+      .cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--cell-size);
+        height: var(--cell-size);
+        background: var(--bg-cell);
+        border: 2px solid rgba(255, 255, 255, 0.06);
+        border-radius: var(--radius);
+        cursor: pointer;
+        font-size: calc(var(--cell-size) * 0.52);
+        font-weight: 800;
+        color: transparent;
+        transition:
+          background 0.2s ease,
+          transform 0.25s ease,
+          box-shadow 0.3s ease,
+          border-color 0.3s ease;
+      }
+
+      .cell:hover:not(.taken):not(.game-over) {
+        background: #1a2744;
+        transform: scale(1.06);
+        border-color: rgba(255, 255, 255, 0.15);
+      }
+
+      .cell.taken {
+        cursor: default;
+      }
+
+      .cell.x {
+        color: var(--color-x);
+        animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+
+      .cell.o {
+        color: var(--color-o);
+        animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+
+      .cell.winner {
+        animation: winPulse 0.7s ease-in-out infinite alternate;
+        z-index: 2;
+      }
+
+      .cell.winner.x {
+        box-shadow: var(--glow-x);
+        border-color: var(--color-x);
+      }
+
+      .cell.winner.o {
+        box-shadow: var(--glow-o);
+        border-color: var(--color-o);
+      }
+
+      @keyframes popIn {
+        0% {
+          transform: scale(0.3) rotateY(90deg);
+          opacity: 0;
+        }
+        60% {
+          transform: scale(1.12) rotateY(-5deg);
+          opacity: 1;
+        }
+        100% {
+          transform: scale(1) rotateY(0deg);
+          opacity: 1;
+        }
+      }
+
+      @keyframes winPulse {
+        0% {
+          transform: scale(1);
+        }
+        100% {
+          transform: scale(1.1);
+        }
+      }
+
+      /* ── Overlay ── */
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 10, 24, 0.85);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.2rem;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.4s ease;
+        z-index: 10;
+      }
+
+      .overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .overlay h2 {
+        font-size: clamp(1.8rem, 6vw, 2.8rem);
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+
+      .overlay h2.x {
+        color: var(--color-x);
+        text-shadow: var(--glow-x);
+      }
+      .overlay h2.o {
+        color: var(--color-o);
+        text-shadow: var(--glow-o);
+      }
+      .overlay h2.draw {
+        color: var(--color-muted);
+      }
+
+      .btn {
+        padding: 0.7em 2em;
+        font-size: clamp(1rem, 3vw, 1.15rem);
+        font-weight: 700;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        background: linear-gradient(135deg, var(--color-x), #c0392b);
+        color: #fff;
+        box-shadow: 0 4px 20px rgba(233, 69, 96, 0.35);
+        transition:
+          transform 0.2s ease,
+          box-shadow 0.2s ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-2px) scale(1.04);
+        box-shadow: 0 6px 28px rgba(233, 69, 96, 0.5);
+      }
+
+      .btn:active {
+        transform: scale(0.97);
+      }
+
+      /* ── Responsive tweaks ── */
+      @media (max-width: 400px) {
+        :root {
+          --cell-size: 26vw;
+          --gap: 4px;
+          --radius: 10px;
+        }
+        .scoreboard {
+          gap: 0.8rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tic-Tac-Toe</h1>
+
+    <div class="scoreboard">
+      <span class="score-x">X: <b id="sx">0</b></span>
+      <span class="score-d">Draw: <b id="sd">0</b></span>
+      <span class="score-o">O: <b id="so">0</b></span>
+    </div>
+
+    <div class="turn-indicator x" id="turn">X's turn</div>
+
+    <div class="board" id="board"></div>
+
+    <div class="overlay" id="overlay">
+      <h2 id="result"></h2>
+      <button class="btn" id="again">Play Again</button>
+    </div>
+
+    <script>
+      (() => {
+        /* ── State ── */
+        const WIN_COMBOS = [
+          [0, 1, 2],
+          [3, 4, 5],
+          [6, 7, 8],
+          [0, 3, 6],
+          [1, 4, 7],
+          [2, 5, 8],
+          [0, 4, 8],
+          [2, 4, 6],
+        ];
+
+        let board = Array(9).fill("");
+        let current = "x";
+        let gameActive = true;
+        const score = { x: 0, o: 0, d: 0 };
+
+        /* ── DOM refs ── */
+        const boardEl = document.getElementById("board");
+        const turnEl = document.getElementById("turn");
+        const overlayEl = document.getElementById("overlay");
+        const resultEl = document.getElementById("result");
+        const againBtn = document.getElementById("again");
+        const sx = document.getElementById("sx");
+        const so = document.getElementById("so");
+        const sd = document.getElementById("sd");
+
+        /* ── Build cells ── */
+        const cells = [];
+        for (let i = 0; i < 9; i++) {
+          const cell = document.createElement("div");
+          cell.className = "cell";
+          cell.dataset.idx = i;
+          cell.addEventListener("click", () => handleClick(i));
+          boardEl.appendChild(cell);
+          cells.push(cell);
+        }
+
+        /* ── Click handler ── */
+        function handleClick(i) {
+          if (!gameActive || board[i]) return;
+
+          board[i] = current;
+          const cell = cells[i];
+          cell.textContent = current.toUpperCase();
+          cell.classList.add("taken", current);
+
+          const winCombo = checkWin(current);
+          if (winCombo) {
+            gameActive = false;
+            highlightWin(winCombo);
+            score[current]++;
+            updateScoreboard();
+            showOverlay(current);
+            markCellsGameOver();
+            return;
+          }
+
+          if (board.every((c) => c !== "")) {
+            gameActive = false;
+            score.d++;
+            updateScoreboard();
+            showOverlay("draw");
+            markCellsGameOver();
+            return;
+          }
+
+          current = current === "x" ? "o" : "x";
+          updateTurn();
+        }
+
+        /* ── Win check ── */
+        function checkWin(player) {
+          for (const combo of WIN_COMBOS) {
+            if (combo.every((i) => board[i] === player)) return combo;
+          }
+          return null;
+        }
+
+        /* ── UI helpers ── */
+        function updateTurn() {
+          turnEl.textContent = `${current.toUpperCase()}'s turn`;
+          turnEl.className = `turn-indicator ${current}`;
+        }
+
+        function highlightWin(combo) {
+          for (const i of combo) {
+            cells[i].classList.add("winner");
+          }
+        }
+
+        function markCellsGameOver() {
+          cells.forEach((c) => c.classList.add("game-over"));
+        }
+
+        function showOverlay(outcome) {
+          if (outcome === "draw") {
+            resultEl.textContent = "It's a Draw!";
+            resultEl.className = "draw";
+          } else {
+            resultEl.textContent = `${outcome.toUpperCase()} Wins!`;
+            resultEl.className = outcome;
+          }
+          /* Short delay so the win animation is visible before the overlay covers it */
+          setTimeout(() => overlayEl.classList.add("visible"), 600);
+        }
+
+        function updateScoreboard() {
+          sx.textContent = score.x;
+          so.textContent = score.o;
+          sd.textContent = score.d;
+        }
+
+        /* ── Reset ── */
+        function reset() {
+          board = Array(9).fill("");
+          gameActive = true;
+          current = "x";
+          updateTurn();
+          overlayEl.classList.remove("visible");
+          cells.forEach((cell) => {
+            cell.textContent = "";
+            cell.className = "cell";
+          });
+        }
+
+        againBtn.addEventListener("click", reset);
+      })();
+    </script>
+  </body>
+</html>

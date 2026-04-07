@@ -1,6 +1,8 @@
 import { useEffect, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
+import { EmbeddedBrowserPane } from "./EmbeddedBrowserPane";
+import { OrchestratorPanel } from "./OrchestratorPanel";
 import ThreadSidebar from "./Sidebar";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
 
@@ -32,7 +34,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       <Sidebar
         side="left"
         collapsible="offcanvas"
-        className="border-r border-border bg-card text-foreground"
+        className="border-r border-white/8 text-foreground supports-[backdrop-filter]:bg-transparent supports-[backdrop-filter]:backdrop-blur-2xl [&>[data-slot=sidebar-inner]]:border-r-0 [&>[data-slot=sidebar-inner]]:bg-[linear-gradient(180deg,rgba(55,58,70,0.76),rgba(42,45,56,0.64))] [&>[data-slot=sidebar-inner]]:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: ({ nextWidth, wrapper }) =>
@@ -43,7 +45,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <ThreadSidebar />
         <SidebarRail />
       </Sidebar>
-      {children}
+      <OrchestratorPanel />
+      <div className="min-w-0 flex-1">{children}</div>
+      <EmbeddedBrowserPane currentThreadId={null} />
     </SidebarProvider>
   );
 }

@@ -189,21 +189,31 @@ export class WsTransport {
     });
 
     ws.addEventListener("close", () => {
-      if (this.ws === ws) {
-        this.ws = null;
-        this.outboundQueue.length = 0;
-        for (const [id, pending] of this.pending.entries()) {
-          if (pending.timeout !== null) {
-            clearTimeout(pending.timeout);
-          }
-          this.pending.delete(id);
-          pending.reject(new Error("WebSocket connection closed."));
-        }
+      // Ignore close events from stale WebSocket instances (previous connections
+      // that closed after a new one was established). This prevents the
+      // "closing and reopening connections too eagerly" bug from upstream.
+      if (this.ws !== ws) {
+        return;
       }
+
+      this.ws = null;
+      this.outboundQueue.length = 0;
+
+      // Reject in-flight requests — they were sent on the now-closed connection
+      // and won't receive responses.
+      for (const [id, pending] of this.pending.entries()) {
+        if (pending.timeout !== null) {
+          clearTimeout(pending.timeout);
+        }
+        this.pending.delete(id);
+        pending.reject(new Error("WebSocket connection closed."));
+      }
+
       if (this.disposed) {
         this.state = "disposed";
         return;
       }
+
       this.state = "closed";
       this.scheduleReconnect();
     });

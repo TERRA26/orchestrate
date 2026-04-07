@@ -9,9 +9,11 @@
 import {
   IsoDateTime,
   ModelSelection,
+  ThreadHandoff,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadEnvironmentMode,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -27,12 +29,14 @@ export const ProjectionThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  envMode: ThreadEnvironmentMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   latestTurnId: Schema.NullOr(TurnId),
+  handoff: Schema.NullOr(ThreadHandoff),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  archivedAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

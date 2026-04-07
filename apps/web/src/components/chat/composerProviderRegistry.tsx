@@ -103,8 +103,8 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     }) => (
       <TraitsMenuContent
         provider="codex"
-        models={models}
         threadId={threadId}
+        models={models}
         model={model}
         modelOptions={modelOptions}
         prompt={prompt}
@@ -114,8 +114,8 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) => (
       <TraitsPicker
         provider="codex"
-        models={models}
         threadId={threadId}
+        models={models}
         model={model}
         modelOptions={modelOptions}
         prompt={prompt}
@@ -135,8 +135,8 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     }) => (
       <TraitsMenuContent
         provider="claudeAgent"
-        models={models}
         threadId={threadId}
+        models={models}
         model={model}
         modelOptions={modelOptions}
         prompt={prompt}
@@ -146,8 +146,8 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) => (
       <TraitsPicker
         provider="claudeAgent"
-        models={models}
         threadId={threadId}
+        models={models}
         model={model}
         modelOptions={modelOptions}
         prompt={prompt}

@@ -25,6 +25,7 @@ import {
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { readNativeApi } from "~/nativeApi";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -49,6 +50,20 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     : null;
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
+
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy plan",
+        description: error instanceof Error ? error.message : "An error occurred while copying.",
+      });
+    },
+  });
+
+  const handleCopyPlan = () => {
+    copyToClipboard(saveContents);
+  };
 
   const handleDownload = () => {
     downloadPlanAsTextFile(downloadFilename, saveContents);
@@ -127,6 +142,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <EllipsisIcon aria-hidden="true" className="size-4" />
           </MenuTrigger>
           <MenuPopup align="end">
+            <MenuItem onClick={handleCopyPlan}>
+              {isCopied ? "Copied!" : "Copy to clipboard"}
+            </MenuItem>
             <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
             <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
               Save to workspace

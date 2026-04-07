@@ -26,6 +26,20 @@ const closeServer = (server: Net.Server) => {
   }
 };
 
+const normalizeAvailabilityError = (cause: unknown): boolean => {
+  if (!isErrnoExceptionWithCode(cause)) {
+    return false;
+  }
+
+  return (
+    cause.code === "ECONNREFUSED" ||
+    cause.code === "EHOSTUNREACH" ||
+    cause.code === "ENETUNREACH" ||
+    cause.code === "ETIMEDOUT" ||
+    cause.code === "EADDRNOTAVAIL"
+  );
+};
+
 const tryReservePort = (port: number): Effect.Effect<number, NetError> =>
   Effect.callback<number, NetError>((resume) => {
     const server = Net.createServer();
@@ -65,6 +79,11 @@ export interface NetServiceShape {
    * Returns true when a TCP server can bind to {host, port}.
    */
   readonly canListenOnHost: (port: number, host: string) => Effect.Effect<boolean>;
+
+  /**
+   * Returns true when a TCP connection can already be established to {host, port}.
+   */
+  readonly canConnectToHost: (port: number, host: string) => Effect.Effect<boolean>;
 
   /**
    * Checks loopback availability on both IPv4 and IPv6 localhost addresses.
@@ -128,6 +147,42 @@ export class NetService extends ServiceMap.Service<NetService, NetServiceShape>(
         });
       });
 
+    const canConnectToHost = (port: number, host: string): Effect.Effect<boolean> =>
+      Effect.callback<boolean>((resume) => {
+        const socket = new Net.Socket();
+        let settled = false;
+
+        const settle = (value: boolean) => {
+          if (settled) return;
+          settled = true;
+          resume(Effect.succeed(value));
+        };
+
+        socket.setTimeout(250);
+        socket.unref();
+
+        socket.once("connect", () => {
+          socket.destroy();
+          settle(true);
+        });
+
+        socket.once("timeout", () => {
+          socket.destroy();
+          settle(false);
+        });
+
+        socket.once("error", (cause) => {
+          socket.destroy();
+          settle(!normalizeAvailabilityError(cause));
+        });
+
+        socket.connect({ host, port });
+
+        return Effect.sync(() => {
+          socket.destroy();
+        });
+      });
+
     /**
      * Reserve an ephemeral loopback port and release it immediately.
      * Returns the reserved port number.
@@ -166,12 +221,25 @@ export class NetService extends ServiceMap.Service<NetService, NetServiceShape>(
 
     return {
       canListenOnHost,
+      canConnectToHost,
       isPortAvailableOnLoopback: (port) =>
-        Effect.zipWith(
-          canListenOnHost(port, "127.0.0.1"),
-          canListenOnHost(port, "::1"),
-          (ipv4, ipv6) => ipv4 && ipv6,
-        ),
+        Effect.gen(function* () {
+          const [ipv4Reachable, ipv6Reachable] = yield* Effect.all([
+            canConnectToHost(port, "127.0.0.1"),
+            canConnectToHost(port, "::1"),
+          ]);
+
+          if (ipv4Reachable || ipv6Reachable) {
+            return false;
+          }
+
+          const [ipv4Available, ipv6Available] = yield* Effect.all([
+            canListenOnHost(port, "127.0.0.1"),
+            canListenOnHost(port, "::1"),
+          ]);
+
+          return ipv4Available && ipv6Available;
+        }),
       reserveLoopbackPort,
       findAvailablePort: (preferred) =>
         Effect.catch(tryReservePort(preferred), () => tryReservePort(0)),

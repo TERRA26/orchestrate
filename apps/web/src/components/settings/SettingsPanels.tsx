@@ -31,6 +31,7 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { getProviderModels } from "../../providerModels";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
@@ -374,7 +375,7 @@ function AboutVersionSection() {
     if (typeof bridge.checkForUpdate !== "function") return;
     void bridge
       .checkForUpdate()
-      .then((result) => {
+      .then((result: any) => {
         setDesktopUpdateStateQueryData(queryClient, result.state);
         if (!result.checked) {
           toastManager.add({
@@ -980,10 +981,7 @@ export function GeneralSettingsPanel() {
                 provider={textGenProvider}
                 model={textGenModel}
                 lockedProvider={null}
-                providers={serverProviders}
                 modelOptionsByProvider={gitModelOptionsByProvider}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onProviderModelChange={(provider, model) => {
                   updateSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
@@ -998,32 +996,12 @@ export function GeneralSettingsPanel() {
               />
               <TraitsPicker
                 provider={textGenProvider}
-                models={
-                  serverProviders.find((provider) => provider.provider === textGenProvider)
-                    ?.models ?? []
-                }
+                threadId={"settings" as unknown as ThreadId}
+                models={getProviderModels(serverProviders, textGenProvider)}
                 model={textGenModel}
                 prompt=""
-                onPromptChange={() => {}}
                 modelOptions={textGenModelOptions}
-                allowPromptInjectedEffort={false}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onModelOptionsChange={(nextOptions) => {
-                  updateSettings({
-                    textGenerationModelSelection: resolveAppModelSelectionState(
-                      {
-                        ...settings,
-                        textGenerationModelSelection: {
-                          provider: textGenProvider,
-                          model: textGenModel,
-                          ...(nextOptions ? { options: nextOptions } : {}),
-                        },
-                      },
-                      serverProviders,
-                    ),
-                  });
-                }}
+                onPromptChange={() => {}}
               />
             </div>
           }

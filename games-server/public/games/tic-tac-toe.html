@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tic-Tac-Toe — Games Portal</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      /* ── Layout ── */
+      .ttt-status {
+        text-align: center;
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 1.5rem;
+        min-height: 1.8rem;
+        transition: color 0.2s var(--ease-out);
+      }
+
+      .ttt-status .player-x {
+        color: var(--accent-light);
+      }
+      .ttt-status .player-o {
+        color: #e879f9;
+      }
+      .ttt-status .draw-text {
+        color: var(--warning);
+      }
+
+      /* ── Board ── */
+      .board-wrapper {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 2rem;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        background: var(--border);
+        border-radius: var(--radius-md);
+        padding: 6px;
+        box-shadow: var(--shadow-md);
+        width: 100%;
+        max-width: 380px;
+        aspect-ratio: 1;
+      }
+
+      .cell {
+        background: var(--bg-card);
+        border: none;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 3rem;
+        font-weight: 700;
+        color: transparent;
+        transition: all 0.2s var(--ease-out);
+        position: relative;
+        overflow: hidden;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .cell::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at center, var(--accent-glow), transparent 70%);
+        opacity: 0;
+        transition: opacity 0.2s var(--ease-out);
+      }
+
+      .cell:hover:not(.taken):not(.game-over) {
+        background: var(--bg-card-hover);
+      }
+
+      .cell:hover:not(.taken):not(.game-over)::before {
+        opacity: 1;
+      }
+
+      .cell.x {
+        color: var(--accent-light);
+        text-shadow: 0 0 20px var(--accent-glow);
+      }
+
+      .cell.o {
+        color: #e879f9;
+        text-shadow: 0 0 20px rgba(232, 121, 249, 0.3);
+      }
+
+      .cell.taken {
+        cursor: default;
+        animation: popIn 0.25s var(--ease-bounce);
+      }
+
+      .cell.winning {
+        animation: winPulse 0.6s var(--ease-out) infinite alternate;
+      }
+
+      .cell.winning.x {
+        background: rgba(124, 92, 252, 0.15);
+        box-shadow: inset 0 0 20px var(--accent-glow);
+      }
+
+      .cell.winning.o {
+        background: rgba(232, 121, 249, 0.12);
+        box-shadow: inset 0 0 20px rgba(232, 121, 249, 0.2);
+      }
+
+      .cell.game-over:not(.winning) {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      @keyframes popIn {
+        0% {
+          transform: scale(0.5);
+          opacity: 0;
+        }
+        60% {
+          transform: scale(1.15);
+        }
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+      }
+
+      @keyframes winPulse {
+        0% {
+          transform: scale(1);
+        }
+        100% {
+          transform: scale(1.05);
+        }
+      }
+
+      /* ── Score colors ── */
+      .score-x .value {
+        color: var(--accent-light) !important;
+      }
+      .score-o .value {
+        color: #e879f9 !important;
+      }
+      .score-d .value {
+        color: var(--warning) !important;
+      }
+
+      /* ── Controls ── */
+      .controls {
+        display: flex;
+        justify-content: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      /* ── Modal extras ── */
+      .modal .result-icon {
+        font-size: 3.5rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .modal h2 .player-x {
+        color: var(--accent-light);
+      }
+      .modal h2 .player-o {
+        color: #e879f9;
+      }
+      .modal h2 .draw-text {
+        color: var(--warning);
+      }
+
+      .modal .btn {
+        min-width: 140px;
+      }
+
+      /* ── Responsive ── */
+      @media (max-width: 480px) {
+        .board {
+          max-width: 300px;
+          gap: 4px;
+          padding: 4px;
+        }
+
+        .cell {
+          font-size: 2.2rem;
+          border-radius: 6px;
+        }
+
+        .ttt-status {
+          font-size: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Header -->
+    <header class="game-header">
+      <a class="back-link" href="/">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+        Games
+      </a>
+      <h1>Tic-Tac-Toe</h1>
+    </header>
+
+    <!-- Main -->
+    <main class="game-container">
+      <!-- Mode Selector -->
+      <div class="mode-selector">
+        <button class="btn active" data-mode="2p">2 Players</button>
+        <button class="btn" data-mode="ai">vs AI</button>
+      </div>
+
+      <!-- Scoreboard -->
+      <div class="score-bar">
+        <div class="score-item score-x">
+          <div class="label">X Wins</div>
+          <div class="value" id="score-x">0</div>
+        </div>
+        <div class="score-item score-d">
+          <div class="label">Draws</div>
+          <div class="value" id="score-d">0</div>
+        </div>
+        <div class="score-item score-o">
+          <div class="label">O Wins</div>
+          <div class="value" id="score-o">0</div>
+        </div>
+      </div>
+
+      <!-- Status -->
+      <div class="ttt-status" id="status"><span class="player-x">X</span>'s turn</div>
+
+      <!-- Board -->
+      <div class="board-wrapper">
+        <div class="board" id="board"></div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <button class="btn btn-primary" id="btn-new">New Game</button>
+        <button class="btn btn-secondary" id="btn-reset">Reset Scores</button>
+      </div>
+    </main>
+
+    <!-- Win/Draw Modal -->
+    <div class="overlay" id="overlay">
+      <div class="modal">
+        <div class="result-icon" id="modal-icon"></div>
+        <h2 id="modal-title"></h2>
+        <p id="modal-subtitle"></p>
+        <button class="btn btn-primary btn-lg" id="btn-play-again">Play Again</button>
+      </div>
+    </div>
+
+    <script>
+      (() => {
+        // ── State ──
+        const EMPTY = "";
+        const X = "X";
+        const O = "O";
+
+        const WIN_LINES = [
+          [0, 1, 2],
+          [3, 4, 5],
+          [6, 7, 8], // rows
+          [0, 3, 6],
+          [1, 4, 7],
+          [2, 5, 8], // cols
+          [0, 4, 8],
+          [2, 4, 6], // diags
+        ];
+
+        let board = Array(9).fill(EMPTY);
+        let currentPlayer = X;
+        let gameOver = false;
+        let mode = "2p"; // '2p' | 'ai'
+        let scores = { X: 0, O: 0, D: 0 };
+        let winningLine = null;
+
+        // ── DOM refs ──
+        const boardEl = document.getElementById("board");
+        const statusEl = document.getElementById("status");
+        const scoreXEl = document.getElementById("score-x");
+        const scoreOEl = document.getElementById("score-o");
+        const scoreDEl = document.getElementById("score-d");
+        const overlay = document.getElementById("overlay");
+        const modalIcon = document.getElementById("modal-icon");
+        const modalTitle = document.getElementById("modal-title");
+        const modalSub = document.getElementById("modal-subtitle");
+        const modeBtns = document.querySelectorAll(".mode-selector .btn");
+
+        // ── Board rendering ──
+        function createBoard() {
+          boardEl.innerHTML = "";
+          for (let i = 0; i < 9; i++) {
+            const cell = document.createElement("button");
+            cell.className = "cell";
+            cell.dataset.index = i;
+            cell.setAttribute("aria-label", `Cell ${Math.floor(i / 3) + 1}, ${(i % 3) + 1}`);
+            cell.addEventListener("click", () => handleCellClick(i));
+            boardEl.appendChild(cell);
+          }
+        }
+
+        function renderBoard() {
+          const cells = boardEl.children;
+          for (let i = 0; i < 9; i++) {
+            const cell = cells[i];
+            const val = board[i];
+            cell.textContent = val;
+            cell.className = "cell";
+            if (val === X) cell.classList.add("x", "taken");
+            else if (val === O) cell.classList.add("o", "taken");
+            if (gameOver) {
+              cell.classList.add("game-over");
+              if (winningLine && winningLine.includes(i)) {
+                cell.classList.add("winning");
+              }
+            }
+          }
+        }
+
+        function updateStatus() {
+          if (gameOver) return;
+          const cls = currentPlayer === X ? "player-x" : "player-o";
+          statusEl.innerHTML = `<span class="${cls}">${currentPlayer}</span>'s turn`;
+        }
+
+        function updateScores() {
+          scoreXEl.textContent = scores.X;
+          scoreOEl.textContent = scores.O;
+          scoreDEl.textContent = scores.D;
+        }
+
+        // ── Game logic ──
+        function checkWin(b, player) {
+          for (const line of WIN_LINES) {
+            if (line.every((i) => b[i] === player)) return line;
+          }
+          return null;
+        }
+
+        function isBoardFull(b) {
+          return b.every((c) => c !== EMPTY);
+        }
+
+        function handleCellClick(index) {
+          if (gameOver || board[index] !== EMPTY) return;
+          if (mode === "ai" && currentPlayer === O) return; // not player's turn
+
+          makeMove(index);
+
+          if (!gameOver && mode === "ai" && currentPlayer === O) {
+            // Small delay for natural feel
+            setTimeout(aiMove, 280);
+          }
+        }
+
+        function makeMove(index) {
+          board[index] = currentPlayer;
+
+          const line = checkWin(board, currentPlayer);
+          if (line) {
+            gameOver = true;
+            winningLine = line;
+            scores[currentPlayer]++;
+            updateScores();
+            renderBoard();
+            const cls = currentPlayer === X ? "player-x" : "player-o";
+            statusEl.innerHTML = `<span class="${cls}">${currentPlayer}</span> wins!`;
+            setTimeout(() => showModal(currentPlayer), 500);
+            return;
+          }
+
+          if (isBoardFull(board)) {
+            gameOver = true;
+            winningLine = null;
+            scores.D++;
+            updateScores();
+            renderBoard();
+            statusEl.innerHTML = `<span class="draw-text">Draw!</span>`;
+            setTimeout(() => showModal(null), 500);
+            return;
+          }
+
+          currentPlayer = currentPlayer === X ? O : X;
+          renderBoard();
+          updateStatus();
+        }
+
+        // ── AI (minimax with alpha-beta pruning) ──
+        function aiMove() {
+          if (gameOver) return;
+          const best = getBestMove(board, O);
+          if (best !== -1) makeMove(best);
+        }
+
+        function getBestMove(b, player) {
+          let bestScore = -Infinity;
+          let bestIdx = -1;
+          for (let i = 0; i < 9; i++) {
+            if (b[i] !== EMPTY) continue;
+            b[i] = player;
+            const score = minimax(b, 0, false, -Infinity, Infinity);
+            b[i] = EMPTY;
+            if (score > bestScore) {
+              bestScore = score;
+              bestIdx = i;
+            }
+          }
+          return bestIdx;
+        }
+
+        function minimax(b, depth, isMaximizing, alpha, beta) {
+          // AI is O (maximizing), human is X (minimizing)
+          const aiWin = checkWin(b, O);
+          if (aiWin) return 10 - depth;
+          const huWin = checkWin(b, X);
+          if (huWin) return depth - 10;
+          if (isBoardFull(b)) return 0;
+
+          if (isMaximizing) {
+            let best = -Infinity;
+            for (let i = 0; i < 9; i++) {
+              if (b[i] !== EMPTY) continue;
+              b[i] = O;
+              const score = minimax(b, depth + 1, false, alpha, beta);
+              b[i] = EMPTY;
+              best = Math.max(best, score);
+              alpha = Math.max(alpha, score);
+              if (beta <= alpha) break;
+            }
+            return best;
+          } else {
+            let best = Infinity;
+            for (let i = 0; i < 9; i++) {
+              if (b[i] !== EMPTY) continue;
+              b[i] = X;
+              const score = minimax(b, depth + 1, true, alpha, beta);
+              b[i] = EMPTY;
+              best = Math.min(best, score);
+              beta = Math.min(beta, score);
+              if (beta <= alpha) break;
+            }
+            return best;
+          }
+        }
+
+        // ── Modal ──
+        function showModal(winner) {
+          if (winner) {
+            const cls = winner === X ? "player-x" : "player-o";
+            modalIcon.textContent = winner === X ? "✕" : "◯";
+            modalIcon.style.color = winner === X ? "var(--accent-light)" : "#e879f9";
+            modalTitle.innerHTML = `<span class="${cls}">${winner}</span> wins!`;
+            modalSub.textContent = "Great game! Play another round?";
+          } else {
+            modalIcon.textContent = "—";
+            modalIcon.style.color = "var(--warning)";
+            modalTitle.innerHTML = `<span class="draw-text">It's a draw!</span>`;
+            modalSub.textContent = "Evenly matched. Try again?";
+          }
+          overlay.classList.add("active");
+        }
+
+        function hideModal() {
+          overlay.classList.remove("active");
+        }
+
+        // ── New game ──
+        function newGame() {
+          board = Array(9).fill(EMPTY);
+          currentPlayer = X;
+          gameOver = false;
+          winningLine = null;
+          renderBoard();
+          updateStatus();
+          hideModal();
+        }
+
+        // ── Reset scores ──
+        function resetScores() {
+          scores = { X: 0, O: 0, D: 0 };
+          updateScores();
+          newGame();
+        }
+
+        // ── Mode switching ──
+        function setMode(newMode) {
+          mode = newMode;
+          modeBtns.forEach((btn) => {
+            btn.classList.toggle("active", btn.dataset.mode === newMode);
+          });
+          newGame();
+        }
+
+        // ── Events ──
+        modeBtns.forEach((btn) => {
+          btn.addEventListener("click", () => setMode(btn.dataset.mode));
+        });
+
+        document.getElementById("btn-new").addEventListener("click", newGame);
+        document.getElementById("btn-reset").addEventListener("click", resetScores);
+        document.getElementById("btn-play-again").addEventListener("click", () => {
+          hideModal();
+          setTimeout(newGame, 150);
+        });
+
+        // Close modal on overlay click (outside modal)
+        overlay.addEventListener("click", (e) => {
+          if (e.target === overlay) {
+            hideModal();
+            setTimeout(newGame, 150);
+          }
+        });
+
+        // Keyboard support: Escape closes modal
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && overlay.classList.contains("active")) {
+            hideModal();
+            setTimeout(newGame, 150);
+          }
+        });
+
+        // ── Init ──
+        createBoard();
+        updateStatus();
+        updateScores();
+      })();
+    </script>
+  </body>
+</html>

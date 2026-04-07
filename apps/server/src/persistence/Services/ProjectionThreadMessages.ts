@@ -9,7 +9,10 @@
 import {
   ChatAttachment,
   OrchestrationMessageRole,
+  OrchestrationMessageSource,
   MessageId,
+  ProviderMentionReference,
+  ProviderSkillReference,
   ThreadId,
   TurnId,
   IsoDateTime,
@@ -26,7 +29,10 @@ export const ProjectionThreadMessage = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  skills: Schema.optional(Schema.Array(ProviderSkillReference)),
+  mentions: Schema.optional(Schema.Array(ProviderMentionReference)),
   isStreaming: Schema.Boolean,
+  source: OrchestrationMessageSource.pipe(Schema.withDecodingDefault(() => "native")),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

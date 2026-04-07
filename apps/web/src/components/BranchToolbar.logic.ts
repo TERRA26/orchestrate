@@ -8,9 +8,12 @@ export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
+  serverThreadEnvMode?: EnvMode | undefined;
 }): EnvMode {
-  const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
-  return activeWorktreePath || (!hasServerThread && draftThreadEnvMode === "worktree")
+  const { activeWorktreePath, hasServerThread, draftThreadEnvMode, serverThreadEnvMode } = input;
+  return activeWorktreePath ||
+    serverThreadEnvMode === "worktree" ||
+    (!hasServerThread && draftThreadEnvMode === "worktree")
     ? "worktree"
     : "local";
 }
@@ -122,27 +125,4 @@ export function resolveBranchSelectionTarget(input: {
     nextWorktreePath,
     reuseExistingWorktree: false,
   };
-}
-
-export function shouldIncludeBranchPickerItem(input: {
-  itemValue: string;
-  normalizedQuery: string;
-  createBranchItemValue: string | null;
-  checkoutPullRequestItemValue: string | null;
-}): boolean {
-  const { itemValue, normalizedQuery, createBranchItemValue, checkoutPullRequestItemValue } = input;
-
-  if (normalizedQuery.length === 0) {
-    return true;
-  }
-
-  if (createBranchItemValue && itemValue === createBranchItemValue) {
-    return true;
-  }
-
-  if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
-    return true;
-  }
-
-  return itemValue.toLowerCase().includes(normalizedQuery);
 }

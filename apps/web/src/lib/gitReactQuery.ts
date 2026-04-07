@@ -1,9 +1,9 @@
-import { type GitStackedAction } from "@t3tools/contracts";
+import type { GitStackedAction } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 
-const GIT_STATUS_STALE_TIME_MS = 5_000;
-const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
+const GIT_STATUS_STALE_TIME_MS = 30_000;
+const GIT_STATUS_REFETCH_INTERVAL_MS = 60_000;
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
 
@@ -36,7 +36,7 @@ export function gitStatusQueryOptions(cwd: string | null) {
     },
     enabled: cwd !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
-    refetchOnWindowFocus: "always",
+    refetchOnWindowFocus: true,
     refetchOnReconnect: "always",
     refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
   });
@@ -112,6 +112,7 @@ export function gitCheckoutMutationOptions(input: {
 export function gitRunStackedActionMutationOptions(input: {
   cwd: string | null;
   queryClient: QueryClient;
+  model?: string | null;
 }) {
   return mutationOptions({
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
@@ -137,6 +138,7 @@ export function gitRunStackedActionMutationOptions(input: {
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(input.model ? { model: input.model } : {}),
       });
     },
     onSettled: async () => {

@@ -145,9 +145,7 @@ async function mountPicker(props: {
       provider={props.provider}
       model={props.model}
       lockedProvider={props.lockedProvider}
-      providers={providers}
       modelOptionsByProvider={modelOptionsByProvider}
-      triggerVariant={props.triggerVariant}
       onProviderModelChange={onProviderModelChange}
     />,
     { container: host },

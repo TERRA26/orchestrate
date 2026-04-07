@@ -15,7 +15,6 @@ import {
   MAX_WHEN_EXPRESSION_DEPTH,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
-  THREAD_JUMP_KEYBINDING_COMMANDS,
   type ServerConfigIssue,
 } from "@t3tools/contracts";
 import { Mutable } from "effect/Types";
@@ -24,7 +23,6 @@ import {
   Cache,
   Cause,
   Deferred,
-  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -44,7 +42,6 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
 
 export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
   "KeybindingsConfigParseError",
@@ -68,21 +65,25 @@ type WhenToken =
   | { type: "rparen" };
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
+  { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
+  // Route Cmd/Ctrl+N to terminal creation only while a terminal has focus.
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
+  { key: "mod+shift+j", command: "terminal.workspace.newFullWidth" },
+  { key: "mod+w", command: "terminal.workspace.closeActive", when: "terminalWorkspaceOpen" },
+  { key: "mod+1", command: "terminal.workspace.terminal", when: "terminalWorkspaceOpen" },
+  { key: "mod+2", command: "terminal.workspace.chat", when: "terminalWorkspaceOpen" },
+  { key: "mod+shift+b", command: "browser.toggle", when: "!terminalFocus" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
-  { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
+  { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
+  { key: "mod+shift+t", command: "chat.newTerminal", when: "!terminalFocus" },
+  { key: "mod+shift+]", command: "chat.visible.next", when: "!terminalFocus" },
+  { key: "mod+shift+[", command: "chat.visible.previous", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
-  { key: "mod+shift+[", command: "thread.previous" },
-  { key: "mod+shift+]", command: "thread.next" },
-  ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
-    key: `mod+${index + 1}`,
-    command,
-  })),
 ];
 
 function normalizeKeyToken(token: string): string {
@@ -417,7 +418,7 @@ function encodeWhenAst(node: KeybindingWhenNode): string {
 
 const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);
 
-const RawKeybindingsEntries = fromLenientJson(Schema.Array(Schema.Unknown));
+const RawKeybindingsEntries = Schema.fromJsonString(Schema.Array(Schema.Unknown));
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
   SchemaGetter.stringifyJson({ space: 2 }),
@@ -681,7 +682,6 @@ const makeKeybindings = Effect.gen(function* () {
       Effect.tap(() => fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true })),
       Effect.tap((encoded) => fs.writeFileString(tempPath, encoded)),
       Effect.flatMap(() => fs.rename(tempPath, keybindingsConfigPath)),
-      Effect.ensuring(fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }))),
       Effect.mapError(
         (cause) =>
           new KeybindingsConfigError({
@@ -827,25 +827,16 @@ const makeKeybindings = Effect.gen(function* () {
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
-    // Debounce watch events so the file is fully written before we read it.
-    // Editors emit multiple events per save (truncate, write, rename) and
-    // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedKeybindingsEvents = fs.watch(keybindingsConfigDir).pipe(
-      Stream.filter((event) => {
-        return (
-          event.path === keybindingsConfigFile ||
-          event.path === keybindingsConfigPath ||
-          path.resolve(keybindingsConfigDir, event.path) === keybindingsConfigPathResolved
-        );
-      }),
-      Stream.debounce(Duration.millis(100)),
-    );
-
-    yield* Stream.runForEach(debouncedKeybindingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+    yield* Stream.runForEach(fs.watch(keybindingsConfigDir), (event) => {
+      const isTargetConfigEvent =
+        event.path === keybindingsConfigFile ||
+        event.path === keybindingsConfigPath ||
+        path.resolve(keybindingsConfigDir, event.path) === keybindingsConfigPathResolved;
+      if (!isTargetConfigEvent) {
+        return Effect.void;
+      }
+      return revalidateAndEmitSafely;
+    }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
   });
 
   const start = Effect.gen(function* () {

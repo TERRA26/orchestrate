@@ -580,7 +580,7 @@ describe("composerDraftStore project draft thread mapping", () => {
     store.setProjectDraftThreadId(otherProjectId, otherThreadId);
     store.setPrompt(otherThreadId, "keep me");
 
-    clearPromotedDraftThreads([threadId]);
+    clearPromotedDraftThreads(new Set([threadId]));
 
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
@@ -596,7 +596,7 @@ describe("composerDraftStore project draft thread mapping", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(threadId, "keep me");
 
-    clearPromotedDraftThreads([threadId]);
+    clearPromotedDraftThreads(new Set([threadId]));
 
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe("keep me");

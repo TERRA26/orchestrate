@@ -1,6 +1,5 @@
-import * as React from "react";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { Thread } from "../types";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
+import type { Project, Thread } from "../types";
 import { cn } from "../lib/utils";
 import {
   findLatestProposedPlan,
@@ -9,7 +8,6 @@ import {
 } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
@@ -17,12 +15,7 @@ type SidebarProject = {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
-type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
-  latestUserMessageAt?: string | null;
-  messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
-};
-
-export type ThreadTraversalDirection = "previous" | "next";
+type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
 
 export interface ThreadStatusPill {
   label:
@@ -48,95 +41,8 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
 
 type ThreadStatusInput = Pick<
   Thread,
-  "interactionMode" | "latestTurn" | "proposedPlans" | "session"
-> & {
-  lastVisitedAt?: string | undefined;
-};
-
-export interface ThreadJumpHintVisibilityController {
-  sync: (shouldShow: boolean) => void;
-  dispose: () => void;
-}
-
-export function createThreadJumpHintVisibilityController(input: {
-  delayMs: number;
-  onVisibilityChange: (visible: boolean) => void;
-  setTimeoutFn?: typeof globalThis.setTimeout;
-  clearTimeoutFn?: typeof globalThis.clearTimeout;
-}): ThreadJumpHintVisibilityController {
-  const setTimeoutFn = input.setTimeoutFn ?? globalThis.setTimeout;
-  const clearTimeoutFn = input.clearTimeoutFn ?? globalThis.clearTimeout;
-  let isVisible = false;
-  let timeoutId: NodeJS.Timeout | null = null;
-
-  const clearPendingShow = () => {
-    if (timeoutId === null) {
-      return;
-    }
-    clearTimeoutFn(timeoutId);
-    timeoutId = null;
-  };
-
-  return {
-    sync: (shouldShow) => {
-      if (!shouldShow) {
-        clearPendingShow();
-        if (isVisible) {
-          isVisible = false;
-          input.onVisibilityChange(false);
-        }
-        return;
-      }
-
-      if (isVisible || timeoutId !== null) {
-        return;
-      }
-
-      timeoutId = setTimeoutFn(() => {
-        timeoutId = null;
-        isVisible = true;
-        input.onVisibilityChange(true);
-      }, input.delayMs);
-    },
-    dispose: () => {
-      clearPendingShow();
-    },
-  };
-}
-
-export function useThreadJumpHintVisibility(): {
-  showThreadJumpHints: boolean;
-  updateThreadJumpHintsVisibility: (shouldShow: boolean) => void;
-} {
-  const [showThreadJumpHints, setShowThreadJumpHints] = React.useState(false);
-  const controllerRef = React.useRef<ThreadJumpHintVisibilityController | null>(null);
-
-  React.useEffect(() => {
-    const controller = createThreadJumpHintVisibilityController({
-      delayMs: THREAD_JUMP_HINT_SHOW_DELAY_MS,
-      onVisibilityChange: (visible) => {
-        setShowThreadJumpHints(visible);
-      },
-      setTimeoutFn: window.setTimeout.bind(window),
-      clearTimeoutFn: window.clearTimeout.bind(window),
-    });
-    controllerRef.current = controller;
-
-    return () => {
-      controller.dispose();
-      controllerRef.current = null;
-    };
-  }, []);
-
-  const updateThreadJumpHintsVisibility = React.useCallback((shouldShow: boolean) => {
-    controllerRef.current?.sync(shouldShow);
-  }, []);
-
-  return {
-    showThreadJumpHints,
-    updateThreadJumpHintsVisibility,
-  };
-}
+  "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
+>;
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -161,114 +67,35 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
-export function orderItemsByPreferredIds<TItem, TId>(input: {
-  items: readonly TItem[];
-  preferredIds: readonly TId[];
-  getId: (item: TItem) => TId;
-}): TItem[] {
-  const { getId, items, preferredIds } = input;
-  if (preferredIds.length === 0) {
-    return [...items];
-  }
-
-  const itemsById = new Map(items.map((item) => [getId(item), item] as const));
-  const preferredIdSet = new Set(preferredIds);
-  const emittedPreferredIds = new Set<TId>();
-  const ordered = preferredIds.flatMap((id) => {
-    if (emittedPreferredIds.has(id)) {
-      return [];
-    }
-    const item = itemsById.get(id);
-    if (!item) {
-      return [];
-    }
-    emittedPreferredIds.add(id);
-    return [item];
-  });
-  const remaining = items.filter((item) => !preferredIdSet.has(getId(item)));
-  return [...ordered, ...remaining];
-}
-
-export function getVisibleSidebarThreadIds<TThreadId>(
-  renderedProjects: readonly {
-    shouldShowThreadPanel?: boolean;
-    renderedThreads: readonly {
-      id: TThreadId;
-    }[];
-  }[],
-): TThreadId[] {
-  return renderedProjects.flatMap((renderedProject) =>
-    renderedProject.shouldShowThreadPanel === false
-      ? []
-      : renderedProject.renderedThreads.map((thread) => thread.id),
-  );
-}
-
-export function resolveAdjacentThreadId<T>(input: {
-  threadIds: readonly T[];
-  currentThreadId: T | null;
-  direction: ThreadTraversalDirection;
-}): T | null {
-  const { currentThreadId, direction, threadIds } = input;
-
-  if (threadIds.length === 0) {
-    return null;
-  }
-
-  if (currentThreadId === null) {
-    return direction === "previous" ? (threadIds.at(-1) ?? null) : (threadIds[0] ?? null);
-  }
-
-  const currentIndex = threadIds.indexOf(currentThreadId);
-  if (currentIndex === -1) {
-    return null;
-  }
-
-  if (direction === "previous") {
-    return currentIndex > 0 ? (threadIds[currentIndex - 1] ?? null) : null;
-  }
-
-  return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
-}
-
-export function isContextMenuPointerDown(input: {
-  button: number;
-  ctrlKey: boolean;
-  isMac: boolean;
-}): boolean {
-  if (input.button === 2) return true;
-  return input.isMac && input.button === 0 && input.ctrlKey;
-}
-
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
 }): string {
   const baseClassName =
-    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+    "h-8 w-full translate-x-0 cursor-pointer justify-start rounded-lg pr-4 pl-8 text-left text-[13px] select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
   if (input.isSelected && input.isActive) {
     return cn(
       baseClassName,
-      "bg-primary/22 text-foreground font-medium hover:bg-primary/26 hover:text-foreground dark:bg-primary/30 dark:hover:bg-primary/36",
+      "bg-primary/16 text-foreground/90 hover:bg-primary/20 hover:text-foreground dark:bg-primary/22 dark:hover:bg-primary/28",
     );
   }
 
   if (input.isSelected) {
     return cn(
       baseClassName,
-      "bg-primary/15 text-foreground hover:bg-primary/19 hover:text-foreground dark:bg-primary/22 dark:hover:bg-primary/28",
+      "bg-primary/12 text-foreground/88 hover:bg-primary/16 hover:text-foreground dark:bg-primary/18 dark:hover:bg-primary/24",
     );
   }
 
   if (input.isActive) {
     return cn(
       baseClassName,
-      "bg-accent/85 text-foreground font-medium hover:bg-accent hover:text-foreground dark:bg-accent/55 dark:hover:bg-accent/70",
+      "bg-accent/62 text-foreground/90 hover:bg-accent/72 hover:text-foreground dark:bg-accent/42 dark:hover:bg-accent/56",
     );
   }
 
-  return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+  return cn(baseClassName, "text-foreground/78 hover:bg-accent/45 hover:text-foreground");
 }
 
 export function resolveThreadStatusPill(input: {
@@ -360,15 +187,14 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
-export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
-  threads: readonly T[];
-  activeThreadId: T["id"] | undefined;
+export function getVisibleThreadsForProject(input: {
+  threads: readonly Thread[];
+  activeThreadId: Thread["id"] | undefined;
   isThreadListExpanded: boolean;
   previewLimit: number;
 }): {
   hasHiddenThreads: boolean;
-  visibleThreads: T[];
-  hiddenThreads: T[];
+  visibleThreads: Thread[];
 } {
   const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
   const hasHiddenThreads = threads.length > previewLimit;
@@ -376,7 +202,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   if (!hasHiddenThreads || isThreadListExpanded) {
     return {
       hasHiddenThreads,
-      hiddenThreads: [],
       visibleThreads: [...threads],
     };
   }
@@ -385,7 +210,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
     return {
       hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -394,7 +218,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   if (!activeThread) {
     return {
       hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -403,9 +226,108 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
 
   return {
     hasHiddenThreads: true,
-    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+// Match the exact rows the sidebar renders for one project, including folded previews.
+export function getRenderedThreadsForSidebarProject(input: {
+  project: Pick<Project, "expanded">;
+  threads: readonly Thread[];
+  activeThreadId: Thread["id"] | undefined;
+  isThreadListExpanded: boolean;
+  previewLimit: number;
+}): {
+  hasHiddenThreads: boolean;
+  renderedThreads: Thread[];
+} {
+  const { activeThreadId, isThreadListExpanded, previewLimit, project, threads } = input;
+  const pinnedCollapsedThread =
+    !project.expanded && activeThreadId
+      ? (threads.find((thread) => thread.id === activeThreadId) ?? null)
+      : null;
+  const { hasHiddenThreads, visibleThreads } = getVisibleThreadsForProject({
+    threads,
+    activeThreadId,
+    isThreadListExpanded,
+    previewLimit,
+  });
+
+  return {
+    hasHiddenThreads,
+    renderedThreads: pinnedCollapsedThread ? [pinnedCollapsedThread] : visibleThreads,
+  };
+}
+
+// Flatten the sidebar's current project/thread visibility into the same order the user sees.
+export function getVisibleSidebarThreadIds(input: {
+  projects: readonly Pick<Project, "id" | "expanded">[];
+  threads: readonly Thread[];
+  activeThreadId: Thread["id"] | undefined;
+  expandedThreadListsByProject: ReadonlySet<Project["id"]>;
+  previewLimit: number;
+  threadSortOrder: SidebarThreadSortOrder;
+}): Thread["id"][] {
+  const {
+    activeThreadId,
+    expandedThreadListsByProject,
+    previewLimit,
+    projects,
+    threadSortOrder,
+    threads,
+  } = input;
+  const visibleThreadIds: Thread["id"][] = [];
+
+  for (const project of projects) {
+    const projectThreads = sortThreadsForSidebar(
+      threads.filter((thread) => thread.projectId === project.id),
+      threadSortOrder,
+    );
+    const { renderedThreads } = getRenderedThreadsForSidebarProject({
+      project,
+      threads: projectThreads,
+      activeThreadId,
+      isThreadListExpanded: expandedThreadListsByProject.has(project.id),
+      previewLimit,
+    });
+    for (const thread of renderedThreads) {
+      visibleThreadIds.push(thread.id);
+    }
+  }
+
+  return visibleThreadIds;
+}
+
+// Resolve the next sidebar-visible thread for keyboard cycling with wraparound.
+export function getNextVisibleSidebarThreadId(input: {
+  visibleThreadIds: readonly Thread["id"][];
+  activeThreadId: Thread["id"] | undefined;
+  direction: "forward" | "backward";
+}): Thread["id"] | null {
+  const { activeThreadId, direction, visibleThreadIds } = input;
+  if (visibleThreadIds.length === 0) {
+    return null;
+  }
+
+  if (!activeThreadId) {
+    return direction === "forward"
+      ? (visibleThreadIds[0] ?? null)
+      : (visibleThreadIds.at(-1) ?? null);
+  }
+
+  const activeIndex = visibleThreadIds.findIndex((threadId) => threadId === activeThreadId);
+  if (activeIndex === -1) {
+    return direction === "forward"
+      ? (visibleThreadIds[0] ?? null)
+      : (visibleThreadIds.at(-1) ?? null);
+  }
+
+  const nextIndex =
+    direction === "forward"
+      ? (activeIndex + 1) % visibleThreadIds.length
+      : (activeIndex - 1 + visibleThreadIds.length) % visibleThreadIds.length;
+
+  return visibleThreadIds[nextIndex] ?? null;
 }
 
 function toSortableTimestamp(iso: string | undefined): number | null {
@@ -415,13 +337,9 @@ function toSortableTimestamp(iso: string | undefined): number | null {
 }
 
 function getLatestUserMessageTimestamp(thread: SidebarThreadSortInput): number {
-  if (thread.latestUserMessageAt) {
-    return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
-  }
-
   let latestUserMessageTimestamp: number | null = null;
 
-  for (const message of thread.messages ?? []) {
+  for (const message of thread.messages) {
     if (message.role !== "user") continue;
     const messageTimestamp = toSortableTimestamp(message.createdAt);
     if (messageTimestamp === null) continue;
@@ -449,7 +367,7 @@ function getThreadSortTimestamp(
 }
 
 export function sortThreadsForSidebar<
-  T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "messages">,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
   return threads.toSorted((left, right) => {
     const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
@@ -462,7 +380,7 @@ export function sortThreadsForSidebar<
 }
 
 export function getFallbackThreadIdAfterDelete<
-  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
+  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt" | "messages">,
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
@@ -506,10 +424,7 @@ export function getProjectSortTimestamp(
   return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
-export function sortProjectsForSidebar<
-  TProject extends SidebarProject,
-  TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
->(
+export function sortProjectsForSidebar<TProject extends SidebarProject, TThread extends Thread>(
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,

@@ -11,11 +11,11 @@ export function showContextMenuFallback<T extends string>(
 ): Promise<T | null> {
   return new Promise<T | null>((resolve) => {
     const overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;z-index:9999";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:99999";
 
     const menu = document.createElement("div");
     menu.className =
-      "fixed z-[10000] min-w-[140px] rounded-md border border-border bg-popover py-1 shadow-xl animate-in fade-in zoom-in-95";
+      "fixed z-[100000] min-w-[160px] rounded-lg border border-border bg-popover py-1.5 shadow-2xl";
 
     const x = position?.x ?? 0;
     const y = position?.y ?? 0;
@@ -47,10 +47,10 @@ export function showContextMenuFallback<T extends string>(
       const isDisabled = item.disabled === true;
       btn.disabled = isDisabled;
       btn.className = isDisabled
-        ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-muted-foreground/60 cursor-not-allowed"
+        ? "flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground/60 cursor-not-allowed"
         : isDestructiveAction
-          ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
-          : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default";
+          ? "flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-destructive hover:bg-destructive/10 cursor-default"
+          : "flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-popover-foreground hover:bg-accent cursor-default";
       if (!isDisabled) {
         btn.addEventListener("click", () => cleanup(item.id));
       }

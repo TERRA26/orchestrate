@@ -1,7 +1,8 @@
 import type { GitBranch } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "~/lib/icons";
+import { GoGitBranch } from "react-icons/go";
 import {
   type CSSProperties,
   useCallback,
@@ -28,7 +29,6 @@ import {
   EnvMode,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
-  shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
@@ -135,20 +135,11 @@ export function BranchToolbarBranchSelector({
     () =>
       normalizedDeferredBranchQuery.length === 0
         ? branchPickerItems
-        : branchPickerItems.filter((itemValue) =>
-            shouldIncludeBranchPickerItem({
-              itemValue,
-              normalizedQuery: normalizedDeferredBranchQuery,
-              createBranchItemValue,
-              checkoutPullRequestItemValue,
-            }),
-          ),
-    [
-      branchPickerItems,
-      checkoutPullRequestItemValue,
-      createBranchItemValue,
-      normalizedDeferredBranchQuery,
-    ],
+        : branchPickerItems.filter((itemValue) => {
+            if (createBranchItemValue && itemValue === createBranchItemValue) return true;
+            return itemValue.toLowerCase().includes(normalizedDeferredBranchQuery);
+          }),
+    [branchPickerItems, createBranchItemValue, normalizedDeferredBranchQuery],
   );
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     canonicalActiveBranch,
@@ -397,6 +388,7 @@ export function BranchToolbarBranchSelector({
         key={itemValue}
         index={index}
         value={itemValue}
+        className={itemValue === resolvedActiveBranch ? "bg-accent text-foreground" : undefined}
         style={style}
         onClick={() => selectBranch(branch)}
       >
@@ -424,9 +416,10 @@ export function BranchToolbarBranchSelector({
     >
       <ComboboxTrigger
         render={<Button variant="ghost" size="xs" />}
-        className="text-muted-foreground/70 hover:text-foreground/80"
+        className="inline-flex items-center text-muted-foreground/70 hover:text-foreground/80"
         disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
       >
+        <GoGitBranch className="size-3 shrink-0" />
         <span className="max-w-[240px] truncate">{triggerLabel}</span>
         <ChevronDownIcon />
       </ComboboxTrigger>

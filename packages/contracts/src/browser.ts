@@ -1,0 +1,201 @@
+import { Schema } from "effect";
+import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
+
+const BROWSER_MAX_URL_LENGTH = 2_048;
+const BROWSER_MAX_KEY_LENGTH = 64;
+const BROWSER_MAX_VIEWPORT_WIDTH = 3_840;
+const BROWSER_MAX_VIEWPORT_HEIGHT = 2_160;
+const BROWSER_MAX_WAIT_MS = 10_000;
+const BROWSER_MAX_SCROLL_AMOUNT = 4_000;
+const BROWSER_MAX_TYPE_TEXT_LENGTH = 4_000;
+const BROWSER_MAX_TEXT_SUMMARY_LENGTH = 4_000;
+const BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH = 2_000_000;
+const BROWSER_MAX_CONSOLE_ENTRIES = 50;
+const BROWSER_MAX_NETWORK_ERROR_ENTRIES = 50;
+const BROWSER_MAX_CONSOLE_MESSAGE_LENGTH = 512;
+const BROWSER_MAX_ARIA_SNAPSHOT_LENGTH = 16_000;
+const BROWSER_MAX_WAIT_FOR_TEXT_LENGTH = 512;
+const BROWSER_MAX_EVALUATE_EXPRESSION_LENGTH = 4_000;
+const BROWSER_MAX_EVALUATE_RESULT_LENGTH = 8_000;
+
+export const BrowserSessionId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export type BrowserSessionId = typeof BrowserSessionId.Type;
+
+export const BrowserTargetId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+export type BrowserTargetId = typeof BrowserTargetId.Type;
+
+export const BrowserObservedTarget = Schema.Struct({
+  id: BrowserTargetId,
+  role: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  tagName: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  label: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  text: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  placeholder: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  disabled: Schema.Boolean,
+  x: NonNegativeInt,
+  y: NonNegativeInt,
+  width: NonNegativeInt,
+  height: NonNegativeInt,
+});
+export type BrowserObservedTarget = typeof BrowserObservedTarget.Type;
+
+export const BrowserConsoleEntry = Schema.Struct({
+  level: Schema.Literals(["error", "warning"]),
+  text: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_CONSOLE_MESSAGE_LENGTH)),
+});
+export type BrowserConsoleEntry = typeof BrowserConsoleEntry.Type;
+
+export const BrowserNetworkError = Schema.Struct({
+  url: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  method: Schema.String.check(Schema.isMaxLength(16)),
+  failure: Schema.String.check(Schema.isMaxLength(256)),
+});
+export type BrowserNetworkError = typeof BrowserNetworkError.Type;
+
+export const BrowserPageMetrics = Schema.Struct({
+  totalInteractiveElements: NonNegativeInt,
+  totalImages: NonNegativeInt,
+  totalLinks: NonNegativeInt,
+  totalInputs: NonNegativeInt,
+  headings: Schema.Array(Schema.String.check(Schema.isMaxLength(256))),
+  viewportWidth: NonNegativeInt,
+  viewportHeight: NonNegativeInt,
+  scrollHeight: NonNegativeInt,
+  scrollTop: NonNegativeInt,
+});
+export type BrowserPageMetrics = typeof BrowserPageMetrics.Type;
+
+export const BrowserObservation = Schema.Struct({
+  sessionId: BrowserSessionId,
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  title: Schema.String.check(Schema.isMaxLength(512)),
+  readyState: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  textSummary: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_TEXT_SUMMARY_LENGTH)),
+  screenshotDataUrl: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
+  ),
+  fullPageScreenshotDataUrl: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
+  ),
+  targets: Schema.Array(BrowserObservedTarget),
+  consoleErrors: Schema.optionalKey(
+    Schema.Array(BrowserConsoleEntry).check(Schema.isMaxLength(BROWSER_MAX_CONSOLE_ENTRIES)),
+  ),
+  networkErrors: Schema.optionalKey(
+    Schema.Array(BrowserNetworkError).check(Schema.isMaxLength(BROWSER_MAX_NETWORK_ERROR_ENTRIES)),
+  ),
+  pageMetrics: Schema.optionalKey(BrowserPageMetrics),
+  ariaSnapshot: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_ARIA_SNAPSHOT_LENGTH)),
+  ),
+  navigationError: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
+  evaluateResult: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_EVALUATE_RESULT_LENGTH)),
+  ),
+  observedAt: IsoDateTime,
+});
+export type BrowserObservation = typeof BrowserObservation.Type;
+
+export const BrowserOpenSessionInput = Schema.Struct({
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  viewportWidth: Schema.optionalKey(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
+  ),
+  viewportHeight: Schema.optionalKey(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_HEIGHT)),
+  ),
+});
+export type BrowserOpenSessionInput = typeof BrowserOpenSessionInput.Type;
+
+export const BrowserOpenSessionResult = Schema.Struct({
+  sessionId: BrowserSessionId,
+  observation: BrowserObservation,
+});
+export type BrowserOpenSessionResult = typeof BrowserOpenSessionResult.Type;
+
+const BrowserNavigateAction = Schema.Struct({
+  kind: Schema.Literal("navigate"),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+});
+
+const BrowserClickAction = Schema.Struct({
+  kind: Schema.Literal("click"),
+  targetId: BrowserTargetId,
+});
+
+const BrowserTypeAction = Schema.Struct({
+  kind: Schema.Literal("type"),
+  targetId: BrowserTargetId,
+  text: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_TYPE_TEXT_LENGTH)),
+  clearFirst: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+});
+
+const BrowserPressAction = Schema.Struct({
+  kind: Schema.Literal("press"),
+  key: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(BROWSER_MAX_KEY_LENGTH),
+    Schema.isPattern(/^[A-Za-z0-9+._-]+$/),
+  ),
+});
+
+const BrowserScrollAction = Schema.Struct({
+  kind: Schema.Literal("scroll"),
+  direction: Schema.Literals(["up", "down"]),
+  amount: PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_SCROLL_AMOUNT)),
+});
+
+const BrowserWaitAction = Schema.Struct({
+  kind: Schema.Literal("wait"),
+  ms: NonNegativeInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_WAIT_MS)),
+});
+
+const BrowserResizeAction = Schema.Struct({
+  kind: Schema.Literal("resize"),
+  width: PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
+  height: PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_HEIGHT)),
+});
+
+const BrowserWaitForAction = Schema.Struct({
+  kind: Schema.Literal("waitFor"),
+  text: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_WAIT_FOR_TEXT_LENGTH)),
+  ),
+  textGone: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_WAIT_FOR_TEXT_LENGTH)),
+  ),
+  timeout: Schema.optionalKey(PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_WAIT_MS))),
+});
+
+const BrowserEvaluateAction = Schema.Struct({
+  kind: Schema.Literal("evaluate"),
+  expression: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_EVALUATE_EXPRESSION_LENGTH)),
+});
+
+export const BrowserAction = Schema.Union([
+  BrowserNavigateAction,
+  BrowserClickAction,
+  BrowserTypeAction,
+  BrowserPressAction,
+  BrowserScrollAction,
+  BrowserWaitAction,
+  BrowserResizeAction,
+  BrowserWaitForAction,
+  BrowserEvaluateAction,
+]);
+export type BrowserAction = typeof BrowserAction.Type;
+
+export const BrowserActInput = Schema.Struct({
+  sessionId: BrowserSessionId,
+  action: BrowserAction,
+});
+export type BrowserActInput = typeof BrowserActInput.Type;
+
+export const BrowserActResult = Schema.Struct({
+  observation: BrowserObservation,
+});
+export type BrowserActResult = typeof BrowserActResult.Type;
+
+export const BrowserCloseSessionInput = Schema.Struct({
+  sessionId: BrowserSessionId,
+});
+export type BrowserCloseSessionInput = typeof BrowserCloseSessionInput.Type;

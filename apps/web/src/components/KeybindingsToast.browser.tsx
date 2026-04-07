@@ -46,25 +46,13 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
-        enabled: true,
-        installed: true,
-        version: "0.116.0",
         status: "ready",
-        auth: { status: "authenticated" },
+        available: true,
+        authStatus: "authenticated",
         checkedAt: NOW_ISO,
-        models: [],
       },
     ],
     availableEditors: [],
-    settings: {
-      enableAssistantStreaming: false,
-      defaultThreadEnvMode: "local" as const,
-      textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
-      providers: {
-        codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
-        claudeAgent: { enabled: true, binaryPath: "", customModels: [] },
-      },
-    },
   };
 }
 
@@ -97,13 +85,14 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         },
         interactionMode: "default",
         runtimeMode: "full-access",
+        envMode: "local",
         branch: "main",
         worktreePath: null,
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
-        archivedAt: null,
         deletedAt: null,
+        handoff: null,
         messages: [
           {
             id: "msg-1" as MessageId,
@@ -111,6 +100,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
             text: "hello",
             turnId: null,
             streaming: false,
+            source: "native",
             createdAt: NOW_ISO,
             updatedAt: NOW_ISO,
           },
@@ -323,7 +313,7 @@ describe("Keybindings update toast", () => {
     useStore.setState({
       projects: [],
       threads: [],
-      bootstrapComplete: false,
+      threadsHydrated: false,
     });
   });
 

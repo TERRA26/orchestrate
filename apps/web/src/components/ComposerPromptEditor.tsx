@@ -69,6 +69,10 @@ import {
   COMPOSER_INLINE_CHIP_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
+  COMPOSER_INLINE_SKILL_CHIP_ICON_SVG,
+  COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
+  COMPOSER_INLINE_SKILL_CHIP_ICON_CLASS_NAME,
+  formatComposerSkillChipLabel,
 } from "./composerInlineChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 
@@ -78,6 +82,15 @@ type SerializedComposerMentionNode = Spread<
   {
     path: string;
     type: "composer-mention";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
+type SerializedComposerSkillNode = Spread<
+  {
+    skillName: string;
+    type: "composer-skill";
     version: 1;
   },
   SerializedTextNode
@@ -170,6 +183,96 @@ function $createComposerMentionNode(path: string): ComposerMentionNode {
   return $applyNodeReplacement(new ComposerMentionNode(path));
 }
 
+function renderSkillChipDom(container: HTMLElement, name: string): void {
+  container.textContent = "";
+  container.style.setProperty("user-select", "none");
+  container.style.setProperty("-webkit-user-select", "none");
+
+  const icon = document.createElement("span");
+  icon.ariaHidden = "true";
+  icon.className = COMPOSER_INLINE_SKILL_CHIP_ICON_CLASS_NAME;
+  icon.innerHTML = COMPOSER_INLINE_SKILL_CHIP_ICON_SVG;
+
+  const label = document.createElement("span");
+  label.className = COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME;
+  label.textContent = formatComposerSkillChipLabel(name);
+
+  container.append(icon, label);
+}
+
+class ComposerSkillNode extends TextNode {
+  __skillName: string;
+
+  static override getType(): string {
+    return "composer-skill";
+  }
+
+  static override clone(node: ComposerSkillNode): ComposerSkillNode {
+    return new ComposerSkillNode(node.__skillName, node.__key);
+  }
+
+  static override importJSON(serializedNode: SerializedComposerSkillNode): ComposerSkillNode {
+    return $createComposerSkillNode(serializedNode.skillName);
+  }
+
+  constructor(name: string, key?: NodeKey) {
+    const normalizedName = name.startsWith("$") || name.startsWith("/") ? name.slice(1) : name;
+    const prefix = name.startsWith("/") ? "/" : "$";
+    super(`${prefix}${normalizedName}`, key);
+    this.__skillName = normalizedName;
+  }
+
+  override exportJSON(): SerializedComposerSkillNode {
+    return {
+      ...super.exportJSON(),
+      skillName: this.__skillName,
+      type: "composer-skill",
+      version: 1,
+    };
+  }
+
+  override createDOM(_config: EditorConfig): HTMLElement {
+    const dom = document.createElement("span");
+    dom.className = COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME;
+    dom.contentEditable = "false";
+    dom.setAttribute("spellcheck", "false");
+    renderSkillChipDom(dom, this.__skillName);
+    return dom;
+  }
+
+  override updateDOM(
+    prevNode: ComposerSkillNode,
+    dom: HTMLElement,
+    _config: EditorConfig,
+  ): boolean {
+    dom.contentEditable = "false";
+    if (prevNode.__text !== this.__text || prevNode.__skillName !== this.__skillName) {
+      renderSkillChipDom(dom, this.__skillName);
+    }
+    return false;
+  }
+
+  override canInsertTextBefore(): false {
+    return false;
+  }
+
+  override canInsertTextAfter(): false {
+    return false;
+  }
+
+  override isTextEntity(): true {
+    return true;
+  }
+
+  override isToken(): true {
+    return true;
+  }
+}
+
+function $createComposerSkillNode(name: string): ComposerSkillNode {
+  return $applyNodeReplacement(new ComposerSkillNode(name));
+}
+
 function ComposerTerminalContextDecorator(props: { context: TerminalContextDraft }) {
   return <ComposerPendingTerminalContextChip context={props.context} />;
 }
@@ -234,11 +337,16 @@ function $createComposerTerminalContextNode(
   return $applyNodeReplacement(new ComposerTerminalContextNode(context));
 }
 
-type ComposerInlineTokenNode = ComposerMentionNode | ComposerTerminalContextNode;
+type ComposerInlineTokenNode =
+  | ComposerMentionNode
+  | ComposerSkillNode
+  | ComposerTerminalContextNode;
 
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
-    candidate instanceof ComposerMentionNode || candidate instanceof ComposerTerminalContextNode
+    candidate instanceof ComposerMentionNode ||
+    candidate instanceof ComposerSkillNode ||
+    candidate instanceof ComposerTerminalContextNode
   );
 }
 
@@ -391,7 +499,7 @@ function getAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: number): numb
   }
 
   if ($isTextNode(node)) {
-    if (node instanceof ComposerMentionNode) {
+    if (node instanceof ComposerMentionNode || node instanceof ComposerSkillNode) {
       return getAbsoluteOffsetForInlineTokenPoint(node, offset, pointOffset);
     }
     return offset + Math.min(pointOffset, node.getTextContentSize());
@@ -438,7 +546,7 @@ function getExpandedAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: numbe
   }
 
   if ($isTextNode(node)) {
-    if (node instanceof ComposerMentionNode) {
+    if (node instanceof ComposerMentionNode || node instanceof ComposerSkillNode) {
       return getExpandedAbsoluteOffsetForInlineTokenPoint(node, offset, pointOffset);
     }
     return offset + Math.min(pointOffset, node.getTextContentSize());
@@ -469,7 +577,7 @@ function findSelectionPointAtOffset(
   node: LexicalNode,
   remainingRef: { value: number },
 ): { key: string; offset: number; type: "text" | "element" } | null {
-  if (node instanceof ComposerMentionNode) {
+  if (node instanceof ComposerMentionNode || node instanceof ComposerSkillNode) {
     return findSelectionPointForInlineToken(node, remainingRef);
   }
   if (node instanceof ComposerTerminalContextNode) {
@@ -601,6 +709,11 @@ function $setComposerEditorPrompt(
   for (const segment of segments) {
     if (segment.type === "mention") {
       paragraph.append($createComposerMentionNode(segment.path));
+      continue;
+    }
+    if (segment.type === "skill") {
+      const prefixedName = `${segment.prefix ?? "$"}${segment.name}`;
+      paragraph.append($createComposerSkillNode(prefixedName));
       continue;
     }
     if (segment.type === "terminal-context") {
@@ -1093,7 +1206,7 @@ function ComposerPromptEditorInner({
           contentEditable={
             <ContentEditable
               className={cn(
-                "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[14px] leading-relaxed text-foreground focus:outline-none",
+                "font-system-ui block max-h-[200px] min-h-[3.5rem] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[13px] leading-relaxed text-foreground focus:outline-none",
                 className,
               )}
               data-testid="composer-editor"
@@ -1104,7 +1217,7 @@ function ComposerPromptEditorInner({
           }
           placeholder={
             terminalContexts.length > 0 ? null : (
-              <div className="pointer-events-none absolute inset-0 text-[14px] leading-relaxed text-muted-foreground/35">
+              <div className="font-system-ui pointer-events-none absolute inset-0 text-[13px] leading-relaxed text-muted-foreground/40">
                 {placeholder}
               </div>
             )
@@ -1146,7 +1259,7 @@ export const ComposerPromptEditor = forwardRef<
     () => ({
       namespace: "t3tools-composer-editor",
       editable: true,
-      nodes: [ComposerMentionNode, ComposerTerminalContextNode],
+      nodes: [ComposerMentionNode, ComposerSkillNode, ComposerTerminalContextNode],
       editorState: () => {
         $setComposerEditorPrompt(initialValueRef.current, initialTerminalContextsRef.current);
       },

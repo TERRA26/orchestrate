@@ -25,11 +25,7 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type {
-  ServerConfig,
-  ServerProviderUpdatedPayload,
-  ServerUpsertKeybindingResult,
-} from "./server";
+import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -40,7 +36,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput } from "./server";
+import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -51,13 +47,26 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
-import { ServerSettings, ServerSettingsPatch } from "./settings";
+import type { ThreadId } from "./baseSchemas";
+import type {
+  ProviderComposerCapabilities,
+  ProviderGetComposerCapabilitiesInput,
+  ProviderListCommandsInput,
+  ProviderListCommandsResult,
+  ProviderListModelsInput,
+  ProviderListModelsResult,
+  ProviderListPluginsInput,
+  ProviderListPluginsResult,
+  ProviderListSkillsInput,
+  ProviderListSkillsResult,
+  ProviderReadPluginInput,
+  ProviderReadPluginResult,
+} from "./providerDiscovery";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
   destructive?: boolean;
-  disabled?: boolean;
 }
 
 export type DesktopUpdateStatus =
@@ -101,9 +110,69 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
-export interface DesktopUpdateCheckResult {
-  checked: boolean;
-  state: DesktopUpdateState;
+export interface BrowserTabState {
+  id: string;
+  url: string;
+  title: string;
+  status: "live" | "suspended";
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  faviconUrl: string | null;
+  lastCommittedUrl: string | null;
+  lastError: string | null;
+}
+
+export interface ThreadBrowserState {
+  threadId: ThreadId;
+  open: boolean;
+  activeTabId: string | null;
+  tabs: BrowserTabState[];
+  lastError: string | null;
+}
+
+export interface BrowserOpenInput {
+  threadId: ThreadId;
+  initialUrl?: string;
+}
+
+export interface BrowserThreadInput {
+  threadId: ThreadId;
+}
+
+export interface BrowserTabInput {
+  threadId: ThreadId;
+  tabId: string;
+}
+
+export interface BrowserNavigateInput {
+  threadId: ThreadId;
+  tabId?: string;
+  url: string;
+}
+
+export interface BrowserNewTabInput {
+  threadId: ThreadId;
+  url?: string;
+  activate?: boolean;
+}
+
+export interface BrowserPanelBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserSetPanelBoundsInput {
+  threadId: ThreadId;
+  bounds: BrowserPanelBounds | null;
+}
+
+export interface DesktopNotificationInput {
+  title: string;
+  body?: string;
+  silent?: boolean;
 }
 
 export interface DesktopBridge {
@@ -118,10 +187,29 @@ export interface DesktopBridge {
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
-  checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  notifications: {
+    isSupported: () => Promise<boolean>;
+    show: (input: DesktopNotificationInput) => Promise<boolean>;
+  };
+  browser: {
+    open: (input: BrowserOpenInput) => Promise<ThreadBrowserState>;
+    close: (input: BrowserThreadInput) => Promise<ThreadBrowserState>;
+    hide: (input: BrowserThreadInput) => Promise<void>;
+    getState: (input: BrowserThreadInput) => Promise<ThreadBrowserState>;
+    setPanelBounds: (input: BrowserSetPanelBoundsInput) => Promise<ThreadBrowserState>;
+    navigate: (input: BrowserNavigateInput) => Promise<ThreadBrowserState>;
+    reload: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    goBack: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    goForward: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    newTab: (input: BrowserNewTabInput) => Promise<ThreadBrowserState>;
+    closeTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    openDevTools: (input: BrowserTabInput) => Promise<void>;
+    onState: (listener: (state: ThreadBrowserState) => void) => () => void;
+  };
 }
 
 export interface NativeApi {
@@ -130,12 +218,12 @@ export interface NativeApi {
     confirm: (message: string) => Promise<boolean>;
   };
   terminal: {
-    open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
-    write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
-    resize: (input: typeof TerminalResizeInput.Encoded) => Promise<void>;
-    clear: (input: typeof TerminalClearInput.Encoded) => Promise<void>;
-    restart: (input: typeof TerminalRestartInput.Encoded) => Promise<TerminalSessionSnapshot>;
-    close: (input: typeof TerminalCloseInput.Encoded) => Promise<void>;
+    open: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
+    write: (input: TerminalWriteInput) => Promise<void>;
+    resize: (input: TerminalResizeInput) => Promise<void>;
+    clear: (input: TerminalClearInput) => Promise<void>;
+    restart: (input: TerminalRestartInput) => Promise<TerminalSessionSnapshot>;
+    close: (input: TerminalCloseInput) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
@@ -172,10 +260,17 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
-    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
-    getSettings: () => Promise<ServerSettings>;
-    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+  provider: {
+    getComposerCapabilities: (
+      input: ProviderGetComposerCapabilitiesInput,
+    ) => Promise<ProviderComposerCapabilities>;
+    listCommands: (input: ProviderListCommandsInput) => Promise<ProviderListCommandsResult>;
+    listSkills: (input: ProviderListSkillsInput) => Promise<ProviderListSkillsResult>;
+    listPlugins: (input: ProviderListPluginsInput) => Promise<ProviderListPluginsResult>;
+    readPlugin: (input: ProviderReadPluginInput) => Promise<ProviderReadPluginResult>;
+    listModels: (input: ProviderListModelsInput) => Promise<ProviderListModelsResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
@@ -186,5 +281,21 @@ export interface NativeApi {
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+  };
+  browser: {
+    open: (input: BrowserOpenInput) => Promise<ThreadBrowserState>;
+    close: (input: BrowserThreadInput) => Promise<ThreadBrowserState>;
+    hide: (input: BrowserThreadInput) => Promise<void>;
+    getState: (input: BrowserThreadInput) => Promise<ThreadBrowserState>;
+    setPanelBounds: (input: BrowserSetPanelBoundsInput) => Promise<ThreadBrowserState>;
+    navigate: (input: BrowserNavigateInput) => Promise<ThreadBrowserState>;
+    reload: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    goBack: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    goForward: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    newTab: (input: BrowserNewTabInput) => Promise<ThreadBrowserState>;
+    closeTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    openDevTools: (input: BrowserTabInput) => Promise<void>;
+    onState: (callback: (state: ThreadBrowserState) => void) => () => void;
   };
 }

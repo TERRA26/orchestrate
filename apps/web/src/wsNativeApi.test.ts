@@ -362,6 +362,105 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards workspace file reads to the websocket project method", async () => {
+    requestMock.mockResolvedValue({ relativePath: "plan.md", contents: "# Plan\n" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.projects.readFile({
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.projectsReadFile, {
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
+    });
+  });
+
+  it("forwards browser automation requests to websocket methods", async () => {
+    requestMock.mockResolvedValueOnce({
+      sessionId: "browser-session-1",
+      observation: {
+        sessionId: "browser-session-1",
+        url: "http://localhost:3333",
+        title: "Preview",
+        readyState: "complete",
+        textSummary: "Interactive page",
+        targets: [],
+        observedAt: "2026-04-01T00:00:00.000Z",
+      },
+    });
+    requestMock.mockResolvedValueOnce({
+      observation: {
+        sessionId: "browser-session-1",
+        url: "http://localhost:3333",
+        title: "Preview",
+        readyState: "complete",
+        textSummary: "Clicked the primary button",
+        targets: [],
+        observedAt: "2026-04-01T00:00:01.000Z",
+      },
+    });
+    requestMock.mockResolvedValueOnce(undefined);
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+
+    await api.browser.openSession({ url: "http://localhost:3333" });
+    await api.browser.act({
+      sessionId: "browser-session-1",
+      action: { kind: "click", targetId: "target-1" },
+    });
+    await api.browser.closeSession({ sessionId: "browser-session-1" });
+
+    expect(requestMock).toHaveBeenNthCalledWith(
+      1,
+      WS_METHODS.browserOpenSession,
+      { url: "http://localhost:3333" },
+      { timeoutMs: 90_000 },
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(
+      2,
+      WS_METHODS.browserAct,
+      { sessionId: "browser-session-1", action: { kind: "click", targetId: "target-1" } },
+      { timeoutMs: 90_000 },
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.browserCloseSession, {
+      sessionId: "browser-session-1",
+    });
+  });
+
+  it("forwards orchestrator model options to the websocket completion method", async () => {
+    requestMock.mockResolvedValue({ text: "planned" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.orchestrator.complete({
+      provider: "codex",
+      model: "gpt-5.4",
+      modelOptions: {
+        reasoningEffort: "high",
+        fastMode: true,
+      },
+      messages: [{ role: "user", content: "Plan this task" }],
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(
+      WS_METHODS.orchestratorComplete,
+      {
+        provider: "codex",
+        model: "gpt-5.4",
+        modelOptions: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+        messages: [{ role: "user", content: "Plan this task" }],
+      },
+      { timeoutMs: 150_000 },
+    );
+  });
+
   it("uses no client timeout for git.runStackedAction", async () => {
     requestMock.mockResolvedValue({
       action: "commit",

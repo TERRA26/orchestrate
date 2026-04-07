@@ -1,0 +1,776 @@
+/// <reference lib="dom" />
+
+import { randomUUID } from "node:crypto";
+
+import {
+  type BrowserActInput,
+  type BrowserConsoleEntry,
+  type BrowserNetworkError,
+  type BrowserObservedTarget,
+  type BrowserPageMetrics,
+} from "@t3tools/contracts";
+import { Effect, Layer, Schema } from "effect";
+import type { Browser, BrowserContext, Locator, Page } from "playwright";
+
+import {
+  BrowserAutomation,
+  BrowserAutomationError,
+  BrowserAutomationSessionNotFoundError,
+} from "../Services/BrowserAutomation.ts";
+import {
+  isMissingPlaywrightBrowserExecutableError,
+  resolveFallbackChromiumExecutablePath,
+} from "../browserExecutable.ts";
+
+const DEFAULT_VIEWPORT = { width: 1_440, height: 900 } as const;
+const POST_ACTION_DELAY_MS = 350;
+const NETWORK_IDLE_TIMEOUT_MS = 1_500;
+const DOM_CONTENT_LOADED_TIMEOUT_MS = 8_000;
+const ACTION_TIMEOUT_MS = 15_000;
+const MAX_CONSOLE_BUFFER = 50;
+const MAX_NETWORK_ERROR_BUFFER = 50;
+
+type PlaywrightModule = typeof import("playwright");
+
+interface BrowserTargetDescriptor {
+  target: BrowserObservedTarget;
+  selector: string;
+}
+
+interface BrowserSessionState {
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
+  targetDescriptorsById: Map<string, BrowserTargetDescriptor>;
+  consoleBuffer: BrowserConsoleEntry[];
+  networkErrorBuffer: BrowserNetworkError[];
+}
+
+interface EvaluatedTarget extends BrowserObservedTarget {
+  selector: string;
+}
+
+const ACCESSIBLE_ROLE_LOCATORS = new Set([
+  "button",
+  "checkbox",
+  "combobox",
+  "link",
+  "menuitem",
+  "option",
+  "radio",
+  "switch",
+  "tab",
+  "textbox",
+]);
+
+function toBrowserAutomationError(
+  operation: string,
+  detail: string,
+  cause?: unknown,
+): BrowserAutomationError {
+  return new BrowserAutomationError({
+    operation,
+    detail,
+    ...(cause !== undefined ? { cause } : {}),
+  });
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return value.slice(0, maxLength);
+}
+
+function buildLocatorCandidates(page: Page, descriptor: BrowserTargetDescriptor): Locator[] {
+  const candidates: Locator[] = [];
+  const accessibleName = descriptor.target.label || descriptor.target.text || undefined;
+
+  if (descriptor.target.label) {
+    candidates.push(page.getByLabel(descriptor.target.label, { exact: true }).first());
+  }
+  if (descriptor.target.placeholder) {
+    candidates.push(page.getByPlaceholder(descriptor.target.placeholder, { exact: true }).first());
+  }
+  if (accessibleName && ACCESSIBLE_ROLE_LOCATORS.has(descriptor.target.role)) {
+    candidates.push(
+      page
+        .getByRole(descriptor.target.role as Parameters<Page["getByRole"]>[0], {
+          name: accessibleName,
+          exact: true,
+        })
+        .first(),
+    );
+  }
+  if (
+    descriptor.target.text &&
+    (descriptor.target.role === "button" ||
+      descriptor.target.role === "link" ||
+      descriptor.target.tagName === "button" ||
+      descriptor.target.tagName === "a" ||
+      descriptor.target.tagName === "summary")
+  ) {
+    candidates.push(page.getByText(descriptor.target.text, { exact: true }).first());
+  }
+
+  candidates.push(page.locator(descriptor.selector).first());
+  return candidates;
+}
+
+async function tryLocatorCandidates(
+  page: Page,
+  descriptor: BrowserTargetDescriptor,
+  operation: (locator: Locator) => Promise<void>,
+): Promise<void> {
+  let lastError: unknown = undefined;
+  for (const locator of buildLocatorCandidates(page, descriptor)) {
+    try {
+      await operation(locator);
+      return;
+    } catch (cause) {
+      lastError = cause;
+    }
+  }
+
+  throw lastError;
+}
+
+const loadPlaywright = Effect.tryPromise({
+  try: () => import("playwright") as Promise<PlaywrightModule>,
+  catch: (cause) =>
+    toBrowserAutomationError(
+      "browser.loadPlaywright",
+      "Playwright is unavailable. Install the browser automation runtime before using orchestrator browser validation.",
+      cause,
+    ),
+});
+
+async function launchBrowser(playwright: PlaywrightModule): Promise<Browser> {
+  const launchOptions = {
+    headless: true,
+    env: {},
+    args: ["--disable-extensions", "--disable-file-system"],
+  };
+
+  try {
+    return await playwright.chromium.launch(launchOptions);
+  } catch (cause) {
+    if (!isMissingPlaywrightBrowserExecutableError(cause)) {
+      throw cause;
+    }
+
+    const fallbackExecutablePath = await resolveFallbackChromiumExecutablePath();
+    if (!fallbackExecutablePath) {
+      throw cause;
+    }
+
+    return playwright.chromium.launch({
+      ...launchOptions,
+      executablePath: fallbackExecutablePath,
+    });
+  }
+}
+
+function waitForSettled(page: Page): Promise<void> {
+  return page
+    .waitForLoadState("domcontentloaded", { timeout: DOM_CONTENT_LOADED_TIMEOUT_MS })
+    .catch(() => undefined)
+    .then(() => page.waitForLoadState("networkidle", { timeout: NETWORK_IDLE_TIMEOUT_MS }))
+    .catch(() => undefined)
+    .then(() => page.waitForTimeout(POST_ACTION_DELAY_MS))
+    .then(() => undefined);
+}
+
+async function captureScreenshotDataUrl(
+  page: Page,
+  options?: { fullPage?: boolean },
+): Promise<string | undefined> {
+  try {
+    const screenshot = await page.screenshot({
+      type: "jpeg",
+      quality: options?.fullPage ? 30 : 50,
+      animations: "disabled",
+      caret: "hide",
+      scale: "css",
+      fullPage: options?.fullPage ?? false,
+      timeout: 8_000,
+    });
+    return `data:image/jpeg;base64,${screenshot.toString("base64")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+async function captureObservation(input: { page: Page; session?: BrowserSessionState }): Promise<{
+  observation: {
+    sessionId: string;
+    url: string;
+    title: string;
+    readyState: string;
+    textSummary: string;
+    screenshotDataUrl?: string;
+    fullPageScreenshotDataUrl?: string;
+    targets: BrowserObservedTarget[];
+    consoleErrors?: BrowserConsoleEntry[];
+    networkErrors?: BrowserNetworkError[];
+    pageMetrics?: BrowserPageMetrics;
+    observedAt: string;
+  };
+  targetDescriptorsById: Map<string, BrowserTargetDescriptor>;
+}> {
+  const raw = await input.page.evaluate(() => {
+    const MAX_TARGETS = 64;
+    const MAX_TEXT_SUMMARY_LENGTH = 4_000;
+
+    // eslint-disable-next-line unicorn/consistent-function-scoping
+    const cleanText = (value: string | null | undefined, maxLength: number): string => {
+      const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+      return normalized.length <= maxLength ? normalized : normalized.slice(0, maxLength);
+    };
+
+    // eslint-disable-next-line unicorn/consistent-function-scoping
+    const escapeCssSegment = (value: string): string => {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return CSS.escape(value);
+      }
+      return value.replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
+    };
+
+    const toCssPath = (element: Element): string => {
+      const htmlElement = element as HTMLElement;
+      if (htmlElement.id) {
+        return `#${escapeCssSegment(htmlElement.id)}`;
+      }
+
+      const segments: string[] = [];
+      let current: Element | null = element;
+      while (current && current !== document.body) {
+        const parent: Element | null = current.parentElement;
+        const tagName = current.tagName.toLowerCase();
+        let segment = tagName;
+        if (parent) {
+          const siblings = Array.from(parent.children).filter(
+            (candidate: Element) => candidate.tagName === current?.tagName,
+          );
+          if (siblings.length > 1) {
+            segment += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+          }
+        }
+        segments.unshift(segment);
+        current = parent;
+      }
+
+      return `body > ${segments.join(" > ")}`;
+    };
+
+    // eslint-disable-next-line unicorn/consistent-function-scoping
+    const isVisible = (element: HTMLElement): boolean => {
+      const htmlElement = element;
+      const style = window.getComputedStyle(htmlElement);
+      const rect = htmlElement.getBoundingClientRect();
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        style.opacity !== "0" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+
+    const labelFor = (
+      element: HTMLElement & {
+        labels?: NodeListOf<HTMLLabelElement>;
+        placeholder?: string;
+        value?: string;
+      },
+    ): string => {
+      const htmlElement = element;
+      const ariaLabel = htmlElement.getAttribute("aria-label");
+      if (ariaLabel) {
+        return cleanText(ariaLabel, 512);
+      }
+      if (htmlElement.labels && htmlElement.labels.length > 0) {
+        const labels = Array.from(htmlElement.labels)
+          .map((label) => cleanText(label.textContent, 512))
+          .filter((value) => value.length > 0);
+        if (labels.length > 0) {
+          return labels.join(" ");
+        }
+      }
+      const ariaLabelledBy = htmlElement.getAttribute("aria-labelledby");
+      if (ariaLabelledBy) {
+        const labels = ariaLabelledBy
+          .split(/\s+/)
+          .map((id) => document.getElementById(id))
+          .filter((label): label is HTMLElement => label instanceof HTMLElement)
+          .map((label) => cleanText(label.textContent, 512))
+          .filter((value) => value.length > 0);
+        if (labels.length > 0) {
+          return labels.join(" ");
+        }
+      }
+      return "";
+    };
+
+    const elements = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"]',
+      ),
+    );
+
+    const seenSelectors = new Set<string>();
+    const targets: Array<EvaluatedTarget> = [];
+
+    for (const element of elements) {
+      if (!isVisible(element)) {
+        continue;
+      }
+      const selector = toCssPath(element);
+      if (selector.length === 0 || seenSelectors.has(selector)) {
+        continue;
+      }
+      seenSelectors.add(selector);
+
+      const htmlElement = element as HTMLElement & {
+        disabled?: boolean;
+        placeholder?: string;
+      };
+      const rect = htmlElement.getBoundingClientRect();
+      const label = labelFor(element);
+      const text = cleanText(htmlElement.innerText || htmlElement.textContent, 512);
+      const placeholder = cleanText(htmlElement.placeholder, 512);
+      const role = cleanText(element.getAttribute("role") || element.tagName.toLowerCase(), 64);
+      const tagName = cleanText(element.tagName.toLowerCase(), 64);
+      const disabled =
+        htmlElement.disabled === true || htmlElement.getAttribute("aria-disabled") === "true";
+
+      targets.push({
+        id: `target-${targets.length + 1}`,
+        selector,
+        role,
+        tagName,
+        ...(label.length > 0 ? { label } : {}),
+        ...(text.length > 0 ? { text } : {}),
+        ...(placeholder.length > 0 ? { placeholder } : {}),
+        disabled,
+        x: Math.max(0, Math.round(rect.x)),
+        y: Math.max(0, Math.round(rect.y)),
+        width: Math.max(0, Math.round(rect.width)),
+        height: Math.max(0, Math.round(rect.height)),
+      });
+
+      if (targets.length >= MAX_TARGETS) {
+        break;
+      }
+    }
+
+    const interactiveSelector =
+      'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"]';
+    const totalInteractiveElements = document.querySelectorAll(interactiveSelector).length;
+    const totalImages = document.querySelectorAll("img, picture, video, canvas, svg").length;
+    const totalLinks = document.querySelectorAll("a[href]").length;
+    const totalInputs = document.querySelectorAll("input, textarea, select").length;
+    const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6"))
+      .slice(0, 20)
+      .map((heading) => cleanText(heading.textContent, 256))
+      .filter((text) => text.length > 0);
+
+    return {
+      readyState: document.readyState,
+      title: cleanText(document.title, 512),
+      textSummary: cleanText(document.body?.innerText, MAX_TEXT_SUMMARY_LENGTH),
+      targets,
+      pageMetrics: {
+        totalInteractiveElements,
+        totalImages,
+        totalLinks,
+        totalInputs,
+        headings,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        scrollHeight: document.documentElement.scrollHeight,
+        scrollTop: Math.round(window.scrollY),
+      },
+    };
+  });
+
+  const needsFullPage = raw.pageMetrics.scrollHeight > raw.pageMetrics.viewportHeight * 1.5;
+  const [screenshotDataUrl, fullPageScreenshotDataUrl, ariaSnapshot] = await Promise.all([
+    captureScreenshotDataUrl(input.page),
+    needsFullPage ? captureScreenshotDataUrl(input.page, { fullPage: true }) : undefined,
+    input.page
+      .locator("body")
+      .ariaSnapshot({ timeout: 5_000 })
+      .then((snapshot) => truncateText(snapshot, 16_000))
+      .catch(() => undefined),
+  ]);
+
+  const consoleErrors =
+    input.session && input.session.consoleBuffer.length > 0
+      ? [...input.session.consoleBuffer]
+      : undefined;
+  const networkErrors =
+    input.session && input.session.networkErrorBuffer.length > 0
+      ? [...input.session.networkErrorBuffer]
+      : undefined;
+
+  if (input.session) {
+    input.session.consoleBuffer.length = 0;
+    input.session.networkErrorBuffer.length = 0;
+  }
+
+  const targetDescriptorsById = new Map<string, BrowserTargetDescriptor>();
+  for (const target of raw.targets as EvaluatedTarget[]) {
+    targetDescriptorsById.set(target.id, {
+      target,
+      selector: target.selector,
+    });
+  }
+
+  return {
+    observation: {
+      sessionId: "",
+      url: truncateText(input.page.url(), 2_048),
+      title: truncateText(raw.title, 512),
+      readyState: truncateText(raw.readyState, 32),
+      textSummary: truncateText(raw.textSummary, 4_000),
+      ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
+      ...(fullPageScreenshotDataUrl ? { fullPageScreenshotDataUrl } : {}),
+      targets: (raw.targets as EvaluatedTarget[]).map(
+        ({ selector: _selector, ...target }) => target,
+      ),
+      ...(consoleErrors ? { consoleErrors } : {}),
+      ...(networkErrors ? { networkErrors } : {}),
+      pageMetrics: raw.pageMetrics as BrowserPageMetrics,
+      ...(ariaSnapshot ? { ariaSnapshot } : {}),
+      observedAt: new Date().toISOString(),
+    },
+    targetDescriptorsById,
+  };
+}
+
+const makeBrowserAutomation = () =>
+  Effect.gen(function* () {
+    const sessions = new Map<string, BrowserSessionState>();
+
+    const closeSessionState = (session: BrowserSessionState) =>
+      Effect.tryPromise({
+        try: async () => {
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+        },
+        catch: (cause) =>
+          toBrowserAutomationError(
+            "browser.closeSession",
+            "Failed to close the browser automation session.",
+            cause,
+          ),
+      });
+
+    yield* Effect.addFinalizer(() =>
+      Effect.forEach([...sessions.values()], closeSessionState, {
+        discard: true,
+      }).pipe(Effect.ignore),
+    );
+
+    const requireSession = (sessionId: string) => {
+      const session = sessions.get(sessionId);
+      if (!session) {
+        return Effect.fail(
+          new BrowserAutomationSessionNotFoundError({
+            sessionId,
+          }),
+        );
+      }
+      return Effect.succeed(session);
+    };
+
+    const openSession = (input: { url: string; viewportWidth?: number; viewportHeight?: number }) =>
+      Effect.gen(function* () {
+        const playwright = yield* loadPlaywright;
+        const browser = yield* Effect.tryPromise({
+          try: () => launchBrowser(playwright),
+          catch: (cause) =>
+            toBrowserAutomationError(
+              "browser.openSession",
+              "Failed to launch the browser automation runtime. Install Playwright browsers or make an existing Chromium cache available for fallback launch.",
+              cause,
+            ),
+        });
+        const context = yield* Effect.tryPromise({
+          try: () =>
+            browser.newContext({
+              ignoreHTTPSErrors: true,
+              viewport: {
+                width: input.viewportWidth ?? DEFAULT_VIEWPORT.width,
+                height: input.viewportHeight ?? DEFAULT_VIEWPORT.height,
+              },
+            }),
+          catch: (cause) =>
+            toBrowserAutomationError(
+              "browser.openSession",
+              "Failed to create a browser context.",
+              cause,
+            ),
+        });
+        const page = yield* Effect.tryPromise({
+          try: () => context.newPage(),
+          catch: (cause) =>
+            toBrowserAutomationError(
+              "browser.openSession",
+              "Failed to create a browser page.",
+              cause,
+            ),
+        });
+        const sessionId = randomUUID();
+        const consoleBuffer: BrowserConsoleEntry[] = [];
+        const networkErrorBuffer: BrowserNetworkError[] = [];
+        let openNavigationError: string | undefined;
+
+        yield* Effect.tryPromise({
+          try: async () => {
+            try {
+              await page.goto(input.url, { waitUntil: "domcontentloaded" });
+            } catch (navError) {
+              openNavigationError = truncateText(
+                navError instanceof Error ? navError.message : String(navError),
+                512,
+              );
+            }
+            await waitForSettled(page);
+          },
+          catch: (cause) =>
+            toBrowserAutomationError(
+              "browser.openSession",
+              `Failed to open ${input.url} in the browser automation session.`,
+              cause,
+            ),
+        }).pipe(
+          Effect.tapError(() =>
+            closeSessionState({
+              browser,
+              context,
+              page,
+              targetDescriptorsById: new Map(),
+              consoleBuffer: [],
+              networkErrorBuffer: [],
+            }).pipe(Effect.ignore),
+          ),
+        );
+
+        page.on("console", (msg) => {
+          const type = msg.type();
+          if (type !== "error" && type !== "warning") return;
+          if (consoleBuffer.length >= MAX_CONSOLE_BUFFER) return;
+          consoleBuffer.push({
+            level: type === "error" ? "error" : "warning",
+            text: truncateText(msg.text(), 512),
+          });
+        });
+        page.on("pageerror", (error) => {
+          if (consoleBuffer.length >= MAX_CONSOLE_BUFFER) return;
+          consoleBuffer.push({
+            level: "error",
+            text: truncateText(String(error), 512),
+          });
+        });
+        page.on("requestfailed", (request) => {
+          if (networkErrorBuffer.length >= MAX_NETWORK_ERROR_BUFFER) return;
+          const failure = request.failure();
+          networkErrorBuffer.push({
+            url: truncateText(request.url(), 2_048),
+            method: truncateText(request.method(), 16),
+            failure: truncateText(failure?.errorText ?? "Unknown failure", 256),
+          });
+        });
+
+        const sessionState: BrowserSessionState = {
+          browser,
+          context,
+          page,
+          targetDescriptorsById: new Map(),
+          consoleBuffer,
+          networkErrorBuffer,
+        };
+        const { observation, targetDescriptorsById } = yield* Effect.tryPromise({
+          try: async () => captureObservation({ page, session: sessionState }),
+          catch: (cause) =>
+            toBrowserAutomationError(
+              "browser.openSession",
+              "Failed to inspect the loaded browser page.",
+              cause,
+            ),
+        });
+        sessionState.targetDescriptorsById = targetDescriptorsById;
+        sessions.set(sessionId, sessionState);
+        return {
+          sessionId,
+          observation: {
+            ...observation,
+            sessionId,
+            ...(openNavigationError ? { navigationError: openNavigationError } : {}),
+          },
+        };
+      });
+
+    const act = (input: BrowserActInput) =>
+      Effect.gen(function* () {
+        const session = yield* requireSession(input.sessionId);
+
+        const lookupTarget = (targetId: string): BrowserTargetDescriptor => {
+          const descriptor = session.targetDescriptorsById.get(targetId);
+          if (!descriptor) {
+            throw new BrowserAutomationError({
+              operation: "browser.act",
+              detail: `The target '${targetId}' is not available in the current browser observation.`,
+            });
+          }
+          return descriptor;
+        };
+
+        let navigationError: string | undefined;
+        let evaluateResult: string | undefined;
+
+        yield* Effect.tryPromise({
+          try: async () => {
+            const actionPromise = (async () => {
+              switch (input.action.kind) {
+                case "navigate": {
+                  try {
+                    await session.page.goto(input.action.url, { waitUntil: "domcontentloaded" });
+                  } catch (navError) {
+                    navigationError = truncateText(
+                      navError instanceof Error ? navError.message : String(navError),
+                      512,
+                    );
+                  }
+                  break;
+                }
+                case "click": {
+                  const descriptor = lookupTarget(input.action.targetId);
+                  await tryLocatorCandidates(session.page, descriptor, (locator) =>
+                    locator.click({ timeout: ACTION_TIMEOUT_MS }),
+                  );
+                  break;
+                }
+                case "type": {
+                  const textAction = input.action;
+                  const descriptor = lookupTarget(input.action.targetId);
+                  await tryLocatorCandidates(session.page, descriptor, async (locator) => {
+                    if (textAction.clearFirst) {
+                      await locator.fill(textAction.text, { timeout: ACTION_TIMEOUT_MS });
+                      return;
+                    }
+                    await locator.click({ timeout: ACTION_TIMEOUT_MS });
+                    await locator.pressSequentially(textAction.text);
+                  });
+                  break;
+                }
+                case "press": {
+                  await session.page.keyboard.press(input.action.key);
+                  break;
+                }
+                case "scroll": {
+                  const delta =
+                    input.action.direction === "down" ? input.action.amount : -input.action.amount;
+                  await session.page.mouse.wheel(0, delta);
+                  break;
+                }
+                case "wait": {
+                  await session.page.waitForTimeout(input.action.ms);
+                  break;
+                }
+                case "resize": {
+                  await session.page.setViewportSize({
+                    width: input.action.width,
+                    height: input.action.height,
+                  });
+                  break;
+                }
+                case "waitFor": {
+                  const waitTimeout = input.action.timeout ?? 5_000;
+                  if (input.action.text) {
+                    await session.page
+                      .getByText(input.action.text, { exact: false })
+                      .first()
+                      .waitFor({ state: "visible", timeout: waitTimeout });
+                  } else if (input.action.textGone) {
+                    await session.page
+                      .getByText(input.action.textGone, { exact: false })
+                      .first()
+                      .waitFor({ state: "hidden", timeout: waitTimeout });
+                  }
+                  break;
+                }
+                case "evaluate": {
+                  try {
+                    const raw = await session.page.evaluate(input.action.expression);
+                    evaluateResult = truncateText(
+                      typeof raw === "string" ? raw : JSON.stringify(raw),
+                      8_000,
+                    );
+                  } catch (evalError) {
+                    evaluateResult = `Error: ${evalError instanceof Error ? evalError.message : String(evalError)}`;
+                  }
+                  break;
+                }
+              }
+            })();
+
+            await Promise.race([
+              actionPromise,
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () => reject(new Error(`Browser action '${input.action.kind}' timed out`)),
+                  ACTION_TIMEOUT_MS,
+                ),
+              ),
+            ]);
+
+            await waitForSettled(session.page);
+          },
+          catch: (cause) =>
+            Schema.is(BrowserAutomationError)(cause)
+              ? cause
+              : toBrowserAutomationError(
+                  "browser.act",
+                  `Failed to execute browser action '${input.action.kind}'.`,
+                  cause,
+                ),
+        });
+
+        const { observation, targetDescriptorsById } = yield* Effect.tryPromise({
+          try: async () => captureObservation({ page: session.page, session }),
+          catch: (cause) =>
+            toBrowserAutomationError(
+              "browser.act",
+              "Failed to inspect the page after executing a browser action.",
+              cause,
+            ),
+        });
+        session.targetDescriptorsById = targetDescriptorsById;
+        return {
+          observation: {
+            ...observation,
+            sessionId: input.sessionId,
+            ...(navigationError ? { navigationError } : {}),
+            ...(evaluateResult ? { evaluateResult } : {}),
+          },
+        };
+      });
+
+    const closeSession = (input: { sessionId: string }) =>
+      Effect.gen(function* () {
+        const session = yield* requireSession(input.sessionId);
+        sessions.delete(input.sessionId);
+        yield* closeSessionState(session);
+      });
+
+    return {
+      openSession,
+      act,
+      closeSession,
+    };
+  });
+
+export const BrowserAutomationLive = Layer.effect(BrowserAutomation, makeBrowserAutomation());

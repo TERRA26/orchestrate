@@ -1,4 +1,4 @@
-import { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -11,28 +11,20 @@ import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
-import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import {
-  clearPromotedDraftThread,
-  clearPromotedDraftThreads,
-  useComposerDraftStore,
-} from "../composerDraftStore";
+import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
-import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
-import { onServerConfigUpdated, onServerProvidersUpdated, onServerWelcome } from "../wsNativeApi";
-import { migrateLocalSettingsToServer } from "../hooks/useSettings";
+import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
-import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
-import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
+import { TaskCompletionNotifications } from "../notifications/taskCompletion";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -61,10 +53,9 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <EventRouter />
+        <TaskCompletionNotifications />
         <DesktopProjectBootstrap />
-        <AppSidebarLayout>
-          <Outlet />
-        </AppSidebarLayout>
+        <Outlet />
       </AnchoredToastProvider>
     </ToastProvider>
   );
@@ -142,13 +133,8 @@ function errorDetails(error: unknown): string {
 }
 
 function EventRouter() {
-  const applyOrchestrationEvents = useStore((store) => store.applyOrchestrationEvents);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
-  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
-  const syncProjects = useUiStateStore((store) => store.syncProjects);
-  const syncThreads = useUiStateStore((store) => store.syncThreads);
-  const clearThreadUi = useUiStateStore((store) => store.clearThreadUi);
-  const removeTerminalState = useTerminalStateStore((store) => store.removeTerminalState);
+  const setProjectExpanded = useStore((store) => store.setProjectExpanded);
   const removeOrphanedTerminalStates = useTerminalStateStore(
     (store) => store.removeOrphanedTerminalStates,
   );
@@ -164,40 +150,56 @@ function EventRouter() {
     const api = readNativeApi();
     if (!api) return;
     let disposed = false;
-    const recovery = createOrchestrationRecoveryCoordinator();
+    let latestSequence = 0;
+    let syncing = false;
+    let pending = false;
     let needsProviderInvalidation = false;
 
-    const reconcileSnapshotDerivedState = () => {
-      const threads = useStore.getState().threads;
-      const projects = useStore.getState().projects;
-      syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
-      syncThreads(
-        threads.map((thread) => ({
-          id: thread.id,
-          seedVisitedAt: thread.updatedAt ?? thread.createdAt,
-        })),
-      );
-      clearPromotedDraftThreads(threads.map((thread) => thread.id));
+    const flushSnapshotSync = async (): Promise<void> => {
+      const snapshot = await api.orchestration.getSnapshot();
+      if (disposed) return;
+      latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
+      syncServerReadModel(snapshot);
+      clearPromotedDraftThreads(new Set(snapshot.threads.map((t) => t.id)));
       const draftThreadIds = Object.keys(
         useComposerDraftStore.getState().draftThreadsByThreadId,
       ) as ThreadId[];
       const activeThreadIds = collectActiveTerminalThreadIds({
-        snapshotThreads: threads.map((thread) => ({ id: thread.id, deletedAt: null })),
+        snapshotThreads: snapshot.threads,
         draftThreadIds,
       });
       removeOrphanedTerminalStates(activeThreadIds);
+      if (pending) {
+        pending = false;
+        await flushSnapshotSync();
+      }
     };
 
-    const queryInvalidationThrottler = new Throttler(
+    const syncSnapshot = async () => {
+      if (syncing) {
+        pending = true;
+        return;
+      }
+      syncing = true;
+      pending = false;
+      try {
+        await flushSnapshotSync();
+      } catch {
+        // Keep prior state and wait for next domain event to trigger a resync.
+      }
+      syncing = false;
+    };
+
+    const domainEventFlushThrottler = new Throttler(
       () => {
-        if (!needsProviderInvalidation) {
-          return;
+        if (needsProviderInvalidation) {
+          needsProviderInvalidation = false;
+          void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+          // Invalidate workspace entry queries so the @-mention file picker
+          // reflects files created, deleted, or restored during this turn.
+          void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
         }
-        needsProviderInvalidation = false;
-        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
-        // Invalidate workspace entry queries so the @-mention file picker
-        // reflects files created, deleted, or restored during this turn.
-        void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+        void syncSnapshot();
       },
       {
         wait: 100,
@@ -206,113 +208,15 @@ function EventRouter() {
       },
     );
 
-    const applyEventBatch = (events: ReadonlyArray<OrchestrationEvent>) => {
-      const nextEvents = recovery.markEventBatchApplied(events);
-      if (nextEvents.length === 0) {
-        return;
-      }
-
-      const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
-      const needsProjectUiSync = nextEvents.some(
-        (event) =>
-          event.type === "project.created" ||
-          event.type === "project.meta-updated" ||
-          event.type === "project.deleted",
-      );
-
-      if (batchEffects.needsProviderInvalidation) {
-        needsProviderInvalidation = true;
-        void queryInvalidationThrottler.maybeExecute();
-      }
-
-      applyOrchestrationEvents(nextEvents);
-      if (needsProjectUiSync) {
-        const projects = useStore.getState().projects;
-        syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
-      }
-      const needsThreadUiSync = nextEvents.some(
-        (event) => event.type === "thread.created" || event.type === "thread.deleted",
-      );
-      if (needsThreadUiSync) {
-        const threads = useStore.getState().threads;
-        syncThreads(
-          threads.map((thread) => ({
-            id: thread.id,
-            seedVisitedAt: thread.updatedAt ?? thread.createdAt,
-          })),
-        );
-      }
-      const draftStore = useComposerDraftStore.getState();
-      for (const threadId of batchEffects.clearPromotedDraftThreadIds) {
-        clearPromotedDraftThread(threadId);
-      }
-      for (const threadId of batchEffects.clearDeletedThreadIds) {
-        draftStore.clearDraftThread(threadId);
-        clearThreadUi(threadId);
-      }
-      for (const threadId of batchEffects.removeTerminalStateThreadIds) {
-        removeTerminalState(threadId);
-      }
-    };
-
-    const recoverFromSequenceGap = async (): Promise<void> => {
-      if (!recovery.beginReplayRecovery("sequence-gap")) {
-        return;
-      }
-
-      try {
-        const events = await api.orchestration.replayEvents(recovery.getState().latestSequence);
-        if (!disposed) {
-          applyEventBatch(events);
-        }
-      } catch {
-        recovery.failReplayRecovery();
-        void fallbackToSnapshotRecovery();
-        return;
-      }
-
-      if (!disposed && recovery.completeReplayRecovery()) {
-        void recoverFromSequenceGap();
-      }
-    };
-
-    const runSnapshotRecovery = async (reason: "bootstrap" | "replay-failed"): Promise<void> => {
-      if (!recovery.beginSnapshotRecovery(reason)) {
-        return;
-      }
-
-      try {
-        const snapshot = await api.orchestration.getSnapshot();
-        if (!disposed) {
-          syncServerReadModel(snapshot);
-          reconcileSnapshotDerivedState();
-          if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
-            void recoverFromSequenceGap();
-          }
-        }
-      } catch {
-        // Keep prior state and wait for welcome or a later replay attempt.
-        recovery.failSnapshotRecovery();
-      }
-    };
-
-    const bootstrapFromSnapshot = async (): Promise<void> => {
-      await runSnapshotRecovery("bootstrap");
-    };
-
-    const fallbackToSnapshotRecovery = async (): Promise<void> => {
-      await runSnapshotRecovery("replay-failed");
-    };
-
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
-      const action = recovery.classifyDomainEvent(event.sequence);
-      if (action === "apply") {
-        applyEventBatch([event]);
+      if (event.sequence <= latestSequence) {
         return;
       }
-      if (action === "recover") {
-        void recoverFromSequenceGap();
+      latestSequence = event.sequence;
+      if (event.type === "thread.turn-diff-completed" || event.type === "thread.reverted") {
+        needsProviderInvalidation = true;
       }
+      domainEventFlushThrottler.maybeExecute();
     });
     const unsubTerminalEvent = api.terminal.onEvent((event) => {
       const hasRunningSubprocess = terminalRunningSubprocessFromEvent(event);
@@ -328,10 +232,8 @@ function EventRouter() {
         );
     });
     const unsubWelcome = onServerWelcome((payload) => {
-      // Migrate old localStorage settings to server on first connect
-      migrateLocalSettingsToServer();
       void (async () => {
-        await bootstrapFromSnapshot();
+        await syncSnapshot();
         if (disposed) {
           return;
         }
@@ -360,14 +262,8 @@ function EventRouter() {
     // don't produce duplicate toasts.
     let subscribed = false;
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
-      // Invalidate the config query so active observers refetch fresh data.
       void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-
       if (!subscribed) return;
-
-      // Only show keybindings toasts for keybindings changes (no settings in payload)
-      if (payload.settings) return;
-
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {
         toastManager.add({
@@ -406,31 +302,22 @@ function EventRouter() {
         },
       });
     });
-    const unsubProvidersUpdated = onServerProvidersUpdated(() => {
-      void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-    });
     subscribed = true;
     return () => {
       disposed = true;
       needsProviderInvalidation = false;
-      queryInvalidationThrottler.cancel();
+      domainEventFlushThrottler.cancel();
       unsubDomainEvent();
       unsubTerminalEvent();
       unsubWelcome();
       unsubServerConfigUpdated();
-      unsubProvidersUpdated();
     };
   }, [
-    applyOrchestrationEvents,
     navigate,
     queryClient,
-    removeTerminalState,
     removeOrphanedTerminalStates,
-    clearThreadUi,
     setProjectExpanded,
-    syncProjects,
     syncServerReadModel,
-    syncThreads,
   ]);
 
   return null;

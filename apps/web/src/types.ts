@@ -1,9 +1,11 @@
 import type {
   ModelSelection,
+  OrchestrationMessageSource,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  ThreadHandoff,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -13,6 +15,7 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadEnvironmentMode,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -22,6 +25,10 @@ export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_TERMINALS_PER_GROUP = 4;
+export type ThreadTerminalPresentationMode = "drawer" | "workspace";
+export type ThreadTerminalWorkspaceTab = "terminal" | "chat";
+export type ThreadTerminalWorkspaceLayout = "both" | "terminal-only";
+export type ThreadPrimarySurface = "chat" | "terminal";
 export type ProjectScript = ContractProjectScript;
 
 export interface ThreadTerminalGroup {
@@ -45,10 +52,10 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ChatAttachment[];
-  turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;
   streaming: boolean;
+  source?: OrchestrationMessageSource;
 }
 
 export interface ProposedPlan {
@@ -83,6 +90,7 @@ export interface Project {
   name: string;
   cwd: string;
   defaultModelSelection: ModelSelection | null;
+  expanded: boolean;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
@@ -101,12 +109,14 @@ export interface Thread {
   proposedPlans: ProposedPlan[];
   error: string | null;
   createdAt: string;
-  archivedAt: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
-  pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
+  lastVisitedAt?: string | undefined;
+  envMode?: ThreadEnvironmentMode | undefined;
   branch: string | null;
   worktreePath: string | null;
+  forkSourceThreadId?: ThreadId | null;
+  handoff?: ThreadHandoff | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }

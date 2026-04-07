@@ -6,7 +6,23 @@ import readline from "node:readline";
 import {
   ApprovalRequestId,
   EventId,
+  type ProviderComposerCapabilities,
   ProviderItemId,
+  type ProviderListModelsResult,
+  type ProviderListPluginsResult,
+  type ProviderMentionReference,
+  type ProviderPluginAppSummary,
+  type ProviderPluginDescriptor,
+  type ProviderPluginDetail,
+  type ProviderForkThreadInput,
+  type ProviderReadPluginResult,
+  type ProviderForkThreadResult,
+  type ProviderListSkillsResult,
+  type ProviderListPluginsInput,
+  type ProviderReadPluginInput,
+  type ProviderStartReviewInput,
+  type ProviderSkillDescriptor,
+  type ProviderSkillReference,
   ProviderRequestKind,
   type ProviderUserInputAnswers,
   ThreadId,
@@ -14,6 +30,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderEvent,
   type ProviderSession,
+  type ProviderSessionStartInput,
   type ProviderTurnStartResult,
   RuntimeMode,
   ProviderInteractionMode,
@@ -26,15 +43,6 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
-import {
-  readCodexAccountSnapshot,
-  resolveCodexModelForAccount,
-  type CodexAccountSnapshot,
-} from "./provider/codexAccount";
-import { buildCodexInitializeParams, killCodexChildProcess } from "./provider/codexAppServer";
-
-export { buildCodexInitializeParams } from "./provider/codexAppServer";
-export { readCodexAccountSnapshot, resolveCodexModelForAccount } from "./provider/codexAccount";
 
 type PendingRequestKey = string;
 
@@ -81,7 +89,18 @@ interface CodexSessionContext {
   collabReceiverTurns: Map<string, TurnId>;
   nextRequestId: number;
   stopping: boolean;
+  discovery?: boolean;
 }
+
+interface CodexSkillListInput {
+  readonly cwd: string;
+  readonly forceReload?: boolean;
+  readonly threadId?: string;
+}
+
+interface CodexPluginListInput extends Omit<ProviderListPluginsInput, "provider"> {}
+
+interface CodexPluginReadInput extends Omit<ProviderReadPluginInput, "provider"> {}
 
 interface JsonRpcError {
   code?: number;
@@ -105,15 +124,49 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
+function shouldRetrySkillsListWithCwdFallback(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("skills/list failed") &&
+    (message.includes("invalid") ||
+      message.includes("unknown field") ||
+      message.includes("unrecognized field") ||
+      message.includes("missing field") ||
+      message.includes("expected") ||
+      message.includes("cwds"))
+  );
+}
+
+type CodexPlanType =
+  | "free"
+  | "go"
+  | "plus"
+  | "pro"
+  | "team"
+  | "business"
+  | "enterprise"
+  | "edu"
+  | "unknown";
+
+interface CodexAccountSnapshot {
+  readonly type: "apiKey" | "chatgpt" | "unknown";
+  readonly planType: CodexPlanType | null;
+  readonly sparkEnabled: boolean;
+}
+
 export interface CodexAppServerSendTurnInput {
   readonly threadId: ThreadId;
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
+  readonly skills?: ReadonlyArray<ProviderSkillReference>;
+  readonly mentions?: ReadonlyArray<ProviderMentionReference>;
   readonly model?: string;
   readonly serviceTier?: string | null;
   readonly effort?: string;
   readonly interactionMode?: ProviderInteractionMode;
 }
+
+type CodexAppServerReviewTarget = ProviderStartReviewInput["target"];
 
 export interface CodexAppServerStartSessionInput {
   readonly threadId: ThreadId;
@@ -122,8 +175,7 @@ export interface CodexAppServerStartSessionInput {
   readonly model?: string;
   readonly serviceTier?: string;
   readonly resumeCursor?: unknown;
-  readonly binaryPath: string;
-  readonly homePath?: string;
+  readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
   readonly runtimeMode: RuntimeMode;
 }
 
@@ -154,6 +206,50 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
+const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
+const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
+const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapshot {
+  const record = asObject(response);
+  const account = asObject(record?.account) ?? record;
+  const accountType = asString(account?.type);
+
+  if (accountType === "apiKey") {
+    return {
+      type: "apiKey",
+      planType: null,
+      sparkEnabled: true,
+    };
+  }
+
+  if (accountType === "chatgpt") {
+    const planType = (account?.planType as CodexPlanType | null) ?? "unknown";
+    return {
+      type: "chatgpt",
+      planType,
+      sparkEnabled: !CODEX_SPARK_DISABLED_PLAN_TYPES.has(planType),
+    };
+  }
+
+  return {
+    type: "unknown",
+    planType: null,
+    sparkEnabled: true,
+  };
+}
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -306,13 +402,32 @@ function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
   };
 }
 
+export function resolveCodexModelForAccount(
+  model: string | undefined,
+  account: CodexAccountSnapshot,
+): string | undefined {
+  if (model !== CODEX_SPARK_MODEL || account.sparkEnabled) {
+    return model;
+  }
+
+  return CODEX_DEFAULT_MODEL;
+}
+
 /**
  * On Windows with `shell: true`, `child.kill()` only terminates the `cmd.exe`
  * wrapper, leaving the actual command running. Use `taskkill /T` to kill the
  * entire process tree instead.
  */
 function killChildTree(child: ChildProcessWithoutNullStreams): void {
-  killCodexChildProcess(child);
+  if (process.platform === "win32" && child.pid !== undefined) {
+    try {
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      return;
+    } catch {
+      // fallback to direct kill
+    }
+  }
+  child.kill();
 }
 
 export function normalizeCodexModelSlug(
@@ -329,6 +444,19 @@ export function normalizeCodexModelSlug(
   }
 
   return normalized;
+}
+
+export function buildCodexInitializeParams() {
+  return {
+    clientInfo: {
+      name: "t3code_desktop",
+      title: "DP Code Desktop",
+      version: "0.1.0",
+    },
+    capabilities: {
+      experimentalApi: true,
+    },
+  } as const;
 }
 
 function buildCodexCollaborationMode(input: {
@@ -431,6 +559,11 @@ export interface CodexAppServerManagerEvents {
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  private readonly discoverySessions = new Map<string, CodexSessionContext>();
+  private readonly skillsCache = new Map<string, ProviderListSkillsResult>();
+  private readonly pluginsCache = new Map<string, ProviderListPluginsResult>();
+  private readonly pluginDetailCache = new Map<string, ProviderReadPluginResult>();
+  private readonly modelCache = new Map<string, ProviderListModelsResult>();
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
@@ -457,8 +590,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         updatedAt: now,
       };
 
-      const codexBinaryPath = input.binaryPath;
-      const codexHomePath = input.homePath;
+      const codexOptions = readCodexProviderOptions(input);
+      const codexBinaryPath = codexOptions.binaryPath ?? "codex";
+      const codexHomePath = codexOptions.homePath;
       this.assertSupportedCodexCliVersion({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
@@ -651,8 +785,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const context = this.requireSession(input.threadId);
     context.collabReceiverTurns.clear();
 
+    // Normal sends never interrupt active work. The orchestration layer decides
+    // when a queued follow-up is ready to become a provider turn.
     const turnInput: Array<
-      { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
+      | { type: "text"; text: string; text_elements: [] }
+      | { type: "image"; url: string }
+      | { type: "skill"; name: string; path: string }
+      | { type: "mention"; name: string; path: string }
     > = [];
     if (input.input) {
       turnInput.push({
@@ -669,6 +808,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         });
       }
     }
+    for (const skill of input.skills ?? []) {
+      turnInput.push({
+        type: "skill",
+        name: skill.name,
+        path: skill.path,
+      });
+    }
+    for (const mention of input.mentions ?? []) {
+      turnInput.push({
+        type: "mention",
+        name: mention.name,
+        path: mention.path,
+      });
+    }
     if (turnInput.length === 0) {
       throw new Error("Turn input must include text or attachments.");
     }
@@ -684,7 +837,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const turnStartParams: {
       threadId: string;
       input: Array<
-        { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
+        | { type: "text"; text: string; text_elements: [] }
+        | { type: "image"; url: string }
+        | { type: "skill"; name: string; path: string }
+        | { type: "mention"; name: string; path: string }
       >;
       model?: string;
       serviceTier?: string | null;
@@ -727,11 +883,136 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     const response = await this.sendRequest(context, "turn/start", turnStartParams);
+    const turnIdRaw = this.readString(this.readObject(this.readObject(response), "turn"), "id");
+    if (!turnIdRaw) {
+      throw new Error("turn/start response did not include a turn id.");
+    }
+    const turnId = TurnId.makeUnsafe(turnIdRaw);
+
+    this.updateSession(context, {
+      status: "running",
+      activeTurnId: turnId,
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
+    });
+
+    return {
+      threadId: context.session.threadId,
+      turnId,
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
+    };
+  }
+
+  async steerTurn(input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> {
+    const context = this.requireSession(input.threadId);
+    context.collabReceiverTurns.clear();
+
+    const activeTurnId = context.session.activeTurnId;
+    if (context.session.status !== "running" || activeTurnId === undefined) {
+      return this.sendTurn(input);
+    }
+
+    const turnInput: Array<
+      | { type: "text"; text: string; text_elements: [] }
+      | { type: "image"; url: string }
+      | { type: "skill"; name: string; path: string }
+      | { type: "mention"; name: string; path: string }
+    > = [];
+    if (input.input) {
+      turnInput.push({
+        type: "text",
+        text: input.input,
+        text_elements: [],
+      });
+    }
+    for (const attachment of input.attachments ?? []) {
+      if (attachment.type === "image") {
+        turnInput.push({
+          type: "image",
+          url: attachment.url,
+        });
+      }
+    }
+    for (const skill of input.skills ?? []) {
+      turnInput.push({
+        type: "skill",
+        name: skill.name,
+        path: skill.path,
+      });
+    }
+    for (const mention of input.mentions ?? []) {
+      turnInput.push({
+        type: "mention",
+        name: mention.name,
+        path: mention.path,
+      });
+    }
+    if (turnInput.length === 0) {
+      throw new Error("Turn input must include text or attachments.");
+    }
+
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing provider resume thread id.");
+    }
+
+    const response = await this.sendRequest(context, "turn/steer", {
+      threadId: providerThreadId,
+      input: turnInput,
+      expectedTurnId: activeTurnId,
+    });
+
+    const turnIdRaw = this.readString(this.readObject(response), "turnId");
+    if (!turnIdRaw) {
+      throw new Error("turn/steer response did not include a turn id.");
+    }
+    const turnId = TurnId.makeUnsafe(turnIdRaw);
+
+    this.updateSession(context, {
+      status: "running",
+      activeTurnId: turnId,
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
+    });
+
+    return {
+      threadId: context.session.threadId,
+      turnId,
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
+    };
+  }
+
+  async startReview(input: ProviderStartReviewInput): Promise<ProviderTurnStartResult> {
+    const context = this.requireSession(input.threadId);
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing a provider resume thread id.");
+    }
+
+    const response = await this.sendRequest(context, "review/start", {
+      threadId: providerThreadId,
+      delivery: "inline",
+      target: this.toCodexReviewTarget(input.target),
+    });
 
     const turn = this.readObject(this.readObject(response), "turn");
     const turnIdRaw = this.readString(turn, "id");
     if (!turnIdRaw) {
-      throw new Error("turn/start response did not include a turn id.");
+      throw new Error("review/start response did not include a turn id.");
     }
     const turnId = TurnId.makeUnsafe(turnIdRaw);
 
@@ -787,6 +1068,142 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       includeTurns: true,
     });
     return this.parseThreadSnapshot("thread/read", response);
+  }
+
+  async forkThread(input: ProviderForkThreadInput): Promise<ProviderForkThreadResult> {
+    const threadId = input.threadId;
+    const now = new Date().toISOString();
+    let context: CodexSessionContext | undefined;
+
+    try {
+      const sourceProviderThreadId = readResumeCursorThreadId(input.sourceResumeCursor);
+      if (!sourceProviderThreadId) {
+        throw new Error("Provider fork is missing the source thread resume id.");
+      }
+
+      const resolvedCwd = input.cwd ?? process.cwd();
+      const session: ProviderSession = {
+        provider: "codex",
+        status: "connecting",
+        runtimeMode: input.runtimeMode,
+        model:
+          input.modelSelection?.provider === "codex"
+            ? normalizeCodexModelSlug(input.modelSelection.model)
+            : undefined,
+        cwd: resolvedCwd,
+        threadId,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const codexOptions = readCodexProviderOptions({
+        threadId,
+        ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
+        runtimeMode: input.runtimeMode,
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+      });
+      const codexBinaryPath = codexOptions.binaryPath ?? "codex";
+      const codexHomePath = codexOptions.homePath;
+      this.assertSupportedCodexCliVersion({
+        binaryPath: codexBinaryPath,
+        cwd: resolvedCwd,
+        ...(codexHomePath ? { homePath: codexHomePath } : {}),
+      });
+      const child = spawn(codexBinaryPath, ["app-server"], {
+        cwd: resolvedCwd,
+        env: {
+          ...process.env,
+          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      });
+      const output = readline.createInterface({ input: child.stdout });
+
+      context = {
+        session,
+        account: {
+          type: "unknown",
+          planType: null,
+          sparkEnabled: true,
+        },
+        child,
+        output,
+        pending: new Map(),
+        pendingApprovals: new Map(),
+        pendingUserInputs: new Map(),
+        collabReceiverTurns: new Map(),
+        nextRequestId: 1,
+        stopping: false,
+      };
+
+      this.sessions.set(threadId, context);
+      this.attachProcessListeners(context);
+      this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
+
+      await this.sendRequest(context, "initialize", buildCodexInitializeParams());
+      this.writeMessage(context, { method: "initialized" });
+      try {
+        const accountReadResponse = await this.sendRequest(context, "account/read", {});
+        context.account = readCodexAccountSnapshot(accountReadResponse);
+      } catch {
+        // Fork can proceed without account metadata; model fallback will stay best-effort.
+      }
+
+      const normalizedModel =
+        input.modelSelection?.provider === "codex"
+          ? resolveCodexModelForAccount(
+              normalizeCodexModelSlug(input.modelSelection.model),
+              context.account,
+            )
+          : undefined;
+      const forkParams = {
+        threadId: sourceProviderThreadId,
+        ...(normalizedModel ? { model: normalizedModel } : {}),
+        ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
+          ? { serviceTier: "fast" as const }
+          : {}),
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...mapCodexRuntimeMode(input.runtimeMode),
+      };
+
+      this.emitLifecycleEvent(
+        context,
+        "session/threadOpenRequested",
+        `Forking Codex thread ${sourceProviderThreadId}.`,
+      );
+      const response = await this.sendRequest(context, "thread/fork", forkParams);
+      const forkedProviderThreadId = this.readThreadIdFromResponse("thread/fork", response);
+
+      this.updateSession(context, {
+        status: "ready",
+        resumeCursor: { threadId: forkedProviderThreadId },
+      });
+      this.emitLifecycleEvent(context, "session/threadOpenResolved", "Codex thread/fork resolved.");
+      this.emitLifecycleEvent(
+        context,
+        "session/ready",
+        `Connected to thread ${forkedProviderThreadId}`,
+      );
+
+      return {
+        threadId,
+        resumeCursor: {
+          threadId: forkedProviderThreadId,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fork Codex thread.";
+      if (context) {
+        this.updateSession(context, {
+          status: "error",
+          lastError: message,
+        });
+        this.emitErrorEvent(context, "session/threadForkFailed", message);
+        this.stopSession(threadId);
+      }
+      throw new Error(message, { cause: error });
+    }
   }
 
   async rollbackThread(threadId: ThreadId, numTurns: number): Promise<CodexThreadSnapshot> {
@@ -933,6 +1350,145 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     for (const threadId of this.sessions.keys()) {
       this.stopSession(threadId);
     }
+    for (const discoveryKey of this.discoverySessions.keys()) {
+      this.stopDiscoverySession(discoveryKey);
+    }
+  }
+
+  async listSkills(input: CodexSkillListInput): Promise<ProviderListSkillsResult> {
+    const cwd = input.cwd.trim();
+    const cacheKey = JSON.stringify({
+      cwd,
+      threadId: input.threadId?.trim() || null,
+    });
+    if (!input.forceReload) {
+      const cached = this.skillsCache.get(cacheKey);
+      if (cached) {
+        return {
+          ...cached,
+          cached: true,
+        };
+      }
+    }
+
+    const context = await this.resolveContextForDiscovery(input.threadId, cwd);
+    let response: Record<string, unknown>;
+    try {
+      response = await this.sendRequest<Record<string, unknown>>(context, "skills/list", {
+        cwds: [cwd],
+        ...(input.forceReload ? { forceReload: true } : {}),
+      });
+    } catch (error) {
+      if (!shouldRetrySkillsListWithCwdFallback(error)) {
+        throw error;
+      }
+      response = await this.sendRequest<Record<string, unknown>>(context, "skills/list", {
+        cwd,
+        ...(input.forceReload ? { forceReload: true } : {}),
+      });
+    }
+    const skills = this.parseSkillsListResponse(response, cwd);
+    const result: ProviderListSkillsResult = {
+      skills,
+      source: "codex-app-server",
+      cached: false,
+    };
+    this.skillsCache.set(cacheKey, result);
+    return result;
+  }
+
+  async listPlugins(input: CodexPluginListInput): Promise<ProviderListPluginsResult> {
+    const cwd = input.cwd?.trim() || null;
+    const cacheKey = JSON.stringify({
+      cwd,
+      threadId: input.threadId?.trim() || null,
+      forceRemoteSync: input.forceRemoteSync === true,
+    });
+    if (!input.forceReload) {
+      const cached = this.pluginsCache.get(cacheKey);
+      if (cached) {
+        return {
+          ...cached,
+          cached: true,
+        };
+      }
+    }
+
+    const context = await this.resolveContextForDiscovery(input.threadId, cwd ?? undefined);
+    const response = await this.sendRequest<Record<string, unknown>>(context, "plugin/list", {
+      ...(cwd ? { cwds: [cwd] } : {}),
+      ...(input.forceRemoteSync ? { forceRemoteSync: true } : {}),
+    });
+    const result: ProviderListPluginsResult = {
+      ...this.parsePluginListResponse(response),
+      source: "codex-app-server",
+      cached: false,
+    };
+    this.pluginsCache.set(cacheKey, result);
+    return result;
+  }
+
+  async readPlugin(input: CodexPluginReadInput): Promise<ProviderReadPluginResult> {
+    const marketplacePath = input.marketplacePath.trim();
+    const pluginName = input.pluginName.trim();
+    const cacheKey = JSON.stringify({
+      marketplacePath,
+      pluginName,
+    });
+    const cached = this.pluginDetailCache.get(cacheKey);
+    if (cached) {
+      return {
+        ...cached,
+        cached: true,
+      };
+    }
+
+    const context = await this.resolveContextForDiscovery(undefined);
+    const response = await this.sendRequest<Record<string, unknown>>(context, "plugin/read", {
+      marketplacePath,
+      pluginName,
+    });
+    const result: ProviderReadPluginResult = {
+      plugin: this.parsePluginReadResponse(response),
+      source: "codex-app-server",
+      cached: false,
+    };
+    this.pluginDetailCache.set(cacheKey, result);
+    return result;
+  }
+
+  async listModels(threadId?: string): Promise<ProviderListModelsResult> {
+    const cacheKey = threadId?.trim() || "__default__";
+    const cached = this.modelCache.get(cacheKey);
+    if (cached) {
+      return {
+        ...cached,
+        cached: true,
+      };
+    }
+
+    const context = await this.resolveContextForDiscovery(threadId);
+    const response = await this.sendRequest<Record<string, unknown>>(context, "model/list", {});
+    const models = this.parseModelListResponse(response);
+    const result: ProviderListModelsResult = {
+      models,
+      source: "codex-app-server",
+      cached: false,
+    };
+    this.modelCache.set(cacheKey, result);
+    return result;
+  }
+
+  getComposerCapabilities(): ProviderComposerCapabilities {
+    return {
+      provider: "codex",
+      supportsSkillMentions: true,
+      supportsSkillDiscovery: true,
+      supportsNativeSlashCommandDiscovery: false,
+      supportsPluginMentions: true,
+      supportsPluginDiscovery: true,
+      supportsRuntimeModelList: true,
+    };
   }
 
   private requireSession(threadId: ThreadId): CodexSessionContext {
@@ -946,6 +1502,113 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     return context;
+  }
+
+  private async resolveContextForDiscovery(
+    threadId?: string,
+    cwd?: string,
+  ): Promise<CodexSessionContext> {
+    const normalizedThreadId = threadId?.trim();
+    if (normalizedThreadId) {
+      try {
+        return this.requireSession(ThreadId.makeUnsafe(normalizedThreadId));
+      } catch {
+        // Discovery is read-only metadata, so if the current draft thread does not
+        // have a live Codex session yet we can safely fall back to any active
+        // Codex session instead of disabling skill autocomplete outright.
+      }
+    }
+    const firstActive = this.sessions.values().next().value;
+    if (firstActive) {
+      return firstActive;
+    }
+    return this.getOrCreateDiscoverySession(cwd?.trim() || process.cwd());
+  }
+
+  private async getOrCreateDiscoverySession(cwd: string): Promise<CodexSessionContext> {
+    const normalizedCwd = cwd.trim() || process.cwd();
+    const existing = this.discoverySessions.get(normalizedCwd);
+    if (existing && !existing.stopping && !existing.child.killed) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    this.assertSupportedCodexCliVersion({
+      binaryPath: "codex",
+      cwd: normalizedCwd,
+    });
+    const child = spawn("codex", ["app-server"], {
+      cwd: normalizedCwd,
+      env: { ...process.env },
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+    const output = readline.createInterface({ input: child.stdout });
+    const context: CodexSessionContext = {
+      session: {
+        provider: "codex",
+        status: "connecting",
+        runtimeMode: "full-access",
+        model: CODEX_DEFAULT_MODEL,
+        cwd: normalizedCwd,
+        threadId: ThreadId.makeUnsafe(`__codex_discovery__:${normalizedCwd}`),
+        createdAt: now,
+        updatedAt: now,
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      child,
+      output,
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+      nextRequestId: 1,
+      stopping: false,
+      discovery: true,
+    };
+
+    this.discoverySessions.set(normalizedCwd, context);
+    this.attachProcessListeners(context);
+    try {
+      await this.sendRequest(context, "initialize", buildCodexInitializeParams());
+      this.writeMessage(context, { method: "initialized" });
+      try {
+        const accountReadResponse = await this.sendRequest(context, "account/read", {});
+        context.account = readCodexAccountSnapshot(accountReadResponse);
+      } catch {
+        // Discovery can still function without account metadata.
+      }
+      this.updateSession(context, { status: "ready" });
+      return context;
+    } catch (error) {
+      this.stopDiscoverySession(normalizedCwd);
+      throw error;
+    }
+  }
+
+  private stopDiscoverySession(discoveryKey: string): void {
+    const context = this.discoverySessions.get(discoveryKey);
+    if (!context) {
+      return;
+    }
+
+    context.stopping = true;
+    for (const pending of context.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("Discovery session stopped before request completed."));
+    }
+    context.pending.clear();
+    context.output.close();
+
+    if (!context.child.killed) {
+      killChildTree(context.child);
+    }
+
+    this.discoverySessions.delete(discoveryKey);
   }
 
   private attachProcessListeners(context: CodexSessionContext): void {
@@ -962,7 +1625,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           continue;
         }
 
-        this.emitNotificationEvent(context, "process/stderr", classified.message);
+        this.emitErrorEvent(context, "process/stderr", classified.message);
       }
     });
 
@@ -987,7 +1650,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         lastError: code === 0 ? context.session.lastError : message,
       });
       this.emitLifecycleEvent(context, "session/exited", message);
-      this.sessions.delete(context.session.threadId);
+      if (context.discovery) {
+        const discoveryKey = context.session.cwd ?? "";
+        if (discoveryKey) {
+          this.discoverySessions.delete(discoveryKey);
+        }
+      } else {
+        this.sessions.delete(context.session.threadId);
+      }
     });
   }
 
@@ -1247,6 +1917,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private emitLifecycleEvent(context: CodexSessionContext, method: string, message: string): void {
+    if (context.discovery) {
+      return;
+    }
     this.emitEvent({
       id: EventId.makeUnsafe(randomUUID()),
       kind: "session",
@@ -1259,25 +1932,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private emitErrorEvent(context: CodexSessionContext, method: string, message: string): void {
+    if (context.discovery) {
+      return;
+    }
     this.emitEvent({
       id: EventId.makeUnsafe(randomUUID()),
       kind: "error",
-      provider: "codex",
-      threadId: context.session.threadId,
-      createdAt: new Date().toISOString(),
-      method,
-      message,
-    });
-  }
-
-  private emitNotificationEvent(
-    context: CodexSessionContext,
-    method: string,
-    message: string,
-  ): void {
-    this.emitEvent({
-      id: EventId.makeUnsafe(randomUUID()),
-      kind: "notification",
       provider: "codex",
       threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
@@ -1324,14 +1984,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private parseThreadSnapshot(method: string, response: unknown): CodexThreadSnapshot {
     const responseRecord = this.readObject(response);
-    const thread = this.readObject(responseRecord, "thread");
-    const threadIdRaw =
-      this.readString(thread, "id") ?? this.readString(responseRecord, "threadId");
-    if (!threadIdRaw) {
-      throw new Error(`${method} response did not include a thread id.`);
-    }
+    const threadIdRaw = this.readThreadIdFromResponse(method, responseRecord);
     const turnsRaw =
-      this.readArray(thread, "turns") ?? this.readArray(responseRecord, "turns") ?? [];
+      this.readArray(this.readObject(responseRecord, "thread"), "turns") ??
+      this.readArray(responseRecord, "turns") ??
+      [];
     const turns = turnsRaw.map((turnValue, index) => {
       const turn = this.readObject(turnValue);
       const turnIdRaw = this.readString(turn, "id") ?? `${threadIdRaw}:turn:${index + 1}`;
@@ -1347,6 +2004,31 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: threadIdRaw,
       turns,
     };
+  }
+
+  private toCodexReviewTarget(target: CodexAppServerReviewTarget): Record<string, unknown> {
+    switch (target.type) {
+      case "uncommittedChanges":
+        return {
+          type: "uncommittedChanges",
+        };
+      case "baseBranch":
+        return {
+          type: "baseBranch",
+          branch: target.branch,
+        };
+    }
+  }
+
+  private readThreadIdFromResponse(method: string, response: unknown): string {
+    const responseRecord = this.readObject(response);
+    const thread = this.readObject(responseRecord, "thread");
+    const threadIdRaw =
+      this.readString(thread, "id") ?? this.readString(responseRecord, "threadId");
+    if (!threadIdRaw) {
+      throw new Error(`${method} response did not include a thread id.`);
+    }
+    return threadIdRaw;
   }
 
   private isServerRequest(value: unknown): value is JsonRpcRequest {
@@ -1508,6 +2190,284 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const candidate = (value as Record<string, unknown>)[key];
     return typeof candidate === "boolean" ? candidate : undefined;
   }
+
+  private parseSkillDescriptor(skill: unknown): ProviderSkillDescriptor | undefined {
+    const record = this.readObject(skill);
+    if (!record) return undefined;
+    const name = this.readString(record, "name")?.trim();
+    const path = this.readString(record, "path")?.trim();
+    if (!name || !path) {
+      return undefined;
+    }
+    const description = this.readString(record, "description")?.trim();
+    const scope = this.readString(record, "scope")?.trim();
+    const display = this.readObject(record, "interface");
+    return {
+      name,
+      path,
+      enabled: record.enabled !== false,
+      ...(description ? { description } : {}),
+      ...(scope ? { scope } : {}),
+      ...(display
+        ? {
+            interface: {
+              ...(this.readString(display, "displayName")
+                ? { displayName: this.readString(display, "displayName") }
+                : {}),
+              ...(this.readString(display, "shortDescription")
+                ? { shortDescription: this.readString(display, "shortDescription") }
+                : {}),
+            },
+          }
+        : {}),
+      ...(record.dependencies !== undefined ? { dependencies: record.dependencies } : {}),
+    } satisfies ProviderSkillDescriptor;
+  }
+
+  private parseSkillsListResponse(response: unknown, cwd: string): ProviderSkillDescriptor[] {
+    const responseRecord = this.readObject(response);
+    const resultRecord = this.readObject(responseRecord, "result") ?? responseRecord;
+    const dataItems = this.readArray(resultRecord, "data") ?? [];
+    const scopedData = dataItems.find((value) => {
+      const item = this.readObject(value);
+      const itemCwd = this.readString(item, "cwd");
+      return itemCwd === cwd;
+    });
+    const scopedSkills = this.readArray(this.readObject(scopedData), "skills");
+    const directSkills = this.readArray(resultRecord, "skills");
+    const rawSkills = scopedSkills ?? directSkills ?? [];
+
+    const parsedSkills = rawSkills.flatMap((skill) => {
+      const parsedSkill = this.parseSkillDescriptor(skill);
+      return parsedSkill ? [parsedSkill] : [];
+    });
+
+    return parsedSkills.toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private parsePluginListResponse(
+    response: unknown,
+  ): Omit<ProviderListPluginsResult, "source" | "cached"> {
+    const responseRecord = this.readObject(response);
+    const resultRecord = this.readObject(responseRecord, "result") ?? responseRecord;
+    const marketplaces = (this.readArray(resultRecord, "marketplaces") ?? []).flatMap(
+      (marketplace) => {
+        const record = this.readObject(marketplace);
+        if (!record) return [];
+        const name = this.readString(record, "name")?.trim();
+        const path = this.readString(record, "path")?.trim();
+        if (!name || !path) {
+          return [];
+        }
+        const rawPlugins = this.readArray(record, "plugins") ?? [];
+        const plugins = rawPlugins.flatMap((plugin) => {
+          const parsedPlugin = this.parsePluginSummary(plugin);
+          return parsedPlugin ? [parsedPlugin] : [];
+        });
+        const marketplaceInterface = this.readObject(record, "interface");
+        const marketplaceDisplayName = this.readString(marketplaceInterface, "displayName")?.trim();
+        return [
+          {
+            name,
+            path,
+            ...(marketplaceDisplayName
+              ? {
+                  interface: {
+                    displayName: marketplaceDisplayName,
+                  },
+                }
+              : {}),
+            plugins,
+          },
+        ];
+      },
+    );
+    const marketplaceLoadErrors = (this.readArray(resultRecord, "marketplaceLoadErrors") ?? [])
+      .map((error) => this.readObject(error))
+      .flatMap((error) => {
+        if (!error) return [];
+        const marketplacePath = this.readString(error, "marketplacePath")?.trim();
+        const message = this.readString(error, "message")?.trim();
+        if (!marketplacePath || !message) {
+          return [];
+        }
+        return [{ marketplacePath, message }];
+      });
+    const featuredPluginIds = (this.readArray(resultRecord, "featuredPluginIds") ?? [])
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0);
+    const remoteSyncError = this.readString(resultRecord, "remoteSyncError")?.trim() ?? null;
+
+    return {
+      marketplaces,
+      marketplaceLoadErrors,
+      remoteSyncError: remoteSyncError?.length ? remoteSyncError : null,
+      featuredPluginIds,
+    };
+  }
+
+  private parsePluginSummary(plugin: unknown): ProviderPluginDescriptor | undefined {
+    const record = this.readObject(plugin);
+    if (!record) return undefined;
+    const id = this.readString(record, "id")?.trim();
+    const name = this.readString(record, "name")?.trim();
+    const source = this.readObject(record, "source");
+    const sourcePath = this.readString(source, "path")?.trim();
+    const installPolicy = this.readString(record, "installPolicy");
+    const authPolicy = this.readString(record, "authPolicy");
+    if (
+      !id ||
+      !name ||
+      !sourcePath ||
+      (installPolicy !== "NOT_AVAILABLE" &&
+        installPolicy !== "AVAILABLE" &&
+        installPolicy !== "INSTALLED_BY_DEFAULT") ||
+      (authPolicy !== "ON_INSTALL" && authPolicy !== "ON_USE")
+    ) {
+      return undefined;
+    }
+
+    const pluginInterface = this.parsePluginInterface(this.readObject(record, "interface"));
+
+    return {
+      id,
+      name,
+      source: {
+        type: "local",
+        path: sourcePath,
+      },
+      installed: record.installed === true,
+      enabled: record.enabled === true,
+      installPolicy,
+      authPolicy,
+      ...(pluginInterface ? { interface: pluginInterface } : {}),
+    } satisfies ProviderPluginDescriptor;
+  }
+
+  private parsePluginInterface(value: unknown): ProviderPluginDescriptor["interface"] | undefined {
+    const record = this.readObject(value);
+    if (!record) return undefined;
+    const capabilities = (this.readArray(record, "capabilities") ?? [])
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter((entry) => entry.length > 0);
+    const defaultPrompt = (this.readArray(record, "defaultPrompt") ?? [])
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter((entry) => entry.length > 0);
+    const screenshots = (this.readArray(record, "screenshots") ?? [])
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter((entry) => entry.length > 0);
+
+    return {
+      ...(this.readString(record, "displayName")?.trim()
+        ? { displayName: this.readString(record, "displayName")?.trim() }
+        : {}),
+      ...(this.readString(record, "shortDescription")?.trim()
+        ? { shortDescription: this.readString(record, "shortDescription")?.trim() }
+        : {}),
+      ...(this.readString(record, "longDescription")?.trim()
+        ? { longDescription: this.readString(record, "longDescription")?.trim() }
+        : {}),
+      ...(this.readString(record, "developerName")?.trim()
+        ? { developerName: this.readString(record, "developerName")?.trim() }
+        : {}),
+      ...(this.readString(record, "category")?.trim()
+        ? { category: this.readString(record, "category")?.trim() }
+        : {}),
+      ...(capabilities.length > 0 ? { capabilities } : {}),
+      ...(this.readString(record, "websiteUrl")?.trim()
+        ? { websiteUrl: this.readString(record, "websiteUrl")?.trim() }
+        : {}),
+      ...(this.readString(record, "privacyPolicyUrl")?.trim()
+        ? { privacyPolicyUrl: this.readString(record, "privacyPolicyUrl")?.trim() }
+        : {}),
+      ...(this.readString(record, "termsOfServiceUrl")?.trim()
+        ? { termsOfServiceUrl: this.readString(record, "termsOfServiceUrl")?.trim() }
+        : {}),
+      ...(defaultPrompt.length > 0 ? { defaultPrompt } : {}),
+      ...(this.readString(record, "brandColor")?.trim()
+        ? { brandColor: this.readString(record, "brandColor")?.trim() }
+        : {}),
+      ...(this.readString(record, "composerIcon")?.trim()
+        ? { composerIcon: this.readString(record, "composerIcon")?.trim() }
+        : {}),
+      ...(this.readString(record, "logo")?.trim()
+        ? { logo: this.readString(record, "logo")?.trim() }
+        : {}),
+      ...(screenshots.length > 0 ? { screenshots } : {}),
+    };
+  }
+
+  private parsePluginReadResponse(response: unknown): ProviderPluginDetail {
+    const responseRecord = this.readObject(response);
+    const resultRecord = this.readObject(responseRecord, "result") ?? responseRecord;
+    const pluginRecord = this.readObject(resultRecord, "plugin") ?? resultRecord;
+    const marketplaceName = this.readString(pluginRecord, "marketplaceName")?.trim();
+    const marketplacePath = this.readString(pluginRecord, "marketplacePath")?.trim();
+    const summary = this.parsePluginSummary(this.readObject(pluginRecord, "summary"));
+    if (!marketplaceName || !marketplacePath || !summary) {
+      throw new Error("plugin/read response did not include a valid plugin payload.");
+    }
+    const skills = (this.readArray(pluginRecord, "skills") ?? []).flatMap((skill) => {
+      const parsedSkill = this.parseSkillDescriptor(skill);
+      return parsedSkill ? [parsedSkill] : [];
+    });
+    const apps = (this.readArray(pluginRecord, "apps") ?? []).flatMap((app) => {
+      const parsedApp = this.parsePluginAppSummary(app);
+      return parsedApp ? [parsedApp] : [];
+    });
+    const mcpServers = (this.readArray(pluginRecord, "mcpServers") ?? [])
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0);
+    const description = this.readString(pluginRecord, "description")?.trim();
+
+    return {
+      marketplaceName,
+      marketplacePath,
+      summary,
+      ...(description ? { description } : {}),
+      skills,
+      apps,
+      mcpServers,
+    };
+  }
+
+  private parsePluginAppSummary(value: unknown): ProviderPluginAppSummary | undefined {
+    const record = this.readObject(value);
+    if (!record) return undefined;
+    const id = this.readString(record, "id")?.trim();
+    const name = this.readString(record, "name")?.trim();
+    if (!id || !name) {
+      return undefined;
+    }
+    const description = this.readString(record, "description")?.trim();
+    const installUrl = this.readString(record, "installUrl")?.trim();
+    return {
+      id,
+      name,
+      ...(description ? { description } : {}),
+      ...(installUrl ? { installUrl } : {}),
+      needsAuth: record.needsAuth === true,
+    };
+  }
+
+  private parseModelListResponse(response: unknown): ProviderListModelsResult["models"] {
+    const responseRecord = this.readObject(response);
+    const resultRecord = this.readObject(responseRecord, "result") ?? responseRecord;
+    const rawModels =
+      this.readArray(resultRecord, "models") ?? this.readArray(resultRecord, "data") ?? [];
+
+    return rawModels
+      .map((value) => this.readObject(value))
+      .flatMap((model) => {
+        if (!model) return [];
+        const slug = this.readString(model, "id") ?? this.readString(model, "slug");
+        const name = this.readString(model, "name") ?? slug;
+        if (!slug || !name) {
+          return [];
+        }
+        return [{ slug, name }];
+      });
+  }
 }
 
 function brandIfNonEmpty<T extends string>(
@@ -1520,6 +2480,20 @@ function brandIfNonEmpty<T extends string>(
 
 function normalizeProviderThreadId(value: string | undefined): string | undefined {
   return brandIfNonEmpty(value, (normalized) => normalized);
+}
+
+function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
+  readonly binaryPath?: string;
+  readonly homePath?: string;
+} {
+  const options = input.providerOptions?.codex;
+  if (!options) {
+    return {};
+  }
+  return {
+    ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
+    ...(options.homePath ? { homePath: options.homePath } : {}),
+  };
 }
 
 function assertSupportedCodexCliVersion(input: {
@@ -1575,11 +2549,7 @@ function readResumeCursorThreadId(resumeCursor: unknown): string | undefined {
   return typeof rawThreadId === "string" ? normalizeProviderThreadId(rawThreadId) : undefined;
 }
 
-function readResumeThreadId(input: {
-  readonly resumeCursor?: unknown;
-  readonly threadId?: ThreadId;
-  readonly runtimeMode?: RuntimeMode;
-}): string | undefined {
+function readResumeThreadId(input: CodexAppServerStartSessionInput): string | undefined {
   return readResumeCursorThreadId(input.resumeCursor);
 }
 

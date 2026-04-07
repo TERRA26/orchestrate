@@ -11,10 +11,11 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection } from "@t3tools/contracts";
+import { ModelSelection, ThreadHandoff } from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
+    handoff: Schema.NullOr(Schema.fromJsonString(ThreadHandoff)),
     modelSelection: Schema.fromJsonString(ModelSelection),
   }),
 );
@@ -34,12 +35,14 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json,
           runtime_mode,
           interaction_mode,
+          env_mode,
           branch,
           worktree_path,
+          fork_source_thread_id,
           latest_turn_id,
+          handoff_json,
           created_at,
           updated_at,
-          archived_at,
           deleted_at
         )
         VALUES (
@@ -49,12 +52,14 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${JSON.stringify(row.modelSelection)},
           ${row.runtimeMode},
           ${row.interactionMode},
+          ${row.envMode},
           ${row.branch},
           ${row.worktreePath},
+          ${row.forkSourceThreadId ?? null},
           ${row.latestTurnId},
+          ${row.handoff === null ? null : JSON.stringify(row.handoff)},
           ${row.createdAt},
           ${row.updatedAt},
-          ${row.archivedAt},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -64,12 +69,14 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
+          env_mode = excluded.env_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
+          fork_source_thread_id = excluded.fork_source_thread_id,
           latest_turn_id = excluded.latest_turn_id,
+          handoff_json = excluded.handoff_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
-          archived_at = excluded.archived_at,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -86,12 +93,14 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          env_mode AS "envMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
           latest_turn_id AS "latestTurnId",
+          handoff_json AS "handoff",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          archived_at AS "archivedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -110,12 +119,14 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          env_mode AS "envMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
           latest_turn_id AS "latestTurnId",
+          handoff_json AS "handoff",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          archived_at AS "archivedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

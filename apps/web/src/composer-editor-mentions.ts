@@ -13,11 +13,19 @@ export type ComposerPromptSegment =
       path: string;
     }
   | {
+      type: "skill";
+      name: string;
+      prefix?: string;
+    }
+  | {
       type: "terminal-context";
       context: TerminalContextDraft | null;
     };
 
 const MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s)/g;
+const SKILL_TOKEN_REGEX = /(^|\s)(\$)([a-zA-Z][a-zA-Z0-9_:-]*)(?=\s)/g;
+const DISPLAY_MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s|$)/g;
+const DISPLAY_SKILL_TOKEN_REGEX = /(^|\s)(\$)([a-zA-Z][a-zA-Z0-9_:-]*)(?=\s|$)/g;
 
 function pushTextSegment(segments: ComposerPromptSegment[], text: string): void {
   if (!text) return;
@@ -29,32 +37,90 @@ function pushTextSegment(segments: ComposerPromptSegment[], text: string): void 
   segments.push({ type: "text", text });
 }
 
-function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegment[] {
+type InlineTokenMatch = {
+  kind: "mention" | "skill";
+  value: string;
+  skillPrefix?: string;
+  start: number;
+  end: number;
+};
+
+function collectInlineTokenMatches(
+  text: string,
+  options: {
+    includeTrailingTokenAtEnd: boolean;
+  },
+): InlineTokenMatch[] {
+  const matches: InlineTokenMatch[] = [];
+  const mentionRegex = options.includeTrailingTokenAtEnd
+    ? DISPLAY_MENTION_TOKEN_REGEX
+    : MENTION_TOKEN_REGEX;
+  const skillRegex = options.includeTrailingTokenAtEnd
+    ? DISPLAY_SKILL_TOKEN_REGEX
+    : SKILL_TOKEN_REGEX;
+
+  for (const match of text.matchAll(mentionRegex)) {
+    const fullMatch = match[0];
+    const prefix = match[1] ?? "";
+    const path = match[2] ?? "";
+    const matchIndex = match.index ?? 0;
+    const start = matchIndex + prefix.length;
+    const end = start + fullMatch.length - prefix.length;
+    if (path.length > 0) {
+      matches.push({ kind: "mention", value: path, start, end });
+    }
+  }
+
+  for (const match of text.matchAll(skillRegex)) {
+    const fullMatch = match[0];
+    const whitespace = match[1] ?? "";
+    const skillPrefix = match[2] ?? "$";
+    const name = match[3] ?? "";
+    const matchIndex = match.index ?? 0;
+    const start = matchIndex + whitespace.length;
+    const end = start + fullMatch.length - whitespace.length;
+    // Keep raw slash commands editable in the composer. Only `$foo` becomes a
+    // skill chip once it is delimited.
+    if (name.length > 0) {
+      matches.push({ kind: "skill", value: name, skillPrefix, start, end });
+    }
+  }
+
+  matches.sort((a, b) => a.start - b.start);
+  return matches;
+}
+
+function splitTextIntoPromptSegments(
+  text: string,
+  options: {
+    includeTrailingTokenAtEnd: boolean;
+  },
+): ComposerPromptSegment[] {
   const segments: ComposerPromptSegment[] = [];
   if (!text) {
     return segments;
   }
 
+  const matches = collectInlineTokenMatches(text, options);
   let cursor = 0;
-  for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
-    const fullMatch = match[0];
-    const prefix = match[1] ?? "";
-    const path = match[2] ?? "";
-    const matchIndex = match.index ?? 0;
-    const mentionStart = matchIndex + prefix.length;
-    const mentionEnd = mentionStart + fullMatch.length - prefix.length;
 
-    if (mentionStart > cursor) {
-      pushTextSegment(segments, text.slice(cursor, mentionStart));
+  for (const match of matches) {
+    if (match.start < cursor) continue;
+
+    if (match.start > cursor) {
+      pushTextSegment(segments, text.slice(cursor, match.start));
     }
 
-    if (path.length > 0) {
-      segments.push({ type: "mention", path });
+    if (match.kind === "mention") {
+      segments.push({ type: "mention", path: match.value });
     } else {
-      pushTextSegment(segments, text.slice(mentionStart, mentionEnd));
+      const skillSegment: ComposerPromptSegment = match.skillPrefix
+        ? { type: "skill", name: match.value, prefix: match.skillPrefix }
+        : { type: "skill", name: match.value };
+      segments.push(skillSegment);
     }
 
-    cursor = mentionEnd;
+    cursor = match.end;
   }
 
   if (cursor < text.length) {
@@ -62,6 +128,12 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
   }
 
   return segments;
+}
+
+export function splitPromptIntoDisplaySegments(prompt: string): ComposerPromptSegment[] {
+  return splitTextIntoPromptSegments(prompt, {
+    includeTrailingTokenAtEnd: true,
+  });
 }
 
 export function splitPromptIntoComposerSegments(
@@ -82,7 +154,11 @@ export function splitPromptIntoComposerSegments(
     }
 
     if (index > textCursor) {
-      segments.push(...splitPromptTextIntoComposerSegments(prompt.slice(textCursor, index)));
+      segments.push(
+        ...splitTextIntoPromptSegments(prompt.slice(textCursor, index), {
+          includeTrailingTokenAtEnd: false,
+        }),
+      );
     }
     segments.push({
       type: "terminal-context",
@@ -93,7 +169,11 @@ export function splitPromptIntoComposerSegments(
   }
 
   if (textCursor < prompt.length) {
-    segments.push(...splitPromptTextIntoComposerSegments(prompt.slice(textCursor)));
+    segments.push(
+      ...splitTextIntoPromptSegments(prompt.slice(textCursor), {
+        includeTrailingTokenAtEnd: false,
+      }),
+    );
   }
 
   return segments;

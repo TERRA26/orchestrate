@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minesweeper</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      /* ── Grid ── */
+      .grid-wrapper {
+        display: flex;
+        justify-content: center;
+        overflow-x: auto;
+        padding-bottom: 1rem;
+      }
+
+      .grid {
+        display: inline-grid;
+        gap: 2px;
+        background: var(--bg-surface);
+        border: 2px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 4px;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: manipulation;
+      }
+
+      .cell {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        font-weight: 700;
+        border-radius: 4px;
+        cursor: pointer;
+        transition:
+          background 0.1s,
+          transform 0.1s,
+          box-shadow 0.1s;
+        position: relative;
+      }
+
+      /* Unrevealed (raised / 3D) */
+      .cell.unrevealed {
+        background: var(--bg-card);
+        border: 1px solid var(--border-light);
+        box-shadow:
+          inset 1px 1px 0 rgba(255, 255, 255, 0.06),
+          inset -1px -1px 0 rgba(0, 0, 0, 0.2);
+      }
+
+      .cell.unrevealed:hover {
+        background: var(--bg-card-hover);
+        transform: translateY(-1px);
+        box-shadow:
+          inset 1px 1px 0 rgba(255, 255, 255, 0.08),
+          0 2px 6px rgba(0, 0, 0, 0.3);
+      }
+
+      .cell.unrevealed:active {
+        transform: translateY(0);
+        box-shadow: none;
+      }
+
+      /* Revealed (flat) */
+      .cell.revealed {
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        cursor: default;
+      }
+
+      /* Flagged */
+      .cell.flagged {
+        font-size: 1rem;
+      }
+
+      /* Mine */
+      .cell.mine-hit {
+        background: var(--danger) !important;
+        border-color: var(--danger) !important;
+      }
+
+      .cell.mine-revealed {
+        background: rgba(248, 113, 113, 0.15);
+        border-color: rgba(248, 113, 113, 0.3);
+        font-size: 1rem;
+      }
+
+      .cell.wrong-flag {
+        background: rgba(248, 113, 113, 0.15);
+        border-color: rgba(248, 113, 113, 0.3);
+        text-decoration: line-through;
+        font-size: 1rem;
+      }
+
+      /* Number colours */
+      .cell.n1 {
+        color: #60a5fa;
+      }
+      .cell.n2 {
+        color: #34d399;
+      }
+      .cell.n3 {
+        color: #f87171;
+      }
+      .cell.n4 {
+        color: #a78bfa;
+      }
+      .cell.n5 {
+        color: #f59e0b;
+      }
+      .cell.n6 {
+        color: #22d3ee;
+      }
+      .cell.n7 {
+        color: #e879f9;
+      }
+      .cell.n8 {
+        color: #94a3b8;
+      }
+
+      /* ── Score bar tweaks ── */
+      .score-bar .btn {
+        margin-left: 0.5rem;
+      }
+
+      /* ── Modal extras ── */
+      .modal .stats {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .modal .stat {
+        text-align: center;
+      }
+
+      .modal .stat .stat-label {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .modal .stat .stat-value {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: var(--accent-light);
+      }
+
+      .modal .emoji {
+        font-size: 3rem;
+        margin-bottom: 0.5rem;
+      }
+
+      .modal .buttons {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: center;
+      }
+
+      /* ── Responsive ── */
+      @media (max-width: 640px) {
+        .cell {
+          width: 26px;
+          height: 26px;
+          font-size: 0.75rem;
+        }
+        .cell.flagged,
+        .cell.mine-revealed,
+        .cell.mine-hit {
+          font-size: 0.85rem;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .cell {
+          width: 22px;
+          height: 22px;
+          font-size: 0.65rem;
+        }
+        .cell.flagged,
+        .cell.mine-revealed,
+        .cell.mine-hit {
+          font-size: 0.75rem;
+        }
+        .grid {
+          gap: 1px;
+          padding: 3px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Header -->
+    <header class="game-header">
+      <a href="/" class="back-link">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        Games
+      </a>
+      <h1>Minesweeper</h1>
+    </header>
+
+    <div class="game-container">
+      <!-- Difficulty selector -->
+      <div class="mode-selector" id="difficulty">
+        <button class="btn btn-secondary active" data-difficulty="easy">Easy</button>
+        <button class="btn btn-secondary" data-difficulty="medium">Medium</button>
+        <button class="btn btn-secondary" data-difficulty="hard">Hard</button>
+      </div>
+
+      <!-- Score bar -->
+      <div class="score-bar">
+        <div class="score-item">
+          <div class="label">Mines</div>
+          <div class="value" id="mine-count">10</div>
+        </div>
+        <div class="score-item">
+          <div class="label">Time</div>
+          <div class="value" id="timer">0</div>
+        </div>
+        <div class="score-item">
+          <button class="btn btn-primary btn-sm" id="new-game-btn">New Game</button>
+        </div>
+      </div>
+
+      <!-- Grid -->
+      <div class="grid-wrapper">
+        <div class="grid" id="grid"></div>
+      </div>
+    </div>
+
+    <!-- Overlay -->
+    <div class="overlay" id="overlay">
+      <div class="modal" id="modal"></div>
+    </div>
+
+    <script>
+      (() => {
+        "use strict";
+
+        // ── Difficulty presets ──
+        const PRESETS = {
+          easy: { cols: 9, rows: 9, mines: 10 },
+          medium: { cols: 16, rows: 16, mines: 40 },
+          hard: { cols: 30, rows: 16, mines: 99 },
+        };
+
+        // ── State ──
+        let difficulty = "easy";
+        let cols, rows, totalMines;
+        let board; // flat array of cell objects
+        let minesPlaced;
+        let flagCount;
+        let revealedCount;
+        let gameOver;
+        let gameWon;
+        let firstClick;
+        let timerInterval;
+        let elapsedSeconds;
+
+        // ── DOM refs ──
+        const gridEl = document.getElementById("grid");
+        const mineCountEl = document.getElementById("mine-count");
+        const timerEl = document.getElementById("timer");
+        const overlayEl = document.getElementById("overlay");
+        const modalEl = document.getElementById("modal");
+        const newGameBtn = document.getElementById("new-game-btn");
+        const diffBtns = document.querySelectorAll("#difficulty .btn");
+
+        // ── Helpers ──
+        function idx(r, c) {
+          return r * cols + c;
+        }
+
+        function neighbors(r, c) {
+          const result = [];
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              if (dr === 0 && dc === 0) continue;
+              const nr = r + dr,
+                nc = c + dc;
+              if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                result.push({ r: nr, c: nc });
+              }
+            }
+          }
+          return result;
+        }
+
+        // ── Initialize board ──
+        function initBoard() {
+          const preset = PRESETS[difficulty];
+          cols = preset.cols;
+          rows = preset.rows;
+          totalMines = preset.mines;
+
+          board = [];
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              board.push({
+                r,
+                c,
+                mine: false,
+                revealed: false,
+                flagged: false,
+                adjacent: 0,
+                el: null,
+              });
+            }
+          }
+
+          minesPlaced = false;
+          flagCount = 0;
+          revealedCount = 0;
+          gameOver = false;
+          gameWon = false;
+          firstClick = true;
+          elapsedSeconds = 0;
+          clearInterval(timerInterval);
+          timerInterval = null;
+
+          mineCountEl.textContent = totalMines;
+          timerEl.textContent = "0";
+          overlayEl.classList.remove("active");
+
+          renderGrid();
+        }
+
+        // ── Place mines (after first click) ──
+        function placeMines(safeR, safeC) {
+          // Collect safe zone indices (clicked cell + neighbors)
+          const safeSet = new Set();
+          safeSet.add(idx(safeR, safeC));
+          for (const { r, c } of neighbors(safeR, safeC)) {
+            safeSet.add(idx(r, c));
+          }
+
+          // Collect eligible positions
+          const eligible = [];
+          for (let i = 0; i < board.length; i++) {
+            if (!safeSet.has(i)) eligible.push(i);
+          }
+
+          // Shuffle & pick
+          for (let i = eligible.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
+          }
+
+          for (let m = 0; m < totalMines; m++) {
+            board[eligible[m]].mine = true;
+          }
+
+          // Compute adjacency counts
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              if (board[idx(r, c)].mine) continue;
+              let count = 0;
+              for (const nb of neighbors(r, c)) {
+                if (board[idx(nb.r, nb.c)].mine) count++;
+              }
+              board[idx(r, c)].adjacent = count;
+            }
+          }
+
+          minesPlaced = true;
+        }
+
+        // ── Render grid ──
+        function renderGrid() {
+          gridEl.innerHTML = "";
+          gridEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+          for (let i = 0; i < board.length; i++) {
+            const cell = board[i];
+            const el = document.createElement("div");
+            el.className = "cell unrevealed";
+            el.dataset.index = i;
+            cell.el = el;
+            gridEl.appendChild(el);
+          }
+        }
+
+        // ── Update a single cell's DOM ──
+        function updateCell(cell) {
+          const el = cell.el;
+          el.className = "cell";
+          el.textContent = "";
+
+          if (cell.revealed) {
+            if (cell.mine) {
+              el.classList.add("mine-revealed");
+              el.textContent = "\u{1F4A3}";
+            } else {
+              el.classList.add("revealed");
+              if (cell.adjacent > 0) {
+                el.classList.add("n" + cell.adjacent);
+                el.textContent = cell.adjacent;
+              }
+            }
+          } else if (cell.flagged) {
+            el.classList.add("unrevealed", "flagged");
+            el.textContent = "\u{1F6A9}";
+          } else {
+            el.classList.add("unrevealed");
+          }
+        }
+
+        // ── Reveal cell ──
+        function revealCell(r, c) {
+          const cell = board[idx(r, c)];
+          if (cell.revealed || cell.flagged || gameOver) return;
+
+          cell.revealed = true;
+          revealedCount++;
+
+          if (cell.mine) {
+            // Game over
+            cell.el.className = "cell mine-hit";
+            cell.el.textContent = "\u{1F4A3}";
+            endGame(false);
+            return;
+          }
+
+          updateCell(cell);
+
+          // Flood fill if empty
+          if (cell.adjacent === 0) {
+            for (const nb of neighbors(r, c)) {
+              revealCell(nb.r, nb.c);
+            }
+          }
+
+          // Win check
+          if (revealedCount === rows * cols - totalMines) {
+            endGame(true);
+          }
+        }
+
+        // ── Toggle flag ──
+        function toggleFlag(r, c) {
+          const cell = board[idx(r, c)];
+          if (cell.revealed || gameOver) return;
+
+          cell.flagged = !cell.flagged;
+          flagCount += cell.flagged ? 1 : -1;
+          mineCountEl.textContent = totalMines - flagCount;
+          updateCell(cell);
+        }
+
+        // ── Timer ──
+        function startTimer() {
+          if (timerInterval) return;
+          timerInterval = setInterval(() => {
+            elapsedSeconds++;
+            timerEl.textContent = elapsedSeconds;
+          }, 1000);
+        }
+
+        function stopTimer() {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+
+        // ── End game ──
+        function endGame(won) {
+          gameOver = true;
+          gameWon = won;
+          stopTimer();
+
+          // Reveal all mines / mark wrong flags
+          for (const cell of board) {
+            if (cell.mine && !cell.revealed && !cell.flagged) {
+              cell.revealed = true;
+              cell.el.className = "cell mine-revealed";
+              cell.el.textContent = "\u{1F4A3}";
+            }
+            if (!cell.mine && cell.flagged) {
+              cell.el.className = "cell wrong-flag";
+              cell.el.textContent = "\u{1F6A9}\u274C";
+            }
+            // Auto-flag unflagged mines on win
+            if (won && cell.mine && !cell.flagged) {
+              cell.flagged = true;
+              cell.el.className = "cell unrevealed flagged";
+              cell.el.textContent = "\u{1F6A9}";
+            }
+          }
+
+          if (won) {
+            mineCountEl.textContent = "0";
+          }
+
+          showOverlay(won);
+        }
+
+        // ── Overlay ──
+        function showOverlay(won) {
+          if (won) {
+            modalEl.innerHTML = `
+        <div class="emoji">\u{1F3C6}</div>
+        <h2>You Win!</h2>
+        <p>Congratulations! You cleared the minefield.</p>
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-label">Time</div>
+            <div class="stat-value">${elapsedSeconds}s</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Difficulty</div>
+            <div class="stat-value">${difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}</div>
+          </div>
+        </div>
+        <div class="buttons">
+          <button class="btn btn-primary" onclick="document.getElementById('overlay').classList.remove('active'); document.getElementById('new-game-btn').click();">Play Again</button>
+        </div>
+      `;
+          } else {
+            modalEl.innerHTML = `
+        <div class="emoji">\u{1F4A5}</div>
+        <h2>Game Over</h2>
+        <p>You hit a mine! Better luck next time.</p>
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-label">Time</div>
+            <div class="stat-value">${elapsedSeconds}s</div>
+          </div>
+        </div>
+        <div class="buttons">
+          <button class="btn btn-primary" onclick="document.getElementById('overlay').classList.remove('active'); document.getElementById('new-game-btn').click();">Try Again</button>
+        </div>
+      `;
+          }
+
+          overlayEl.classList.add("active");
+        }
+
+        // ── Long-press detection for mobile flagging ──
+        let longPressTimer = null;
+        let longPressTriggered = false;
+
+        // ── Event handlers ──
+
+        // Left click
+        gridEl.addEventListener("click", (e) => {
+          if (longPressTriggered) {
+            longPressTriggered = false;
+            return;
+          }
+          const el = e.target.closest(".cell");
+          if (!el || gameOver) return;
+
+          const i = parseInt(el.dataset.index);
+          const cell = board[i];
+
+          if (cell.flagged) return;
+
+          if (firstClick) {
+            firstClick = false;
+            placeMines(cell.r, cell.c);
+            startTimer();
+          }
+
+          revealCell(cell.r, cell.c);
+        });
+
+        // Right click (flag)
+        gridEl.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          const el = e.target.closest(".cell");
+          if (!el || gameOver) return;
+
+          const i = parseInt(el.dataset.index);
+          const cell = board[i];
+
+          if (firstClick) return; // can't flag before first reveal
+
+          toggleFlag(cell.r, cell.c);
+        });
+
+        // Long-press for mobile flagging
+        gridEl.addEventListener(
+          "touchstart",
+          (e) => {
+            const el = e.target.closest(".cell");
+            if (!el || gameOver) return;
+
+            longPressTriggered = false;
+            longPressTimer = setTimeout(() => {
+              longPressTriggered = true;
+              const i = parseInt(el.dataset.index);
+              const cell = board[i];
+              if (!firstClick) {
+                toggleFlag(cell.r, cell.c);
+              }
+            }, 400);
+          },
+          { passive: true },
+        );
+
+        gridEl.addEventListener("touchend", () => {
+          clearTimeout(longPressTimer);
+        });
+
+        gridEl.addEventListener("touchmove", () => {
+          clearTimeout(longPressTimer);
+        });
+
+        // Prevent context menu on grid for all devices
+        gridEl.addEventListener("contextmenu", (e) => e.preventDefault());
+
+        // Difficulty buttons
+        diffBtns.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            diffBtns.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            difficulty = btn.dataset.difficulty;
+            initBoard();
+          });
+        });
+
+        // New game button
+        newGameBtn.addEventListener("click", () => initBoard());
+
+        // Close overlay on background click
+        overlayEl.addEventListener("click", (e) => {
+          if (e.target === overlayEl) {
+            overlayEl.classList.remove("active");
+          }
+        });
+
+        // ── Start ──
+        initBoard();
+      })();
+    </script>
+  </body>
+</html>

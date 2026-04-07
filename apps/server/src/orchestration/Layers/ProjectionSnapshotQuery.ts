@@ -7,6 +7,8 @@ import {
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   ProjectScript,
+  ProviderMentionReference,
+  ProviderSkillReference,
   ThreadId,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -17,6 +19,7 @@ import {
   type OrchestrationSession,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  ThreadHandoff,
   ModelSelection,
 } from "@t3tools/contracts";
 import { Effect, Layer, Schema, Struct } from "effect";
@@ -54,11 +57,14 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    skills: Schema.NullOr(Schema.fromJsonString(Schema.Array(ProviderSkillReference))),
+    mentions: Schema.NullOr(Schema.fromJsonString(Schema.Array(ProviderMentionReference))),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
+    handoff: Schema.NullOr(Schema.fromJsonString(ThreadHandoff)),
     modelSelection: Schema.fromJsonString(ModelSelection),
   }),
 );
@@ -169,12 +175,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          env_mode AS "envMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
           latest_turn_id AS "latestTurnId",
+          handoff_json AS "handoff",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          archived_at AS "archivedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -193,7 +201,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          skills_json AS "skills",
+          mentions_json AS "mentions",
           is_streaming AS "isStreaming",
+          source,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -435,8 +446,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               role: row.role,
               text: row.text,
               ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+              ...(row.skills !== null ? { skills: row.skills } : {}),
+              ...(row.mentions !== null ? { mentions: row.mentions } : {}),
               turnId: row.turnId,
               streaming: row.isStreaming === 1,
+              source: row.source,
               createdAt: row.createdAt,
               updatedAt: row.updatedAt,
             });
@@ -556,13 +570,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             modelSelection: row.modelSelection,
             runtimeMode: row.runtimeMode,
             interactionMode: row.interactionMode,
+            envMode: row.envMode,
             branch: row.branch,
             worktreePath: row.worktreePath,
+            forkSourceThreadId: row.forkSourceThreadId,
             latestTurn: latestTurnByThread.get(row.threadId) ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
-            archivedAt: row.archivedAt,
             deletedAt: row.deletedAt,
+            handoff: row.handoff,
             messages: messagesByThread.get(row.threadId) ?? [],
             proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
             activities: activitiesByThread.get(row.threadId) ?? [],

@@ -10,6 +10,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  Notification,
   nativeImage,
   nativeTheme,
   protocol,
@@ -18,9 +19,14 @@ import {
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
+  BrowserNavigateInput,
+  BrowserNewTabInput,
+  BrowserOpenInput,
+  BrowserSetPanelBoundsInput,
+  BrowserTabInput,
+  BrowserThreadInput,
   DesktopTheme,
   DesktopUpdateActionResult,
-  DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
@@ -44,6 +50,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { DesktopBrowserManager } from "./browserManager";
 
 syncShellEnvironment();
 
@@ -57,17 +64,31 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
-const UPDATE_CHECK_CHANNEL = "desktop:update-check";
-const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const NOTIFICATIONS_IS_SUPPORTED_CHANNEL = "desktop:notifications-is-supported";
+const NOTIFICATIONS_SHOW_CHANNEL = "desktop:notifications-show";
+const BROWSER_STATE_CHANNEL = "desktop:browser-state";
+const BROWSER_OPEN_CHANNEL = "desktop:browser-open";
+const BROWSER_CLOSE_CHANNEL = "desktop:browser-close";
+const BROWSER_HIDE_CHANNEL = "desktop:browser-hide";
+const BROWSER_GET_STATE_CHANNEL = "desktop:browser-get-state";
+const BROWSER_SET_BOUNDS_CHANNEL = "desktop:browser-set-bounds";
+const BROWSER_NAVIGATE_CHANNEL = "desktop:browser-navigate";
+const BROWSER_RELOAD_CHANNEL = "desktop:browser-reload";
+const BROWSER_GO_BACK_CHANNEL = "desktop:browser-go-back";
+const BROWSER_GO_FORWARD_CHANNEL = "desktop:browser-go-forward";
+const BROWSER_NEW_TAB_CHANNEL = "desktop:browser-new-tab";
+const BROWSER_CLOSE_TAB_CHANNEL = "desktop:browser-close-tab";
+const BROWSER_SELECT_TAB_CHANNEL = "desktop:browser-select-tab";
+const BROWSER_OPEN_DEVTOOLS_CHANNEL = "desktop:browser-open-devtools";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const APP_DISPLAY_NAME = isDevelopment ? "DP Code (Dev)" : "DP Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
 const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
-const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "DP Code (Dev)" : "DP Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
@@ -94,6 +115,11 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+const browserManager = new DesktopBrowserManager();
+
+browserManager.subscribe((state) => {
+  mainWindow?.webContents.send(BROWSER_STATE_CHANNEL, state);
+});
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
@@ -114,17 +140,6 @@ function logScope(scope: string): string {
 
 function sanitizeLogValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
-}
-
-function backendChildEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.T3CODE_PORT;
-  delete env.T3CODE_AUTH_TOKEN;
-  delete env.T3CODE_MODE;
-  delete env.T3CODE_NO_BROWSER;
-  delete env.T3CODE_HOST;
-  delete env.T3CODE_DESKTOP_WS_URL;
-  return env;
 }
 
 function writeDesktopLogHeader(message: string): void {
@@ -289,12 +304,10 @@ let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 let updateStartupTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
-let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
-  if (updateInstallInFlight) return "install";
   if (updateDownloadInFlight) return "download";
   if (updateCheckInFlight) return "check";
   return updateState.errorContext;
@@ -456,7 +469,7 @@ function handleFatalStartupError(stage: string, error: unknown): void {
   console.error(`[desktop] fatal startup error (${stage})`, error);
   if (!isQuitting) {
     isQuitting = true;
-    dialog.showErrorBox("T3 Code failed to start", `Stage: ${stage}\n${message}${detail}`);
+    dialog.showErrorBox("DP Code failed to start", `Stage: ${stage}\n${message}${detail}`);
   }
   stopBackend();
   restoreStdIoCapture?.();
@@ -561,7 +574,7 @@ async function checkForUpdatesFromMenu(): Promise<void> {
     void dialog.showMessageBox({
       type: "info",
       title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
+      message: `DP Code ${updateState.currentVersion} is currently the newest version available.`,
       buttons: ["OK"],
     });
   } else if (updateState.status === "error") {
@@ -626,6 +639,17 @@ function configureApplicationMenu(): void {
     {
       label: "View",
       submenu: [
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CmdOrCtrl+B",
+          click: () => dispatchMenuAction("toggle-sidebar"),
+        },
+        {
+          label: "Toggle Browser",
+          accelerator: "CmdOrCtrl+Shift+B",
+          click: () => dispatchMenuAction("toggle-browser"),
+        },
+        { type: "separator" },
         { role: "reload" },
         { role: "forceReload" },
         { role: "toggleDevTools" },
@@ -674,12 +698,49 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
   return resolveResourcePath(`icon.${ext}`);
 }
 
+// Show a native OS notification and refocus the app window when the alert is clicked.
+function showDesktopNotification(input: {
+  title: string;
+  body?: string;
+  silent?: boolean;
+}): boolean {
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const body = typeof input.body === "string" ? input.body.trim() : "";
+  if (title.length === 0 || !Notification.isSupported()) {
+    return false;
+  }
+
+  const iconPath = resolveIconPath("png");
+  const notification = new Notification({
+    title,
+    body,
+    silent: input.silent === true,
+    ...(iconPath ? { icon: iconPath } : {}),
+  });
+
+  notification.on("click", () => {
+    if (!mainWindow) {
+      return;
+    }
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+  });
+
+  notification.show();
+  return true;
+}
+
 /**
  * Resolve the Electron userData directory path.
  *
  * Electron derives the default userData path from `productName` in
  * package.json, which currently produces directories with spaces and
- * parentheses (e.g. `~/.config/T3 Code (Alpha)` on Linux). This is
+ * parentheses (e.g. `~/.config/DP Code (Alpha)` on Linux). This is
  * unfriendly for shell usage and violates Linux naming conventions.
  *
  * We override it to a clean lowercase name (`t3code`). If the legacy
@@ -715,12 +776,8 @@ function configureAppIdentity(): void {
     app.setAppUserModelId(APP_USER_MODEL_ID);
   }
 
-  if (process.platform === "darwin" && app.dock) {
-    const iconPath = resolveIconPath("png");
-    if (iconPath) {
-      app.dock.setIcon(iconPath);
-    }
-  }
+  // On macOS the dock icon comes from the .icns in the app bundle;
+  // calling dock.setIcon() with a raw PNG bypasses the OS rounded mask.
 }
 
 function clearUpdatePollTimer(): void {
@@ -758,13 +815,13 @@ function shouldEnableAutoUpdates(): boolean {
   );
 }
 
-async function checkForUpdates(reason: string): Promise<boolean> {
-  if (isQuitting || !updaterConfigured || updateCheckInFlight) return false;
+async function checkForUpdates(reason: string): Promise<void> {
+  if (isQuitting || !updaterConfigured || updateCheckInFlight) return;
   if (updateState.status === "downloading" || updateState.status === "downloaded") {
     console.info(
       `[desktop-updater] Skipping update check (${reason}) while status=${updateState.status}.`,
     );
-    return false;
+    return;
   }
   updateCheckInFlight = true;
   setUpdateState(reduceDesktopUpdateStateOnCheckStart(updateState, new Date().toISOString()));
@@ -772,14 +829,12 @@ async function checkForUpdates(reason: string): Promise<boolean> {
 
   try {
     await autoUpdater.checkForUpdates();
-    return true;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     setUpdateState(
       reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
     );
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
-    return true;
   } finally {
     updateCheckInFlight = false;
   }
@@ -813,22 +868,13 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
   }
 
   isQuitting = true;
-  updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
     await stopBackendAndWaitForExit();
-    // Destroy all windows before launching the NSIS installer to avoid the installer finding live windows it needs to close.
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.destroy();
-    }
-    // `quitAndInstall()` only starts the handoff to the updater. The actual
-    // install may still fail asynchronously, so keep the action incomplete
-    // until we either quit or receive an updater error.
-    autoUpdater.quitAndInstall(true, true);
-    return { accepted: true, completed: false };
+    autoUpdater.quitAndInstall();
+    return { accepted: true, completed: true };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
-    updateInstallInFlight = false;
     isQuitting = false;
     setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
     console.error(`[desktop-updater] Failed to install update: ${message}`);
@@ -863,13 +909,6 @@ function configureAutoUpdater(): void {
         token: githubToken,
       });
     }
-  }
-
-  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
-    autoUpdater.setFeedURL({
-      provider: "generic",
-      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
-    });
   }
 
   autoUpdater.autoDownload = false;
@@ -908,13 +947,6 @@ function configureAutoUpdater(): void {
   });
   autoUpdater.on("error", (error) => {
     const message = formatErrorMessage(error);
-    if (updateInstallInFlight) {
-      updateInstallInFlight = false;
-      isQuitting = false;
-      setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
-      console.error(`[desktop-updater] Updater error: ${message}`);
-      return;
-    }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
       setUpdateState({
         status: "error",
@@ -959,6 +991,17 @@ function configureAutoUpdater(): void {
   }, AUTO_UPDATE_POLL_INTERVAL_MS);
   updatePollTimer.unref();
 }
+function backendEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    T3CODE_MODE: "desktop",
+    T3CODE_NO_BROWSER: "1",
+    T3CODE_PORT: String(backendPort),
+    T3CODE_HOME: BASE_DIR,
+    T3CODE_AUTH_TOKEN: backendAuthToken,
+  };
+}
+
 function scheduleBackendRestart(reason: string): void {
   if (isQuitting || restartTimer) return;
 
@@ -982,35 +1025,16 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
-  const child = ChildProcess.spawn(process.execPath, [backendEntry, "--bootstrap-fd", "3"], {
+  const child = ChildProcess.spawn(process.execPath, [backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
     env: {
-      ...backendChildEnv(),
+      ...backendEnv(),
       ELECTRON_RUN_AS_NODE: "1",
     },
-    stdio: captureBackendLogs
-      ? ["ignore", "pipe", "pipe", "pipe"]
-      : ["ignore", "inherit", "inherit", "pipe"],
+    stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
   });
-  const bootstrapStream = child.stdio[3];
-  if (bootstrapStream && "write" in bootstrapStream) {
-    bootstrapStream.write(
-      `${JSON.stringify({
-        mode: "desktop",
-        noBrowser: true,
-        port: backendPort,
-        t3Home: BASE_DIR,
-        authToken: backendAuthToken,
-      })}\n`,
-    );
-    bootstrapStream.end();
-  } else {
-    child.kill("SIGTERM");
-    scheduleBackendRestart("missing desktop bootstrap pipe");
-    return;
-  }
   backendProcess = child;
   let backendSessionClosed = false;
   const closeBackendSession = (details: string) => {
@@ -1121,11 +1145,6 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.removeAllListeners(GET_WS_URL_CHANNEL);
-  ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
-    event.returnValue = backendWsUrl;
-  });
-
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
@@ -1170,7 +1189,6 @@ function registerIpcHandlers(): void {
           id: item.id,
           label: item.label,
           destructive: item.destructive === true,
-          disabled: item.disabled === true,
         }));
       if (normalizedItems.length === 0) {
         return null;
@@ -1201,7 +1219,6 @@ function registerIpcHandlers(): void {
           }
           const itemOption: MenuItemConstructorOptions = {
             label: item.label,
-            enabled: !item.disabled,
             click: () => resolve(item.id),
           };
           if (item.destructive) {
@@ -1268,19 +1285,86 @@ function registerIpcHandlers(): void {
     } satisfies DesktopUpdateActionResult;
   });
 
-  ipcMain.removeHandler(UPDATE_CHECK_CHANNEL);
-  ipcMain.handle(UPDATE_CHECK_CHANNEL, async () => {
-    if (!updaterConfigured) {
-      return {
-        checked: false,
-        state: updateState,
-      } satisfies DesktopUpdateCheckResult;
-    }
-    const checked = await checkForUpdates("web-ui");
-    return {
-      checked,
-      state: updateState,
-    } satisfies DesktopUpdateCheckResult;
+  ipcMain.removeHandler(NOTIFICATIONS_IS_SUPPORTED_CHANNEL);
+  ipcMain.handle(NOTIFICATIONS_IS_SUPPORTED_CHANNEL, async () => Notification.isSupported());
+
+  ipcMain.removeHandler(NOTIFICATIONS_SHOW_CHANNEL);
+  ipcMain.handle(
+    NOTIFICATIONS_SHOW_CHANNEL,
+    async (
+      _event,
+      input: { title?: unknown; body?: unknown; silent?: unknown } | null | undefined,
+    ) =>
+      showDesktopNotification({
+        title: typeof input?.title === "string" ? input.title : "",
+        body: typeof input?.body === "string" ? input.body : "",
+        silent: input?.silent === true,
+      }),
+  );
+
+  ipcMain.removeHandler(BROWSER_OPEN_CHANNEL);
+  ipcMain.handle(BROWSER_OPEN_CHANNEL, async (_event, input: BrowserOpenInput) =>
+    browserManager.open(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_CLOSE_CHANNEL);
+  ipcMain.handle(BROWSER_CLOSE_CHANNEL, async (_event, input: BrowserThreadInput) =>
+    browserManager.close(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_HIDE_CHANNEL);
+  ipcMain.handle(BROWSER_HIDE_CHANNEL, async (_event, input: BrowserThreadInput) => {
+    browserManager.hide(input);
+  });
+
+  ipcMain.removeHandler(BROWSER_GET_STATE_CHANNEL);
+  ipcMain.handle(BROWSER_GET_STATE_CHANNEL, async (_event, input: BrowserThreadInput) =>
+    browserManager.getState(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_SET_BOUNDS_CHANNEL);
+  ipcMain.handle(BROWSER_SET_BOUNDS_CHANNEL, async (_event, input: BrowserSetPanelBoundsInput) =>
+    browserManager.setPanelBounds(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_NAVIGATE_CHANNEL);
+  ipcMain.handle(BROWSER_NAVIGATE_CHANNEL, async (_event, input: BrowserNavigateInput) =>
+    browserManager.navigate(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_RELOAD_CHANNEL);
+  ipcMain.handle(BROWSER_RELOAD_CHANNEL, async (_event, input: BrowserTabInput) =>
+    browserManager.reload(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_GO_BACK_CHANNEL);
+  ipcMain.handle(BROWSER_GO_BACK_CHANNEL, async (_event, input: BrowserTabInput) =>
+    browserManager.goBack(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_GO_FORWARD_CHANNEL);
+  ipcMain.handle(BROWSER_GO_FORWARD_CHANNEL, async (_event, input: BrowserTabInput) =>
+    browserManager.goForward(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_NEW_TAB_CHANNEL);
+  ipcMain.handle(BROWSER_NEW_TAB_CHANNEL, async (_event, input: BrowserNewTabInput) =>
+    browserManager.newTab(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_CLOSE_TAB_CHANNEL);
+  ipcMain.handle(BROWSER_CLOSE_TAB_CHANNEL, async (_event, input: BrowserTabInput) =>
+    browserManager.closeTab(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_SELECT_TAB_CHANNEL);
+  ipcMain.handle(BROWSER_SELECT_TAB_CHANNEL, async (_event, input: BrowserTabInput) =>
+    browserManager.selectTab(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_OPEN_DEVTOOLS_CHANNEL);
+  ipcMain.handle(BROWSER_OPEN_DEVTOOLS_CHANNEL, async (_event, input: BrowserTabInput) => {
+    browserManager.openDevTools(input);
   });
 }
 
@@ -1303,6 +1387,9 @@ function createWindow(): BrowserWindow {
     title: APP_DISPLAY_NAME,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 18 },
+    vibrancy: "under-window",
+    visualEffectState: "active",
+    backgroundColor: "#00000000",
     webPreferences: {
       preload: Path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -1310,6 +1397,7 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   });
+  browserManager.setWindow(window);
 
   window.webContents.on("context-menu", (event, params) => {
     event.preventDefault();
@@ -1370,6 +1458,7 @@ function createWindow(): BrowserWindow {
     if (mainWindow === window) {
       mainWindow = null;
     }
+    browserManager.setWindow(null);
   });
 
   return window;
@@ -1391,9 +1480,9 @@ async function bootstrap(): Promise<void> {
   );
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
-  const baseUrl = `ws://127.0.0.1:${backendPort}`;
-  backendWsUrl = `${baseUrl}/?token=${encodeURIComponent(backendAuthToken)}`;
-  writeDesktopLogHeader(`bootstrap resolved websocket endpoint baseUrl=${baseUrl}`);
+  backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
+  process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
+  writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
@@ -1405,10 +1494,10 @@ async function bootstrap(): Promise<void> {
 
 app.on("before-quit", () => {
   isQuitting = true;
-  updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
   stopBackend();
+  browserManager.dispose();
   restoreStdIoCapture?.();
 });
 
@@ -1435,7 +1524,7 @@ app
   });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !isQuitting) {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });

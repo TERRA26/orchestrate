@@ -1,4 +1,6 @@
 import {
+  CLAUDE_CODE_EFFORT_OPTIONS,
+  CODEX_REASONING_EFFORT_OPTIONS,
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ClaudeCodeEffort,
@@ -8,6 +10,65 @@ import {
   type ModelSelection,
   type ProviderKind,
 } from "@t3tools/contracts";
+
+// ── Default model capabilities ────────────────────────────────────────
+
+const DEFAULT_CODEX_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: CODEX_REASONING_EFFORT_OPTIONS.map((value) => ({
+    value,
+    label: value,
+    ...(value === "high" ? { isDefault: true } : {}),
+  })),
+  supportsFastMode: true,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
+const DEFAULT_CLAUDE_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: CLAUDE_CODE_EFFORT_OPTIONS.filter((v) => v !== "ultrathink").map(
+    (value) => ({
+      value,
+      label: value,
+      ...(value === "high" ? { isDefault: true } : {}),
+    }),
+  ),
+  supportsFastMode: true,
+  supportsThinkingToggle: true,
+  contextWindowOptions: [
+    { value: "default", label: "Default", isDefault: true },
+    { value: "1m", label: "1M" },
+  ],
+  promptInjectedEffortLevels: ["ultrathink"],
+};
+
+const EMPTY_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [],
+  supportsFastMode: false,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
+/**
+ * Return static model capabilities for a given provider and optional model slug.
+ *
+ * This provides sensible defaults when capabilities haven't been fetched from
+ * the server yet.
+ */
+export function getModelCapabilities(
+  provider: ProviderKind,
+  _model?: string | null | undefined,
+): ModelCapabilities {
+  switch (provider) {
+    case "codex":
+      return DEFAULT_CODEX_CAPABILITIES;
+    case "claudeAgent":
+      return DEFAULT_CLAUDE_CAPABILITIES;
+    default:
+      return EMPTY_CAPABILITIES;
+  }
+}
 
 export interface SelectableModelOption {
   slug: string;

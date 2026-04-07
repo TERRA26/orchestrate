@@ -32,10 +32,10 @@ import {
   Undo2Icon,
   WrenchIcon,
   ZapIcon,
-} from "lucide-react";
+} from "~/lib/icons";
 import { Button } from "../ui/button";
 import { clamp } from "effect/Number";
-import { estimateTimelineMessageHeight } from "../timelineHeight";
+import { estimateTimelineMessageHeight, estimateTimelineWorkGroupHeight } from "../timelineHeight";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -48,13 +48,21 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { formatTimestamp } from "../../timestampFormat";
+import { type TimestampFormat } from "../../appSettings";
+import { formatShortTimestamp } from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
+import { splitPromptIntoDisplaySegments } from "~/composer-editor-mentions";
+import {
+  COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
+  COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
+  COMPOSER_INLINE_SKILL_CHIP_ICON_CLASS_NAME,
+  COMPOSER_INLINE_SKILL_CHIP_ICON_SVG,
+  formatComposerSkillChipLabel,
+} from "../composerInlineChip";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -64,6 +72,7 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
+  emptyStateContent?: ReactNode;
   scrollContainer: HTMLDivElement | null;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
@@ -105,6 +114,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  emptyStateContent,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -241,19 +251,49 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     minimum: 0,
     maximum: rows.length,
   });
+  const [allDirectoriesExpandedByTurnId, setAllDirectoriesExpandedByTurnId] = useState<
+    Record<string, boolean>
+  >({});
+  const onToggleAllDirectories = useCallback((turnId: TurnId) => {
+    setAllDirectoriesExpandedByTurnId((current) => ({
+      ...current,
+      [turnId]: !(current[turnId] ?? true),
+    }));
+  }, []);
 
   const rowVirtualizer = useVirtualizer({
     count: virtualizedRowCount,
     getScrollElement: () => scrollContainer,
     // Use stable row ids so virtual measurements do not leak across thread switches.
     getItemKey: (index: number) => rows[index]?.id ?? index,
+    // Keep pre-measure placements close to the final layout so fast scrolls do not visually stack rows.
     estimateSize: (index: number) => {
       const row = rows[index];
       if (!row) return 96;
-      if (row.kind === "work") return 112;
+      if (row.kind === "work") {
+        return estimateTimelineWorkGroupHeight(row.groupedEntries, {
+          expanded: expandedWorkGroups[row.id] ?? false,
+          maxVisibleEntries: MAX_VISIBLE_WORK_LOG_ENTRIES,
+        });
+      }
       if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
       if (row.kind === "working") return 40;
-      return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
+      const turnSummary =
+        row.message.role === "assistant"
+          ? turnDiffSummaryByAssistantMessageId.get(row.message.id)
+          : undefined;
+      const messageHeightInput = {
+        ...row.message,
+        showCompletionDivider: row.showCompletionDivider,
+      };
+      if (turnSummary) {
+        Object.assign(messageHeightInput, {
+          diffSummaryFiles: turnSummary.files,
+          diffSummaryAllDirectoriesExpanded:
+            allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true,
+        });
+      }
+      return estimateTimelineMessageHeight(messageHeightInput, { timelineWidthPx });
     },
     measureElement: measureVirtualElement,
     useAnimationFrameWithResizeObserver: true,
@@ -263,15 +303,43 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     if (timelineWidthPx === null) return;
     rowVirtualizer.measure();
   }, [rowVirtualizer, timelineWidthPx]);
+  useLayoutEffect(() => {
+    if (!scrollContainer || typeof ResizeObserver === "undefined") return;
+
+    let lastViewportWidth = -1;
+    let lastViewportHeight = -1;
+    // Re-measure when the scroll viewport changes because composer/panel chrome
+    // can steal vertical space without remounting the timeline.
+    const syncViewportSize = () => {
+      const nextViewportWidth = scrollContainer.clientWidth;
+      const nextViewportHeight = scrollContainer.clientHeight;
+      if (
+        Math.abs(nextViewportWidth - lastViewportWidth) < 0.5 &&
+        Math.abs(nextViewportHeight - lastViewportHeight) < 0.5
+      ) {
+        return;
+      }
+      lastViewportWidth = nextViewportWidth;
+      lastViewportHeight = nextViewportHeight;
+      rowVirtualizer.measure();
+    };
+
+    syncViewportSize();
+    const observer = new ResizeObserver(() => {
+      syncViewportSize();
+    });
+    observer.observe(scrollContainer);
+    return () => {
+      observer.disconnect();
+    };
+  }, [rowVirtualizer, scrollContainer]);
   useEffect(() => {
-    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+    rowVirtualizer.measure();
+  }, [rowVirtualizer, expandedWorkGroups, allDirectoriesExpandedByTurnId]);
+  useEffect(() => {
+    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
       const viewportHeight = instance.scrollRect?.height ?? 0;
       const scrollOffset = instance.scrollOffset ?? 0;
-      const itemIntersectsViewport =
-        item.end > scrollOffset && item.start < scrollOffset + viewportHeight;
-      if (itemIntersectsViewport) {
-        return false;
-      }
       const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
       return remainingDistance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
     };
@@ -298,15 +366,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);
-  const [allDirectoriesExpandedByTurnId, setAllDirectoriesExpandedByTurnId] = useState<
-    Record<string, boolean>
-  >({});
-  const onToggleAllDirectories = useCallback((turnId: TurnId) => {
-    setAllDirectoriesExpandedByTurnId((current) => ({
-      ...current,
-      [turnId]: !(current[turnId] ?? true),
-    }));
-  }, []);
 
   const renderRowContent = (row: TimelineRow) => (
     <div
@@ -334,13 +393,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
               {showHeader && (
                 <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-                  <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
+                  <p className="font-mono text-[9px] text-muted-foreground/55">
                     {groupLabel} ({groupedEntries.length})
                   </p>
                   {hasOverflow && (
                     <button
                       type="button"
-                      className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+                      className="font-mono text-[9px] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
                       onClick={() => onToggleWorkGroup(groupId)}
                     >
                       {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
@@ -365,72 +424,77 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                onImageExpand(preview);
-                              }}
-                            >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="h-full max-h-[220px] w-full object-cover"
-                                onLoad={onTimelineImageLoad}
-                                onError={onTimelineImageLoad}
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                )}
-                {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
-                  <UserMessageBody
-                    text={displayedUserMessage.visibleText}
-                    terminalContexts={terminalContexts}
-                  />
-                )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+            <div className="flex w-full justify-end">
+              <div className="group flex max-w-[80%] flex-col items-end gap-1">
+                {/* Keep user-message chrome outside the bubble so the message reads as one simple block. */}
+                <div className="w-max max-w-full min-w-0 self-end rounded-xl border border-border/70 bg-secondary px-[14px] py-1.5">
+                  {userImages.length > 0 && (
+                    <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                      {userImages.map(
+                        (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                          <div
+                            key={image.id}
+                            className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                          >
+                            {image.previewUrl ? (
+                              <button
+                                type="button"
+                                className="h-full w-full cursor-zoom-in"
+                                aria-label={`Preview ${image.name}`}
+                                onClick={() => {
+                                  const preview = buildExpandedImagePreview(userImages, image.id);
+                                  if (!preview) return;
+                                  onImageExpand(preview);
+                                }}
+                              >
+                                <img
+                                  src={image.previewUrl}
+                                  alt={image.name}
+                                  className="h-full max-h-[220px] w-full object-cover"
+                                  onLoad={onTimelineImageLoad}
+                                  onError={onTimelineImageLoad}
+                                />
+                              </button>
+                            ) : (
+                              <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                                {image.name}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  )}
+                  {(displayedUserMessage.visibleText.trim().length > 0 ||
+                    terminalContexts.length > 0) && (
+                    <UserMessageBody
+                      text={displayedUserMessage.visibleText}
+                      terminalContexts={terminalContexts}
+                    />
+                  )}
+                </div>
+                <div className="flex items-center justify-end gap-1.5 pr-0.5">
+                  <div className="flex items-center gap-1 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                     {displayedUserMessage.copyText && (
                       <MessageCopyButton text={displayedUserMessage.copyText} />
                     )}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
-                        size="xs"
-                        variant="outline"
+                        size="icon-xs"
+                        variant="ghost"
+                        className="size-auto rounded-none border-0 bg-transparent p-0 text-muted-foreground/55 shadow-none hover:bg-transparent hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
                         disabled={isRevertingCheckpoint || isWorking}
                         onClick={() => onRevertUserMessage(row.message.id)}
                         title="Revert to this message"
+                        aria-label="Revert to this message"
                       >
                         <Undo2Icon className="size-3" />
                       </Button>
                     )}
                   </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(row.message.createdAt, timestampFormat)}
+                  <p className="text-right font-mono text-[10px] text-muted-foreground/45">
+                    {formatShortTimestamp(row.message.createdAt, timestampFormat)}
                   </p>
                 </div>
               </div>
@@ -447,7 +511,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               {row.showCompletionDivider && (
                 <div className="my-3 flex items-center gap-3">
                   <span className="h-px flex-1 bg-border" />
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                  <span className="rounded-full border border-border bg-background px-2.5 py-1 font-mono text-[10px] text-muted-foreground/80">
                     {completionSummary ? `Response • ${completionSummary}` : "Response"}
                   </span>
                   <span className="h-px flex-1 bg-border" />
@@ -471,7 +535,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   return (
                     <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                        <p className="font-mono text-[10px] text-muted-foreground/65">
                           <span>Changed files ({changedFileCountLabel})</span>
                           {hasNonZeroStat(summaryStat) && (
                             <>
@@ -488,7 +552,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             type="button"
                             size="xs"
                             variant="outline"
-                            data-scroll-anchor-ignore
                             onClick={() => onToggleAllDirectories(turnSummary.turnId)}
                           >
                             {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
@@ -516,7 +579,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                <p className="mt-1.5 font-mono text-[10px] text-muted-foreground/45">
                   {formatMessageMeta(
                     row.message.createdAt,
                     row.message.streaming
@@ -560,6 +623,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   if (!hasMessages && !isWorking) {
+    if (emptyStateContent) {
+      return <div className="flex h-full items-center justify-center">{emptyStateContent}</div>;
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground/30">
@@ -663,8 +729,8 @@ function formatMessageMeta(
   duration: string | null,
   timestampFormat: TimestampFormat,
 ): string {
-  if (!duration) return formatTimestamp(createdAt, timestampFormat);
-  return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
+  if (!duration) return formatShortTimestamp(createdAt, timestampFormat);
+  return `${formatShortTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
 
 const UserMessageTerminalContextInlineLabel = memo(
@@ -677,6 +743,58 @@ const UserMessageTerminalContextInlineLabel = memo(
     return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
   },
 );
+
+const UserMessageInlineSkillChip = memo(function UserMessageInlineSkillChip(props: {
+  skillName: string;
+}) {
+  return (
+    <span className={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}>
+      <span
+        aria-hidden="true"
+        className={COMPOSER_INLINE_SKILL_CHIP_ICON_CLASS_NAME}
+        dangerouslySetInnerHTML={{ __html: COMPOSER_INLINE_SKILL_CHIP_ICON_SVG }}
+      />
+      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>
+        {formatComposerSkillChipLabel(props.skillName)}
+      </span>
+    </span>
+  );
+});
+
+// Renders read-only user text with the same inline skill pill treatment as the composer.
+function renderUserMessageInlineText(text: string, keyPrefix: string): ReactNode[] {
+  return splitPromptIntoDisplaySegments(text).flatMap((segment, index) => {
+    const key = `${keyPrefix}:${index}`;
+    if (segment.type === "text") {
+      return segment.text.length > 0 ? [<span key={`${key}:text`}>{segment.text}</span>] : [];
+    }
+    if (segment.type === "skill") {
+      return [<UserMessageInlineSkillChip key={`${key}:skill`} skillName={segment.name} />];
+    }
+    if (segment.type === "mention") {
+      return [<span key={`${key}:mention`}>{`@${segment.path}`}</span>];
+    }
+    return [];
+  });
+}
+
+function hasOnlyInlineSkillChips(text: string): boolean {
+  const segments = splitPromptIntoDisplaySegments(text);
+  let skillCount = 0;
+
+  for (const segment of segments) {
+    if (segment.type === "skill") {
+      skillCount += 1;
+      continue;
+    }
+    if (segment.type === "text" && segment.text.trim().length === 0) {
+      continue;
+    }
+    return false;
+  }
+
+  return skillCount > 0;
+}
 
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
@@ -702,9 +820,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
         if (matchIndex > cursor) {
           inlineNodes.push(
-            <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              {props.text.slice(cursor, matchIndex)}
-            </span>,
+            ...renderUserMessageInlineText(
+              props.text.slice(cursor, matchIndex),
+              `user-terminal-context-inline-before:${context.header}:${cursor}`,
+            ),
           );
         }
         inlineNodes.push(
@@ -719,14 +838,15 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       if (inlineNodes.length > 0) {
         if (cursor < props.text.length) {
           inlineNodes.push(
-            <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
-              {props.text.slice(cursor)}
-            </span>,
+            ...renderUserMessageInlineText(
+              props.text.slice(cursor),
+              `user-message-terminal-context-inline-rest:${cursor}`,
+            ),
           );
         }
 
         return (
-          <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+          <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
             {inlineNodes}
           </div>
         );
@@ -748,13 +868,15 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     if (props.text.length > 0) {
-      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
+      inlineNodes.push(
+        ...renderUserMessageInlineText(props.text, "user-message-terminal-context-inline-text"),
+      );
     } else if (inlinePrefix.length === 0) {
       return null;
     }
 
     return (
-      <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+      <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
         {inlineNodes}
       </div>
     );
@@ -764,10 +886,18 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     return null;
   }
 
+  if (props.terminalContexts.length === 0 && hasOnlyInlineSkillChips(props.text)) {
+    return (
+      <div className="flex max-w-full min-w-0 items-center leading-none text-foreground">
+        {renderUserMessageInlineText(props.text, "user-message-inline-chip-only")}
+      </div>
+    );
+  }
+
   return (
-    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-      {props.text}
-    </pre>
+    <div className="inline-block max-w-full min-w-0 whitespace-pre-wrap break-words font-system-ui text-sm leading-relaxed text-foreground">
+      {renderUserMessageInlineText(props.text, "user-message-inline")}
+    </div>
   );
 });
 

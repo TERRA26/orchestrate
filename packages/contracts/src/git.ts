@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
+const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 
 // Domain Types
 
@@ -84,6 +85,11 @@ export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
 export const GitListBranchesInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  query: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256))),
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(GIT_LIST_BRANCHES_MAX_LIMIT)),
+  ),
 });
 export type GitListBranchesInput = typeof GitListBranchesInput.Type;
 
@@ -168,6 +174,8 @@ export const GitListBranchesResult = Schema.Struct({
   branches: Schema.Array(GitBranch),
   isRepo: Schema.Boolean,
   hasOriginRemote: Schema.Boolean,
+  nextCursor: NonNegativeInt.pipe(Schema.NullOr),
+  totalCount: NonNegativeInt,
 });
 export type GitListBranchesResult = typeof GitListBranchesResult.Type;
 

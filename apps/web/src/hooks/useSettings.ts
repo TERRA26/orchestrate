@@ -153,7 +153,12 @@ export function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<s
   }
 
   if (Schema.is(ModelSelection)(legacySettings.textGenerationModelSelection)) {
-    patch.textGenerationModelSelection = legacySettings.textGenerationModelSelection;
+    const selection = legacySettings.textGenerationModelSelection;
+    patch.textGenerationModelSelection = {
+      provider: selection.provider,
+      model: selection.model,
+      ...(selection.options ? { options: selection.options } : {}),
+    };
   }
 
   if (typeof legacySettings.codexBinaryPath === "string") {

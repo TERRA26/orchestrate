@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minesweeper</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="header">
+        <div class="counter mine-counter" id="mine-counter">040</div>
+        <button class="smiley-btn" id="smiley-btn" title="New Game">😊</button>
+        <div class="counter timer" id="timer">000</div>
+      </header>
+      <nav class="difficulty-bar">
+        <button class="diff-btn" data-difficulty="easy">Easy</button>
+        <button class="diff-btn active" data-difficulty="medium">Medium</button>
+        <button class="diff-btn" data-difficulty="hard">Hard</button>
+      </nav>
+      <div class="board-wrapper">
+        <div class="board" id="board"></div>
+      </div>
+      <div class="overlay hidden" id="overlay">
+        <div class="overlay-content">
+          <h2 id="overlay-title"></h2>
+          <p id="overlay-message"></p>
+          <button class="overlay-btn" id="overlay-btn">New Game</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "neon-pinball",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A standalone HTML5 Canvas pinball game with neon arcade aesthetics",
+  "type": "module",
+  "scripts": {
+    "serve": "node server.js",
+    "serve:bun": "bun run server.ts",
+    "start": "node server.js"
+  }
+}

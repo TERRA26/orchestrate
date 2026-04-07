@@ -1,9 +1,12 @@
 import { TurnId } from "@t3tools/contracts";
 
+export type ChatRightPanel = "diff" | "browser" | undefined;
+
 export interface DiffRouteSearch {
   diff?: "1" | undefined;
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
+  panel?: ChatRightPanel;
 }
 
 function isDiffOpenValue(value: unknown): boolean {

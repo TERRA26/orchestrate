@@ -22,32 +22,16 @@ import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
+import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
-import { readBootstrapEnvelope } from "./bootstrap";
-import { ServerSettingsLive } from "./serverSettings";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
-
-const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
-
-const BootstrapEnvelopeSchema = Schema.Struct({
-  mode: Schema.optional(Schema.String),
-  port: Schema.optional(PortSchema),
-  host: Schema.optional(Schema.String),
-  t3Home: Schema.optional(Schema.String),
-  devUrl: Schema.optional(Schema.URLFromString),
-  noBrowser: Schema.optional(Schema.Boolean),
-  authToken: Schema.optional(Schema.String),
-  autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
-  logWebSocketEvents: Schema.optional(Schema.Boolean),
-});
 
 interface CliInput {
   readonly mode: Option.Option<RuntimeMode>;
@@ -57,7 +41,6 @@ interface CliInput {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
-  readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
 }
@@ -108,8 +91,12 @@ export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
 const CliEnvConfig = Config.all({
   mode: Config.string("T3CODE_MODE").pipe(
     Config.option,
-    Config.map(Option.map((value) => (value === "desktop" ? "desktop" : "web"))),
-    Config.map(Option.getOrUndefined),
+    Config.map(
+      Option.match<RuntimeMode, string>({
+        onNone: () => "web",
+        onSome: (value) => (value === "desktop" ? "desktop" : "web"),
+      }),
+    ),
   ),
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
@@ -120,10 +107,6 @@ const CliEnvConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   authToken: Config.string("T3CODE_AUTH_TOKEN").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
-  bootstrapFd: Config.int("T3CODE_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -140,14 +123,6 @@ const CliEnvConfig = Config.all({
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
   Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
 
-const resolveOptionPrecedence = <Value>(
-  ...values: ReadonlyArray<Option.Option<Value>>
-): Option.Option<Value> => Option.firstSomeOf(values);
-
-const isValidPort = (value: number): boolean => value >= 1 && value <= 65_535;
-const isRuntimeMode = (value: string): value is RuntimeMode =>
-  value === "web" || value === "desktop";
-
 const ServerConfigLive = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
@@ -161,115 +136,41 @@ const ServerConfigLive = (input: CliInput) =>
         ),
       );
 
-      const bootstrapFd = Option.getOrUndefined(input.bootstrapFd) ?? env.bootstrapFd;
-      const bootstrapEnvelope =
-        bootstrapFd !== undefined
-          ? yield* readBootstrapEnvelope(BootstrapEnvelopeSchema, bootstrapFd)
-          : Option.none();
+      const mode = Option.getOrElse(input.mode, () => env.mode);
 
-      const mode: RuntimeMode = Option.getOrElse(
-        resolveOptionPrecedence(
-          input.mode,
-          Option.fromUndefinedOr(env.mode),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.filter(Option.fromUndefinedOr(bootstrap.mode), isRuntimeMode),
-          ),
-        ),
-        () => "web",
-      );
-      const port = yield* Option.match(
-        resolveOptionPrecedence(
-          input.port,
-          Option.fromUndefinedOr(env.port),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.filter(Option.fromUndefinedOr(bootstrap.port), isValidPort),
-          ),
-        ),
-        {
-          onSome: (value) => Effect.succeed(value),
-          onNone: () => {
-            if (mode === "desktop") {
-              return Effect.succeed(DEFAULT_PORT);
-            }
-            return findAvailablePort(DEFAULT_PORT);
-          },
+      const port = yield* Option.match(input.port, {
+        onSome: (value) => Effect.succeed(value),
+        onNone: () => {
+          if (env.port) {
+            return Effect.succeed(env.port);
+          }
+          if (mode === "desktop") {
+            return Effect.succeed(DEFAULT_PORT);
+          }
+          return findAvailablePort(DEFAULT_PORT);
         },
-      );
+      });
 
-      const devUrl = Option.getOrElse(
-        resolveOptionPrecedence(
-          input.devUrl,
-          Option.fromUndefinedOr(env.devUrl),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.devUrl),
-          ),
-        ),
-        () => undefined,
-      );
-      const baseDir = yield* resolveBaseDir(
-        Option.getOrUndefined(
-          resolveOptionPrecedence(
-            input.t3Home,
-            Option.fromUndefinedOr(env.t3Home),
-            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-              Option.fromUndefinedOr(bootstrap.t3Home),
-            ),
-          ),
-        ),
-      );
+      const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
+      const baseDir = yield* resolveBaseDir(Option.getOrUndefined(input.t3Home) ?? env.t3Home);
       const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-      const noBrowser = resolveBooleanFlag(
-        input.noBrowser,
-        Option.getOrElse(
-          resolveOptionPrecedence(
-            Option.fromUndefinedOr(env.noBrowser),
-            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-              Option.fromUndefinedOr(bootstrap.noBrowser),
-            ),
-          ),
-          () => mode === "desktop",
-        ),
-      );
-      const authToken = resolveOptionPrecedence(
-        input.authToken,
-        Option.fromUndefinedOr(env.authToken),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-          Option.fromUndefinedOr(bootstrap.authToken),
-        ),
-      );
+      const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
+      const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,
-        Option.getOrElse(
-          resolveOptionPrecedence(
-            Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
-            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-              Option.fromUndefinedOr(bootstrap.autoBootstrapProjectFromCwd),
-            ),
-          ),
-          () => mode === "web",
-        ),
+        env.autoBootstrapProjectFromCwd ?? mode === "web",
       );
+      // Keep websocket payload logging opt-in in dev. Terminal/TUI traffic is
+      // high-volume enough that automatic logging adds noticeable CPU and I/O.
       const logWebSocketEvents = resolveBooleanFlag(
         input.logWebSocketEvents,
-        Option.getOrElse(
-          resolveOptionPrecedence(
-            Option.fromUndefinedOr(env.logWebSocketEvents),
-            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-              Option.fromUndefinedOr(bootstrap.logWebSocketEvents),
-            ),
-          ),
-          () => Boolean(devUrl),
-        ),
+        env.logWebSocketEvents ?? false,
       );
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
-      const host = Option.getOrElse(
-        resolveOptionPrecedence(
-          input.host,
-          Option.fromUndefinedOr(env.host),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.host)),
-        ),
-        () => (mode === "desktop" ? "127.0.0.1" : undefined),
-      );
+      const host =
+        Option.getOrUndefined(input.host) ??
+        env.host ??
+        (mode === "desktop" ? "127.0.0.1" : undefined);
 
       const config: ServerConfigShape = {
         mode,
@@ -281,7 +182,7 @@ const ServerConfigLive = (input: CliInput) =>
         staticDir,
         devUrl,
         noBrowser,
-        authToken: Option.getOrUndefined(authToken),
+        authToken,
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
       } satisfies ServerConfigShape;
@@ -294,11 +195,10 @@ const LayerLive = (input: CliInput) =>
   Layer.empty.pipe(
     Layer.provideMerge(makeServerRuntimeServicesLayer()),
     Layer.provideMerge(makeServerProviderLayer()),
-    Layer.provideMerge(ProviderRegistryLive),
+    Layer.provideMerge(ProviderHealthLive),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),
     Layer.provideMerge(AnalyticsServiceLayerLive),
-    Layer.provideMerge(ServerSettingsLive),
     Layer.provideMerge(ServerConfigLive(input)),
   );
 
@@ -333,10 +233,12 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-const makeServerRuntimeProgram = (input: CliInput) =>
+const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
+    const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
+    yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
 
@@ -358,7 +260,7 @@ const makeServerRuntimeProgram = (input: CliInput) =>
         ? `http://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
     const { authToken, devUrl, ...safeConfig } = config;
-    yield* Effect.logInfo("T3 Code running", {
+    yield* Effect.logInfo("DP Code running", {
       ...safeConfig,
       devUrl: devUrl?.toString(),
       authEnabled: Boolean(authToken),
@@ -378,13 +280,6 @@ const makeServerRuntimeProgram = (input: CliInput) =>
     return yield* stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));
 
-const makeServerProgram = (input: CliInput) =>
-  Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
-    yield* cliConfig.fixPath;
-    return yield* makeServerRuntimeProgram(input);
-  });
-
 /**
  * These flags mirrors the environment variables and the config shape.
  */
@@ -394,7 +289,7 @@ const modeFlag = Flag.choice("mode", ["web", "desktop"]).pipe(
   Flag.optional,
 );
 const portFlag = Flag.integer("port").pipe(
-  Flag.withSchema(PortSchema),
+  Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
   Flag.withDescription("Port for the HTTP/WebSocket server."),
   Flag.optional,
 );
@@ -403,7 +298,7 @@ const hostFlag = Flag.string("host").pipe(
   Flag.optional,
 );
 const t3HomeFlag = Flag.string("home-dir").pipe(
-  Flag.withDescription("Base directory for all T3 Code data (equivalent to T3CODE_HOME)."),
+  Flag.withDescription("Base directory for all DP Code data (equivalent to T3CODE_HOME)."),
   Flag.optional,
 );
 const devUrlFlag = Flag.string("dev-url").pipe(
@@ -418,11 +313,6 @@ const noBrowserFlag = Flag.boolean("no-browser").pipe(
 const authTokenFlag = Flag.string("auth-token").pipe(
   Flag.withDescription("Auth token required for WebSocket connections."),
   Flag.withAlias("token"),
-  Flag.optional,
-);
-const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
-  Flag.withSchema(Schema.Int),
-  Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
   Flag.optional,
 );
 const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
@@ -447,10 +337,9 @@ export const t3Cli = Command.make("t3", {
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
   authToken: authTokenFlag,
-  bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(
-  Command.withDescription("Run the T3 Code server."),
+  Command.withDescription("Run the DP Code server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
 );

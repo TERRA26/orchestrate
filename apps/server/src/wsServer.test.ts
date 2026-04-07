@@ -4,39 +4,28 @@ import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  ManagedRuntime,
-  PlatformError,
-  PubSub,
-  Scope,
-  Stream,
-} from "effect";
+import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
+import { ProviderDiscoveryService } from "./provider/Services/ProviderDiscoveryService";
 
 import {
   DEFAULT_TERMINAL_ID,
-  DEFAULT_SERVER_SETTINGS,
   EDITORS,
   EventId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   ProviderItemId,
-  type ServerSettings,
   ThreadId,
   TurnId,
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
   type ProviderRuntimeEvent,
-  type ServerProvider,
+  type ServerProviderStatus,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPushChannel,
@@ -57,7 +46,7 @@ import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
-import { ProviderRegistry, type ProviderRegistryShape } from "./provider/Services/ProviderRegistry";
+import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
@@ -65,7 +54,6 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { ServerSettingsService } from "./serverSettings.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -77,42 +65,36 @@ const defaultOpenService: OpenShape = {
   openInEditor: () => Effect.void,
 };
 
-const defaultProviderStatuses: ReadonlyArray<ServerProvider> = [
+const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
   {
     provider: "codex",
-    enabled: true,
-    installed: true,
-    version: "0.116.0",
     status: "ready",
-    auth: { status: "authenticated" },
+    available: true,
+    authStatus: "authenticated",
     checkedAt: "2026-01-01T00:00:00.000Z",
-    models: [],
   },
 ];
 
-const defaultProviderRegistryService: ProviderRegistryShape = {
-  getProviders: Effect.succeed(defaultProviderStatuses),
-  refresh: () => Effect.succeed(defaultProviderStatuses),
-  streamChanges: Stream.empty,
+const defaultProviderHealthService: ProviderHealthShape = {
+  getStatuses: Effect.succeed(defaultProviderStatuses),
 };
-
-const defaultServerSettings = DEFAULT_SERVER_SETTINGS;
 
 class MockTerminalManager implements TerminalManagerShape {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
-  private readonly eventPubSub = Effect.runSync(PubSub.unbounded<TerminalEvent>());
-  private activeSubscriptions = 0;
+  private readonly listeners = new Set<(event: TerminalEvent) => void>();
 
   private key(threadId: string, terminalId: string): string {
     return `${threadId}\u0000${terminalId}`;
   }
 
   emitEvent(event: TerminalEvent): void {
-    Effect.runSync(PubSub.publish(this.eventPubSub, event));
+    for (const listener of this.listeners) {
+      listener(event);
+    }
   }
 
   subscriptionCount(): number {
-    return this.activeSubscriptions;
+    return this.listeners.size;
   }
 
   readonly open: TerminalManagerShape["open"] = (input: TerminalOpenInput) =>
@@ -219,15 +201,13 @@ class MockTerminalManager implements TerminalManagerShape {
 
   readonly subscribe: TerminalManagerShape["subscribe"] = (listener) =>
     Effect.sync(() => {
-      this.activeSubscriptions += 1;
-      const fiber = Effect.runFork(
-        Stream.runForEach(Stream.fromPubSub(this.eventPubSub), (event) => listener(event)),
-      );
+      this.listeners.add(listener);
       return () => {
-        this.activeSubscriptions -= 1;
-        Effect.runFork(Fiber.interrupt(fiber).pipe(Effect.ignore));
+        this.listeners.delete(listener);
       };
     });
+
+  readonly dispose: TerminalManagerShape["dispose"] = Effect.void;
 }
 
 // ---------------------------------------------------------------------------
@@ -485,7 +465,6 @@ function deriveServerPathsSync(baseDir: string, devUrl: URL | undefined) {
 describe("WebSocket Server", () => {
   let server: Http.Server | null = null;
   let serverScope: Scope.Closeable | null = null;
-  let disposeServerRuntime: (() => Promise<void>) | null = null;
   const connections: WebSocket[] = [];
   const tempDirs: string[] = [];
 
@@ -508,13 +487,12 @@ describe("WebSocket Server", () => {
       authToken?: string;
       baseDir?: string;
       staticDir?: string;
-      providerLayer?: Layer.Layer<ProviderService, never>;
-      providerRegistry?: ProviderRegistryShape;
+      providerLayer?: Layer.Layer<ProviderService | ProviderDiscoveryService, never>;
+      providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
-      serverSettings?: Partial<ServerSettings>;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -527,17 +505,11 @@ describe("WebSocket Server", () => {
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
     const providerLayer = options.providerLayer ?? makeServerProviderLayer();
-    const providerRegistryLayer = Layer.succeed(
-      ProviderRegistry,
-      options.providerRegistry ?? defaultProviderRegistryService,
+    const providerHealthLayer = Layer.succeed(
+      ProviderHealth,
+      options.providerHealth ?? defaultProviderHealthService,
     );
     const openLayer = Layer.succeed(Open, options.open ?? defaultOpenService);
-    const nodeServicesLayer = NodeServices.layer;
-    const serverSettingsLayer = ServerSettingsService.layerTest(options.serverSettings);
-    const serverSettingsRuntimeLayer = serverSettingsLayer.pipe(
-      Layer.provideMerge(nodeServicesLayer),
-    );
-    const analyticsLayer = AnalyticsService.layerTest;
     const serverConfigLayer = Layer.succeed(ServerConfig, {
       mode: "web",
       port: 0,
@@ -550,14 +522,9 @@ describe("WebSocket Server", () => {
       noBrowser: true,
       authToken: options.authToken,
       autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
-      logWebSocketEvents: options.logWebSocketEvents ?? Boolean(options.devUrl),
+      logWebSocketEvents: options.logWebSocketEvents ?? false,
     } satisfies ServerConfigShape);
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
-    const providerRuntimeLayer = infrastructureLayer.pipe(
-      Layer.provideMerge(serverConfigLayer),
-      Layer.provideMerge(serverSettingsRuntimeLayer),
-      Layer.provideMerge(analyticsLayer),
-    );
     const runtimeOverrides = Layer.mergeAll(
       options.gitManager ? Layer.succeed(GitManager, options.gitManager) : Layer.empty,
       options.gitCore
@@ -570,49 +537,40 @@ describe("WebSocket Server", () => {
 
     const runtimeLayer = Layer.merge(
       Layer.merge(
-        makeServerRuntimeServicesLayer().pipe(
-          Layer.provideMerge(providerRuntimeLayer),
-          Layer.provideMerge(serverConfigLayer),
-          Layer.provideMerge(serverSettingsRuntimeLayer),
-          Layer.provideMerge(analyticsLayer),
-          Layer.provideMerge(nodeServicesLayer),
-        ),
-        Layer.mergeAll(providerRuntimeLayer, serverSettingsRuntimeLayer, analyticsLayer),
+        makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
+        infrastructureLayer,
       ),
       runtimeOverrides,
     );
-    const dependenciesLayer = Layer.mergeAll(
-      runtimeLayer,
-      providerRegistryLayer,
-      openLayer,
-      serverConfigLayer,
-      nodeServicesLayer,
+    const dependenciesLayer = Layer.empty.pipe(
+      Layer.provideMerge(runtimeLayer),
+      Layer.provideMerge(providerHealthLayer),
+      Layer.provideMerge(openLayer),
+      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(AnalyticsService.layerTest),
+      Layer.provideMerge(NodeServices.layer),
     );
-    const runtime = ManagedRuntime.make(dependenciesLayer);
+    const runtimeServices = await Effect.runPromise(
+      Layer.build(dependenciesLayer).pipe(Scope.provide(scope)),
+    );
+
     try {
-      const httpServer = await runtime.runPromise(createServer().pipe(Scope.provide(scope)));
-      disposeServerRuntime = () => runtime.dispose();
+      const runtime = await Effect.runPromise(
+        createServer().pipe(Effect.provide(runtimeServices), Scope.provide(scope)),
+      );
       serverScope = scope;
-      return httpServer;
+      return runtime;
     } catch (error) {
-      await runtime.dispose();
       await Effect.runPromise(Scope.close(scope, Exit.void));
       throw error;
     }
   }
 
   async function closeTestServer() {
-    if (!serverScope && !disposeServerRuntime) return;
+    if (!serverScope) return;
     const scope = serverScope;
-    const disposeRuntime = disposeServerRuntime;
     serverScope = null;
-    disposeServerRuntime = null;
-    if (scope) {
-      await Effect.runPromise(Scope.close(scope, Exit.void));
-    }
-    if (disposeRuntime) {
-      await disposeRuntime();
-    }
+    await Effect.runPromise(Scope.close(scope, Exit.void));
   }
 
   afterEach(async () => {
@@ -851,7 +809,7 @@ describe("WebSocket Server", () => {
     );
   });
 
-  it("logs outbound websocket push events in dev mode", async () => {
+  it("logs outbound websocket push events when explicitly enabled", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {
       // Keep test output clean while verifying websocket logs.
     });
@@ -859,6 +817,7 @@ describe("WebSocket Server", () => {
     server = await createTestServer({
       cwd: "/test/project",
       devUrl: "http://localhost:5173",
+      logWebSocketEvents: true,
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -901,7 +860,6 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
-      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -927,7 +885,6 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
-      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
@@ -964,7 +921,6 @@ describe("WebSocket Server", () => {
       ],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
-      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
@@ -998,7 +954,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
-      providers: ReadonlyArray<ServerProvider>;
+      providers: ReadonlyArray<ServerProviderStatus>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -1046,6 +1002,7 @@ describe("WebSocket Server", () => {
     );
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
+      providers: defaultProviderStatuses,
     });
 
     const successPush = await rewriteKeybindingsAndWaitForPush(
@@ -1054,7 +1011,7 @@ describe("WebSocket Server", () => {
       "[]",
       (push) => Array.isArray(push.data.issues) && push.data.issues.length === 0,
     );
-    expect(successPush.data).toEqual({ issues: [] });
+    expect(successPush.data).toEqual({ issues: [], providers: defaultProviderStatuses });
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -1114,7 +1071,6 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
-      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -1163,7 +1119,6 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
-      settings: defaultServerSettings,
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,
@@ -1285,32 +1240,6 @@ describe("WebSocket Server", () => {
     expect(response.error?.message).toContain("exceeds current turn count");
   });
 
-  it("rejects project.create when the workspace root does not exist", async () => {
-    server = await createTestServer({ cwd: "/test" });
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-
-    const [ws] = await connectAndAwaitWelcome(port);
-    connections.push(ws);
-
-    const missingWorkspaceRoot = path.join(makeTempDir("t3code-ws-project-missing-"), "missing");
-    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
-      type: "project.create",
-      commandId: "cmd-ws-project-create-missing",
-      projectId: "project-missing",
-      title: "Missing Project",
-      workspaceRoot: missingWorkspaceRoot,
-      defaultModelSelection: {
-        provider: "codex",
-        model: "gpt-5-codex",
-      },
-      createdAt: new Date().toISOString(),
-    });
-
-    expect(response.result).toBeUndefined();
-    expect(response.error?.message).toContain("Workspace root does not exist:");
-  });
-
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
@@ -1332,6 +1261,13 @@ describe("WebSocket Server", () => {
           threadId,
           turnId: asTurnId("provider-turn-1"),
         }),
+      steerTurn: ({ threadId }) =>
+        Effect.succeed({
+          threadId,
+          turnId: asTurnId("provider-turn-steer-1"),
+        }),
+      startReview: () => unsupported(),
+      forkThread: () => Effect.succeed(null),
       interruptTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
       respondToUserInput: () => unsupported(),
@@ -1341,12 +1277,61 @@ describe("WebSocket Server", () => {
       rollbackConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
-    const providerLayer = Layer.succeed(ProviderService, providerService);
+    const providerLayer = Layer.mergeAll(
+      Layer.succeed(ProviderService, providerService),
+      Layer.succeed(ProviderDiscoveryService, {
+        getComposerCapabilities: () =>
+          Effect.succeed({
+            provider: "codex" as const,
+            supportsSkillMentions: false,
+            supportsSkillDiscovery: false,
+            supportsNativeSlashCommandDiscovery: false,
+            supportsPluginMentions: false,
+            supportsPluginDiscovery: false,
+            supportsRuntimeModelList: false,
+          }),
+        listSkills: () => Effect.succeed({ skills: [], source: "test", cached: false }),
+        listCommands: () => Effect.succeed({ commands: [], source: "test", cached: false }),
+        listPlugins: () =>
+          Effect.succeed({
+            marketplaces: [],
+            marketplaceLoadErrors: [],
+            remoteSyncError: null,
+            featuredPluginIds: [],
+            source: "test",
+            cached: false,
+          }),
+        readPlugin: () =>
+          Effect.succeed({
+            plugin: {
+              marketplaceName: "test-marketplace",
+              marketplacePath: "/test/marketplace.json",
+              summary: {
+                id: "plugin/test",
+                name: "test",
+                source: {
+                  type: "local",
+                  path: "/test/plugin",
+                },
+                installed: false,
+                enabled: false,
+                installPolicy: "AVAILABLE",
+                authPolicy: "ON_USE",
+              },
+              skills: [],
+              apps: [],
+              mcpServers: [],
+            },
+            source: "test",
+            cached: false,
+          }),
+        listModels: () => Effect.succeed({ models: [], source: "test", cached: false }),
+      }),
+    );
 
     server = await createTestServer({
       cwd: "/test",
       providerLayer,
-      serverSettings: { enableAssistantStreaming: true },
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -1397,6 +1382,7 @@ describe("WebSocket Server", () => {
         text: "hello",
         attachments: [],
       },
+      assistantDeliveryMode: "streaming",
       runtimeMode: "approval-required",
       interactionMode: "default",
       createdAt,
@@ -1511,25 +1497,111 @@ describe("WebSocket Server", () => {
     expect(push.channel).toBe(WS_CHANNELS.terminalEvent);
   });
 
-  it("shuts down cleanly for injected terminal managers", async () => {
+  it("auto-renames generic terminal threads from safe terminal commands", async () => {
+    const terminalManager = new MockTerminalManager();
+    server = await createTestServer({
+      cwd: "/test",
+      terminalManager,
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const workspaceRoot = makeTempDir("t3code-ws-terminal-rename-");
+    const createdAt = new Date().toISOString();
+    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: "cmd-terminal-rename-project-create",
+      projectId: "project-terminal-rename",
+      title: "Terminal Rename Project",
+      workspaceRoot,
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      createdAt,
+    });
+    expect(createProjectResponse.error).toBeUndefined();
+
+    const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.create",
+      commandId: "cmd-terminal-rename-thread-create",
+      threadId: "thread-terminal-rename",
+      projectId: "project-terminal-rename",
+      title: "New terminal",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt,
+    });
+    expect(createThreadResponse.error).toBeUndefined();
+
+    const openResponse = await sendRequest(ws, WS_METHODS.terminalOpen, {
+      threadId: "thread-terminal-rename",
+      cwd: workspaceRoot,
+      cols: 100,
+      rows: 24,
+    });
+    expect(openResponse.error).toBeUndefined();
+
+    const writeResponse = await sendRequest(ws, WS_METHODS.terminalWrite, {
+      threadId: "thread-terminal-rename",
+      data: "git push origin main\r",
+    });
+    expect(writeResponse.error).toBeUndefined();
+
+    const metaUpdatedPush = await waitForPush(
+      ws,
+      ORCHESTRATION_WS_CHANNELS.domainEvent,
+      (push) =>
+        (push.data as { type?: string; payload?: { threadId?: string; title?: string } }).type ===
+          "thread.meta-updated" &&
+        (push.data as { payload?: { threadId?: string; title?: string } }).payload?.threadId ===
+          "thread-terminal-rename",
+    );
+    expect(
+      (
+        metaUpdatedPush.data as {
+          payload: {
+            title?: string;
+          };
+        }
+      ).payload.title,
+    ).toBe("git push");
+
+    const snapshotResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot);
+    expect(snapshotResponse.error).toBeUndefined();
+    const renamedThread = (
+      snapshotResponse.result as {
+        threads: Array<{
+          id: string;
+          title: string;
+        }>;
+      }
+    ).threads.find((thread) => thread.id === "thread-terminal-rename");
+    expect(renamedThread?.title).toBe("git push");
+  });
+
+  it("detaches terminal event listener on stop for injected manager", async () => {
     const terminalManager = new MockTerminalManager();
     server = await createTestServer({
       cwd: "/test",
       terminalManager,
     });
 
+    expect(terminalManager.subscriptionCount()).toBe(1);
+
     await closeTestServer();
     server = null;
 
-    expect(() =>
-      terminalManager.emitEvent({
-        type: "output",
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
-        data: "after shutdown\n",
-      }),
-    ).not.toThrow();
+    expect(terminalManager.subscriptionCount()).toBe(0);
   });
 
   it("returns validation errors for invalid terminal open params", async () => {
@@ -1721,50 +1793,6 @@ describe("WebSocket Server", () => {
     );
   });
 
-  it("invalidates workspace entry search cache after projects.writeFile", async () => {
-    const workspace = makeTempDir("t3code-ws-write-file-invalidate-");
-    fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
-    fs.writeFileSync(path.join(workspace, "src", "existing.ts"), "export {};\n", "utf8");
-
-    server = await createTestServer({ cwd: "/test" });
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-
-    const [ws] = await connectAndAwaitWelcome(port);
-    connections.push(ws);
-
-    const beforeWrite = await sendRequest(ws, WS_METHODS.projectsSearchEntries, {
-      cwd: workspace,
-      query: "rpc",
-      limit: 10,
-    });
-    expect(beforeWrite.error).toBeUndefined();
-    expect(beforeWrite.result).toEqual({
-      entries: [],
-      truncated: false,
-    });
-
-    const writeResponse = await sendRequest(ws, WS_METHODS.projectsWriteFile, {
-      cwd: workspace,
-      relativePath: "plans/effect-rpc.md",
-      contents: "# Plan\n",
-    });
-    expect(writeResponse.error).toBeUndefined();
-
-    const afterWrite = await sendRequest(ws, WS_METHODS.projectsSearchEntries, {
-      cwd: workspace,
-      query: "rpc",
-      limit: 10,
-    });
-    expect(afterWrite.error).toBeUndefined();
-    expect(afterWrite.result).toEqual({
-      entries: expect.arrayContaining([
-        expect.objectContaining({ path: "plans/effect-rpc.md", kind: "file" }),
-      ]),
-      truncated: false,
-    });
-  });
-
   it("rejects projects.writeFile paths outside the workspace root", async () => {
     const workspace = makeTempDir("t3code-ws-write-file-reject-");
 
@@ -1783,7 +1811,7 @@ describe("WebSocket Server", () => {
 
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain(
-      "Workspace file path must be relative to the project root: ../escape.md",
+      "Workspace file path must stay within the project root.",
     );
     expect(fs.existsSync(path.join(workspace, "..", "escape.md"))).toBe(false);
   });
@@ -1961,10 +1989,6 @@ describe("WebSocket Server", () => {
       actionId: "client-action-1",
       cwd: "/test",
       action: "commit_push",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.4-mini",
-      },
     });
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("detached HEAD");
@@ -2028,10 +2052,6 @@ describe("WebSocket Server", () => {
       actionId: "client-action-2",
       cwd: "/test",
       action: "commit",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.4-mini",
-      },
     });
     const progressPush = await waitForPush(initiatingWs, WS_CHANNELS.gitActionProgress);
 

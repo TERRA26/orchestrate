@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>How Crypto Works</title>
+    <meta
+      name="description"
+      content="A visual plain-language guide to cryptocurrency, blockchains, wallets, validators, smart contracts, and the tradeoffs."
+    />
+    <link rel="icon" href="./assets/ledger.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <nav class="topbar">
+          <a class="brand" href="#top">How Crypto Works</a>
+          <a class="jump-link" href="#risks">See the tradeoffs</a>
+        </nav>
+
+        <div class="hero-grid" id="top">
+          <section class="hero-copy">
+            <p class="eyebrow">Visual explainer</p>
+            <h1>Cryptocurrency is shared bookkeeping with internet-native money rules.</h1>
+            <p class="lede">
+              Instead of a bank updating one private ledger, many computers keep copies of the same
+              record, check each other’s work, and agree on which transactions count.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#flow">Watch a payment move</a>
+              <a class="button button-secondary" href="#concepts">Start with the basics</a>
+            </div>
+            <ul class="hero-points" aria-label="topics covered">
+              <li>Blockchain records</li>
+              <li>Wallets and keys</li>
+              <li>Sending and receiving</li>
+              <li>Validators and miners</li>
+              <li>Smart contracts</li>
+              <li>Major risks</li>
+            </ul>
+          </section>
+
+          <section class="hero-visual card">
+            <div class="network-title">
+              <span class="status-dot"></span>
+              <span>Shared network ledger</span>
+            </div>
+            <div class="chain-diagram" aria-label="simplified blockchain diagram">
+              <div class="chain-node">
+                <p class="node-label">Wallet A</p>
+                <p class="node-detail">asks to send 0.4 coin</p>
+              </div>
+              <div class="chain-link"></div>
+              <div class="chain-node accent">
+                <p class="node-label">Pending block</p>
+                <p class="node-detail">network checks the request</p>
+              </div>
+              <div class="chain-link"></div>
+              <div class="chain-node">
+                <p class="node-label">Final ledger</p>
+                <p class="node-detail">all copies update</p>
+              </div>
+            </div>
+            <div class="ledger-stack" aria-hidden="true">
+              <div class="ledger-card">
+                <span>Block 1051</span>
+                <strong>Tx: A → B</strong>
+              </div>
+              <div class="ledger-card">
+                <span>Block 1050</span>
+                <strong>Tx: C → D</strong>
+              </div>
+              <div class="ledger-card">
+                <span>Block 1049</span>
+                <strong>Tx: E → F</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+      </header>
+
+      <main>
+        <section class="section section-intro" id="concepts">
+          <div class="section-heading">
+            <p class="eyebrow">Core idea</p>
+            <h2>What crypto is</h2>
+            <p>
+              Crypto assets are digital tokens tracked by software rules. Ownership is usually
+              defined by who can prove control of a private key, not by possession of a physical
+              object.
+            </p>
+          </div>
+          <div class="concept-grid">
+            <article class="card concept-card">
+              <h3>It is not just “coins”</h3>
+              <p>
+                A cryptocurrency network is a set of computers following the same transaction rules
+                and ledger history.
+              </p>
+            </article>
+            <article class="card concept-card">
+              <h3>The ledger is public</h3>
+              <p>
+                Anyone can often inspect transfers on-chain, even if real names are not directly
+                attached.
+              </p>
+            </article>
+            <article class="card concept-card">
+              <h3>Rules are enforced by software</h3>
+              <p>
+                The network rejects invalid transfers, such as spending funds from an address
+                without the right signature.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="flow">
+          <div class="section-heading">
+            <p class="eyebrow">Transaction flow</p>
+            <h2>How a blockchain records a payment</h2>
+            <p>
+              A blockchain is a history of transaction batches called blocks. Each new block points
+              back to the previous one, creating a chain that is difficult to rewrite.
+            </p>
+          </div>
+
+          <div class="flow-layout">
+            <article class="card flow-card">
+              <div class="flow-header">
+                <h3>Follow one payment</h3>
+                <button class="button button-secondary play-button" type="button" id="replay-flow">
+                  Replay animation
+                </button>
+              </div>
+              <div class="flow-track" aria-label="transaction lifecycle animation">
+                <div class="flow-step is-active" data-step="0">
+                  <span class="flow-step-number">1</span>
+                  <div>
+                    <strong>Wallet signs</strong>
+                    <p>Alice’s wallet creates a message saying “send 0.4 coin to Bob.”</p>
+                  </div>
+                </div>
+                <div class="flow-step" data-step="1">
+                  <span class="flow-step-number">2</span>
+                  <div>
+                    <strong>Network broadcasts</strong>
+                    <p>The signed message spreads to many nodes on the network.</p>
+                  </div>
+                </div>
+                <div class="flow-step" data-step="2">
+                  <span class="flow-step-number">3</span>
+                  <div>
+                    <strong>Checks run</strong>
+                    <p>Nodes verify the signature, balance rules, and transaction format.</p>
+                  </div>
+                </div>
+                <div class="flow-step" data-step="3">
+                  <span class="flow-step-number">4</span>
+                  <div>
+                    <strong>Block is proposed</strong>
+                    <p>Validators or miners gather valid transactions into a candidate block.</p>
+                  </div>
+                </div>
+                <div class="flow-step" data-step="4">
+                  <span class="flow-step-number">5</span>
+                  <div>
+                    <strong>Ledger updates</strong>
+                    <p>
+                      Once accepted, the block is appended and Bob’s balance reflects the change.
+                    </p>
+                  </div>
+                </div>
+                <div class="flow-pulse" aria-hidden="true"></div>
+              </div>
+            </article>
+
+            <aside class="card block-card">
+              <h3>Inside one block</h3>
+              <div class="block-shell">
+                <div class="block-row">
+                  <span>Previous block hash</span>
+                  <strong>connects history</strong>
+                </div>
+                <div class="block-row">
+                  <span>Timestamp</span>
+                  <strong>shows when proposed</strong>
+                </div>
+                <div class="block-row">
+                  <span>Transaction list</span>
+                  <strong>stores the batch</strong>
+                </div>
+                <div class="block-row">
+                  <span>Proof / validator data</span>
+                  <strong>shows why the network accepted it</strong>
+                </div>
+              </div>
+              <div class="timeline">
+                <div class="timeline-line"></div>
+                <div class="timeline-event">
+                  <strong>Genesis</strong>
+                  <span>first block</span>
+                </div>
+                <div class="timeline-event">
+                  <strong>Block 1049</strong>
+                  <span>older history</span>
+                </div>
+                <div class="timeline-event highlight">
+                  <strong>Block 1050</strong>
+                  <span>contains Alice → Bob</span>
+                </div>
+                <div class="timeline-event">
+                  <strong>Block 1051</strong>
+                  <span>builds on top</span>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Control and custody</p>
+            <h2>How wallets and keys work</h2>
+            <p>
+              A wallet usually stores or manages keys, not the coins themselves. The coins stay on
+              the shared ledger; the wallet proves you are allowed to move them.
+            </p>
+          </div>
+
+          <div class="wallet-layout">
+            <article class="card wallet-card">
+              <img
+                class="wallet-asset"
+                src="./assets/keypair.svg"
+                alt="Illustration of a public address and a private key"
+              />
+              <div class="key-grid">
+                <div>
+                  <h3>Public address</h3>
+                  <p>Like an account number you can share so others know where to send funds.</p>
+                </div>
+                <div>
+                  <h3>Private key</h3>
+                  <p>
+                    Like a secret signing power. If someone gets it, they can usually move funds.
+                  </p>
+                </div>
+              </div>
+            </article>
+            <article class="card custody-card">
+              <h3>Two common wallet models</h3>
+              <div class="compare-grid">
+                <div>
+                  <strong>Self-custody wallet</strong>
+                  <p>
+                    You control the keys. More freedom, but losing the secret can mean losing
+                    access.
+                  </p>
+                </div>
+                <div>
+                  <strong>Exchange account</strong>
+                  <p>
+                    The platform often controls the keys for you. Easier for beginners, but adds
+                    platform risk.
+                  </p>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Consensus</p>
+            <h2>Why miners or validators matter</h2>
+            <p>
+              The network needs a rule for deciding which block becomes the official next block.
+              Different chains solve this in different ways.
+            </p>
+          </div>
+
+          <div class="consensus-grid">
+            <article class="card consensus-card">
+              <h3>Mining</h3>
+              <p>
+                In proof-of-work systems, miners spend computing power competing to add the next
+                block. That cost is meant to make cheating expensive.
+              </p>
+            </article>
+            <article class="card consensus-card">
+              <h3>Validation</h3>
+              <p>
+                In many newer systems, validators lock up assets as stake. If they follow the rules,
+                they earn rewards; if they cheat, they can be penalized.
+              </p>
+            </article>
+            <article class="card consensus-card accent-card">
+              <h3>What consensus is really doing</h3>
+              <p>
+                It is the network’s way of answering: “Which transactions happened, and in what
+                order, without trusting one single operator?”
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Programmable rules</p>
+            <h2>What smart contracts are</h2>
+            <p>
+              A smart contract is code stored on-chain that runs when triggered. It can hold assets,
+              enforce conditions, and act as a shared program many users can interact with.
+            </p>
+          </div>
+
+          <div class="contracts-layout">
+            <article class="card contract-card">
+              <h3>Simple example</h3>
+              <p>
+                “Release payment only if two people approve” or “swap token A for token B at a
+                published rule set.”
+              </p>
+            </article>
+            <article class="card contract-card">
+              <h3>Why this matters</h3>
+              <p>
+                It enables things like decentralized exchanges, lending apps, collectibles, and
+                automated business logic without a traditional central server approving each step.
+              </p>
+            </article>
+            <article class="card contract-card">
+              <h3>Why it is risky</h3>
+              <p>
+                If the code has a bug, users may not be able to reverse the damage. “Code is law” is
+                powerful, but unforgiving.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="risks">
+          <div class="section-heading">
+            <p class="eyebrow">Tradeoffs</p>
+            <h2>Major risks and limits</h2>
+            <p>
+              Crypto can offer portability, transparency, and programmable money. It also creates
+              new kinds of operational and financial risk.
+            </p>
+          </div>
+
+          <div class="risk-grid">
+            <article class="card risk-card">
+              <h3>Price volatility</h3>
+              <p>
+                Many assets swing wildly in value, which can make them poor short-term stores of
+                value.
+              </p>
+            </article>
+            <article class="card risk-card">
+              <h3>Irreversible mistakes</h3>
+              <p>
+                Send to the wrong address or lose your keys, and there may be no customer support
+                rescue.
+              </p>
+            </article>
+            <article class="card risk-card">
+              <h3>Scams and hacks</h3>
+              <p>
+                Fake tokens, phishing, exchange failures, and contract exploits are common enough to
+                treat as normal risk.
+              </p>
+            </article>
+            <article class="card risk-card">
+              <h3>Fees and speed limits</h3>
+              <p>Busy networks can become expensive or slow, especially for small payments.</p>
+            </article>
+            <article class="card risk-card">
+              <h3>Energy or centralization concerns</h3>
+              <p>
+                Some systems consume large amounts of energy; others drift toward a few dominant
+                operators.
+              </p>
+            </article>
+            <article class="card risk-card">
+              <h3>Regulatory uncertainty</h3>
+              <p>
+                Rules differ by country and can change, affecting taxes, custody, and what platforms
+                can offer.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section closing card">
+          <div>
+            <p class="eyebrow">Bottom line</p>
+            <h2>Crypto is best understood as a coordination system.</h2>
+            <p>
+              It combines networking, cryptography, incentives, and software rules to let many
+              parties agree on asset ownership without one central ledger owner. That makes some
+              things possible, but it does not remove risk. It mostly changes where the risk lives.
+            </p>
+          </div>
+          <img
+            class="closing-asset"
+            src="./assets/ledger.svg"
+            alt="Abstract ledger illustration showing chained transaction blocks"
+          />
+        </section>
+      </main>
+    </div>
+
+    <script src="./script.js" defer></script>
+  </body>
+</html>

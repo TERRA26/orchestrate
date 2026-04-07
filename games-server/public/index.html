@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Games Portal</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      .hero {
+        text-align: center;
+        padding: 3.5rem 1.5rem 2rem;
+      }
+
+      .hero h1 {
+        font-size: 2.8rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--accent-light), var(--accent), #e879f9);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+      }
+
+      .hero p {
+        color: var(--text-secondary);
+        font-size: 1.1rem;
+        max-width: 500px;
+        margin: 0 auto;
+      }
+
+      .games-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.5rem;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 1rem 1.5rem 4rem;
+      }
+
+      .game-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 2rem 1.5rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s var(--ease-out);
+        text-decoration: none;
+        color: inherit;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .game-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: var(--radius-lg);
+        border: 2px solid transparent;
+        transition: border-color 0.3s var(--ease-out);
+      }
+
+      .game-card:hover {
+        transform: translateY(-6px);
+        background: var(--bg-card-hover);
+        box-shadow: var(--shadow-lg), var(--shadow-glow);
+      }
+
+      .game-card:hover::before {
+        border-color: var(--accent);
+      }
+
+      .game-card .icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 80px;
+        height: 80px;
+        background: var(--bg-surface);
+        border-radius: var(--radius-md);
+        transition: transform 0.3s var(--ease-bounce);
+      }
+
+      .game-card:hover .icon {
+        transform: scale(1.1) rotate(-3deg);
+      }
+
+      .game-card h2 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: var(--text-primary);
+      }
+
+      .game-card p {
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+
+      .game-card .play-badge {
+        margin-top: 1.2rem;
+        padding: 0.35rem 1rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--accent-light);
+        background: rgba(124, 92, 252, 0.12);
+        border-radius: 20px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        transition: all 0.2s var(--ease-out);
+      }
+
+      .game-card:hover .play-badge {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      footer {
+        text-align: center;
+        padding: 2rem;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        border-top: 1px solid var(--border);
+      }
+
+      @media (max-width: 640px) {
+        .hero h1 {
+          font-size: 2rem;
+        }
+
+        .hero p {
+          font-size: 0.95rem;
+        }
+
+        .games-grid {
+          grid-template-columns: 1fr;
+          padding: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section class="hero">
+      <h1>🎮 Games Portal</h1>
+      <p>Six classic games, beautifully crafted. Pick one and play.</p>
+    </section>
+
+    <section class="games-grid">
+      <a class="game-card" href="/games/snake.html">
+        <div class="icon">🐍</div>
+        <h2>Snake</h2>
+        <p>Guide the snake, eat food, grow longer. How high can you score before you crash?</p>
+        <span class="play-badge">Play Now</span>
+      </a>
+
+      <a class="game-card" href="/games/tic-tac-toe.html">
+        <div class="icon">⭕</div>
+        <h2>Tic-Tac-Toe</h2>
+        <p>Classic X's and O's. Challenge a friend locally or test your wits against the AI.</p>
+        <span class="play-badge">Play Now</span>
+      </a>
+
+      <a class="game-card" href="/games/memory.html">
+        <div class="icon">🃏</div>
+        <h2>Memory Match</h2>
+        <p>Flip cards, find pairs, and train your memory. Track your moves and beat your best.</p>
+        <span class="play-badge">Play Now</span>
+      </a>
+
+      <a class="game-card" href="/games/breakout.html">
+        <div class="icon">🧱</div>
+        <h2>Breakout</h2>
+        <p>
+          Smash bricks with a bouncing ball. Control the paddle, clear the board, rack up points.
+        </p>
+        <span class="play-badge">Play Now</span>
+      </a>
+
+      <a class="game-card" href="/games/minesweeper.html">
+        <div class="icon">💣</div>
+        <h2>Minesweeper</h2>
+        <p>
+          Reveal tiles carefully. Flag the mines, clear the board. One wrong click and it's over.
+        </p>
+        <span class="play-badge">Play Now</span>
+      </a>
+
+      <a class="game-card" href="/games/typing-test.html">
+        <div class="icon">⌨️</div>
+        <h2>Typing Speed Test</h2>
+        <p>How fast can you type? Measure your WPM and accuracy with real-time feedback.</p>
+        <span class="play-badge">Play Now</span>
+      </a>
+    </section>
+
+    <footer>Games Portal &mdash; Built with vanilla HTML, CSS &amp; JavaScript</footer>
+  </body>
+</html>

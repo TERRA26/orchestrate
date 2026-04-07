@@ -14,14 +14,12 @@ import {
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
-  ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
-  ThreadUnarchivedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -257,13 +255,15 @@ export function projectEvent(
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
+            envMode: payload.envMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            forkSourceThreadId: payload.forkSourceThreadId,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
-            archivedAt: null,
             deletedAt: null,
+            handoff: payload.handoff,
             messages: [],
             activities: [],
             checkpoints: [],
@@ -292,28 +292,6 @@ export function projectEvent(
         })),
       );
 
-    case "thread.archived":
-      return decodeForEvent(ThreadArchivedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            archivedAt: payload.archivedAt,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
-      );
-
-    case "thread.unarchived":
-      return decodeForEvent(ThreadUnarchivedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            archivedAt: null,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
-      );
-
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
@@ -323,8 +301,10 @@ export function projectEvent(
             ...(payload.modelSelection !== undefined
               ? { modelSelection: payload.modelSelection }
               : {}),
+            ...(payload.envMode !== undefined ? { envMode: payload.envMode } : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.handoff !== undefined ? { handoff: payload.handoff } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -377,8 +357,11 @@ export function projectEvent(
             role: payload.role,
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
+            ...(payload.skills !== undefined ? { skills: payload.skills } : {}),
+            ...(payload.mentions !== undefined ? { mentions: payload.mentions } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
+            source: payload.source,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
           },
@@ -398,11 +381,14 @@ export function projectEvent(
                         ? message.text
                         : entry.text,
                     streaming: message.streaming,
+                    source: message.source,
                     updatedAt: message.updatedAt,
                     turnId: message.turnId,
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
+                    ...(message.skills !== undefined ? { skills: message.skills } : {}),
+                    ...(message.mentions !== undefined ? { mentions: message.mentions } : {}),
                   }
                 : entry,
             )

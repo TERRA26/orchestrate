@@ -28,6 +28,7 @@ function createSendTurnHarness() {
       threadId: "thread_1",
       runtimeMode: "full-access",
       model: "gpt-5.3-codex",
+      activeTurnId: undefined as string | undefined,
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
@@ -207,42 +208,6 @@ describe("classifyCodexStderrLine", () => {
   });
 });
 
-describe("process stderr events", () => {
-  it("emits classified stderr lines as notifications", () => {
-    const manager = new CodexAppServerManager();
-    const emitEvent = vi
-      .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
-      .mockImplementation(() => {});
-
-    (
-      manager as unknown as {
-        emitNotificationEvent: (
-          context: { session: { threadId: ThreadId } },
-          method: string,
-          message: string,
-        ) => void;
-      }
-    ).emitNotificationEvent(
-      {
-        session: {
-          threadId: asThreadId("thread-1"),
-        },
-      },
-      "process/stderr",
-      "fatal: permission denied",
-    );
-
-    expect(emitEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "notification",
-        method: "process/stderr",
-        threadId: "thread-1",
-        message: "fatal: permission denied",
-      }),
-    );
-  });
-});
-
 describe("normalizeCodexModelSlug", () => {
   it("maps 5.3 aliases to gpt-5.3-codex", () => {
     expect(normalizeCodexModelSlug("5.3")).toBe("gpt-5.3-codex");
@@ -310,7 +275,7 @@ describe("readCodexAccountSnapshot", () => {
     });
   });
 
-  it("disables spark for api key accounts", () => {
+  it("keeps spark enabled for api key accounts", () => {
     expect(
       readCodexAccountSnapshot({
         type: "apiKey",
@@ -318,20 +283,7 @@ describe("readCodexAccountSnapshot", () => {
     ).toEqual({
       type: "apiKey",
       planType: null,
-      sparkEnabled: false,
-    });
-  });
-
-  it("disables spark for unknown chatgpt plans", () => {
-    expect(
-      readCodexAccountSnapshot({
-        type: "chatgpt",
-        email: "unknown@example.com",
-      }),
-    ).toEqual({
-      type: "chatgpt",
-      planType: "unknown",
-      sparkEnabled: false,
+      sparkEnabled: true,
     });
   });
 });
@@ -356,16 +308,6 @@ describe("resolveCodexModelForAccount", () => {
       }),
     ).toBe("gpt-5.3-codex-spark");
   });
-
-  it("falls back from spark to default for api key auth", () => {
-    expect(
-      resolveCodexModelForAccount("gpt-5.3-codex-spark", {
-        type: "apiKey",
-        planType: null,
-        sparkEnabled: false,
-      }),
-    ).toBe("gpt-5.3-codex");
-  });
 });
 
 describe("startSession", () => {
@@ -373,7 +315,7 @@ describe("startSession", () => {
     expect(buildCodexInitializeParams()).toEqual({
       clientInfo: {
         name: "t3code_desktop",
-        title: "T3 Code Desktop",
+        title: "DP Code Desktop",
         version: "0.1.0",
       },
       capabilities: {
@@ -401,7 +343,6 @@ describe("startSession", () => {
         manager.startSession({
           threadId: asThreadId("thread-1"),
           provider: "codex",
-          binaryPath: "codex",
           runtimeMode: "full-access",
         }),
       ).rejects.toThrow("cwd missing");
@@ -441,7 +382,7 @@ describe("startSession", () => {
       )
       .mockImplementation(() => {
         throw new Error(
-          "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+          "Codex CLI v0.36.0 is too old for DP Code. Upgrade to v0.37.0 or newer and restart DP Code.",
         );
       });
 
@@ -450,11 +391,10 @@ describe("startSession", () => {
         manager.startSession({
           threadId: asThreadId("thread-1"),
           provider: "codex",
-          binaryPath: "codex",
           runtimeMode: "full-access",
         }),
       ).rejects.toThrow(
-        "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+        "Codex CLI v0.36.0 is too old for DP Code. Upgrade to v0.37.0 or newer and restart DP Code.",
       );
       expect(versionCheck).toHaveBeenCalledTimes(1);
       expect(events).toEqual([
@@ -462,7 +402,7 @@ describe("startSession", () => {
           method: "session/startFailed",
           kind: "error",
           message:
-            "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+            "Codex CLI v0.36.0 is too old for DP Code. Upgrade to v0.37.0 or newer and restart DP Code.",
         },
       ]);
     } finally {
@@ -540,6 +480,70 @@ describe("sendTurn", () => {
         {
           type: "image",
           url: "data:image/png;base64,BBBB",
+        },
+      ],
+      model: "gpt-5.3-codex",
+    });
+  });
+
+  it("adds selected skills as structured turn/start input items", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Use $check-code for this repo",
+      skills: [
+        {
+          name: "check-code",
+          path: "/Users/test/.codex/skills/check-code/SKILL.md",
+        },
+      ],
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Use $check-code for this repo",
+          text_elements: [],
+        },
+        {
+          type: "skill",
+          name: "check-code",
+          path: "/Users/test/.codex/skills/check-code/SKILL.md",
+        },
+      ],
+      model: "gpt-5.3-codex",
+    });
+  });
+
+  it("adds selected plugin mentions as structured turn/start input items", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Use @github to inspect the PR",
+      mentions: [
+        {
+          name: "github",
+          path: "plugin://github@openai-curated",
+        },
+      ],
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Use @github to inspect the PR",
+          text_elements: [],
+        },
+        {
+          type: "mention",
+          name: "github",
+          path: "plugin://github@openai-curated",
         },
       ],
       model: "gpt-5.3-codex",
@@ -637,6 +641,66 @@ describe("sendTurn", () => {
     });
   });
 
+  it("starts a fresh turn even when the session currently reports running", async () => {
+    const { manager, context, sendRequest, updateSession } = createSendTurnHarness();
+    context.session.status = "running";
+    context.session.activeTurnId = "turn_active";
+    sendRequest.mockResolvedValueOnce({
+      turn: { id: "turn_next" },
+    });
+
+    const result = await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Focus on the failing tests first",
+      attachments: [
+        {
+          type: "image",
+          url: "data:image/png;base64,AAAA",
+        },
+      ],
+      model: "gpt-5.4",
+      serviceTier: "fast",
+      effort: "high",
+      interactionMode: "plan",
+    });
+
+    expect(result).toEqual({
+      threadId: "thread_1",
+      turnId: "turn_next",
+      resumeCursor: { threadId: "thread_1" },
+    });
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Focus on the failing tests first",
+          text_elements: [],
+        },
+        {
+          type: "image",
+          url: "data:image/png;base64,AAAA",
+        },
+      ],
+      model: "gpt-5.4",
+      serviceTier: "fast",
+      effort: "high",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.4",
+          reasoning_effort: "high",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+    expect(updateSession).toHaveBeenCalledWith(context, {
+      status: "running",
+      activeTurnId: "turn_next",
+      resumeCursor: { threadId: "thread_1" },
+    });
+  });
+
   it("rejects empty turn input", async () => {
     const { manager } = createSendTurnHarness();
 
@@ -645,6 +709,516 @@ describe("sendTurn", () => {
         threadId: asThreadId("thread_1"),
       }),
     ).rejects.toThrow("Turn input must include text or attachments.");
+  });
+});
+
+describe("steerTurn", () => {
+  it("steers the active Codex turn when the session is already running", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.session.status = "running";
+    context.session.activeTurnId = "turn_active";
+    sendRequest.mockResolvedValueOnce({
+      turnId: "turn_active",
+    });
+
+    const result = await manager.steerTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Keep going",
+    });
+
+    expect(result).toEqual({
+      threadId: "thread_1",
+      turnId: "turn_active",
+      resumeCursor: { threadId: "thread_1" },
+    });
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/steer", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Keep going",
+          text_elements: [],
+        },
+      ],
+      expectedTurnId: "turn_active",
+    });
+  });
+
+  it("requires turn/steer to return the active turn id", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.session.status = "running";
+    context.session.activeTurnId = "turn_active";
+    sendRequest.mockResolvedValueOnce({});
+
+    await expect(
+      manager.steerTurn({
+        threadId: asThreadId("thread_1"),
+        input: "Keep going",
+      }),
+    ).rejects.toThrow("turn/steer response did not include a turn id.");
+  });
+});
+
+describe("CodexAppServerManager discovery", () => {
+  it("parses bucketed skills/list responses for the requested cwd", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: "thread_1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      collabReceiverTurns: new Map(),
+    };
+
+    const resolveContextForDiscovery = vi
+      .spyOn(
+        manager as unknown as {
+          resolveContextForDiscovery: (threadId?: string) => unknown;
+        },
+        "resolveContextForDiscovery",
+      )
+      .mockReturnValue(context);
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as {
+          sendRequest: (...args: unknown[]) => Promise<unknown>;
+        },
+        "sendRequest",
+      )
+      .mockResolvedValue({
+        result: {
+          data: [
+            {
+              cwd: "/other",
+              skills: [
+                {
+                  name: "ignore-me",
+                  path: "/ignore",
+                },
+              ],
+            },
+            {
+              cwd: "/repo",
+              skills: [
+                {
+                  name: "check-code",
+                  description: "Review repo changes for bugs and risks.",
+                  path: "/Users/test/.codex/skills/check-code/SKILL.md",
+                  scope: "project",
+                  interface: {
+                    displayName: "Check Code",
+                    shortDescription: "Review code changes",
+                  },
+                  dependencies: ["rg"],
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+    const result = await manager.listSkills({
+      cwd: "/repo",
+      threadId: "thread_1",
+    });
+
+    expect(resolveContextForDiscovery).toHaveBeenCalledWith("thread_1", "/repo");
+    expect(sendRequest).toHaveBeenCalledWith(context, "skills/list", {
+      cwds: ["/repo"],
+    });
+    expect(result).toEqual({
+      skills: [
+        {
+          name: "check-code",
+          description: "Review repo changes for bugs and risks.",
+          path: "/Users/test/.codex/skills/check-code/SKILL.md",
+          enabled: true,
+          scope: "project",
+          interface: {
+            displayName: "Check Code",
+            shortDescription: "Review code changes",
+          },
+          dependencies: ["rg"],
+        },
+      ],
+      source: "codex-app-server",
+      cached: false,
+    });
+  });
+
+  it("retries skills/list with cwd when a runtime rejects cwds", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: "thread_1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      collabReceiverTurns: new Map(),
+    };
+
+    vi.spyOn(
+      manager as unknown as {
+        resolveContextForDiscovery: (threadId?: string) => unknown;
+      },
+      "resolveContextForDiscovery",
+    ).mockReturnValue(context);
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as {
+          sendRequest: (...args: unknown[]) => Promise<unknown>;
+        },
+        "sendRequest",
+      )
+      .mockRejectedValueOnce(new Error('skills/list failed: invalid params: unknown field "cwds"'))
+      .mockResolvedValueOnce({
+        result: {
+          skills: [
+            {
+              name: "check-code",
+              path: "/Users/test/.codex/skills/check-code/SKILL.md",
+            },
+          ],
+        },
+      });
+
+    const result = await manager.listSkills({
+      cwd: "/repo",
+      threadId: "thread_1",
+    });
+
+    expect(sendRequest).toHaveBeenNthCalledWith(1, context, "skills/list", {
+      cwds: ["/repo"],
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(2, context, "skills/list", {
+      cwd: "/repo",
+    });
+    expect(result.skills).toEqual([
+      {
+        name: "check-code",
+        path: "/Users/test/.codex/skills/check-code/SKILL.md",
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("parses plugin/list responses for the requested cwd", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: "thread_1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      collabReceiverTurns: new Map(),
+    };
+
+    const resolveContextForDiscovery = vi
+      .spyOn(
+        manager as unknown as {
+          resolveContextForDiscovery: (threadId?: string, cwd?: string) => unknown;
+        },
+        "resolveContextForDiscovery",
+      )
+      .mockReturnValue(context);
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as {
+          sendRequest: (...args: unknown[]) => Promise<unknown>;
+        },
+        "sendRequest",
+      )
+      .mockResolvedValue({
+        result: {
+          marketplaces: [
+            {
+              name: "openai-curated",
+              path: "/Users/test/.agents/plugins/marketplace.json",
+              interface: {
+                displayName: "OpenAI Curated",
+              },
+              plugins: [
+                {
+                  id: "plugin/github",
+                  name: "github",
+                  source: {
+                    path: "/Users/test/.codex/plugins/cache/openai-curated/github",
+                  },
+                  installed: true,
+                  enabled: true,
+                  installPolicy: "INSTALLED_BY_DEFAULT",
+                  authPolicy: "ON_USE",
+                  interface: {
+                    displayName: "GitHub",
+                    shortDescription: "Inspect repositories and pull requests",
+                    capabilities: ["pull_requests", "issues"],
+                    defaultPrompt: ["Help with repository tasks"],
+                    websiteUrl: "https://github.com",
+                    screenshots: ["https://example.com/github.png"],
+                  },
+                },
+              ],
+            },
+          ],
+          marketplaceLoadErrors: [
+            {
+              marketplacePath: "/broken/marketplace.json",
+              message: "Invalid marketplace manifest",
+            },
+          ],
+          featuredPluginIds: ["plugin/github"],
+          remoteSyncError: "Remote sync unavailable",
+        },
+      });
+
+    const result = await manager.listPlugins({
+      cwd: "/repo",
+      threadId: "thread_1",
+      forceRemoteSync: true,
+    });
+
+    expect(resolveContextForDiscovery).toHaveBeenCalledWith("thread_1", "/repo");
+    expect(sendRequest).toHaveBeenCalledWith(context, "plugin/list", {
+      cwds: ["/repo"],
+      forceRemoteSync: true,
+    });
+    expect(result).toEqual({
+      marketplaces: [
+        {
+          name: "openai-curated",
+          path: "/Users/test/.agents/plugins/marketplace.json",
+          interface: {
+            displayName: "OpenAI Curated",
+          },
+          plugins: [
+            {
+              id: "plugin/github",
+              name: "github",
+              source: {
+                type: "local",
+                path: "/Users/test/.codex/plugins/cache/openai-curated/github",
+              },
+              installed: true,
+              enabled: true,
+              installPolicy: "INSTALLED_BY_DEFAULT",
+              authPolicy: "ON_USE",
+              interface: {
+                displayName: "GitHub",
+                shortDescription: "Inspect repositories and pull requests",
+                capabilities: ["pull_requests", "issues"],
+                defaultPrompt: ["Help with repository tasks"],
+                websiteUrl: "https://github.com",
+                screenshots: ["https://example.com/github.png"],
+              },
+            },
+          ],
+        },
+      ],
+      marketplaceLoadErrors: [
+        {
+          marketplacePath: "/broken/marketplace.json",
+          message: "Invalid marketplace manifest",
+        },
+      ],
+      featuredPluginIds: ["plugin/github"],
+      remoteSyncError: "Remote sync unavailable",
+      source: "codex-app-server",
+      cached: false,
+    });
+  });
+
+  it("parses plugin/read responses into plugin detail", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: "thread_1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      collabReceiverTurns: new Map(),
+    };
+
+    const resolveContextForDiscovery = vi
+      .spyOn(
+        manager as unknown as {
+          resolveContextForDiscovery: (threadId?: string, cwd?: string) => unknown;
+        },
+        "resolveContextForDiscovery",
+      )
+      .mockReturnValue(context);
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as {
+          sendRequest: (...args: unknown[]) => Promise<unknown>;
+        },
+        "sendRequest",
+      )
+      .mockResolvedValue({
+        result: {
+          plugin: {
+            marketplaceName: "openai-curated",
+            marketplacePath: "/Users/test/.agents/plugins/marketplace.json",
+            summary: {
+              id: "plugin/github",
+              name: "github",
+              source: {
+                path: "/Users/test/.codex/plugins/cache/openai-curated/github",
+              },
+              installed: true,
+              enabled: true,
+              installPolicy: "INSTALLED_BY_DEFAULT",
+              authPolicy: "ON_USE",
+              interface: {
+                displayName: "GitHub",
+                shortDescription: "Inspect repositories and pull requests",
+                longDescription: "Use GitHub tools to work with repositories, issues, and PRs.",
+                developerName: "OpenAI",
+                category: "Developer Tools",
+                capabilities: ["pull_requests", "issues"],
+                defaultPrompt: ["Help with repository tasks"],
+                websiteUrl: "https://github.com",
+                privacyPolicyUrl: "https://github.com/privacy",
+                termsOfServiceUrl:
+                  "https://docs.github.com/site-policy/github-terms/github-terms-of-service",
+                brandColor: "#24292f",
+                composerIcon: "github",
+                logo: "https://example.com/github-logo.png",
+                screenshots: ["https://example.com/github.png"],
+              },
+            },
+            description: "GitHub connector for repository workflows.",
+            skills: [
+              {
+                name: "gh-fix-ci",
+                description: "Debug failing GitHub Actions checks.",
+                path: "/Users/test/.codex/plugins/cache/openai-curated/github/skills/gh-fix-ci/SKILL.md",
+                scope: "user",
+                dependencies: ["gh"],
+              },
+            ],
+            apps: [
+              {
+                id: "github-app",
+                name: "GitHub App",
+                description: "Connected GitHub account",
+                installUrl: "https://github.com/apps/openai",
+                needsAuth: true,
+              },
+            ],
+            mcpServers: ["GitHub"],
+          },
+        },
+      });
+
+    const result = await manager.readPlugin({
+      marketplacePath: "/Users/test/.agents/plugins/marketplace.json",
+      pluginName: "github",
+    });
+
+    expect(resolveContextForDiscovery).toHaveBeenCalledWith(undefined);
+    expect(sendRequest).toHaveBeenCalledWith(context, "plugin/read", {
+      marketplacePath: "/Users/test/.agents/plugins/marketplace.json",
+      pluginName: "github",
+    });
+    expect(result).toEqual({
+      plugin: {
+        marketplaceName: "openai-curated",
+        marketplacePath: "/Users/test/.agents/plugins/marketplace.json",
+        summary: {
+          id: "plugin/github",
+          name: "github",
+          source: {
+            type: "local",
+            path: "/Users/test/.codex/plugins/cache/openai-curated/github",
+          },
+          installed: true,
+          enabled: true,
+          installPolicy: "INSTALLED_BY_DEFAULT",
+          authPolicy: "ON_USE",
+          interface: {
+            displayName: "GitHub",
+            shortDescription: "Inspect repositories and pull requests",
+            longDescription: "Use GitHub tools to work with repositories, issues, and PRs.",
+            developerName: "OpenAI",
+            category: "Developer Tools",
+            capabilities: ["pull_requests", "issues"],
+            defaultPrompt: ["Help with repository tasks"],
+            websiteUrl: "https://github.com",
+            privacyPolicyUrl: "https://github.com/privacy",
+            termsOfServiceUrl:
+              "https://docs.github.com/site-policy/github-terms/github-terms-of-service",
+            brandColor: "#24292f",
+            composerIcon: "github",
+            logo: "https://example.com/github-logo.png",
+            screenshots: ["https://example.com/github.png"],
+          },
+        },
+        description: "GitHub connector for repository workflows.",
+        skills: [
+          {
+            name: "gh-fix-ci",
+            description: "Debug failing GitHub Actions checks.",
+            path: "/Users/test/.codex/plugins/cache/openai-curated/github/skills/gh-fix-ci/SKILL.md",
+            enabled: true,
+            scope: "user",
+            dependencies: ["gh"],
+          },
+        ],
+        apps: [
+          {
+            id: "github-app",
+            name: "GitHub App",
+            description: "Connected GitHub account",
+            installUrl: "https://github.com/apps/openai",
+            needsAuth: true,
+          },
+        ],
+        mcpServers: ["GitHub"],
+      },
+      source: "codex-app-server",
+      cached: false,
+    });
   });
 });
 
@@ -707,6 +1281,31 @@ describe("thread checkpoint control", () => {
           items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
         },
       ],
+    });
+  });
+
+  it("forks a provider thread via thread/fork", async () => {
+    const { manager, context, sendRequest } = createThreadControlHarness();
+    sendRequest.mockResolvedValue({
+      thread: {
+        id: "thread_forked",
+      },
+    });
+
+    const result = await manager.forkThread({
+      sourceThreadId: asThreadId("thread_1"),
+      threadId: asThreadId("thread_2"),
+      runtimeMode: "full-access",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "thread/fork", {
+      threadId: "thread_1",
+    });
+    expect(result).toEqual({
+      threadId: "thread_2",
+      resumeCursor: {
+        threadId: "thread_forked",
+      },
     });
   });
 
@@ -1009,8 +1608,12 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
         provider: "codex",
         cwd: workspaceDir,
         runtimeMode: "full-access",
-        binaryPath: process.env.CODEX_BINARY_PATH!,
-        ...(process.env.CODEX_HOME_PATH ? { homePath: process.env.CODEX_HOME_PATH } : {}),
+        providerOptions: {
+          codex: {
+            ...(process.env.CODEX_BINARY_PATH ? { binaryPath: process.env.CODEX_BINARY_PATH } : {}),
+            ...(process.env.CODEX_HOME_PATH ? { homePath: process.env.CODEX_HOME_PATH } : {}),
+          },
+        },
       });
 
       const firstTurn = await manager.sendTurn({
@@ -1040,8 +1643,12 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
         cwd: workspaceDir,
         runtimeMode: "approval-required",
         resumeCursor: firstSession.resumeCursor,
-        binaryPath: process.env.CODEX_BINARY_PATH!,
-        ...(process.env.CODEX_HOME_PATH ? { homePath: process.env.CODEX_HOME_PATH } : {}),
+        providerOptions: {
+          codex: {
+            ...(process.env.CODEX_BINARY_PATH ? { binaryPath: process.env.CODEX_BINARY_PATH } : {}),
+            ...(process.env.CODEX_HOME_PATH ? { homePath: process.env.CODEX_HOME_PATH } : {}),
+          },
+        },
       });
 
       expect(resumedSession.threadId).toBe(originalThreadId);

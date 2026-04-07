@@ -124,13 +124,12 @@ function ClaudeTraitsPickerHarness(props: {
   const setPrompt = useComposerDraftStore((store) => store.setPrompt);
   const { modelOptions, selectedModel } = useEffectiveComposerModelState({
     threadId: CLAUDE_THREAD_ID,
-    providers: TEST_PROVIDERS,
     selectedProvider: "claudeAgent",
     threadModelSelection: props.fallbackModelSelection,
     projectModelSelection: null,
-    settings: {
-      ...DEFAULT_SERVER_SETTINGS,
-      ...DEFAULT_CLIENT_SETTINGS,
+    customModelsByProvider: {
+      codex: [],
+      claudeAgent: [],
     },
   });
   const handlePromptChange = useCallback(
@@ -143,13 +142,12 @@ function ClaudeTraitsPickerHarness(props: {
   return (
     <TraitsPicker
       provider="claudeAgent"
-      models={TEST_PROVIDERS[1]!.models}
       threadId={CLAUDE_THREAD_ID}
+      models={[]}
       model={selectedModel ?? props.model}
       prompt={prompt}
       modelOptions={modelOptions?.claudeAgent}
       onPromptChange={handlePromptChange}
-      triggerVariant={props.triggerVariant}
     />
   );
 }
@@ -403,8 +401,8 @@ async function mountCodexPicker(props: { model?: string; options?: CodexModelOpt
   const screen = await render(
     <TraitsPicker
       provider="codex"
-      models={TEST_PROVIDERS[0]!.models}
       threadId={threadId}
+      models={[]}
       model={props.model ?? DEFAULT_MODEL_BY_PROVIDER.codex}
       prompt=""
       modelOptions={props.options}
