@@ -1,4 +1,4 @@
-import { CheckCircleIcon, LoaderIcon, SendIcon } from "lucide-react";
+import { LoaderIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "~/components/ChatMarkdown";
