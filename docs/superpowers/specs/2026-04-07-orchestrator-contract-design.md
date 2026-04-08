@@ -446,19 +446,262 @@ projection_orchestrator_decisions
 
 ---
 
+## Multi-Model Orchestration
+
+Model choice is per task, not per run. The orchestrator selects providers and models intentionally, with policy, fallback, and telemetry — not UI dropdowns.
+
+### Principles
+
+- A worker is bound to one provider/model for the lifetime of one active task.
+- Switching models mid-task is exceptional and policy-gated.
+- Review should often be cross-model (different provider reviews the implementation).
+- Provider choice must be explainable, logged, and measurable.
+- The root should never rely on hidden prompt lore like "Claude is better at X." It should use explicit policy plus telemetry.
+
+### ModelPolicy (per task)
+
+```
+ModelPolicy {
+  executionMode: "root-direct" | "worker"
+  preferredModels: ModelCandidate[]
+  fallbackModels: ModelCandidate[]
+  requiredCapabilities: RequiredCapability[]
+  switchPolicy: "forbidden" | "allow-on-retry" | "allow-on-boundary"
+  reviewMode: "same-model" | "same-provider-different-model"
+           | "cross-provider" | "root-decides"
+  maxRetriesPerModel: number
+}
+
+ModelCandidate {
+  provider: "codex" | "claudeAgent"
+  model: string
+  weight: number
+  reason: string
+}
+
+RequiredCapability =
+  "code-edit" | "repo-inspection" | "browser-use" | "structured-review"
+  | "planning" | "integration" | "test-execution" | "large-context"
+  | "fast-response" | "low-cost"
+```
+
+### WorkerModelBinding
+
+```
+WorkerModelBinding {
+  workerId: string
+  provider: "codex" | "claudeAgent"
+  model: string
+  selectedAt: datetime
+  selectedBy: "root-policy" | "root-override" | "parent-request" | "retry-policy"
+  selectionReason: string
+  inheritedFromTaskPolicy: boolean
+  supersedesBindingId: string | null
+}
+```
+
+### CapabilityProfile
+
+```
+CapabilityProfile {
+  provider: "codex" | "claudeAgent"
+  model: string
+  supports: RequiredCapability[]
+  costTier: "low" | "medium" | "high"
+  latencyTier: "low" | "medium" | "high"
+}
+```
+
+### FallbackPolicy
+
+```
+FailureClass =
+  "timeout" | "tool-failure" | "malformed-output" | "review-rejected"
+  | "capability-mismatch" | "provider-unavailable"
+
+FallbackPolicy {
+  onFailure: Record<FailureClass, {
+    action: "retry-same-model" | "retry-same-provider"
+          | "switch-provider" | "escalate"
+    maxAttempts: number
+  }>
+}
+```
+
+### Selection Algorithm
+
+1. Determine task type and required capabilities.
+2. Filter candidates by required capabilities and hard policy constraints.
+3. Apply workspace/runtime constraints.
+4. Rank by: task fit, past success rate, latency budget, cost budget, current provider health.
+5. Bind the top candidate. Record the reason.
+
+Model selection is policy-driven, not LLM-decided.
+
+### Cross-Model Review Defaults
+
+- Low-risk tasks: same-model or root review.
+- Medium-risk tasks: cross-model review.
+- High-risk tasks: cross-provider review plus deterministic evidence checks.
+- Never let a model be the only reviewer of its own critical output if a second model is available.
+
+### Retry Semantics
+
+- First retry: same model if failure was transient.
+- Second retry: fallback model on same provider if failure suggests model weakness.
+- Third retry: cross-provider fallback if failure persists.
+- After that: escalate to root or user.
+
+### Root Model Policy
+
+- Root gets a stable "control-plane" model binding for the run.
+- Distinguish: `runControlModel`, `taskExecutionModel`, `reviewModel`, `browserValidationModel`.
+- The root should not constantly switch its own base model mid-run.
+
+### Recommended V1 Defaults
+
+| Role | Policy |
+|------|--------|
+| Root orchestrator | Stable reasoning model, one binding for the run |
+| Explorer/search tasks | Faster/lower-cost model |
+| Implementation tasks | Strongest code-editing model available |
+| Review tasks | Cross-provider when task is medium/high value |
+| Browser validation | Strongest browser-tool-use model |
+| Integration tasks | Strong reasoning + code comprehension model |
+
+### Telemetry Per Task
+
+Track: task type, provider/model chosen, selection reason, latency, cost, retries, fallback transitions, review acceptance rate, reopen rate, browser validation success rate, stuck rate, malformed-output rate.
+
+---
+
+## UI and Visual Design
+
+The orchestrator should feel like a live control room, not "chat with extra boxes."
+
+### Design Direction
+
+Treat the root orchestrator as mission control. Separate conversation, task topology, and evidence visually. Use depth, docking, and motion to communicate ownership and focus.
+
+**Visual language:** Control Room structure (dense, sharp, technical) with Studio Desk readability (editorial, calm, clear hierarchy). Steel/ink backgrounds, warm status colors, bright active accents. Mono + grotesk typography pairing.
+
+### Core Layout
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Left Rail          │ Browser Workspace (pinned)    │ Inspector  │
+│                    ├───────────────────────────────┤            │
+│ • Run tree         │ Worker Panel Canvas           │ • Task     │
+│ • Task hierarchy   │ (1-4 live panels, grid)       │ • Evidence │
+│ • Active workers   │                               │ • Model    │
+│ • Filters          │                               │ • Branch   │
+│                    ├───────────────────────────────┤ • Retries  │
+│                    │ Orchestrator Transcript        │            │
+│                    │ (decisions, chat, timeline)    │            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Left rail:** runs, task tree, active workers, filters (blocked, browser, needs review, completed).
+- **Main top:** pinned browser workspace.
+- **Main middle:** worker panel canvas (1-4 live panels).
+- **Main bottom:** orchestrator transcript and decisions.
+- **Right inspector:** selected task, model policy, evidence, logs, branch/worktree, retries.
+
+### Panel Layout Rules
+
+| Workers | Layout |
+|---------|--------|
+| 1 | Centered large panel |
+| 2 | 50/50 split |
+| 3-4 | Equal grid |
+| 5+ | 4 live + overflow stack thumbnails |
+
+- Blocked workers auto-promote visually.
+- Completed workers collapse into slim summary cards, not vanish.
+- "Bring to front" enlarges/focuses without destroying the grid (stage-manager model, not modal).
+- Root orchestrator always remains accessible even when a worker is foregrounded.
+
+### Panel States
+
+| State | Visual Treatment |
+|-------|-----------------|
+| active | Default, prominent |
+| waiting | Subtle pulse or dimmed border |
+| blocked | Amber/red edge glow + top-of-grid promotion |
+| reviewing | Moving header accent or scanline |
+| accepted | Desaturated with clean summary ribbon |
+| stale | Lowered contrast |
+| detached | Ghost outline |
+
+### Collapsing
+
+- Any surface collapses to a labeled rail chip.
+- Chips still show: title, status, provider/model, unread count.
+- Collapsing is lossless, not hidden.
+- Browser workspace collapses to a sticky top bar.
+- Sidebars support hover-peek before full expand.
+
+### Markdown in Orchestrator Transcript
+
+The transcript must support richer-than-normal markdown. Render these as first-class blocks:
+
+- Task cards with status badges
+- Decision blocks (answered/delegated/decomposed/inspected)
+- Evidence summaries with type badges
+- Checklist tables with evidence refs
+- Model/provider badges on messages
+- Inline task refs (`#task/api-auth`), worker refs (`@worker/frontend-2`), evidence refs (`ev:browser-14`)
+- Diff blocks with inline file badges
+- Collapsible code fences and logs
+- Admonitions for blocked, risk, accepted, retrying states
+
+### Chat Role Styling
+
+Different message types should look different:
+
+| Role | Treatment |
+|------|-----------|
+| User request | Clean speech bubble |
+| Orchestrator decision | Framed decision card |
+| Thinking/progress | Slim timeline row (check when done, spinner when active) |
+| Worker result | Submission card |
+| Review verdict | Verdict banner |
+| Browser validation | Evidence strip |
+| System warning | High-signal alert block |
+
+### Styling Details
+
+- No generic SaaS gradients. Strong neutral foundations with selective color: ink, graphite, bone, rust, moss, amber, signal blue.
+- Typography: expressive grotesk for UI, readable humanist for long reasoning, mono for commands/evidence.
+- Motion: panel spawn, promote/demote, collapse-to-chip, evidence attach, browser step pulse. Meaningful, not decorative.
+
+### Creative Interaction Ideas
+
+- Mini spawn graph that grows as children are created.
+- "Heat" overlay showing which panels are most active.
+- Auto-generated short labels for workers (human and memorable).
+- Timeline scrubber for the run.
+- Compare mode: two worker panels + diff/evidence inspector side by side.
+- Hover-peek transcripts for collapsed workers.
+- Bird's-eye topology view for complex runs.
+
+---
+
 ## V1 Recommended Shape
 
 - One root orchestrator per run.
-- Up to 4 visible active worker panels.
-- Up to 8 total active workers.
-- Recursive delegation allowed, root-enforced spawn budgets.
+- Up to 4 visible active worker panels, up to 8 total active workers.
+- Recursive delegation allowed, root-enforced spawn budgets (max depth 3).
 - Root-owned browser workspace pinned at the top.
-- Server-owned run/task/worker/evidence state.
-- Evidence-based acceptance with explicit evidence types.
+- Server-owned run/task/worker/evidence state. Client is projection/cache only.
+- Evidence-based acceptance with explicit evidence types and refs.
 - Full tool capability for the root, bounded by authority policy.
-- Capability-classified routing with safe failure defaults.
-- Crash-and-recover with completed steps permanent.
-- Every decision and LLM call persisted for observability.
+- Capability-classified routing (answer/inspect/delegate/decompose) with safe failure defaults.
+- Crash-and-recover with completed steps permanent, interrupted steps retried.
+- Multi-model orchestration: per-task model policy, worker binding, cross-model review.
+- Every decision, LLM call, and browser action persisted for observability.
+- Control room UI: left rail (task tree), pinned browser, worker canvas, transcript, right inspector.
+- Collapsible panels, stage-manager focus model, evidence-linked checklist items.
 
 ---
 
