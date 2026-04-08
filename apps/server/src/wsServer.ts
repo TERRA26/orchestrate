@@ -428,6 +428,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     logWebSocketEvents,
     autoBootstrapProjectFromCwd,
   } = serverConfig;
+
+  if (!authToken) {
+    yield* Effect.log(
+      "WARNING: No auth token configured. WebSocket connections are unauthenticated. " +
+        "Set T3CODE_AUTH_TOKEN for production use.",
+    );
+  }
+
   const availableEditors = resolveAvailableEditors();
 
   const gitManager = yield* GitManager;

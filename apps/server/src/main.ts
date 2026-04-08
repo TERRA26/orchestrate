@@ -172,7 +172,7 @@ const ServerConfigLive = (input: CliInput) =>
       const host =
         Option.getOrUndefined(input.host) ??
         env.host ??
-        (mode === "desktop" ? "127.0.0.1" : undefined);
+        "127.0.0.1";
 
       const config: ServerConfigShape = {
         mode,
