@@ -403,7 +403,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   const status = statusByThreadId[currentThreadId] ?? "idle";
   const statusDetail = statusDetailByThreadId[currentThreadId] ?? null;
   const isBusy = status !== "idle";
-  const canUseSelectedModel = providers.length > 0;
+  const canUseSelectedModel = selectedModel.length > 0;
 
   const setStatusForThread = useCallback(
     (threadId: ThreadId, nextStatus: OrchestratorStatus, nextDetail: string | null = null) => {

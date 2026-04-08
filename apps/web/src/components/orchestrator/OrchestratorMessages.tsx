@@ -2,7 +2,6 @@ import { LoaderIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "~/components/ChatMarkdown";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
 import {
   countOrchestratorChecklistItems,
@@ -18,10 +17,14 @@ import type { OrchestratorMessage } from "~/orchestratorStateStore";
 function MessageBubble({ message }: { message: OrchestratorMessage }) {
   if (message.role === "user") {
     return (
-      <div className="flex w-full justify-end pb-1">
-        <div className="max-w-[85%] rounded-xl border border-border/70 bg-secondary px-3.5 py-2">
-          <div className="whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
-            {message.content}
+      <div className="pb-4" data-message-role="user">
+        <div className="flex w-full justify-end">
+          <div className="group flex max-w-[80%] flex-col items-end gap-1">
+            <div className="w-max max-w-full min-w-0 self-end rounded-xl border border-border/70 bg-secondary px-[14px] py-1.5">
+              <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
+                {message.content}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -29,7 +32,7 @@ function MessageBubble({ message }: { message: OrchestratorMessage }) {
   }
   if (message.role === "thinking") {
     return (
-      <div className="pb-1">
+      <div className="pb-3">
         <div className="flex items-start gap-2 text-muted-foreground">
           <LoaderIcon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
           <span className="text-sm leading-relaxed">{message.content}</span>
@@ -37,19 +40,10 @@ function MessageBubble({ message }: { message: OrchestratorMessage }) {
       </div>
     );
   }
-  if (message.role === "agent-result") {
-    return (
-      <div className="pb-1">
-        <div className="chat-markdown text-sm leading-relaxed text-foreground">
-          <ChatMarkdown text={message.content} cwd={undefined} />
-        </div>
-      </div>
-    );
-  }
-  // orchestrator
+  // orchestrator or agent-result — rendered like assistant messages
   return (
-    <div className="pb-1">
-      <div className="chat-markdown text-sm leading-relaxed text-foreground">
+    <div className="pb-4" data-message-role="assistant">
+      <div className="chat-markdown prose prose-sm max-w-none text-sm leading-relaxed text-foreground">
         <ChatMarkdown text={message.content} cwd={undefined} />
       </div>
     </div>
@@ -60,11 +54,11 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
   const counts = countOrchestratorChecklistItems(items);
 
   return (
-    <div className="rounded-[18px] border border-border/60 bg-muted/20 px-3 py-2.5">
+    <div className="mb-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[11px] font-medium text-foreground/88">Quality Gate</p>
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs font-medium text-foreground/88">Quality Gate</p>
+          <p className="text-[11px] text-muted-foreground">
             {counts.passed}/{items.length} verified
             {counts.failed > 0 ? `, ${counts.failed} failing` : ""}
             {counts.pending > 0 ? `, ${counts.pending} pending` : ""}
@@ -86,7 +80,7 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
         {items.map((item) => (
           <div
             key={item.id}
-            className="rounded-[14px] border border-border/40 bg-background/55 px-2.5 py-2"
+            className="rounded-md border border-border/40 bg-background/55 px-2.5 py-2"
           >
             <div className="flex items-start gap-2">
               <span
@@ -100,9 +94,9 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
                 )}
               />
               <div className="min-w-0">
-                <p className="text-[11px] leading-4 text-foreground/90">{item.label}</p>
+                <p className="text-xs leading-4 text-foreground/90">{item.label}</p>
                 {item.notes ? (
-                  <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{item.notes}</p>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{item.notes}</p>
                 ) : null}
               </div>
             </div>
@@ -136,27 +130,32 @@ export function OrchestratorMessages({
   isThreadBrowserSessionVisible,
   scrollRef,
 }: OrchestratorMessagesProps) {
+  const hasContent = messages.length > 0 || requirementsChecklist.length > 0;
+
   return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div ref={scrollRef} className="mx-auto flex w-full max-w-xl flex-col gap-4 px-4 py-5">
-        {requirementsChecklist.length > 0 ? (
-          <RequirementsChecklistCard items={requirementsChecklist} />
-        ) : null}
-        {threadBrowserSession && isThreadBrowserSessionVisible ? (
-          <InlineEmbeddedBrowserCard
-            session={threadBrowserSession}
-            scopeLabel="Browser preview"
-            className="h-[clamp(360px,48vh,540px)]"
-          />
-        ) : null}
-        {messages.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center py-20 text-center">
-            <p className="text-sm text-muted-foreground">Describe what you want built.</p>
-          </div>
-        ) : (
-          messages.map((message) => <MessageBubble key={message.id} message={message} />)
-        )}
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+      >
+        <div className="mx-auto w-full max-w-3xl">
+          {requirementsChecklist.length > 0 ? (
+            <RequirementsChecklistCard items={requirementsChecklist} />
+          ) : null}
+          {threadBrowserSession && isThreadBrowserSessionVisible ? (
+            <div className="mb-4">
+              <InlineEmbeddedBrowserCard
+                session={threadBrowserSession}
+                scopeLabel="Browser preview"
+                className="h-[clamp(360px,48vh,540px)]"
+              />
+            </div>
+          ) : null}
+          {hasContent
+            ? messages.map((message) => <MessageBubble key={message.id} message={message} />)
+            : null}
+        </div>
       </div>
-    </ScrollArea>
+    </div>
   );
 }
