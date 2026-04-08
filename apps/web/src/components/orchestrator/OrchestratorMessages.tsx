@@ -151,9 +151,13 @@ export function OrchestratorMessages({
               />
             </div>
           ) : null}
-          {hasContent
-            ? messages.map((message) => <MessageBubble key={message.id} message={message} />)
-            : null}
+          {hasContent ? (
+            messages.map((message) => <MessageBubble key={message.id} message={message} />)
+          ) : (
+            <div className="flex min-h-[40vh] items-center justify-center">
+              <p className="text-sm text-muted-foreground/60">Describe what you want built.</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

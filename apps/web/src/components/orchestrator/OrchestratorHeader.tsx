@@ -94,7 +94,6 @@ export interface OrchestratorHeaderProps {
   latestActivity: { summary: string } | null;
   status: OrchestratorStatus;
   statusDetail: string | null;
-  activeRun: { iteration: number } | null;
   threadBrowserSession: unknown;
   isThreadBrowserSessionVisible: boolean;
   isBusy: boolean;

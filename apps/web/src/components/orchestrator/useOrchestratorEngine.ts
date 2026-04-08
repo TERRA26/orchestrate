@@ -188,9 +188,6 @@ export interface OrchestratorEngineResult {
   handleStartNewChat: () => Promise<void>;
   handleToggleBrowserPreview: () => void;
   handlePromptChangeFromTraits: (prompt: string) => void;
-  handleProviderModelOptionsChange: (
-    nextOptions: ProviderModelOptions[ProviderKind] | undefined,
-  ) => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -1990,7 +1987,6 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     handleStartNewChat,
     handleToggleBrowserPreview,
     handlePromptChangeFromTraits,
-    handleProviderModelOptionsChange,
     scrollRef,
   };
 }

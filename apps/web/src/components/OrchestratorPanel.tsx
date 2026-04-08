@@ -107,7 +107,6 @@ function OrchestratorPanelInner() {
         latestActivity={engine.latestActivity}
         status={engine.status}
         statusDetail={engine.statusDetail}
-        activeRun={engine.activeRun}
         threadBrowserSession={engine.threadBrowserSession}
         isThreadBrowserSessionVisible={engine.isThreadBrowserSessionVisible}
         isBusy={engine.isBusy}
