@@ -24,12 +24,15 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type { ServerConfig, ServerProvider } from "./server";
+import type { ServerSettingsPatch, ServerSettings } from "./settings";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -52,6 +55,14 @@ import type {
 } from "./orchestration";
 import { EditorId } from "./editor";
 import type { ThreadId } from "./baseSchemas";
+import type {
+  BrowserOpenSessionInput,
+  BrowserOpenSessionResult,
+  BrowserActInput,
+  BrowserActResult,
+  BrowserCloseSessionInput,
+} from "./browser";
+import type { OrchestratorCompleteInput, OrchestratorCompleteResult } from "./ws";
 import type {
   ProviderComposerCapabilities,
   ProviderGetComposerCapabilitiesInput,
@@ -233,6 +244,7 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
@@ -269,6 +281,8 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    refreshProviders: () => Promise<readonly ServerProvider[]>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
   };
   provider: {
     getComposerCapabilities: (
@@ -289,6 +303,7 @@ export interface NativeApi {
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+    complete: (input: OrchestratorCompleteInput) => Promise<OrchestratorCompleteResult>;
   };
   browser: {
     open: (input: BrowserOpenInput) => Promise<ThreadBrowserState>;
@@ -305,5 +320,8 @@ export interface NativeApi {
     selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     openDevTools: (input: BrowserTabInput) => Promise<void>;
     onState: (callback: (state: ThreadBrowserState) => void) => () => void;
+    openSession: (input: BrowserOpenSessionInput) => Promise<BrowserOpenSessionResult>;
+    act: (input: BrowserActInput) => Promise<BrowserActResult>;
+    closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
   };
 }

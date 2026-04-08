@@ -27,7 +27,10 @@ import {
   type WsResponse as WsResponseMessage,
   WsResponse,
   type WsPushEnvelopeBase,
+  type OrchestratorCompleteInput,
+  type OrchestratorCompleteResult,
 } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,
@@ -50,7 +53,7 @@ import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
-import { searchWorkspaceEntries } from "./workspaceEntries";
+import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -76,11 +79,14 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { BrowserAutomation } from "./browser/Services/BrowserAutomation.ts";
+import { runProcess } from "./processRunner.ts";
 import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
+import { ServerSettingsService } from "./serverSettings";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -220,8 +226,11 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
+  | BrowserAutomation
   | Open
-  | AnalyticsService;
+  | AnalyticsService
+  | WorkspaceEntries
+  | ServerSettingsService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -293,6 +302,69 @@ function summarizePushForLog(push: WsPushEnvelopeBase): unknown {
         }
       : {}),
   };
+}
+
+function handleOrchestratorComplete(
+  input: OrchestratorCompleteInput,
+): Effect.Effect<OrchestratorCompleteResult, RouteRequestError> {
+  // TODO: Wire up to provider adapter for real model completion.
+  // For now, delegate to the provider binary via CLI using runProcess.
+  return Effect.gen(function* () {
+    const systemMessage = input.messages.find((m) => m.role === "system")?.content ?? "";
+    const userMessage = input.messages.find((m) => m.role === "user")?.content ?? "";
+    const prompt = buildOrchestratorCompletionPrompt({
+      systemPrompt: systemMessage,
+      userPrompt: userMessage,
+    });
+    const effort = resolveCodexCliReasoningEffort(
+      input.modelOptions && "reasoningEffort" in input.modelOptions
+        ? (input.modelOptions as any).reasoningEffort
+        : null,
+    );
+
+    const args: string[] = ["-m", input.model, "--reasoning-effort", effort, "-q", prompt];
+
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const result = await runProcess("codex", args, { timeoutMs: 120_000 });
+        return { text: result.stdout } satisfies OrchestratorCompleteResult;
+      },
+      catch: (cause) =>
+        new RouteRequestError({
+          message: `Orchestrator completion failed: ${String(cause)}`,
+        }),
+    });
+  });
+}
+
+function buildOrchestratorCompletionPrompt(input: {
+  systemPrompt: string;
+  userPrompt: string;
+}): string {
+  const sections: string[] = [];
+  const systemPrompt = input.systemPrompt.trim();
+  const userPrompt = input.userPrompt.trim();
+
+  if (systemPrompt.length > 0) {
+    sections.push(`System instructions:\n${systemPrompt}`);
+  }
+  if (userPrompt.length > 0) {
+    sections.push(`User request:\n${userPrompt}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+function resolveCodexCliReasoningEffort(
+  effort: string | null | undefined,
+): "minimal" | "low" | "medium" | "high" {
+  if (effort === "low" || effort === "medium" || effort === "high" || effort === "minimal") {
+    return effort;
+  }
+  if (effort === "xhigh") {
+    return "high";
+  }
+  return "high";
 }
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
@@ -708,11 +780,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
     pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
       issues: event.issues,
-      providers: providerStatuses,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
+  yield* Scope.provide(orchestrationReactor.start(), subscriptionsScope);
   yield* readiness.markOrchestrationSubscriptionsReady;
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
@@ -840,13 +911,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsSearchEntries: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.tryPromise({
-          try: () => searchWorkspaceEntries(body),
-          catch: (cause) =>
-            new RouteRequestError({
-              message: `Failed to search workspace entries: ${String(cause)}`,
-            }),
-        });
+        const workspaceEntries = yield* WorkspaceEntries;
+        return yield* workspaceEntries.search(body).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to search workspace entries: ${cause.detail}`,
+              }),
+          ),
+        );
       }
 
       case WS_METHODS.projectsWriteFile: {
@@ -992,8 +1065,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* terminalManager.close(body);
       }
 
-      case WS_METHODS.serverGetConfig:
+      case WS_METHODS.serverGetConfig: {
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const serverSettingsService = yield* ServerSettingsService;
+        const currentSettings = yield* serverSettingsService.getSettings;
         return {
           cwd,
           keybindingsConfigPath,
@@ -1001,7 +1076,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          settings: currentSettings,
         };
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
@@ -1037,6 +1114,58 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.providerListModels: {
         const body = stripRequestTag(request.body);
         return yield* providerDiscoveryService.listModels(body);
+      }
+
+      case WS_METHODS.projectsReadFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        const content = yield* fileSystem.readFileString(target.absolutePath);
+        return { content };
+      }
+
+      case WS_METHODS.serverRefreshProviders: {
+        const refreshedStatuses = yield* providerHealth.getStatuses;
+        return refreshedStatuses;
+      }
+
+      case WS_METHODS.serverGetSettings: {
+        const svc = yield* ServerSettingsService;
+        return yield* svc.getSettings;
+      }
+
+      case WS_METHODS.serverUpdateSettings: {
+        const body = stripRequestTag(request.body);
+        const svc = yield* ServerSettingsService;
+        return yield* svc.updateSettings(body.patch);
+      }
+
+      case WS_METHODS.browserOpenSession: {
+        const body = stripRequestTag(request.body);
+        const browserAutomation = yield* BrowserAutomation;
+        return yield* browserAutomation.openSession(body);
+      }
+
+      case WS_METHODS.browserAct: {
+        const body = stripRequestTag(request.body);
+        const browserAutomation = yield* BrowserAutomation;
+        return yield* browserAutomation.act(body);
+      }
+
+      case WS_METHODS.browserCloseSession: {
+        const body = stripRequestTag(request.body);
+        const browserAutomation = yield* BrowserAutomation;
+        return yield* browserAutomation.closeSession(body);
+      }
+
+      case WS_METHODS.orchestratorComplete: {
+        // Orchestrator completion: Delegate to the provider adapter for text generation.
+        // This is used by OrchestratorPanel to generate plans, instructions, etc.
+        const body = stripRequestTag(request.body);
+        return yield* handleOrchestratorComplete(body);
       }
 
       default: {

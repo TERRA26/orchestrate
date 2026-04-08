@@ -582,7 +582,7 @@ const make = Effect.gen(function* () {
         cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
-        model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
+        modelSelection: { provider: "codex", model: DEFAULT_GIT_TEXT_GENERATION_MODEL },
       })
       .pipe(
         Effect.catch((error) =>
@@ -957,29 +957,30 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
-  const start: ProviderCommandReactorShape["start"] = Effect.all([
-    Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-      if (
-        event.type !== "thread.runtime-mode-set" &&
-        event.type !== "thread.turn-queued" &&
-        event.type !== "thread.turn-start-requested" &&
-        event.type !== "thread.turn-interrupt-requested" &&
-        event.type !== "thread.approval-response-requested" &&
-        event.type !== "thread.user-input-response-requested" &&
-        event.type !== "thread.session-stop-requested"
-      ) {
-        return Effect.void;
-      }
+  const start: ProviderCommandReactorShape["start"] = () =>
+    Effect.all([
+      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+        if (
+          event.type !== "thread.runtime-mode-set" &&
+          event.type !== "thread.turn-queued" &&
+          event.type !== "thread.turn-start-requested" &&
+          event.type !== "thread.turn-interrupt-requested" &&
+          event.type !== "thread.approval-response-requested" &&
+          event.type !== "thread.user-input-response-requested" &&
+          event.type !== "thread.session-stop-requested"
+        ) {
+          return Effect.void;
+        }
 
-      return worker.enqueue(event);
-    }).pipe(Effect.forkScoped),
-    Stream.runForEach(providerService.streamEvents, (event) => {
-      if (event.type !== "turn.completed" && event.type !== "turn.aborted") {
-        return Effect.void;
-      }
-      return processQueueDrainEventSafely(event);
-    }).pipe(Effect.forkScoped),
-  ]).pipe(Effect.asVoid);
+        return worker.enqueue(event);
+      }).pipe(Effect.forkScoped),
+      Stream.runForEach(providerService.streamEvents, (event) => {
+        if (event.type !== "turn.completed" && event.type !== "turn.aborted") {
+          return Effect.void;
+        }
+        return processQueueDrainEventSafely(event);
+      }).pipe(Effect.forkScoped),
+    ]).pipe(Effect.asVoid);
 
   return {
     start,

@@ -163,6 +163,7 @@ describe("OrchestrationEngine", () => {
         type: "thread.archive",
         commandId: CommandId.makeUnsafe("cmd-thread-archive"),
         threadId: ThreadId.makeUnsafe("thread-archive"),
+        archivedAt: new Date().toISOString(),
       }),
     );
     expect(

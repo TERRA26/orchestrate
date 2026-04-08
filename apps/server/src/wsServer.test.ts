@@ -11,6 +11,7 @@ import WebSocket from "ws";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProviderDiscoveryService } from "./provider/Services/ProviderDiscoveryService";
+import { ServerSettingsService } from "./serverSettings";
 
 import {
   DEFAULT_TERMINAL_ID,
@@ -25,7 +26,7 @@ import {
   WS_METHODS,
   type WebSocketResponse,
   type ProviderRuntimeEvent,
-  type ServerProviderStatus,
+  type ServerProvider,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPushChannel,
@@ -65,13 +66,16 @@ const defaultOpenService: OpenShape = {
   openInEditor: () => Effect.void,
 };
 
-const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
+const defaultProviderStatuses: ReadonlyArray<ServerProvider> = [
   {
     provider: "codex",
     status: "ready",
-    available: true,
-    authStatus: "authenticated",
+    enabled: true,
+    installed: true,
+    version: null,
+    auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [],
   },
 ];
 
@@ -548,6 +552,7 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(NodeServices.layer),
     );
     const runtimeServices = await Effect.runPromise(
@@ -954,7 +959,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
-      providers: ReadonlyArray<ServerProviderStatus>;
+      providers: ReadonlyArray<ServerProvider>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");

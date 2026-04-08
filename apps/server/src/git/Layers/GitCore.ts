@@ -1855,6 +1855,50 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         ),
       );
 
+    const isInsideWorkTree: GitCoreShape["isInsideWorkTree"] = (cwd) =>
+      runGitStdout("GitCore.isInsideWorkTree", cwd, ["rev-parse", "--is-inside-work-tree"]).pipe(
+        Effect.map((stdout) => stdout.trim() === "true"),
+        Effect.catch(() => Effect.succeed(false)),
+      );
+
+    const filterIgnoredPaths: GitCoreShape["filterIgnoredPaths"] = (cwd, relativePaths) => {
+      if (relativePaths.length === 0) return Effect.succeed([]);
+      return execute({
+        operation: "GitCore.filterIgnoredPaths",
+        cwd,
+        args: ["check-ignore", "--stdin"],
+        allowNonZeroExit: true,
+      }).pipe(
+        Effect.map((result) => {
+          const ignoredSet = new Set(
+            result.stdout
+              .split("\n")
+              .map((l) => l.trim())
+              .filter(Boolean),
+          );
+          return relativePaths.filter((p) => !ignoredSet.has(p));
+        }),
+        Effect.catch(() => Effect.succeed(relativePaths as unknown as readonly string[])),
+      );
+    };
+
+    const listWorkspaceFiles: GitCoreShape["listWorkspaceFiles"] = (cwd) =>
+      runGitStdout("GitCore.listWorkspaceFiles", cwd, [
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+      ]).pipe(
+        Effect.map((stdout) => ({
+          paths: stdout
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean),
+          truncated: false,
+        })),
+        Effect.catch(() => Effect.succeed(null)),
+      );
+
     return {
       execute,
       status,
@@ -1878,6 +1922,9 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
       checkoutBranch,
       initRepo,
       listLocalBranchNames,
+      isInsideWorkTree,
+      filterIgnoredPaths,
+      listWorkspaceFiles,
     } satisfies GitCoreShape;
   });
 

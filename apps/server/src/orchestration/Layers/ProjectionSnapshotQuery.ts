@@ -9,6 +9,7 @@ import {
   ProjectScript,
   ProviderMentionReference,
   ProviderSkillReference,
+  ProjectId,
   ThreadId,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -22,7 +23,7 @@ import {
   ThreadHandoff,
   ModelSelection,
 } from "@t3tools/contracts";
-import { Effect, Layer, Schema, Struct } from "effect";
+import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -584,6 +585,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,
+            archivedAt: (row as any).archivedAt ?? null,
             handoff: row.handoff,
             messages: messagesByThread.get(row.threadId) ?? [],
             proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
@@ -617,6 +619,47 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   return {
     getSnapshot,
+    getCounts: () =>
+      getSnapshot().pipe(
+        Effect.map((snapshot) => ({
+          projectCount: snapshot.projects.length,
+          threadCount: snapshot.threads.length,
+        })),
+      ),
+    getActiveProjectByWorkspaceRoot: (workspaceRoot: string) =>
+      getSnapshot().pipe(
+        Effect.map((snapshot) => {
+          const project = snapshot.projects.find(
+            (p) => p.workspaceRoot === workspaceRoot && p.deletedAt === null,
+          );
+          return project ? Option.some(project) : Option.none();
+        }),
+      ),
+    getFirstActiveThreadIdByProjectId: (projectId: ProjectId) =>
+      getSnapshot().pipe(
+        Effect.map((snapshot) => {
+          const thread = snapshot.threads.find(
+            (t) => t.projectId === projectId && t.deletedAt === null,
+          );
+          return thread ? Option.some(thread.id) : Option.none();
+        }),
+      ),
+    getThreadCheckpointContext: (threadId: ThreadId) =>
+      getSnapshot().pipe(
+        Effect.map((snapshot) => {
+          const thread = snapshot.threads.find((t) => t.id === threadId);
+          if (!thread) return Option.none();
+          const project = snapshot.projects.find((p) => p.id === thread.projectId);
+          if (!project) return Option.none();
+          return Option.some({
+            threadId: thread.id,
+            projectId: thread.projectId,
+            workspaceRoot: project.workspaceRoot,
+            worktreePath: thread.worktreePath ?? null,
+            checkpoints: thread.checkpoints,
+          });
+        }),
+      ),
   } satisfies ProjectionSnapshotQueryShape;
 });
 

@@ -209,3 +209,33 @@ export function shouldAutoDeleteTerminalThreadOnLastClose(options: {
     thread.proposedPlans.length === 0
   );
 }
+
+/**
+ * Wait for a thread to appear in the zustand store (synced from server).
+ * Resolves `true` when found within the timeout, `false` otherwise.
+ */
+export async function waitForStartedServerThread(
+  threadId: ThreadId,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  // Dynamically import useStore to avoid circular dependencies
+  const { useStore } = await import("../store");
+
+  // Check immediately
+  const existing = useStore.getState().threads.find((t) => t.id === threadId);
+  if (existing) return true;
+
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      unsub();
+      resolve(false);
+    }, timeoutMs);
+    const unsub = useStore.subscribe((state) => {
+      if (state.threads.some((t) => t.id === threadId)) {
+        clearTimeout(timer);
+        unsub();
+        resolve(true);
+      }
+    });
+  });
+}

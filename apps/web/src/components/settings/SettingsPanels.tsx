@@ -372,8 +372,8 @@ function AboutVersionSection() {
       return;
     }
 
-    if (typeof bridge.checkForUpdate !== "function") return;
-    void bridge
+    if (typeof (bridge as any).checkForUpdate !== "function") return;
+    void (bridge as any)
       .checkForUpdate()
       .then((result: any) => {
         setDesktopUpdateStateQueryData(queryClient, result.state);

@@ -18,28 +18,33 @@
 ### New files (33 — copy from dpcode)
 
 **Disposable threads:**
+
 - `apps/web/src/lib/disposableThread.ts`, `*.test.ts`
 - `apps/web/src/hooks/useDisposableThreadLifecycle.ts`
 - `apps/web/src/hooks/useIsDisposableThread.ts`
 - `apps/web/src/temporaryThreadStore.ts`
 
 **Split view:**
+
 - `apps/web/src/splitView.logic.ts`, `*.test.ts`
 - `apps/web/src/splitViewStore.ts`, `*.test.ts`
 - `apps/web/src/splitViewRoute.ts`
 
 **Workspace handoff:**
+
 - `apps/web/src/components/ThreadWorktreeHandoffDialog.tsx`
 - `apps/web/src/hooks/useThreadWorkspaceHandoff.ts`
 - `packages/shared/src/worktreeHandoff.ts`
 - `packages/shared/src/threadWorkspace.ts`
 
 **Terminal:**
+
 - `apps/web/src/components/TerminalSearch.tsx`
 - `apps/web/src/components/TerminalScrollToBottom.tsx`
 - `apps/web/src/lib/suppressQueryResponses.ts`
 
 **UI/utilities:**
+
 - `apps/web/src/components/ProjectSidebarIcon.tsx`
 - `apps/web/src/components/chat/composerPickerStyles.ts`
 - `apps/web/src/components/ui/toastRouteVisibility.ts`, `*.test.ts`
@@ -51,6 +56,7 @@
 - `apps/web/src/lib/toolCallLabel.ts`, `*.test.ts`
 
 **Migrations (renumbered):**
+
 - dpcode `021` → orchestrate `024_ProjectionThreadsAssociatedWorktree.ts`
 - dpcode `022` → orchestrate `025_ProjectionThreadsAssociatedWorktreeBranch.ts`
 - dpcode `023` → orchestrate `026_ProjectionThreadsAssociatedWorktreeRef.ts`
@@ -58,6 +64,7 @@
 ### Replace files (~90 — no orchestrator code, safe to overwrite)
 
 **Server:**
+
 - `apps/server/src/codexAppServerManager.ts`, `*.test.ts`
 - `apps/server/src/git/Layers/GitCore.ts`, `GitManager.ts`
 - `apps/server/src/git/Services/GitCore.ts`, `GitManager.ts`
@@ -73,6 +80,7 @@
 - `apps/server/src/wsServer.test.ts`
 
 **Web:**
+
 - `apps/web/src/appSettings.ts`
 - `apps/web/src/components/BranchToolbar.tsx`, `BranchToolbarBranchSelector.tsx`
 - `apps/web/src/components/ChatView.tsx`, `ChatView.logic.ts`, `ChatView.browser.tsx`
@@ -99,15 +107,18 @@
 - `apps/web/src/types.ts`
 
 **Contracts:**
+
 - `packages/contracts/src/editor.ts`, `git.ts`, `ipc.ts`, `orchestration.ts`, `ws.ts`
 
 ### Replace + re-integrate (4 files — have orchestrator code)
+
 - `apps/web/src/routes/_chat.tsx` — re-add OrchestratorPanel + EmbeddedBrowserPane
 - `apps/web/src/wsNativeApi.ts` — re-add browser + orchestrator API methods
 - `apps/server/src/wsServer.ts` — re-add BrowserAutomation + orchestrator completion
 - `packages/contracts/src/ws.ts` — re-add browser + orchestrator WS schemas
 
 ### Manual merge (do NOT copy directly)
+
 - `apps/server/src/persistence/Migrations.ts` — add 024-026 entries only
 - `packages/shared/package.json` — add threadWorkspace + worktreeHandoff exports
 - `apps/server/package.json` — merge new deps, keep orchestrate-specific deps
@@ -337,6 +348,7 @@ git commit -m "chore: bulk copy dpcode merge #2 files (pre-reintegration)"
 ### Task 2: Re-integrate orchestrator code into conflict files
 
 **Files:**
+
 - Modify: `apps/web/src/routes/_chat.tsx`
 - Modify: `apps/web/src/wsNativeApi.ts`
 - Modify: `apps/server/src/wsServer.ts`
@@ -390,6 +402,7 @@ F. Add orchestratorComplete route handler (Claude + Codex CLI paths)
 ### Task 3: Update migrations, package files, and install deps
 
 **Files:**
+
 - Modify: `apps/server/src/persistence/Migrations.ts`
 - Modify: `packages/shared/package.json`
 - Modify: `apps/server/package.json`
@@ -472,6 +485,7 @@ cd ../server && bun run typecheck
 ```
 
 Fix all type errors iteratively. Expected issues:
+
 - Missing imports for new types from dpcode
 - Mock shapes in test files missing new fields
 - Service dependency changes (new services needing stubs in tests)

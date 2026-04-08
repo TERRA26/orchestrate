@@ -11,6 +11,41 @@ import {
   type ProviderKind,
 } from "@t3tools/contracts";
 
+export interface SelectableModelOption {
+  slug: string;
+  name: string;
+}
+
+// ── Default model & options helpers ───────────────────────────────────
+
+/**
+ * Return the default model slug for the given provider.
+ */
+export function getDefaultModel(provider: ProviderKind): string {
+  return DEFAULT_MODEL_BY_PROVIDER[provider];
+}
+
+/** Known model slugs per provider with human-readable names. */
+const MODEL_OPTIONS_BY_PROVIDER: Record<ProviderKind, ReadonlyArray<SelectableModelOption>> = {
+  codex: [
+    { slug: "gpt-5.4", name: "GPT-5.4" },
+    { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+    { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
+  ],
+  claudeAgent: [
+    { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+  ],
+};
+
+/**
+ * Return the known selectable models for a given provider.
+ */
+export function getModelOptions(provider: ProviderKind): ReadonlyArray<SelectableModelOption> {
+  return MODEL_OPTIONS_BY_PROVIDER[provider] ?? [];
+}
+
 // ── Default model capabilities ────────────────────────────────────────
 
 const DEFAULT_CODEX_CAPABILITIES: ModelCapabilities = {
@@ -68,11 +103,6 @@ export function getModelCapabilities(
     default:
       return EMPTY_CAPABILITIES;
   }
-}
-
-export interface SelectableModelOption {
-  slug: string;
-  name: string;
 }
 
 // ── Effort helpers ────────────────────────────────────────────────────

@@ -45,6 +45,7 @@ export function useThreadActions() {
         type: "thread.archive",
         commandId: newCommandId(),
         threadId,
+        archivedAt: new Date().toISOString(),
       });
 
       if (routeThreadId === threadId) {

@@ -512,6 +512,18 @@ if (typeof window !== "undefined") {
   });
 }
 
+// ── Memoized selectors ──────────────────────────────────────────────
+
+export function selectProjectById(projectId: Project["id"] | null | undefined) {
+  return (state: AppState): Project | undefined =>
+    projectId == null ? undefined : state.projects.find((p) => p.id === projectId);
+}
+
+export function selectThreadById(threadId: ThreadId | null | undefined) {
+  return (state: AppState): Thread | undefined =>
+    threadId == null ? undefined : state.threads.find((t) => t.id === threadId);
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     persistState(useStore.getState());

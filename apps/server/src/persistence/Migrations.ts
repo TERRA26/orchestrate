@@ -36,6 +36,9 @@ import Migration0020 from "./Migrations/020_ThreadHandoffMetadata.ts";
 import Migration0021 from "./Migrations/021_ProjectionThreadMessageMentions.ts";
 import Migration0022 from "./Migrations/022_ProjectionThreadsEnvMode.ts";
 import Migration0023 from "./Migrations/023_ProjectionThreadsForkSource.ts";
+import Migration0024 from "./Migrations/024_ProjectionThreadsAssociatedWorktree.ts";
+import Migration0025 from "./Migrations/025_ProjectionThreadsAssociatedWorktreeBranch.ts";
+import Migration0026 from "./Migrations/026_ProjectionThreadsAssociatedWorktreeRef.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -71,6 +74,9 @@ export const migrationEntries = [
   [21, "ProjectionThreadMessageMentions", Migration0021],
   [22, "ProjectionThreadsEnvMode", Migration0022],
   [23, "ProjectionThreadsForkSource", Migration0023],
+  [24, "ProjectionThreadsAssociatedWorktree", Migration0024],
+  [25, "ProjectionThreadsAssociatedWorktreeBranch", Migration0025],
+  [26, "ProjectionThreadsAssociatedWorktreeRef", Migration0026],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

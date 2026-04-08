@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
-import type { GitActionProgressEvent, GitActionProgressPhase } from "@t3tools/contracts";
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL,
+  type GitActionProgressEvent,
+  type GitActionProgressPhase,
+} from "@t3tools/contracts";
 import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
@@ -815,7 +819,9 @@ export const makeGitManager = Effect.gen(function* () {
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
           ...(input.includeBranch ? { includeBranch: true } : {}),
-          ...(input.model ? { model: input.model } : {}),
+          modelSelection: input.model
+            ? { provider: "codex" as const, model: input.model }
+            : { provider: "codex" as const, model: DEFAULT_GIT_TEXT_GENERATION_MODEL },
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
 
@@ -985,7 +991,9 @@ export const makeGitManager = Effect.gen(function* () {
         commitSummary: limitContext(rangeContext.commitSummary, 20_000),
         diffSummary: limitContext(rangeContext.diffSummary, 20_000),
         diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-        ...(model ? { model } : {}),
+        modelSelection: model
+          ? { provider: "codex" as const, model }
+          : { provider: "codex" as const, model: DEFAULT_GIT_TEXT_GENERATION_MODEL },
       });
 
       const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);

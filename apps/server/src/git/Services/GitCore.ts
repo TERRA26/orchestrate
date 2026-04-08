@@ -276,6 +276,26 @@ export interface GitCoreShape {
    * List local branch names (short format).
    */
   readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+
+  /**
+   * Check whether the given path is inside a Git work tree.
+   */
+  readonly isInsideWorkTree: (cwd: string) => Effect.Effect<boolean, GitCommandError>;
+
+  /**
+   * Filter paths by Git ignore rules, returning only the tracked/not-ignored ones.
+   */
+  readonly filterIgnoredPaths: (
+    cwd: string,
+    relativePaths: readonly string[],
+  ) => Effect.Effect<readonly string[], GitCommandError>;
+
+  /**
+   * List workspace files tracked by Git (ls-files style).
+   */
+  readonly listWorkspaceFiles: (
+    cwd: string,
+  ) => Effect.Effect<{ paths: readonly string[]; truncated: boolean } | null, GitCommandError>;
 }
 
 /**
