@@ -16,9 +16,9 @@ import {
 import { basenameOfPath } from "../vscode-icons";
 import type { ComposerTrigger } from "../composer-logic";
 import {
-  BUILT_IN_COMPOSER_SLASH_COMMANDS,
   filterComposerSlashCommands,
   getAvailableComposerSlashCommands,
+  getProviderNativeSlashCommandSearchTerms,
 } from "../composerSlashCommands";
 import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
 
@@ -95,9 +95,11 @@ export function useComposerCommandMenuItems(input: {
     if (composerTrigger.kind === "slash-command") {
       const query = normalizeProviderDiscoveryText(composerTrigger.query);
       const availableCommands = getAvailableComposerSlashCommands({
+        provider,
         supportsFastSlashCommand,
         canOfferReviewCommand,
         canOfferForkCommand,
+        providerNativeCommandNames: providerNativeCommands.map((command) => command.name),
       });
       const builtInItems = filterComposerSlashCommands(
         composerTrigger.query,
@@ -110,14 +112,15 @@ export function useComposerCommandMenuItems(input: {
         description: definition.description,
         source: definition.source,
       }));
-      const reservedSlashNames = new Set<string>(BUILT_IN_COMPOSER_SLASH_COMMANDS);
       const providerCommandItems = providerNativeCommands
         .filter((command) => {
-          if (reservedSlashNames.has(command.name)) {
-            return false;
-          }
           if (!query) return true;
-          return buildCommandSearchBlob(command).includes(query);
+          return (
+            buildCommandSearchBlob(command).includes(query) ||
+            getProviderNativeSlashCommandSearchTerms(provider, command.name).some((term) =>
+              term.includes(query),
+            )
+          );
         })
         .map((command) => ({
           id: `provider-command:${provider}:${command.name}`,
@@ -127,7 +130,24 @@ export function useComposerCommandMenuItems(input: {
           label: `/${command.name}`,
           description: command.description ?? `Run ${provider} native command`,
         }));
-      return [...builtInItems, ...providerCommandItems];
+      // For the Claude provider, skills use `/` prefix just like slash commands,
+      // so merge them into the same dropdown.
+      const skillItems: ComposerCommandItem[] =
+        provider === "claudeAgent"
+          ? providerSkills
+              .filter((skill) => {
+                if (!query) return true;
+                return buildSkillSearchBlob(skill).includes(query);
+              })
+              .map((skill) => ({
+                id: `skill:${skill.path}`,
+                type: "skill" as const,
+                skill,
+                label: skill.interface?.displayName ?? skill.name,
+                description: skill.interface?.shortDescription ?? skill.description ?? skill.path,
+              }))
+          : [];
+      return [...builtInItems, ...providerCommandItems, ...skillItems];
     }
 
     if (composerTrigger.kind === "skill") {

@@ -1,12 +1,12 @@
 import { useCallback } from "react";
 import { Option, Schema } from "effect";
+import { TrimmedNonEmptyString, ProviderKind, type ProviderStartOptions } from "@t3tools/contracts";
 import {
-  TrimmedNonEmptyString,
-  type ProviderKind,
-  type ProviderStartOptions,
-} from "@t3tools/contracts";
-import { normalizeModelSlug, resolveSelectableModel } from "@t3tools/shared/model";
-import { DEFAULT_MODEL_BY_PROVIDER } from "@t3tools/contracts";
+  getDefaultModel,
+  getModelOptions,
+  normalizeModelSlug,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { EnvMode } from "./components/BranchToolbar.logic";
 
@@ -34,33 +34,9 @@ export type ProviderCustomModelConfig = {
   example: string;
 };
 
-/** Static built-in model lists per provider (used for custom model deduplication). */
-function getModelOptions(provider: ProviderKind): { slug: string; name: string }[] {
-  switch (provider) {
-    case "codex":
-      return [
-        { slug: "gpt-5.4", name: "GPT-5.4" },
-        { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-        { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
-      ];
-    case "claudeAgent":
-      return [
-        { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
-        { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-        { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
-      ];
-  }
-}
-
-function getDefaultModel(provider: ProviderKind): string {
-  return DEFAULT_MODEL_BY_PROVIDER[provider];
-}
-
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
-  codex: new Set(getModelOptions("codex").map((option: { slug: string }) => option.slug)),
-  claudeAgent: new Set(
-    getModelOptions("claudeAgent").map((option: { slug: string }) => option.slug),
-  ),
+  codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
 };
 
 const withDefaults =
@@ -96,6 +72,8 @@ export const AppSettingsSchema = Schema.Struct({
   customCodexModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   customClaudeModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   textGenerationModel: Schema.optional(TrimmedNonEmptyString),
+  uiFontFamily: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
+  defaultProvider: ProviderKind.pipe(withDefaults(() => "codex" as const)),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
@@ -201,13 +179,11 @@ export function getAppModelOptions(
   customModels: readonly string[],
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getModelOptions(provider).map(
-    ({ slug, name }: { slug: string; name: string }) => ({
-      slug,
-      name,
-      isCustom: false,
-    }),
-  );
+  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
+    slug,
+    name,
+    isCustom: false,
+  }));
   const seen = new Set(options.map((option) => option.slug));
   const trimmedSelectedModel = selectedModel?.trim().toLowerCase();
 

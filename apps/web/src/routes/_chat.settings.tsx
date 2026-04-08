@@ -2,11 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, Undo2Icon, XIcon } from "~/lib/icons";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import {
-  type ProviderKind,
-  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
-} from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { type ProviderKind, DEFAULT_GIT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
+import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   getAppModelOptions,
   getCustomModelsForProvider,
@@ -16,6 +13,7 @@ import {
   useAppSettings,
 } from "../appSettings";
 import { APP_VERSION } from "../branding";
+import { ClaudeAI, OpenAI } from "../components/Icons";
 import { Button } from "../components/ui/button";
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
@@ -232,9 +230,9 @@ function SettingsRouteView() {
     settings.textGenerationModel,
   );
   const currentGitTextGenerationModel =
-    settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex;
+    settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
   const defaultGitTextGenerationModel =
-    defaults.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex;
+    defaults.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
   const isGitTextGenerationModelDirty =
     currentGitTextGenerationModel !== defaultGitTextGenerationModel;
   const selectedGitTextGenerationModelLabel =
@@ -263,6 +261,8 @@ function SettingsRouteView() {
     settings.codexHomePath !== defaults.codexHomePath;
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
+    ...(settings.defaultProvider !== defaults.defaultProvider ? ["Default provider"] : []),
+    ...(settings.uiFontFamily !== defaults.uiFontFamily ? ["UI font"] : []),
     ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
     ...(settings.diffWordWrap !== defaults.diffWordWrap ? ["Diff line wrapping"] : []),
     ...(settings.enableAssistantStreaming !== defaults.enableAssistantStreaming
@@ -325,11 +325,7 @@ function SettingsRouteView() {
         }));
         return;
       }
-      if (
-        getAppModelOptions(provider, []).some(
-          (option: { slug: string }) => option.slug === normalized,
-        )
-      ) {
+      if (getModelOptions(provider).some((option) => option.slug === normalized)) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,
           [provider]: "That model is already built in.",
@@ -435,7 +431,7 @@ function SettingsRouteView() {
 
   async function sendTestNotification() {
     const title = "Task completed";
-    const body = "Notification test from Orchestrate.";
+    const body = "Notification test from DP Code.";
 
     if (window.desktopBridge) {
       const shown = await window.desktopBridge.notifications.show({ title, body, silent: false });
@@ -518,7 +514,7 @@ function SettingsRouteView() {
             <SettingsSection title="General">
               <SettingsRow
                 title="Theme"
-                description="Choose how Orchestrate looks across the app."
+                description="Choose how DP Code looks across the app."
                 resetAction={
                   theme !== "system" ? (
                     <SettingResetButton label="theme" onClick={() => setTheme("system")} />
@@ -545,6 +541,78 @@ function SettingsRouteView() {
                       ))}
                     </SelectPopup>
                   </Select>
+                }
+              />
+
+              <SettingsRow
+                title="Default provider"
+                description="Choose the provider used for new chats."
+                resetAction={
+                  settings.defaultProvider !== defaults.defaultProvider ? (
+                    <SettingResetButton
+                      label="default provider"
+                      onClick={() => updateSettings({ defaultProvider: defaults.defaultProvider })}
+                    />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={settings.defaultProvider}
+                    onValueChange={(value) => {
+                      if (value !== "codex" && value !== "claudeAgent") return;
+                      updateSettings({ defaultProvider: value });
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-44" aria-label="Default provider">
+                      <SelectValue>
+                        <span className="flex items-center gap-2">
+                          {settings.defaultProvider === "claudeAgent" ? (
+                            <ClaudeAI className="size-3.5 text-[#d97757]" />
+                          ) : (
+                            <OpenAI className="size-3.5" />
+                          )}
+                          {settings.defaultProvider === "claudeAgent" ? "Claude" : "Codex"}
+                        </span>
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      <SelectItem hideIndicator value="codex">
+                        <span className="flex items-center gap-2">
+                          <OpenAI className="size-3.5" />
+                          Codex
+                        </span>
+                      </SelectItem>
+                      <SelectItem hideIndicator value="claudeAgent">
+                        <span className="flex items-center gap-2">
+                          <ClaudeAI className="size-3.5 text-[#d97757]" />
+                          Claude
+                        </span>
+                      </SelectItem>
+                    </SelectPopup>
+                  </Select>
+                }
+              />
+
+              <SettingsRow
+                title="UI font"
+                description="Set a custom font for the interface. Leave empty for the default system font."
+                resetAction={
+                  settings.uiFontFamily !== defaults.uiFontFamily ? (
+                    <SettingResetButton
+                      label="UI font"
+                      onClick={() => updateSettings({ uiFontFamily: defaults.uiFontFamily })}
+                    />
+                  ) : null
+                }
+                control={
+                  <Input
+                    className="w-full sm:w-48 text-right"
+                    value={settings.uiFontFamily}
+                    onChange={(event) => updateSettings({ uiFontFamily: event.target.value })}
+                    placeholder="-apple-system, BlinkM…"
+                    spellCheck={false}
+                    aria-label="Custom UI font family"
+                  />
                 }
               />
 
@@ -1136,6 +1204,6 @@ function SettingsRouteView() {
   );
 }
 
-export const Route = createFileRoute("/_chat/settings" as any)({
+export const Route = createFileRoute("/_chat/settings")({
   component: SettingsRouteView,
 });

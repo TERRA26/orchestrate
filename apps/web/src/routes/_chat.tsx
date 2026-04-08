@@ -3,10 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { EmbeddedBrowserPane } from "../components/EmbeddedBrowserPane";
-import { OrchestratorPanel } from "../components/OrchestratorPanel";
 import ThreadSidebar from "../components/Sidebar";
 import { isElectron } from "../env";
+import { useDisposableThreadLifecycle } from "../hooks/useDisposableThreadLifecycle";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { resolveThreadEnvironmentMode } from "../lib/threadEnvironment";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -17,6 +16,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useAppSettings } from "~/appSettings";
 import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "~/components/ui/sidebar";
+import { useUIFont } from "~/hooks/useUIFont";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
@@ -28,13 +28,20 @@ function ChatRouteGlobalShortcuts() {
   const { toggleSidebar } = useSidebar();
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
-  const { activeDraftThread, activeThread, handleNewThread, projects, routeThreadId } =
-    useHandleNewThread();
+  const {
+    activeContextThreadId,
+    activeDraftThread,
+    activeProjectId,
+    activeThread,
+    handleNewThread,
+    projects,
+  } = useHandleNewThread();
+  useDisposableThreadLifecycle(activeContextThreadId);
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const terminalOpen = useTerminalStateStore((state) =>
-    routeThreadId
-      ? selectThreadTerminalState(state.terminalStateByThreadId, routeThreadId).terminalOpen
+    activeContextThreadId
+      ? selectThreadTerminalState(state.terminalStateByThreadId, activeContextThreadId).terminalOpen
       : false,
   );
   const { settings: appSettings } = useAppSettings();
@@ -66,8 +73,7 @@ function ChatRouteGlobalShortcuts() {
       if (!command) return;
 
       if (command === "chat.newLocal") {
-        const projectId =
-          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+        const projectId = activeProjectId ?? projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
         event.stopPropagation();
@@ -80,8 +86,7 @@ function ChatRouteGlobalShortcuts() {
       }
 
       if (command === "chat.newTerminal") {
-        const projectId =
-          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+        const projectId = activeProjectId ?? projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
         event.stopPropagation();
@@ -100,7 +105,7 @@ function ChatRouteGlobalShortcuts() {
       }
 
       if (command !== "chat.new") return;
-      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+      const projectId = activeProjectId ?? projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
       event.stopPropagation();
@@ -122,6 +127,7 @@ function ChatRouteGlobalShortcuts() {
     };
   }, [
     activeDraftThread,
+    activeProjectId,
     activeThread,
     clearSelection,
     handleNewThread,
@@ -157,6 +163,8 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
+  useUIFont();
+
   return (
     <SidebarProvider defaultOpen>
       <ChatRouteGlobalShortcuts />
@@ -165,7 +173,7 @@ function ChatRouteLayout() {
         collapsible="offcanvas"
         className="text-foreground"
         gapClassName="overflow-hidden after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-black/[0.03] dark:after:bg-white/[0.015] before:absolute before:inset-0 before:bg-[radial-gradient(90%_75%_at_0%_0%,rgba(255,255,255,0.06),transparent_58%),linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.008))] dark:before:bg-[radial-gradient(90%_75%_at_0%_0%,rgba(255,255,255,0.04),transparent_58%),linear-gradient(180deg,rgba(255,255,255,0.018),rgba(255,255,255,0.006))]"
-        innerClassName="border-r border-border/30 bg-background/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-3xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/85 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]"
+        innerClassName="border-r border-border/30 bg-background/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/80 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]"
         transparentSurface
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
@@ -177,9 +185,7 @@ function ChatRouteLayout() {
         <ThreadSidebar />
         <SidebarRail />
       </Sidebar>
-      <OrchestratorPanel />
       <Outlet />
-      <EmbeddedBrowserPane currentThreadId={null} />
     </SidebarProvider>
   );
 }

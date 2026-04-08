@@ -3,11 +3,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-
-import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 
 interface HttpResponse {
@@ -27,25 +23,11 @@ function makeTempDir(prefix: string): string {
 async function withRouteServer(run: (baseUrl: string) => Promise<void>): Promise<void> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    void Effect.runPromise(
-      tryHandleProjectFaviconRequest(url, res).pipe(
-        Effect.provide(ProjectFaviconResolverLive),
-        Effect.provide(NodeServices.layer),
-        Effect.flatMap((handled) =>
-          handled
-            ? Effect.void
-            : Effect.sync(() => {
-                res.writeHead(404, { "Content-Type": "text/plain" });
-                res.end("Not Found");
-              }),
-        ),
-      ),
-    ).catch(() => {
-      if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end("Internal Server Error");
-      }
-    });
+    if (tryHandleProjectFaviconRequest(url, res)) {
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("Not Found");
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -184,6 +166,17 @@ describe("tryHandleProjectFaviconRequest", () => {
       expect(response.statusCode).toBe(200);
       expect(response.contentType).toContain("image/svg+xml");
       expect(response.body).toContain('data-fallback="project-favicon"');
+    });
+  });
+
+  it("returns 204 when fallback=none and no icon exists", async () => {
+    const projectDir = makeTempDir("t3code-favicon-route-no-fallback-");
+
+    await withRouteServer(async (baseUrl) => {
+      const pathname = `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}&fallback=none`;
+      const response = await request(baseUrl, pathname);
+      expect(response.statusCode).toBe(204);
+      expect(response.body).toBe("");
     });
   });
 });

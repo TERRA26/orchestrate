@@ -87,7 +87,7 @@ const serverCommandId = (tag: string): CommandId =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const WORKTREE_BRANCH_PREFIX = "t3code";
+const WORKTREE_BRANCH_PREFIX = "dpcode";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 const HANDOFF_CONTEXT_WRAPPER_OVERHEAD =
   "<handoff_context>\n\n</handoff_context>\n\n<latest_user_message>\n\n</latest_user_message>"
@@ -582,7 +582,7 @@ const make = Effect.gen(function* () {
         cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
-        modelSelection: { provider: "codex", model: DEFAULT_GIT_TEXT_GENERATION_MODEL },
+        model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
       })
       .pipe(
         Effect.catch((error) =>
@@ -957,30 +957,29 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
-  const start: ProviderCommandReactorShape["start"] = () =>
-    Effect.all([
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (
-          event.type !== "thread.runtime-mode-set" &&
-          event.type !== "thread.turn-queued" &&
-          event.type !== "thread.turn-start-requested" &&
-          event.type !== "thread.turn-interrupt-requested" &&
-          event.type !== "thread.approval-response-requested" &&
-          event.type !== "thread.user-input-response-requested" &&
-          event.type !== "thread.session-stop-requested"
-        ) {
-          return Effect.void;
-        }
+  const start: ProviderCommandReactorShape["start"] = Effect.all([
+    Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      if (
+        event.type !== "thread.runtime-mode-set" &&
+        event.type !== "thread.turn-queued" &&
+        event.type !== "thread.turn-start-requested" &&
+        event.type !== "thread.turn-interrupt-requested" &&
+        event.type !== "thread.approval-response-requested" &&
+        event.type !== "thread.user-input-response-requested" &&
+        event.type !== "thread.session-stop-requested"
+      ) {
+        return Effect.void;
+      }
 
-        return worker.enqueue(event);
-      }).pipe(Effect.forkScoped),
-      Stream.runForEach(providerService.streamEvents, (event) => {
-        if (event.type !== "turn.completed" && event.type !== "turn.aborted") {
-          return Effect.void;
-        }
-        return processQueueDrainEventSafely(event);
-      }).pipe(Effect.forkScoped),
-    ]).pipe(Effect.asVoid);
+      return worker.enqueue(event);
+    }).pipe(Effect.forkScoped),
+    Stream.runForEach(providerService.streamEvents, (event) => {
+      if (event.type !== "turn.completed" && event.type !== "turn.aborted") {
+        return Effect.void;
+      }
+      return processQueueDrainEventSafely(event);
+    }).pipe(Effect.forkScoped),
+  ]).pipe(Effect.asVoid);
 
   return {
     start,

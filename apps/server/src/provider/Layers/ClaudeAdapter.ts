@@ -186,6 +186,27 @@ export interface ClaudeAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
+function mapSupportedCommands(commands: SlashCommand[]): ProviderListCommandsResult {
+  return {
+    commands: commands.map((cmd) => ({
+      name: cmd.name,
+      description: cmd.description || undefined,
+    })),
+    source: "claudeAgent",
+    cached: false,
+  };
+}
+
+function neverResolvingUserMessageStream(): AsyncIterable<SDKUserMessage> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+      return {
+        next: async () => new Promise<IteratorResult<SDKUserMessage>>(() => {}),
+      };
+    },
+  };
+}
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -683,16 +704,34 @@ function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
       continue;
     }
     const candidate = block as { type?: unknown; text?: unknown };
-    if (
-      candidate.type === "text" &&
-      typeof candidate.text === "string" &&
-      candidate.text.length > 0
-    ) {
-      fragments.push(candidate.text);
+    const sanitizedText =
+      candidate.type === "text" && typeof candidate.text === "string"
+        ? sanitizeClaudeDisplayText(candidate.text)
+        : "";
+    if (candidate.type === "text" && sanitizedText.length > 0) {
+      fragments.push(sanitizedText);
     }
   }
 
   return fragments;
+}
+
+function sanitizeClaudeDisplayText(text: string): string {
+  if (text.length === 0) {
+    return text;
+  }
+
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const normalized = line.trim().toLowerCase();
+      return !(
+        normalized.startsWith("[ede_diagnostic]") &&
+        normalized.includes("result_type=") &&
+        normalized.includes("stop_reason=")
+      );
+    })
+    .join("\n");
 }
 
 function extractContentBlockText(block: unknown): string {
@@ -701,12 +740,14 @@ function extractContentBlockText(block: unknown): string {
   }
 
   const candidate = block as { type?: unknown; text?: unknown };
-  return candidate.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
+  return candidate.type === "text" && typeof candidate.text === "string"
+    ? sanitizeClaudeDisplayText(candidate.text)
+    : "";
 }
 
 function extractTextContent(value: unknown): string {
   if (typeof value === "string") {
-    return value;
+    return sanitizeClaudeDisplayText(value);
   }
 
   if (Array.isArray(value)) {
@@ -2564,7 +2605,13 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             callbackOptions.signal.addEventListener("abort", onAbort, { once: true });
 
             // Block until the user provides answers.
-            const answers = yield* Deferred.await(answersDeferred);
+            const answers = yield* Deferred.await(answersDeferred).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  callbackOptions.signal.removeEventListener("abort", onAbort);
+                }),
+              ),
+            );
             pendingUserInputs.delete(requestId);
 
             // Emit user-input.resolved so the UI knows the interaction completed.
@@ -2714,7 +2761,13 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 once: true,
               });
 
-              const decision = yield* Deferred.await(decisionDeferred);
+              const decision = yield* Deferred.await(decisionDeferred).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    callbackOptions.signal.removeEventListener("abort", onAbort);
+                  }),
+                ),
+              );
               pendingApprovals.delete(requestId);
 
               const resolvedStamp = yield* makeEventStamp();
@@ -3099,17 +3152,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
     let commandsCache: { result: ProviderListCommandsResult; cwd: string } | null = null;
     let pendingCommandDiscovery: Promise<ProviderListCommandsResult> | null = null;
 
-    function mapSupportedCommands(commands: SlashCommand[]): ProviderListCommandsResult {
-      return {
-        commands: commands.map((cmd) => ({
-          name: cmd.name,
-          description: cmd.description || undefined,
-        })),
-        source: "claudeAgent",
-        cached: false,
-      };
-    }
-
     async function discoverCommandsViaTemporaryProcess(
       cwd: string,
     ): Promise<ProviderListCommandsResult> {
@@ -3118,9 +3160,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       // that only resolves when the async generator is iterated (driving the
       // subprocess handshake). We iterate in the background to unblock it.
       const tempQuery = createQuery({
-        prompt: (async function* (): AsyncIterable<SDKUserMessage> {
-          await new Promise<never>(() => {});
-        })(),
+        prompt: neverResolvingUserMessageStream(),
         options: {
           cwd,
           pathToClaudeCodeExecutable: "claude",
@@ -3134,11 +3174,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         // Drive the iterator so the subprocess completes its init handshake.
         // This runs in the background; close() in the finally block stops it.
         void (async () => {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          for await (const _ of tempQuery) {
+          for await (const message of tempQuery) {
+            void message;
             /* consume until closed */
           }
-        })();
+        })().catch(() => undefined);
 
         const commands = await tempQuery.supportedCommands();
         return mapSupportedCommands(commands);

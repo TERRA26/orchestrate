@@ -3,10 +3,12 @@ import {
   type OrchestrationReadModel,
   type ProviderInteractionMode,
   type ProviderKind,
+  type ProviderNativeCommandDescriptor,
   type ProviderModelOptions,
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import { deriveAssociatedWorktreeMetadata } from "@t3tools/shared/threadWorkspace";
 import { useCallback, useState } from "react";
 import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -15,7 +17,9 @@ import type { ComposerTrigger } from "../composer-logic";
 import {
   buildSlashReviewComposerPrompt,
   buildSubagentsPrompt,
-  parseComposerSlashInvocation,
+  getAvailableComposerSlashCommands,
+  hasProviderNativeSlashCommand,
+  parseComposerSlashInvocationForCommands,
   parseFastSlashCommandAction,
   parseForkSlashCommandArgs,
   type ForkSlashCommandTarget,
@@ -42,6 +46,8 @@ export function useComposerSlashCommands(input: {
   supportsFastSlashCommand: boolean;
   supportsTextNativeReviewCommand: boolean;
   fastModeEnabled: boolean;
+  providerNativeCommands: readonly ProviderNativeCommandDescriptor[];
+  providerCommandDiscoveryCwd: string | null;
   selectedProvider: ProviderKind;
   currentProviderModelOptions: ProviderModelOptions[ProviderKind] | undefined;
   selectedModelSelection: ModelSelection;
@@ -53,6 +59,7 @@ export function useComposerSlashCommands(input: {
   handleClearConversation: () => Promise<void> | void;
   handleInteractionModeChange: (mode: "default" | "plan") => Promise<void> | void;
   openForkTargetPicker: () => void;
+  openReviewTargetPicker: () => void;
   setComposerDraftProviderModelOptions: (
     threadId: ThreadId,
     provider: ProviderKind,
@@ -82,13 +89,46 @@ export function useComposerSlashCommands(input: {
   };
 }) {
   const [isSlashStatusDialogOpen, setIsSlashStatusDialogOpen] = useState(false);
+  const {
+    activeProject,
+    activeThread,
+    activeRootBranch,
+    isServerThread,
+    supportsFastSlashCommand,
+    supportsTextNativeReviewCommand,
+    fastModeEnabled,
+    providerNativeCommands,
+    providerCommandDiscoveryCwd,
+    selectedProvider,
+    currentProviderModelOptions,
+    selectedModelSelection,
+    runtimeMode,
+    interactionMode,
+    threadId,
+    syncServerReadModel,
+    navigateToThread,
+    handleClearConversation,
+    handleInteractionModeChange,
+    openForkTargetPicker,
+    openReviewTargetPicker,
+    setComposerDraftProviderModelOptions,
+    editorActions,
+  } = input;
+  const providerNativeCommandNames = providerNativeCommands.map((command) => command.name);
+  const availableBuiltInSlashCommands = getAvailableComposerSlashCommands({
+    provider: selectedProvider,
+    supportsFastSlashCommand,
+    canOfferReviewCommand: true,
+    canOfferForkCommand: true,
+    providerNativeCommandNames,
+  });
 
   const setFastModeFromSlashCommand = useCallback(
     (enabled: boolean) => {
-      input.setComposerDraftProviderModelOptions(
-        input.threadId,
-        input.selectedProvider,
-        buildNextProviderOptions(input.selectedProvider, input.currentProviderModelOptions, {
+      setComposerDraftProviderModelOptions(
+        threadId,
+        selectedProvider,
+        buildNextProviderOptions(selectedProvider, currentProviderModelOptions, {
           fastMode: enabled,
         }),
         {
@@ -96,12 +136,7 @@ export function useComposerSlashCommands(input: {
         },
       );
     },
-    [
-      input.currentProviderModelOptions,
-      input.selectedProvider,
-      input.setComposerDraftProviderModelOptions,
-      input.threadId,
-    ],
+    [currentProviderModelOptions, selectedProvider, setComposerDraftProviderModelOptions, threadId],
   );
 
   const runFastSlashCommand = useCallback(
@@ -110,7 +145,7 @@ export function useComposerSlashCommands(input: {
       if (action === null) {
         return false;
       }
-      if (!input.supportsFastSlashCommand) {
+      if (!supportsFastSlashCommand) {
         toastManager.add({
           type: "warning",
           title: "Fast mode is unavailable",
@@ -129,12 +164,11 @@ export function useComposerSlashCommands(input: {
       if (action === "status") {
         toastManager.add({
           type: "info",
-          title: `Fast mode is ${input.fastModeEnabled ? "on" : "off"}`,
+          title: `Fast mode is ${fastModeEnabled ? "on" : "off"}`,
         });
         return true;
       }
-      const nextEnabled =
-        action === "on" ? true : action === "off" ? false : !input.fastModeEnabled;
+      const nextEnabled = action === "on" ? true : action === "off" ? false : !fastModeEnabled;
       setFastModeFromSlashCommand(nextEnabled);
       toastManager.add({
         type: "success",
@@ -142,13 +176,13 @@ export function useComposerSlashCommands(input: {
       });
       return true;
     },
-    [input.fastModeEnabled, input.supportsFastSlashCommand, setFastModeFromSlashCommand],
+    [fastModeEnabled, supportsFastSlashCommand, setFastModeFromSlashCommand],
   );
 
   const createForkThreadFromSlashCommand = useCallback(
     async (inputOptions?: { target?: ForkSlashCommandTarget }) => {
       const api = readNativeApi();
-      if (!api || !input.activeProject || !input.activeThread || !input.isServerThread) {
+      if (!api || !activeProject || !activeThread || !isServerThread) {
         toastManager.add({
           type: "warning",
           title: "Fork is unavailable",
@@ -157,55 +191,58 @@ export function useComposerSlashCommands(input: {
         return true;
       }
 
-      const importedMessages = buildThreadHandoffImportedMessages(input.activeThread);
+      const importedMessages = buildThreadHandoffImportedMessages(activeThread);
 
       const nextThreadId = newThreadId();
       const createdAt = new Date().toISOString();
       // Fork first, then let the normal first-send worktree bootstrap create the cwd if needed.
       const resolvedTarget = resolveForkThreadEnvironment({
         target: inputOptions?.target ?? "local",
-        activeRootBranch: input.activeRootBranch,
-        sourceThread: input.activeThread,
+        activeRootBranch,
+        sourceThread: activeThread,
       });
 
       await api.orchestration.dispatchCommand({
         type: "thread.fork.create",
         commandId: newCommandId(),
         threadId: nextThreadId,
-        sourceThreadId: input.activeThread.id,
-        projectId: input.activeProject.id,
-        title: input.activeThread.title,
-        modelSelection: input.selectedModelSelection,
-        runtimeMode: input.runtimeMode,
-        interactionMode: input.interactionMode,
+        sourceThreadId: activeThread.id,
+        projectId: activeProject.id,
+        title: activeThread.title,
+        modelSelection: selectedModelSelection,
+        runtimeMode,
+        interactionMode,
         envMode: resolvedTarget.envMode,
         branch: resolvedTarget.branch,
         worktreePath: resolvedTarget.worktreePath,
+        associatedWorktreePath: resolvedTarget.associatedWorktreePath,
+        associatedWorktreeBranch: resolvedTarget.associatedWorktreeBranch,
+        associatedWorktreeRef: resolvedTarget.associatedWorktreeRef,
         importedMessages: [...importedMessages],
         createdAt,
       });
       const snapshot = await api.orchestration.getSnapshot();
-      input.syncServerReadModel(snapshot);
-      await input.navigateToThread(nextThreadId);
+      syncServerReadModel(snapshot);
+      await navigateToThread(nextThreadId);
       return true;
     },
     [
-      input.activeProject,
-      input.activeRootBranch,
-      input.activeThread,
-      input.interactionMode,
-      input.isServerThread,
-      input.navigateToThread,
-      input.runtimeMode,
-      input.selectedModelSelection,
-      input.syncServerReadModel,
+      activeProject,
+      activeRootBranch,
+      activeThread,
+      interactionMode,
+      isServerThread,
+      navigateToThread,
+      runtimeMode,
+      selectedModelSelection,
+      syncServerReadModel,
     ],
   );
 
   const runCodexReviewStart = useCallback(
     async (target: "changes" | "base-branch") => {
       const api = readNativeApi();
-      if (!api || !input.isServerThread || !input.activeThread || !input.activeProject) {
+      if (!api || !isServerThread || !activeThread || !activeProject) {
         toastManager.add({
           type: "warning",
           title: "Review is unavailable",
@@ -214,7 +251,7 @@ export function useComposerSlashCommands(input: {
         return false;
       }
 
-      if (target === "base-branch" && !input.activeRootBranch) {
+      if (target === "base-branch" && !activeRootBranch) {
         toastManager.add({
           type: "warning",
           title: "Base branch unavailable",
@@ -224,31 +261,36 @@ export function useComposerSlashCommands(input: {
       }
 
       const messageText =
-        target === "base-branch" && input.activeRootBranch
-          ? `Review against base branch ${input.activeRootBranch}`
+        target === "base-branch" && activeRootBranch
+          ? `Review against base branch ${activeRootBranch}`
           : "Review current changes";
 
       const nextThreadId = newThreadId();
       const createdAt = new Date().toISOString();
       const nextThreadTitle =
-        target === "base-branch"
-          ? `${input.activeThread.title} Review`
-          : `${input.activeThread.title} Review`;
+        target === "base-branch" ? `${activeThread.title} Review` : `${activeThread.title} Review`;
+      const associatedWorktree = deriveAssociatedWorktreeMetadata({
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
+        associatedWorktreePath: activeThread.associatedWorktreePath ?? null,
+        associatedWorktreeBranch: activeThread.associatedWorktreeBranch ?? null,
+        associatedWorktreeRef: activeThread.associatedWorktreeRef ?? null,
+      });
 
       try {
         await api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
           threadId: nextThreadId,
-          projectId: input.activeProject.id,
+          projectId: activeProject.id,
           title: nextThreadTitle,
-          modelSelection: input.selectedModelSelection,
-          runtimeMode: input.runtimeMode,
+          modelSelection: selectedModelSelection,
+          runtimeMode,
           interactionMode: "default",
-          envMode:
-            input.activeThread.envMode ?? (input.activeThread.worktreePath ? "worktree" : "local"),
-          branch: input.activeThread.branch,
-          worktreePath: input.activeThread.worktreePath,
+          envMode: activeThread.envMode ?? (activeThread.worktreePath ? "worktree" : "local"),
+          branch: activeThread.branch,
+          worktreePath: activeThread.worktreePath,
+          ...associatedWorktree,
           createdAt,
         });
         await api.orchestration.dispatchCommand({
@@ -261,24 +303,24 @@ export function useComposerSlashCommands(input: {
             text: messageText,
             attachments: [],
           },
-          modelSelection: input.selectedModelSelection,
+          modelSelection: selectedModelSelection,
           reviewTarget:
             target === "base-branch"
               ? {
                   type: "baseBranch",
-                  branch: input.activeRootBranch!,
+                  branch: activeRootBranch!,
                 }
               : {
                   type: "uncommittedChanges",
                 },
           dispatchMode: "queue",
-          runtimeMode: input.runtimeMode,
+          runtimeMode,
           interactionMode: "default",
           createdAt,
         });
         const snapshot = await api.orchestration.getSnapshot();
-        input.syncServerReadModel(snapshot);
-        await input.navigateToThread(nextThreadId);
+        syncServerReadModel(snapshot);
+        await navigateToThread(nextThreadId);
         return true;
       } catch (error) {
         toastManager.add({
@@ -291,33 +333,29 @@ export function useComposerSlashCommands(input: {
       }
     },
     [
-      input.activeProject,
-      input.activeRootBranch,
-      input.activeThread,
-      input.interactionMode,
-      input.isServerThread,
-      input.navigateToThread,
-      input.runtimeMode,
-      input.selectedModelSelection,
-      input.syncServerReadModel,
-      input.threadId,
+      activeProject,
+      activeRootBranch,
+      activeThread,
+      isServerThread,
+      navigateToThread,
+      runtimeMode,
+      selectedModelSelection,
+      syncServerReadModel,
     ],
   );
 
-  const chooseReviewTarget = useCallback(async (): Promise<"changes" | "base-branch" | null> => {
-    const api = readNativeApi();
-    if (!api) {
-      return "changes";
-    }
-    const clicked = await api.contextMenu.show([
-      { id: "changes", label: "Review Uncommitted Changes" },
-      { id: "base", label: "Review Against Base Branch" },
-    ]);
-    if (!clicked) {
-      return null;
-    }
-    return clicked === "base" ? "base-branch" : "changes";
-  }, []);
+  const handleReviewTargetSelection = useCallback(
+    async (target: "changes" | "base-branch") => {
+      if (selectedProvider === "codex") {
+        await runCodexReviewStart(target);
+      } else {
+        const replacement = buildSlashReviewComposerPrompt(target === "base-branch" ? "base" : "");
+        editorActions.setComposerPromptValue(replacement);
+      }
+      editorActions.scheduleComposerFocus();
+    },
+    [editorActions, selectedProvider, runCodexReviewStart],
+  );
 
   const handleForkTargetSelection = useCallback(
     async (target: ForkSlashCommandTarget) => {
@@ -337,66 +375,124 @@ export function useComposerSlashCommands(input: {
     [createForkThreadFromSlashCommand],
   );
 
+  const checkClaudeFastSlashCommandAvailability = useCallback(async (): Promise<boolean> => {
+    const api = readNativeApi();
+    if (!api || !providerCommandDiscoveryCwd) {
+      editorActions.clearComposerSlashDraft();
+      toastManager.add({
+        type: "warning",
+        title: "Fast mode could not be checked",
+        description: "Claude command discovery is unavailable right now.",
+      });
+      return false;
+    }
+
+    try {
+      const result = await api.provider.listCommands({
+        provider: "claudeAgent",
+        cwd: providerCommandDiscoveryCwd,
+        threadId,
+        forceReload: true,
+      });
+      if (
+        hasProviderNativeSlashCommand(
+          "claudeAgent",
+          result.commands.map((command) => command.name),
+          "fast",
+        )
+      ) {
+        return true;
+      }
+    } catch {
+      editorActions.clearComposerSlashDraft();
+      toastManager.add({
+        type: "warning",
+        title: "Fast mode could not be checked",
+        description: "Claude command discovery failed. Please try again.",
+      });
+      return false;
+    }
+
+    editorActions.clearComposerSlashDraft();
+    toastManager.add({
+      type: "info",
+      title: "Fast mode is unavailable",
+      description: "Claude did not expose /fast for this account or environment.",
+    });
+    return false;
+  }, [editorActions, providerCommandDiscoveryCwd, threadId]);
+
   const handleStandaloneSlashCommand = useCallback(
     async (trimmed: string): Promise<boolean> => {
-      const slashInvocation = parseComposerSlashInvocation(trimmed);
+      const fastSlashAction = parseFastSlashCommandAction(trimmed);
+      if (selectedProvider === "claudeAgent" && fastSlashAction !== null) {
+        if (await checkClaudeFastSlashCommandAvailability()) {
+          return false;
+        }
+        return true;
+      }
+
+      const slashInvocation = parseComposerSlashInvocationForCommands(
+        trimmed,
+        availableBuiltInSlashCommands,
+      );
       if (!slashInvocation || slashInvocation.command === "model") {
         return false;
       }
       if (slashInvocation.command === "clear") {
-        input.editorActions.clearComposerSlashDraft();
-        await input.handleClearConversation();
+        editorActions.clearComposerSlashDraft();
+        await handleClearConversation();
         return true;
       }
       if (slashInvocation.command === "plan" || slashInvocation.command === "default") {
-        await input.handleInteractionModeChange(
-          slashInvocation.command === "plan" ? "plan" : "default",
-        );
-        input.editorActions.clearComposerSlashDraft();
+        await handleInteractionModeChange(slashInvocation.command === "plan" ? "plan" : "default");
+        editorActions.clearComposerSlashDraft();
         return true;
       }
       if (slashInvocation.command === "status") {
-        input.editorActions.clearComposerSlashDraft();
+        editorActions.clearComposerSlashDraft();
         setIsSlashStatusDialogOpen(true);
         return true;
       }
       if (slashInvocation.command === "subagents") {
-        input.editorActions.setComposerPromptValue(buildSubagentsPrompt(slashInvocation.args));
+        editorActions.setComposerPromptValue(buildSubagentsPrompt(slashInvocation.args));
         return true;
       }
       if (slashInvocation.command === "review") {
-        if (input.selectedProvider === "codex") {
+        if (selectedProvider === "codex") {
           const normalizedArgs = slashInvocation.args.trim().toLowerCase();
-          const target =
-            normalizedArgs.length === 0
-              ? await chooseReviewTarget()
-              : normalizedArgs === "base" || normalizedArgs.startsWith("base ")
-                ? "base-branch"
-                : null;
-          if (!target) {
-            if (normalizedArgs.length > 0) {
-              toastManager.add({
-                type: "warning",
-                title: "Invalid /review command",
-                description: "Use /review and then choose a review target.",
-              });
-            }
+          if (normalizedArgs.length === 0) {
+            editorActions.clearComposerSlashDraft();
+            openReviewTargetPicker();
             return true;
           }
-          input.editorActions.clearComposerSlashDraft();
+          const target =
+            normalizedArgs === "base" || normalizedArgs.startsWith("base ") ? "base-branch" : null;
+          if (!target) {
+            toastManager.add({
+              type: "warning",
+              title: "Invalid /review command",
+              description: "Use /review and then choose a review target.",
+            });
+            return true;
+          }
+          editorActions.clearComposerSlashDraft();
           await runCodexReviewStart(target);
           return true;
         }
-        if (input.supportsTextNativeReviewCommand && slashInvocation.args.length === 0) {
+        if (supportsTextNativeReviewCommand && slashInvocation.args.length === 0) {
           return false;
         }
-        input.editorActions.setComposerPromptValue(
-          buildSlashReviewComposerPrompt(slashInvocation.args),
-        );
+        if (slashInvocation.args.length === 0) {
+          editorActions.clearComposerSlashDraft();
+          openReviewTargetPicker();
+          return true;
+        }
+        editorActions.setComposerPromptValue(buildSlashReviewComposerPrompt(slashInvocation.args));
         return true;
       }
       if (slashInvocation.command === "fast") {
-        input.editorActions.clearComposerSlashDraft();
+        editorActions.clearComposerSlashDraft();
         runFastSlashCommand(trimmed);
         return true;
       }
@@ -412,14 +508,14 @@ export function useComposerSlashCommands(input: {
         }
         try {
           if (!target) {
-            input.editorActions.clearComposerSlashDraft();
-            input.openForkTargetPicker();
+            editorActions.clearComposerSlashDraft();
+            openForkTargetPicker();
             return true;
           }
           await createForkThreadFromSlashCommand({
             target,
           });
-          input.editorActions.clearComposerSlashDraft();
+          editorActions.clearComposerSlashDraft();
         } catch (error) {
           toastManager.add({
             type: "error",
@@ -435,13 +531,16 @@ export function useComposerSlashCommands(input: {
       return false;
     },
     [
-      chooseReviewTarget,
+      availableBuiltInSlashCommands,
+      checkClaudeFastSlashCommandAvailability,
       createForkThreadFromSlashCommand,
-      input.editorActions,
-      input.handleClearConversation,
-      input.handleInteractionModeChange,
-      input.selectedProvider,
-      input.supportsTextNativeReviewCommand,
+      editorActions,
+      handleClearConversation,
+      handleInteractionModeChange,
+      openForkTargetPicker,
+      openReviewTargetPicker,
+      selectedProvider,
+      supportsTextNativeReviewCommand,
       runCodexReviewStart,
       runFastSlashCommand,
     ],
@@ -449,63 +548,63 @@ export function useComposerSlashCommands(input: {
 
   const handleSlashCommandSelection = useCallback(
     (item: SlashCommandItem) => {
-      const { snapshot, trigger } = input.editorActions.resolveActiveComposerTrigger();
+      const { snapshot, trigger } = editorActions.resolveActiveComposerTrigger();
       if (!trigger) {
         return;
       }
 
       if (item.command === "model") {
         const replacement = "/model ";
-        const replacementRangeEnd = input.editorActions.extendReplacementRangeForTrailingSpace(
+        const replacementRangeEnd = editorActions.extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
           replacement,
         );
-        const applied = input.editorActions.applyPromptReplacement(
+        const applied = editorActions.applyPromptReplacement(
           trigger.rangeStart,
           replacementRangeEnd,
           replacement,
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
         if (applied) {
-          input.editorActions.setComposerHighlightedItemId(null);
+          editorActions.setComposerHighlightedItemId(null);
         }
         return;
       }
 
       const clearSlashCommandFromComposer = () =>
-        input.editorActions.applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        editorActions.applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
 
       if (item.command === "clear") {
         const applied = clearSlashCommandFromComposer();
         if (applied) {
-          input.editorActions.setComposerHighlightedItemId(null);
+          editorActions.setComposerHighlightedItemId(null);
         }
-        void input.handleClearConversation();
+        void handleClearConversation();
         return;
       }
 
       if (item.command === "plan" || item.command === "default") {
-        void input.handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = clearSlashCommandFromComposer();
         if (applied) {
-          input.editorActions.setComposerHighlightedItemId(null);
+          editorActions.setComposerHighlightedItemId(null);
         }
         return;
       }
 
       if (item.command === "subagents") {
         const replacement = buildSubagentsPrompt("");
-        const applied = input.editorActions.applyPromptReplacement(
+        const applied = editorActions.applyPromptReplacement(
           trigger.rangeStart,
           trigger.rangeEnd,
           replacement,
           { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
         );
         if (applied) {
-          input.editorActions.setComposerHighlightedItemId(null);
+          editorActions.setComposerHighlightedItemId(null);
         }
         return;
       }
@@ -513,9 +612,9 @@ export function useComposerSlashCommands(input: {
       if (item.command === "status") {
         const applied = clearSlashCommandFromComposer();
         if (applied) {
-          input.editorActions.setComposerHighlightedItemId(null);
+          editorActions.setComposerHighlightedItemId(null);
           setIsSlashStatusDialogOpen(true);
-          input.editorActions.scheduleComposerFocus();
+          editorActions.scheduleComposerFocus();
         }
         return;
       }
@@ -525,80 +624,38 @@ export function useComposerSlashCommands(input: {
         if (!applied) {
           return;
         }
-        input.editorActions.setComposerHighlightedItemId(null);
+        editorActions.setComposerHighlightedItemId(null);
         void runFastSlashCommand("/fast");
-        input.editorActions.scheduleComposerFocus();
+        editorActions.scheduleComposerFocus();
         return;
       }
 
       if (item.command === "review") {
-        if (input.selectedProvider === "codex") {
-          void (async () => {
-            const target = await chooseReviewTarget();
-            if (!target) {
-              input.editorActions.scheduleComposerFocus();
-              return;
-            }
-            const applied = clearSlashCommandFromComposer();
-            if (applied) {
-              input.editorActions.setComposerHighlightedItemId(null);
-            }
-            await runCodexReviewStart(target);
-            input.editorActions.scheduleComposerFocus();
-          })();
-          return;
-        }
-        if (input.supportsTextNativeReviewCommand) {
+        if (supportsTextNativeReviewCommand) {
           const replacement = "/review";
-          const replacementRangeEnd = input.editorActions.extendReplacementRangeForTrailingSpace(
+          const replacementRangeEnd = editorActions.extendReplacementRangeForTrailingSpace(
             snapshot.value,
             trigger.rangeEnd,
             replacement,
           );
-          const applied = input.editorActions.applyPromptReplacement(
+          const applied = editorActions.applyPromptReplacement(
             trigger.rangeStart,
             replacementRangeEnd,
             replacement,
             { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
           );
           if (applied) {
-            input.editorActions.setComposerHighlightedItemId(null);
+            editorActions.setComposerHighlightedItemId(null);
           }
           return;
         }
-        const api = readNativeApi();
-        if (!api) {
-          const replacement = buildSlashReviewComposerPrompt("");
-          const applied = input.editorActions.applyPromptReplacement(
-            trigger.rangeStart,
-            trigger.rangeEnd,
-            replacement,
-            { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
-          );
-          if (applied) {
-            input.editorActions.setComposerHighlightedItemId(null);
-          }
+        const applied = clearSlashCommandFromComposer();
+        if (!applied) {
           return;
         }
-        void (async () => {
-          const target = await chooseReviewTarget();
-          if (!target) {
-            input.editorActions.scheduleComposerFocus();
-            return;
-          }
-          const replacement = buildSlashReviewComposerPrompt(
-            target === "base-branch" ? "base" : "",
-          );
-          const applied = input.editorActions.applyPromptReplacement(
-            trigger.rangeStart,
-            trigger.rangeEnd,
-            replacement,
-            { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
-          );
-          if (applied) {
-            input.editorActions.setComposerHighlightedItemId(null);
-          }
-        })();
+        editorActions.setComposerHighlightedItemId(null);
+        openReviewTargetPicker();
+        editorActions.scheduleComposerFocus();
         return;
       }
 
@@ -607,28 +664,25 @@ export function useComposerSlashCommands(input: {
         if (!applied) {
           return;
         }
-        input.editorActions.setComposerHighlightedItemId(null);
-        input.openForkTargetPicker();
-        input.editorActions.scheduleComposerFocus();
+        editorActions.setComposerHighlightedItemId(null);
+        openForkTargetPicker();
+        editorActions.scheduleComposerFocus();
       }
     },
     [
-      chooseReviewTarget,
-      createForkThreadFromSlashCommand,
-      input.editorActions,
-      input.handleClearConversation,
-      input.fastModeEnabled,
-      input.handleInteractionModeChange,
-      input.openForkTargetPicker,
-      input.selectedProvider,
-      input.supportsTextNativeReviewCommand,
-      runCodexReviewStart,
+      editorActions,
+      handleClearConversation,
+      handleInteractionModeChange,
+      openForkTargetPicker,
+      openReviewTargetPicker,
+      supportsTextNativeReviewCommand,
       runFastSlashCommand,
     ],
   );
 
   return {
     handleForkTargetSelection,
+    handleReviewTargetSelection,
     isSlashStatusDialogOpen,
     setIsSlashStatusDialogOpen,
     handleStandaloneSlashCommand,

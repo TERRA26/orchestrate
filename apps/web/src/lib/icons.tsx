@@ -1,6 +1,6 @@
 import { type FC, type SVGProps } from "react";
 import { PiGitCommit } from "react-icons/pi";
-import { TbPlug } from "react-icons/tb";
+import { TbArrowsRightLeft, TbPlug } from "react-icons/tb";
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -106,6 +106,9 @@ export const PlugIcon: LucideIcon = (props) => (
   <TbPlug className={props.className} style={props.style} />
 );
 export const HammerIcon = adaptIcon(IconTool);
+export const HandoffIcon: LucideIcon = (props) => (
+  <TbArrowsRightLeft className={props.className} style={props.style} />
+);
 export const InfoIcon = adaptIcon(IconInfoCircle);
 export const ListChecksIcon = adaptIcon(IconListCheck);
 export const ListTodoIcon = adaptIcon(IconListDetails);

@@ -23,8 +23,6 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
-  ThreadArchivedPayload,
-  ThreadUnarchivedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -260,6 +258,9 @@ export function projectEvent(
             envMode: payload.envMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            associatedWorktreePath: payload.associatedWorktreePath,
+            associatedWorktreeBranch: payload.associatedWorktreeBranch,
+            associatedWorktreeRef: payload.associatedWorktreeRef,
             forkSourceThreadId: payload.forkSourceThreadId,
             latestTurn: null,
             createdAt: payload.createdAt,
@@ -294,26 +295,6 @@ export function projectEvent(
         })),
       );
 
-    case "thread.archived":
-      return decodeForEvent(ThreadArchivedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            archivedAt: payload.archivedAt,
-          }),
-        })),
-      );
-
-    case "thread.unarchived":
-      return decodeForEvent(ThreadUnarchivedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            archivedAt: null,
-          }),
-        })),
-      );
-
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
@@ -326,6 +307,15 @@ export function projectEvent(
             ...(payload.envMode !== undefined ? { envMode: payload.envMode } : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.associatedWorktreePath !== undefined
+              ? { associatedWorktreePath: payload.associatedWorktreePath }
+              : {}),
+            ...(payload.associatedWorktreeBranch !== undefined
+              ? { associatedWorktreeBranch: payload.associatedWorktreeBranch }
+              : {}),
+            ...(payload.associatedWorktreeRef !== undefined
+              ? { associatedWorktreeRef: payload.associatedWorktreeRef }
+              : {}),
             ...(payload.handoff !== undefined ? { handoff: payload.handoff } : {}),
             updatedAt: payload.updatedAt,
           }),

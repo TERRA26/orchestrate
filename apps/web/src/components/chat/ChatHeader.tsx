@@ -13,7 +13,9 @@ import {
 } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
 import React, { memo, useEffect, useRef, useState } from "react";
+import { BsLayoutSplit } from "react-icons/bs";
 import { FiGitBranch } from "react-icons/fi";
+import { HiMiniArrowsPointingOut } from "react-icons/hi2";
 import GitActionsControl from "../GitActionsControl";
 import {
   ArrowRightIcon,
@@ -34,19 +36,14 @@ import { OpenInPicker } from "./OpenInPicker";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
+import { resolveEditorIcon } from "../../editorMetadata";
 import { usePreferredEditor } from "../../editorPreferences";
-import { AntigravityIcon, ClaudeAI, CursorIcon, OpenAI, VisualStudioCode, Zed } from "../Icons";
+import { useIsDisposableThread } from "~/hooks/useIsDisposableThread";
+import { ClaudeAI, OpenAI } from "../Icons";
 import { gitStatusQueryOptions } from "~/lib/gitReactQuery";
 
 /** Width (px) below which collapsible header controls fold into the ellipsis menu. */
 const HEADER_COMPACT_BREAKPOINT = 480;
-
-const EDITOR_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  cursor: CursorIcon,
-  vscode: VisualStudioCode,
-  zed: Zed,
-  antigravity: AntigravityIcon,
-};
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
@@ -72,6 +69,12 @@ interface ChatHeaderProps {
   browserOpen: boolean;
   gitCwd: string | null;
   diffOpen: boolean;
+  surfaceMode?: "single" | "split";
+  chatLayoutAction?: {
+    kind: "split" | "maximize";
+    label: string;
+    onClick: () => void;
+  } | null;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -106,6 +109,8 @@ export const ChatHeader = memo(function ChatHeader({
   browserOpen,
   gitCwd,
   diffOpen,
+  surfaceMode = "single",
+  chatLayoutAction = null,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -120,22 +125,25 @@ export const ChatHeader = memo(function ChatHeader({
   const headerRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   const [preferredEditor] = usePreferredEditor(availableEditors);
-  const EditorIcon = preferredEditor ? EDITOR_ICONS[preferredEditor] : null;
+  const EditorIcon = preferredEditor ? resolveEditorIcon(preferredEditor) : null;
   // Reuse the shared git status query so the diff toggle can show live totals
   // without introducing a second API shape just for the header control.
   const { data: gitStatus = null } = useQuery(gitStatusQueryOptions(gitCwd));
   const diffTotals = gitStatus?.workingTree ?? null;
   const showDiffTotals = (diffTotals?.insertions ?? 0) > 0 || (diffTotals?.deletions ?? 0) > 0;
+  const isDisposableThread = useIsDisposableThread(activeThreadId);
+
+  const isSplitPane = surfaceMode === "split";
 
   useEffect(() => {
     const el = headerRef.current;
     if (!el) return;
-    const measure = () => setCompact(el.clientWidth < HEADER_COMPACT_BREAKPOINT);
+    const measure = () => setCompact(isSplitPane || el.clientWidth < HEADER_COMPACT_BREAKPOINT);
     measure();
     const observer = new ResizeObserver(() => measure());
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [isSplitPane]);
 
   const hasCollapsibleControls = Boolean(
     activeProjectScripts || activeProjectName || terminalAvailable,
@@ -192,31 +200,39 @@ export const ChatHeader = memo(function ChatHeader({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                className="shrink-0 gap-1.5"
-                aria-label={handoffActionLabel}
-                disabled={handoffDisabled}
-                onClick={onCreateHandoff}
-              >
-                <FiGitBranch className="size-3.5 shrink-0" />
-                <span className="truncate">Hand off to</span>
-                {renderProviderIcon(handoffActionTargetProvider, "size-3.5 shrink-0")}
-                <span className="truncate">
-                  {PROVIDER_DISPLAY_NAMES[handoffActionTargetProvider ?? "codex"]}
-                </span>
-              </Button>
-            }
-          />
-          <TooltipPopup side="bottom">{handoffActionLabel}</TooltipPopup>
-        </Tooltip>
+        {!isDisposableThread ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  className={compact ? "shrink-0 gap-1" : "shrink-0 gap-1.5"}
+                  aria-label={handoffActionLabel}
+                  disabled={handoffDisabled}
+                  onClick={onCreateHandoff}
+                >
+                  <FiGitBranch className="size-3.5 shrink-0" />
+                  {compact ? (
+                    <ArrowRightIcon className="size-2.5 shrink-0 opacity-45" />
+                  ) : (
+                    <span className="truncate">Hand off to</span>
+                  )}
+                  {renderProviderIcon(handoffActionTargetProvider, "size-3.5 shrink-0")}
+                  {!compact && (
+                    <span className="truncate">
+                      {PROVIDER_DISPLAY_NAMES[handoffActionTargetProvider ?? "codex"]}
+                    </span>
+                  )}
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">{handoffActionLabel}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         {/* Inline controls — shown when there's enough room. */}
-        {!compact && (
+        {!isDisposableThread && !compact && (
           <>
             {activeProjectScripts ? (
               <ProjectScriptsControl
@@ -263,7 +279,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
 
         {/* Overflow ellipsis — shown only when compact. */}
-        {compact && hasCollapsibleControls ? (
+        {!isDisposableThread && compact && hasCollapsibleControls ? (
           <Menu modal={false}>
             <MenuTrigger
               render={
@@ -328,8 +344,31 @@ export const ChatHeader = memo(function ChatHeader({
           </Menu>
         ) : null}
 
-        {activeProjectName ? (
+        {!isDisposableThread && activeProjectName ? (
           <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />
+        ) : null}
+        {!isDisposableThread && chatLayoutAction ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  className="shrink-0"
+                  aria-label={chatLayoutAction.label}
+                  onClick={chatLayoutAction.onClick}
+                />
+              }
+            >
+              {chatLayoutAction.kind === "split" ? (
+                <BsLayoutSplit className="size-3.5" />
+              ) : (
+                <HiMiniArrowsPointingOut className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{chatLayoutAction.label}</TooltipPopup>
+          </Tooltip>
         ) : null}
         {isElectron ? (
           <Tooltip>

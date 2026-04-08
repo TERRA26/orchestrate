@@ -1,8 +1,8 @@
 import {
   CODEX_REASONING_EFFORT_OPTIONS,
-  DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeCodeEffort,
   type CodexReasoningEffort,
+  type ModelSlug,
   ModelSelection,
   ProjectId,
   ProviderInteractionMode,
@@ -11,17 +11,14 @@ import {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-
-/** Model slug string identifier. */
-type ModelSlug = string;
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import { DeepMutable } from "effect/Types";
-import { normalizeModelSlug, resolveModelSlugForProvider } from "@t3tools/shared/model";
-
-function getDefaultModel(provider: ProviderKind): string {
-  return DEFAULT_MODEL_BY_PROVIDER[provider];
-}
+import {
+  getDefaultModel,
+  normalizeModelSlug,
+  resolveModelSlugForProvider,
+} from "@t3tools/shared/model";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection } from "./appSettings";
@@ -148,6 +145,7 @@ const PersistedDraftThreadState = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
+  isTemporary: Schema.optionalKey(Schema.Boolean),
 });
 type PersistedDraftThreadState = typeof PersistedDraftThreadState.Type;
 
@@ -188,6 +186,7 @@ export interface DraftThreadState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  isTemporary?: boolean;
 }
 
 interface ProjectDraftThread extends DraftThreadState {
@@ -216,6 +215,7 @@ interface ComposerDraftStoreState {
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       entryPoint?: ThreadPrimarySurface;
+      isTemporary?: boolean;
     },
   ) => void;
   setDraftThreadContext: (
@@ -229,6 +229,7 @@ interface ComposerDraftStoreState {
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       entryPoint?: ThreadPrimarySurface;
+      isTemporary?: boolean;
     },
   ) => void;
   clearProjectDraftThreadId: (projectId: ProjectId, entryPoint?: ThreadPrimarySurface) => void;
@@ -692,6 +693,7 @@ export function resolvePreferredComposerModelSelection(input: {
     | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  defaultProvider?: ProviderKind | null | undefined;
 }): ModelSelection {
   const draftProviderWithSelection =
     (["codex", "claudeAgent"] as const).find(
@@ -702,6 +704,7 @@ export function resolvePreferredComposerModelSelection(input: {
     draftProviderWithSelection ??
     input.threadModelSelection?.provider ??
     input.projectModelSelection?.provider ??
+    input.defaultProvider ??
     "codex";
 
   return (
@@ -842,6 +845,7 @@ function normalizePersistedDraftThreads(
       const branch = candidateDraftThread.branch;
       const worktreePath = candidateDraftThread.worktreePath;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
+      const isTemporary = candidateDraftThread.isTemporary === true ? true : undefined;
       if (typeof projectId !== "string" || projectId.length === 0) {
         continue;
       }
@@ -865,6 +869,7 @@ function normalizePersistedDraftThreads(
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        ...(isTemporary ? { isTemporary: true } : {}),
       };
     }
   }
@@ -1391,6 +1396,12 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options?.worktreePath === undefined
               ? (existingThread?.worktreePath ?? null)
               : (options.worktreePath ?? null);
+          const nextIsTemporary =
+            options?.isTemporary === true
+              ? true
+              : options?.isTemporary === false
+                ? false
+                : existingThread?.isTemporary === true;
           const nextDraftThread: DraftThreadState = {
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
@@ -1409,6 +1420,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             envMode:
               options?.envMode ??
               (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+            ...(nextIsTemporary ? { isTemporary: true } : {}),
           };
           const hasSameProjectMapping = previousThreadIdForProject === threadId;
           const hasSameDraftThread =
@@ -1420,7 +1432,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             existingThread.entryPoint === nextDraftThread.entryPoint &&
             existingThread.branch === nextDraftThread.branch &&
             existingThread.worktreePath === nextDraftThread.worktreePath &&
-            existingThread.envMode === nextDraftThread.envMode;
+            existingThread.envMode === nextDraftThread.envMode &&
+            (existingThread.isTemporary === true) === (nextDraftThread.isTemporary === true);
           if (hasSameProjectMapping && hasSameDraftThread) {
             return state;
           }
@@ -1472,6 +1485,12 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options.entryPoint,
             existing.entryPoint,
           );
+          const nextIsTemporary =
+            options.isTemporary === true
+              ? true
+              : options.isTemporary === false
+                ? false
+                : existing.isTemporary === true;
           const nextDraftThread: DraftThreadState = {
             projectId: nextProjectId,
             createdAt:
@@ -1485,6 +1504,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             worktreePath: nextWorktreePath,
             envMode:
               options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+            ...(nextIsTemporary ? { isTemporary: true } : {}),
           };
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&
@@ -1494,7 +1514,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nextDraftThread.entryPoint === existing.entryPoint &&
             nextDraftThread.branch === existing.branch &&
             nextDraftThread.worktreePath === existing.worktreePath &&
-            nextDraftThread.envMode === existing.envMode;
+            nextDraftThread.envMode === existing.envMode &&
+            (nextDraftThread.isTemporary === true) === (existing.isTemporary === true);
           if (isUnchanged) {
             return state;
           }
@@ -2356,9 +2377,4 @@ export function clearPromotedDraftThreads(serverThreadIds: ReadonlySet<ThreadId>
       store.clearDraftThread(draftId);
     }
   }
-}
-
-/** Clear a single promoted draft thread. */
-export function clearPromotedDraftThread(threadId: ThreadId): void {
-  clearPromotedDraftThreads(new Set([threadId]));
 }

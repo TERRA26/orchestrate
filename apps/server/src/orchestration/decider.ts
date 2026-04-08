@@ -3,6 +3,10 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "@t3tools/contracts";
+import {
+  deriveAssociatedWorktreeMetadata,
+  deriveAssociatedWorktreeMetadataPatch,
+} from "@t3tools/shared/threadWorkspace";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -165,6 +169,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           envMode: command.envMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...deriveAssociatedWorktreeMetadata({
+            branch: command.branch,
+            worktreePath: command.worktreePath,
+            associatedWorktreePath: command.associatedWorktreePath ?? null,
+            associatedWorktreeBranch: command.associatedWorktreeBranch ?? null,
+            associatedWorktreeRef: command.associatedWorktreeRef ?? null,
+          }),
           forkSourceThreadId: null,
           handoff: null,
           createdAt: command.createdAt,
@@ -226,6 +237,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           envMode: command.envMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...deriveAssociatedWorktreeMetadata({
+            branch: command.branch,
+            worktreePath: command.worktreePath,
+            associatedWorktreePath: command.associatedWorktreePath ?? null,
+            associatedWorktreeBranch: command.associatedWorktreeBranch ?? null,
+            associatedWorktreeRef: command.associatedWorktreeRef ?? null,
+          }),
           forkSourceThreadId: null,
           handoff: {
             sourceThreadId: command.sourceThreadId,
@@ -311,6 +329,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           envMode: command.envMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...deriveAssociatedWorktreeMetadata({
+            branch: command.branch,
+            worktreePath: command.worktreePath,
+            associatedWorktreePath: command.associatedWorktreePath ?? null,
+            associatedWorktreeBranch: command.associatedWorktreeBranch ?? null,
+            associatedWorktreeRef: command.associatedWorktreeRef ?? null,
+          }),
           forkSourceThreadId: command.sourceThreadId,
           handoff: null,
           createdAt: command.createdAt,
@@ -390,6 +415,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.envMode !== undefined ? { envMode: command.envMode } : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...deriveAssociatedWorktreeMetadataPatch({
+            branch: command.branch ?? null,
+            worktreePath: command.worktreePath ?? null,
+            associatedWorktreePath: command.associatedWorktreePath ?? null,
+            associatedWorktreeBranch: command.associatedWorktreeBranch ?? null,
+            associatedWorktreeRef: command.associatedWorktreeRef ?? null,
+          }),
           ...(command.handoff !== undefined ? { handoff: command.handoff } : {}),
           updatedAt: occurredAt,
         },
@@ -876,40 +908,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           activity: command.activity,
-        },
-      };
-    }
-
-    case "thread.archive": {
-      const now = new Date().toISOString();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: now,
-          commandId: command.commandId,
-        }),
-        type: "thread.archived",
-        payload: {
-          threadId: command.threadId,
-          archivedAt: now,
-        },
-      };
-    }
-
-    case "thread.unarchive": {
-      const now = new Date().toISOString();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: now,
-          commandId: command.commandId,
-        }),
-        type: "thread.unarchived",
-        payload: {
-          threadId: command.threadId,
-          unarchivedAt: now,
         },
       };
     }

@@ -25,7 +25,7 @@ import {
   WS_METHODS,
   type WebSocketResponse,
   type ProviderRuntimeEvent,
-  type ServerProvider,
+  type ServerProviderStatus,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPushChannel,
@@ -54,7 +54,6 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { ServerSettingsService } from "./serverSettings.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -66,16 +65,13 @@ const defaultOpenService: OpenShape = {
   openInEditor: () => Effect.void,
 };
 
-const defaultProviderStatuses: ReadonlyArray<ServerProvider> = [
+const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
   {
     provider: "codex",
-    enabled: true,
-    installed: true,
-    version: null,
     status: "ready",
-    auth: { status: "authenticated" },
+    available: true,
+    authStatus: "authenticated",
     checkedAt: "2026-01-01T00:00:00.000Z",
-    models: [],
   },
 ];
 
@@ -210,6 +206,8 @@ class MockTerminalManager implements TerminalManagerShape {
         this.listeners.delete(listener);
       };
     });
+
+  readonly dispose: TerminalManagerShape["dispose"] = Effect.void;
 }
 
 // ---------------------------------------------------------------------------
@@ -551,7 +549,6 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
     );
     const runtimeServices = await Effect.runPromise(
       Layer.build(dependenciesLayer).pipe(Scope.provide(scope)),
@@ -957,7 +954,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
-      providers: ReadonlyArray<ServerProvider>;
+      providers: ReadonlyArray<ServerProviderStatus>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -1823,8 +1820,6 @@ describe("WebSocket Server", () => {
     const listBranches = vi.fn(() =>
       Effect.succeed({
         branches: [],
-        nextCursor: null,
-        totalCount: 0,
         isRepo: false,
         hasOriginRemote: false,
       }),
@@ -1857,13 +1852,7 @@ describe("WebSocket Server", () => {
 
     const listResponse = await sendRequest(ws, WS_METHODS.gitListBranches, { cwd: "/repo/path" });
     expect(listResponse.error).toBeUndefined();
-    expect(listResponse.result).toEqual({
-      branches: [],
-      nextCursor: null,
-      totalCount: 0,
-      isRepo: false,
-      hasOriginRemote: false,
-    });
+    expect(listResponse.result).toEqual({ branches: [], isRepo: false, hasOriginRemote: false });
     expect(listBranches).toHaveBeenCalledWith({ cwd: "/repo/path" });
 
     const initResponse = await sendRequest(ws, WS_METHODS.gitInit, { cwd: "/repo/path" });
@@ -1899,6 +1888,7 @@ describe("WebSocket Server", () => {
       status,
       resolvePullRequest,
       preparePullRequestThread,
+      handoffThread: vi.fn(() => Effect.void as any),
       runStackedAction,
     };
 
@@ -1938,6 +1928,7 @@ describe("WebSocket Server", () => {
       status: vi.fn(() => Effect.void as any),
       resolvePullRequest: vi.fn(() => Effect.succeed(resolvePullRequestResult)),
       preparePullRequestThread: vi.fn(() => Effect.succeed(preparePullRequestThreadResult)),
+      handoffThread: vi.fn(() => Effect.void as any),
       runStackedAction: vi.fn(() => Effect.void as any),
     };
 
@@ -1986,6 +1977,7 @@ describe("WebSocket Server", () => {
       status: vi.fn(() => Effect.void as any),
       resolvePullRequest: vi.fn(() => Effect.void as any),
       preparePullRequestThread: vi.fn(() => Effect.void as any),
+      handoffThread: vi.fn(() => Effect.void as any),
       runStackedAction,
     };
 
@@ -2048,6 +2040,7 @@ describe("WebSocket Server", () => {
       status: vi.fn(() => Effect.void as any),
       resolvePullRequest: vi.fn(() => Effect.void as any),
       preparePullRequestThread: vi.fn(() => Effect.void as any),
+      handoffThread: vi.fn(() => Effect.void as any),
       runStackedAction,
     };
 

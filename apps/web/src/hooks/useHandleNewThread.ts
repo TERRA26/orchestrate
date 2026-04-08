@@ -1,6 +1,7 @@
 import { type ProjectId, ThreadId } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
+import { useAppSettings } from "../appSettings";
 import { type DraftThreadState, useComposerDraftStore } from "../composerDraftStore";
 import {
   buildDraftThreadContextPatch,
@@ -13,30 +14,26 @@ import {
 } from "../lib/threadBootstrap";
 import { newCommandId, newThreadId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import { useFocusedChatContext } from "../focusedChatContext";
 import { useStore } from "../store";
+import { useTemporaryThreadStore } from "../temporaryThreadStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 
 export function useHandleNewThread() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
+  const { settings } = useAppSettings();
   const navigate = useNavigate();
-  const routeThreadId = useParams({
-    strict: false,
-    select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
-  });
-  const activeDraftThread = useComposerDraftStore((store) =>
-    routeThreadId ? (store.draftThreadsByThreadId[routeThreadId] ?? null) : null,
-  );
-
-  const activeThread = routeThreadId
-    ? threads.find((thread) => thread.id === routeThreadId)
-    : undefined;
+  const { activeDraftThread, activeProjectId, activeThread, focusedThreadId, routeThreadId } =
+    useFocusedChatContext();
   const openChatThreadPage = useTerminalStateStore((store) => store.openChatThreadPage);
   const openTerminalThreadPage = useTerminalStateStore((store) => store.openTerminalThreadPage);
+  const markTemporaryThread = useTemporaryThreadStore((store) => store.markTemporaryThread);
 
   const handleNewThread = useCallback(
     (projectId: ProjectId, options?: NewThreadOptions): Promise<void> => {
       const entryPoint = options?.entryPoint ?? "chat";
+      const wantsTemporaryThread = options?.temporary === true;
       const activateThreadEntryPoint = (threadId: ThreadId) => {
         if (entryPoint === "terminal") {
           openTerminalThreadPage(threadId, { terminalOnly: true });
@@ -52,16 +49,24 @@ export function useHandleNewThread() {
         setDraftThreadContext,
         setProjectDraftThreadId,
       } = useComposerDraftStore.getState();
-      const storedDraftThread = getDraftThreadByProjectId(projectId, entryPoint);
-      const latestActiveDraftThread: DraftThreadState | null = routeThreadId
-        ? getDraftThread(routeThreadId)
+      const storedDraftThreadCandidate = getDraftThreadByProjectId(projectId, entryPoint);
+      const latestActiveDraftThreadCandidate: DraftThreadState | null = focusedThreadId
+        ? getDraftThread(focusedThreadId)
         : null;
+      const storedDraftThread =
+        !wantsTemporaryThread && storedDraftThreadCandidate?.isTemporary !== true
+          ? storedDraftThreadCandidate
+          : null;
+      const latestActiveDraftThread: DraftThreadState | null =
+        !wantsTemporaryThread && latestActiveDraftThreadCandidate?.isTemporary !== true
+          ? latestActiveDraftThreadCandidate
+          : null;
       const bootstrapPlan = resolveThreadBootstrapPlan({
         storedDraftThread,
         latestActiveDraftThread,
         entryPoint,
         projectId,
-        routeThreadId,
+        routeThreadId: focusedThreadId,
       });
       const projectDefaultModelSelection =
         projects.find((project) => project.id === projectId)?.defaultModelSelection ?? null;
@@ -77,6 +82,7 @@ export function useHandleNewThread() {
         resolveTerminalThreadCreationState({
           activeDraftThread: activeDraftThreadSnapshot,
           activeThread: activeThreadSnapshot,
+          defaultProvider: settings.defaultProvider,
           draftComposerState:
             useComposerDraftStore.getState().draftsByThreadId[targetThreadId] ?? null,
           draftThread,
@@ -114,6 +120,9 @@ export function useHandleNewThread() {
       };
       if (bootstrapPlan.kind === "stored") {
         return (async () => {
+          if (wantsTemporaryThread) {
+            markTemporaryThread(bootstrapPlan.threadId);
+          }
           let resolvedStoredDraftThread: DraftThreadState | null = bootstrapPlan.draftThread;
           const draftContextPatch = buildDraftThreadContextPatch(entryPoint, options);
           if (draftContextPatch) {
@@ -122,7 +131,7 @@ export function useHandleNewThread() {
           }
           setProjectDraftThreadId(projectId, bootstrapPlan.threadId, { entryPoint });
           activateThreadEntryPoint(bootstrapPlan.threadId);
-          if (routeThreadId === bootstrapPlan.threadId) {
+          if (focusedThreadId === bootstrapPlan.threadId) {
             if (entryPoint === "terminal") {
               await createTerminalThread(
                 bootstrapPlan.threadId,
@@ -147,6 +156,9 @@ export function useHandleNewThread() {
       clearProjectDraftThreadId(projectId, entryPoint);
 
       if (bootstrapPlan.kind === "route") {
+        if (wantsTemporaryThread) {
+          markTemporaryThread(bootstrapPlan.threadId);
+        }
         let resolvedActiveDraftThread: DraftThreadState | null = bootstrapPlan.draftThread;
         const draftContextPatch = buildDraftThreadContextPatch(entryPoint, options);
         if (draftContextPatch) {
@@ -165,6 +177,9 @@ export function useHandleNewThread() {
       }
 
       const threadId = newThreadId();
+      if (wantsTemporaryThread) {
+        markTemporaryThread(threadId);
+      }
       const createdAt = new Date().toISOString();
       return (async () => {
         setProjectDraftThreadId(projectId, threadId, {
@@ -196,14 +211,18 @@ export function useHandleNewThread() {
       openChatThreadPage,
       openTerminalThreadPage,
       projects,
-      routeThreadId,
+      focusedThreadId,
+      markTemporaryThread,
+      settings.defaultProvider,
       threads,
     ],
   );
 
   return {
     activeDraftThread,
+    activeProjectId,
     activeThread,
+    activeContextThreadId: focusedThreadId,
     handleNewThread,
     projects,
     routeThreadId,

@@ -40,21 +40,12 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["/tmp/workspace"],
       });
 
-      const vscodeInsidersLaunch = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace", editor: "vscode-insiders" },
+      const traeLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "trae" },
         "darwin",
       );
-      assert.deepEqual(vscodeInsidersLaunch, {
-        command: "code-insiders",
-        args: ["/tmp/workspace"],
-      });
-
-      const vscodiumLaunch = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace", editor: "vscodium" },
-        "darwin",
-      );
-      assert.deepEqual(vscodiumLaunch, {
-        command: "codium",
+      assert.deepEqual(traeLaunch, {
+        command: "trae",
         args: ["/tmp/workspace"],
       });
 
@@ -64,6 +55,15 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       );
       assert.deepEqual(zedLaunch, {
         command: "zed",
+        args: ["/tmp/workspace"],
+      });
+
+      const ideaLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "idea" },
+        "darwin",
+      );
+      assert.deepEqual(ideaLaunch, {
+        command: "idea",
         args: ["/tmp/workspace"],
       });
     }),
@@ -98,22 +98,13 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
       });
 
-      const vscodeInsidersLineAndColumn = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "vscode-insiders" },
+      const ideaLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "idea" },
         "darwin",
       );
-      assert.deepEqual(vscodeInsidersLineAndColumn, {
-        command: "code-insiders",
-        args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
-      });
-
-      const vscodiumLineAndColumn = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "vscodium" },
-        "darwin",
-      );
-      assert.deepEqual(vscodiumLineAndColumn, {
-        command: "codium",
-        args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
+      assert.deepEqual(ideaLineAndColumn, {
+        command: "idea",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
       });
 
       const zedLineAndColumn = yield* resolveEditorLaunch(
@@ -256,14 +247,15 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       const path = yield* Path.Path;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
 
+      yield* fs.writeFileString(path.join(dir, "cursor.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "code-insiders.CMD"), "@echo off\r\n");
-      yield* fs.writeFileString(path.join(dir, "codium.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "zeditor.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "explorer.CMD"), "MZ");
       const editors = resolveAvailableEditors("win32", {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
-      assert.deepEqual(editors, ["vscode-insiders", "vscodium", "file-manager"]);
+      assert.deepEqual(editors, ["cursor", "vscode-insiders", "zed", "file-manager"]);
     }),
   );
 });

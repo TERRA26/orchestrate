@@ -6,7 +6,9 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { toastManager } from "../components/ui/toast";
+import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
+import { resolvePreferredSplitViewIdForThread, useSplitViewStore } from "../splitViewStore";
 import { useStore } from "../store";
 import type { Thread } from "../types";
 import {
@@ -24,6 +26,7 @@ function isBrowserNotificationSupported(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
 }
 
+// Browsers require secure contexts and a user gesture before asking for permission.
 export function readBrowserNotificationPermissionState(): BrowserNotificationPermissionState {
   if (typeof window === "undefined") {
     return "unsupported";
@@ -60,6 +63,14 @@ async function showSystemTaskCompletionNotification(
 ): Promise<boolean> {
   const { body, title } = buildTaskCompletionCopy(candidate);
 
+  if (window.desktopBridge) {
+    const supported = await window.desktopBridge.notifications.isSupported();
+    if (!supported) {
+      return false;
+    }
+    return window.desktopBridge.notifications.show({ title, body, silent: false });
+  }
+
   if (readBrowserNotificationPermissionState() !== "granted") {
     return false;
   }
@@ -68,28 +79,33 @@ async function showSystemTaskCompletionNotification(
     body,
     tag: `thread-completed:${candidate.threadId}`,
   });
-  notification.onclick = () => {
+  notification.addEventListener("click", () => {
     window.focus();
-    notification.close();
-  };
+  });
   return true;
 }
 
 function showCompletionToast(
   candidate: CompletedThreadCandidate,
   navigate: ReturnType<typeof useNavigate>,
-) {
+  splitViewId: string | null,
+): void {
   const { body, title } = buildTaskCompletionCopy(candidate);
   toastManager.add({
     type: "success",
     title,
     description: body,
+    data: {
+      threadId: candidate.threadId,
+      dismissAfterVisibleMs: 8000,
+    },
     actionProps: {
       children: "Open thread",
       onClick: () => {
         void navigate({
           to: "/$threadId",
           params: { threadId: candidate.threadId },
+          ...(splitViewId ? { search: () => ({ splitViewId }) } : {}),
         });
       },
     },
@@ -97,12 +113,22 @@ function showCompletionToast(
 }
 
 export function TaskCompletionNotifications() {
+  const { settings } = useAppSettings();
   const navigate = useNavigate();
   const threads = useStore((store) => store.threads);
+  const threadsHydrated = useStore((store) => store.threadsHydrated);
+  const splitViewsById = useSplitViewStore((store) => store.splitViewsById);
+  const splitViewIdBySourceThreadId = useSplitViewStore(
+    (store) => store.splitViewIdBySourceThreadId,
+  );
   const previousThreadsRef = useRef<readonly Thread[]>([]);
   const readyRef = useRef(false);
 
   useEffect(() => {
+    if (!threadsHydrated) {
+      return;
+    }
+
     if (!readyRef.current) {
       previousThreadsRef.current = threads;
       readyRef.current = true;
@@ -116,16 +142,32 @@ export function TaskCompletionNotifications() {
       return;
     }
 
-    const shouldAttemptSystemNotification = !isWindowForeground();
+    const shouldAttemptSystemNotification =
+      settings.enableSystemTaskCompletionNotifications && !isWindowForeground();
 
     for (const completion of completions) {
-      showCompletionToast(completion, navigate);
+      const preferredSplitViewId = resolvePreferredSplitViewIdForThread({
+        splitViewsById,
+        splitViewIdBySourceThreadId,
+        threadId: completion.threadId,
+      });
+      if (settings.enableTaskCompletionToasts) {
+        showCompletionToast(completion, navigate, preferredSplitViewId);
+      }
 
       if (shouldAttemptSystemNotification) {
         void showSystemTaskCompletionNotification(completion);
       }
     }
-  }, [navigate, threads]);
+  }, [
+    navigate,
+    settings.enableSystemTaskCompletionNotifications,
+    settings.enableTaskCompletionToasts,
+    splitViewIdBySourceThreadId,
+    splitViewsById,
+    threads,
+    threadsHydrated,
+  ]);
 
   return null;
 }

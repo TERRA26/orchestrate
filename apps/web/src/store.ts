@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread } from "./types";
+import { type ChatMessage, type Project, type Thread, type ThreadWorkspacePatch } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -38,6 +38,19 @@ const initialState: AppState = {
 };
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
+
+function rememberProjectUiState(projects: ReadonlyArray<Pick<Project, "cwd" | "expanded">>): void {
+  for (const project of projects) {
+    if (project.expanded) {
+      persistedExpandedProjectCwds.add(project.cwd);
+    } else {
+      persistedExpandedProjectCwds.delete(project.cwd);
+    }
+    if (!persistedProjectOrderCwds.includes(project.cwd)) {
+      persistedProjectOrderCwds.push(project.cwd);
+    }
+  }
+}
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -73,6 +86,7 @@ let legacyKeysCleanedUp = false;
 function persistState(state: AppState): void {
   if (typeof window === "undefined") return;
   try {
+    rememberProjectUiState(state.projects);
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -234,6 +248,7 @@ function attachmentPreviewRoutePath(attachmentId: string): string {
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
+  rememberProjectUiState(state.projects);
   const projects = mapProjectsFromReadModel(
     readModel.projects.filter((project) => project.deletedAt === null),
     state.projects,
@@ -306,6 +321,9 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         envMode: thread.envMode ?? "local",
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        associatedWorktreePath: thread.associatedWorktreePath ?? null,
+        associatedWorktreeBranch: thread.associatedWorktreeBranch ?? null,
+        associatedWorktreeRef: thread.associatedWorktreeRef ?? null,
         forkSourceThreadId: thread.forkSourceThreadId ?? null,
         handoff: thread.handoff,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
@@ -318,7 +336,6 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           files: checkpoint.files.map((file) => ({ ...file })),
         })),
         activities: thread.activities.map((activity) => ({ ...activity })),
-        archivedAt: null,
       };
     });
   return {
@@ -407,19 +424,46 @@ export function setError(state: AppState, threadId: ThreadId, error: string | nu
   return threads === state.threads ? state : { ...state, threads };
 }
 
-export function setThreadBranch(
+export function setThreadWorkspace(
   state: AppState,
   threadId: ThreadId,
-  branch: string | null,
-  worktreePath: string | null,
+  patch: ThreadWorkspacePatch,
 ): AppState {
   const threads = updateThread(state.threads, threadId, (t) => {
-    if (t.branch === branch && t.worktreePath === worktreePath) return t;
-    const cwdChanged = t.worktreePath !== worktreePath;
+    const nextEnvMode = patch.envMode !== undefined ? patch.envMode : t.envMode;
+    const nextBranch = patch.branch !== undefined ? patch.branch : t.branch;
+    const nextWorktreePath = patch.worktreePath !== undefined ? patch.worktreePath : t.worktreePath;
+    const nextAssociatedWorktreePath =
+      patch.associatedWorktreePath !== undefined
+        ? patch.associatedWorktreePath
+        : (t.associatedWorktreePath ?? null);
+    const nextAssociatedWorktreeBranch =
+      patch.associatedWorktreeBranch !== undefined
+        ? patch.associatedWorktreeBranch
+        : (t.associatedWorktreeBranch ?? null);
+    const nextAssociatedWorktreeRef =
+      patch.associatedWorktreeRef !== undefined
+        ? patch.associatedWorktreeRef
+        : (t.associatedWorktreeRef ?? null);
+    if (
+      t.envMode === nextEnvMode &&
+      t.branch === nextBranch &&
+      t.worktreePath === nextWorktreePath &&
+      (t.associatedWorktreePath ?? null) === nextAssociatedWorktreePath &&
+      (t.associatedWorktreeBranch ?? null) === nextAssociatedWorktreeBranch &&
+      (t.associatedWorktreeRef ?? null) === nextAssociatedWorktreeRef
+    ) {
+      return t;
+    }
+    const cwdChanged = t.worktreePath !== nextWorktreePath;
     return {
       ...t,
-      branch,
-      worktreePath,
+      envMode: nextEnvMode,
+      branch: nextBranch,
+      worktreePath: nextWorktreePath,
+      associatedWorktreePath: nextAssociatedWorktreePath,
+      associatedWorktreeBranch: nextAssociatedWorktreeBranch,
+      associatedWorktreeRef: nextAssociatedWorktreeRef,
       ...(cwdChanged ? { session: null } : {}),
     };
   });
@@ -436,7 +480,7 @@ interface AppStore extends AppState {
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
-  setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  setThreadWorkspace: (threadId: ThreadId, patch: ThreadWorkspacePatch) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -451,28 +495,21 @@ export const useStore = create<AppStore>((set) => ({
   reorderProjects: (draggedProjectId, targetProjectId) =>
     set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
-  setThreadBranch: (threadId, branch, worktreePath) =>
-    set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
+  setThreadWorkspace: (threadId, patch) =>
+    set((state) => setThreadWorkspace(state, threadId, patch)),
 }));
 
 // Persist state changes with debouncing to avoid localStorage thrashing
-useStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+useStore.subscribe((state) => {
+  rememberProjectUiState(state.projects);
+  debouncedPersistState.maybeExecute(state);
+});
 
 // Flush pending writes synchronously before page unload to prevent data loss.
 if (typeof window !== "undefined") {
   window.addEventListener("beforeunload", () => {
     debouncedPersistState.flush();
   });
-}
-
-export function selectProjectById(projectId: Project["id"] | null | undefined) {
-  return (state: AppState) =>
-    projectId != null ? state.projects.find((p) => p.id === projectId) : undefined;
-}
-
-export function selectThreadById(threadId: ThreadId | null | undefined) {
-  return (state: AppState) =>
-    threadId != null ? state.threads.find((t) => t.id === threadId) : undefined;
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {

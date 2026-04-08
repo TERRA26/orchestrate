@@ -20,12 +20,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { openInPreferredEditor } from "../editorPreferences";
 import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
-import { readNativeApi } from "../nativeApi";
-import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
@@ -37,11 +34,14 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
+import { type SplitViewPanePanelState } from "../splitViewStore";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 
-const DIFF_PANEL_UNSAFE_CSS = `
+function buildDiffPanelUnsafeCSS(theme: "light" | "dark"): string {
+  const titleColor = theme === "dark" ? "#6073CC" : "#526FFF";
+  return `
 :host {
   /* Feed the library's host-level font variables so shadow DOM chrome stops falling back to system-ui. */
   --diffs-font-family: var(--font-mono-family);
@@ -99,6 +99,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
   z-index: 4;
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-bottom: 1px solid var(--border) !important;
+  cursor: pointer;
 }
 
 /* Hide the default change-type icon (blue circle) — replaced by chevron + file-type icon. */
@@ -109,19 +110,10 @@ const DIFF_PANEL_UNSAFE_CSS = `
 [data-title] {
   font-family: var(--font-mono-family) !important;
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    text-decoration-color 120ms ease;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 2px;
-}
-
-[data-title]:hover {
-  color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
-  text-decoration-color: currentColor;
+  color: ${titleColor} !important;
 }
 `;
+}
 
 type RenderablePatch =
   | {
@@ -180,11 +172,21 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  threadId?: ThreadId | null;
+  panelState?: Pick<SplitViewPanePanelState, "panel" | "diffTurnId" | "diffFilePath">;
+  onUpdatePanelState?: (
+    patch: Partial<Pick<SplitViewPanePanelState, "panel" | "diffTurnId" | "diffFilePath">>,
+  ) => void;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+export default function DiffPanel({
+  mode = "inline",
+  threadId: controlledThreadId,
+  panelState,
+  onUpdatePanelState,
+}: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const { settings } = useAppSettings();
@@ -201,8 +203,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
-  const diffOpen = diffSearch.diff === "1";
-  const activeThreadId = routeThreadId;
+  const diffOpen = panelState ? panelState.panel === "diff" : diffSearch.diff === "1";
+  const activeThreadId = controlledThreadId ?? routeThreadId;
   const activeThread = useStore((store) =>
     activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
   );
@@ -234,8 +236,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
   );
 
-  const selectedTurnId = diffSearch.diffTurnId ?? null;
-  const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
+  const selectedTurnId = panelState
+    ? (panelState.diffTurnId ?? null)
+    : (diffSearch.diffTurnId ?? null);
+  const selectedFilePath =
+    selectedTurnId !== null
+      ? panelState
+        ? (panelState.diffFilePath ?? null)
+        : (diffSearch.diffFilePath ?? null)
+      : null;
   const selectedTurn =
     selectedTurnId === null
       ? undefined
@@ -354,20 +363,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     });
   }, []);
 
-  const openDiffFileInEditor = useCallback(
-    (filePath: string) => {
-      const api = readNativeApi();
-      if (!api) return;
-      const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
-      void openInPreferredEditor(api, targetPath).catch((error) => {
-        console.warn("Failed to open diff file in editor.", error);
-      });
-    },
-    [activeCwd],
-  );
-
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
+    if (onUpdatePanelState) {
+      onUpdatePanelState({
+        panel: "diff",
+        diffTurnId: turnId,
+        diffFilePath: null,
+      });
+      return;
+    }
     void navigate({
       to: "/$threadId",
       params: { threadId: activeThread.id },
@@ -379,6 +384,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   };
   const selectWholeConversation = () => {
     if (!activeThread) return;
+    if (onUpdatePanelState) {
+      onUpdatePanelState({
+        panel: "diff",
+        diffTurnId: null,
+        diffFilePath: null,
+      });
+      return;
+    }
     void navigate({
       to: "/$threadId",
       params: { threadId: activeThread.id },
@@ -637,10 +650,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         const composedPath = nativeEvent.composedPath?.() ?? [];
                         const clickedHeader = composedPath.some((node) => {
                           if (!(node instanceof Element)) return false;
-                          return node.hasAttribute("data-title");
+                          return (
+                            node.hasAttribute("data-diffs-header") ||
+                            node.hasAttribute("data-file-info")
+                          );
                         });
                         if (!clickedHeader) return;
-                        openDiffFileInEditor(filePath);
+                        event.stopPropagation();
+                        toggleFileCollapsed(fileKey);
                       }}
                     >
                       <FileDiff
@@ -651,7 +668,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           overflow: diffWordWrap ? "wrap" : "scroll",
                           theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,
-                          unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
+                          unsafeCSS: buildDiffPanelUnsafeCSS(resolvedTheme),
                           collapsed: isCollapsed,
                         }}
                         renderHeaderPrefix={() => (
@@ -663,20 +680,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           />
                         )}
                         renderHeaderMetadata={() => (
-                          <button
-                            type="button"
+                          <span
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
-                              cursor: "pointer",
-                              background: "none",
-                              border: "none",
                               padding: "2px",
                               color: "inherit",
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleFileCollapsed(fileKey);
                             }}
                           >
                             <ChevronDownIcon
@@ -688,7 +697,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                 opacity: 0.5,
                               }}
                             />
-                          </button>
+                          </span>
                         )}
                       />
                     </div>

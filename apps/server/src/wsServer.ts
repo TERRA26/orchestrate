@@ -28,7 +28,6 @@ import {
   WsResponse,
   type WsPushEnvelopeBase,
 } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,
@@ -51,7 +50,7 @@ import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
-import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
+import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -77,8 +76,6 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { BrowserAutomation } from "./browser/Services/BrowserAutomation.ts";
-import { runProcess } from "./processRunner.ts";
 import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
@@ -223,10 +220,8 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
-  | BrowserAutomation
   | Open
-  | AnalyticsService
-  | WorkspaceEntries;
+  | AnalyticsService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -300,36 +295,6 @@ function summarizePushForLog(push: WsPushEnvelopeBase): unknown {
   };
 }
 
-function buildOrchestratorCompletionPrompt(input: {
-  systemPrompt: string;
-  userPrompt: string;
-}): string {
-  const sections: string[] = [];
-  const systemPrompt = input.systemPrompt.trim();
-  const userPrompt = input.userPrompt.trim();
-
-  if (systemPrompt.length > 0) {
-    sections.push(`System instructions:\n${systemPrompt}`);
-  }
-  if (userPrompt.length > 0) {
-    sections.push(`User request:\n${userPrompt}`);
-  }
-
-  return sections.join("\n\n");
-}
-
-function resolveCodexCliReasoningEffort(
-  effort: string | null | undefined,
-): "minimal" | "low" | "medium" | "high" {
-  if (effort === "low" || effort === "medium" || effort === "high" || effort === "minimal") {
-    return effort;
-  }
-  if (effort === "xhigh") {
-    return "high";
-  }
-  return "high";
-}
-
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
   ServerLifecycleError,
@@ -355,7 +320,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerHealth = yield* ProviderHealth;
   const providerDiscoveryService = yield* ProviderDiscoveryService;
   const git = yield* GitCore;
-  const browserAutomation = yield* BrowserAutomation;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -370,7 +334,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const providerStatuses = yield* providerHealth.getStatuses;
-  const serverSettings = DEFAULT_SERVER_SETTINGS;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -745,10 +708,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
     pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
       issues: event.issues,
+      providers: providerStatuses,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Scope.provide(orchestrationReactor.start(), subscriptionsScope);
+  yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
   yield* readiness.markOrchestrationSubscriptionsReady;
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
@@ -826,8 +790,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
 
-  const unsubscribeTerminalEvents = yield* terminalManager.subscribe((event) =>
-    pushBus.publishAll(WS_CHANNELS.terminalEvent, event),
+  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
+    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
   yield* readiness.markTerminalSubscriptionsReady;
@@ -876,15 +840,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsSearchEntries: {
         const body = stripRequestTag(request.body);
-        const workspaceEntries = yield* WorkspaceEntries;
-        return yield* workspaceEntries.search(body).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: `Failed to search workspace entries: ${String(cause)}`,
-              }),
-          ),
-        );
+        return yield* Effect.tryPromise({
+          try: () => searchWorkspaceEntries(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to search workspace entries: ${String(cause)}`,
+            }),
+        });
       }
 
       case WS_METHODS.projectsWriteFile: {
@@ -961,6 +923,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* git.createWorktree(body);
       }
 
+      case WS_METHODS.gitCreateDetachedWorktree: {
+        const body = stripRequestTag(request.body);
+        return yield* git.createDetachedWorktree(body);
+      }
+
       case WS_METHODS.gitRemoveWorktree: {
         const body = stripRequestTag(request.body);
         return yield* git.removeWorktree(body);
@@ -979,6 +946,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.gitInit: {
         const body = stripRequestTag(request.body);
         return yield* git.initRepo(body);
+      }
+
+      case WS_METHODS.gitHandoffThread: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.handoffThread(body);
       }
 
       case WS_METHODS.terminalOpen: {
@@ -1020,7 +992,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* terminalManager.close(body);
       }
 
-      case WS_METHODS.serverGetConfig: {
+      case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         return {
           cwd,
@@ -1029,9 +1001,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
-          settings: serverSettings,
         };
-      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
@@ -1067,169 +1037,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.providerListModels: {
         const body = stripRequestTag(request.body);
         return yield* providerDiscoveryService.listModels(body);
-      }
-
-      case WS_METHODS.browserOpenSession: {
-        const body = stripRequestTag(request.body);
-        return yield* browserAutomation.openSession(body).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: cause.message,
-              }),
-          ),
-        );
-      }
-
-      case WS_METHODS.browserAct: {
-        const body = stripRequestTag(request.body);
-        return yield* browserAutomation.act(body).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: cause.message,
-              }),
-          ),
-        );
-      }
-
-      case WS_METHODS.browserCloseSession: {
-        const body = stripRequestTag(request.body);
-        return yield* browserAutomation.closeSession(body).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: cause.message,
-              }),
-          ),
-        );
-      }
-
-      case WS_METHODS.orchestratorComplete: {
-        const body = stripRequestTag(request.body);
-        const { provider, model, messages } = body;
-
-        // Separate system messages from conversation messages
-        const systemMessages = messages.filter((m) => m.role === "system");
-        const conversationMessages = messages.filter((m) => m.role !== "system");
-
-        const systemPrompt = systemMessages.map((m) => m.content).join("\n\n");
-        const userPrompt = conversationMessages.map((m) => `${m.role}: ${m.content}`).join("\n\n");
-        const combinedPrompt = buildOrchestratorCompletionPrompt({ systemPrompt, userPrompt });
-
-        if (provider === "claudeAgent") {
-          // Claude agent provider path — spawn `claude` CLI with --print flag
-          const claudeArgs = [
-            "-p",
-            "--output-format",
-            "text",
-            "--model",
-            model,
-            "--dangerously-skip-permissions",
-          ];
-
-          // Apply model options if provided
-          const modelOptions = body.modelOptions;
-          if (modelOptions && "effort" in modelOptions && modelOptions.effort) {
-            claudeArgs.push("--effort", modelOptions.effort);
-          }
-
-          const result = yield* Effect.tryPromise({
-            try: () =>
-              runProcess("claude", claudeArgs, {
-                stdin: combinedPrompt,
-                timeoutMs: 120_000,
-              }),
-            catch: (cause) =>
-              new RouteRequestError({
-                message: `Claude CLI failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-              }),
-          });
-
-          return { text: result.stdout.trim() };
-        }
-
-        if (provider === "codex") {
-          // Codex provider path — spawn `codex` CLI
-          const modelOptions = body.modelOptions;
-          const reasoningEffort =
-            modelOptions && "reasoningEffort" in modelOptions
-              ? modelOptions.reasoningEffort
-              : undefined;
-          const cliReasoningEffort = resolveCodexCliReasoningEffort(reasoningEffort);
-
-          const codexArgs = [
-            "exec",
-            "--ephemeral",
-            "-s",
-            "read-only",
-            "--model",
-            model,
-            "--config",
-            `model_reasoning_effort="${cliReasoningEffort}"`,
-            "-",
-          ];
-
-          const result = yield* Effect.tryPromise({
-            try: () =>
-              runProcess("codex", codexArgs, {
-                stdin: combinedPrompt,
-                timeoutMs: 120_000,
-                allowNonZeroExit: false,
-              }),
-            catch: (cause) =>
-              new RouteRequestError({
-                message: `Codex CLI failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-              }),
-          });
-
-          return { text: result.stdout.trim() };
-        }
-
-        return yield* new RouteRequestError({
-          message: `Unsupported orchestrator provider: ${provider}`,
-        });
-      }
-
-      case WS_METHODS.projectsReadFile: {
-        const body = stripRequestTag(request.body);
-        return yield* Effect.tryPromise({
-          try: async () => {
-            const fs = await import("node:fs/promises");
-            const path = await import("node:path");
-            const fullPath = path.resolve(body.cwd, body.relativePath);
-            const contents = await fs.readFile(fullPath, "utf-8");
-            return { contents };
-          },
-          catch: (cause) =>
-            new RouteRequestError({
-              message: `Failed to read file: ${String(cause)}`,
-            }),
-        });
-      }
-
-      case WS_METHODS.serverRefreshProviders: {
-        return yield* Effect.tryPromise({
-          try: async () => {
-            // Provider refresh is a no-op until full provider health monitoring is implemented
-          },
-          catch: (cause) =>
-            new RouteRequestError({
-              message: `Failed to refresh providers: ${String(cause)}`,
-            }),
-        });
-      }
-
-      case WS_METHODS.serverGetSettings: {
-        return yield* new RouteRequestError({
-          message: "server.getSettings not yet implemented",
-        });
-      }
-
-      case WS_METHODS.serverUpdateSettings: {
-        return yield* new RouteRequestError({
-          message: "server.updateSettings not yet implemented",
-        });
       }
 
       default: {

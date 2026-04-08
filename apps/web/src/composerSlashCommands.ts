@@ -1,4 +1,4 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type { GitBranch, ProviderKind } from "@t3tools/contracts";
 
 export const BUILT_IN_COMPOSER_SLASH_COMMANDS = [
   "clear",
@@ -28,6 +28,60 @@ export interface ComposerSlashInvocation {
 
 export type FastSlashCommandAction = "toggle" | "on" | "off" | "status" | "invalid";
 export type ForkSlashCommandTarget = "local" | "worktree";
+
+function normalizeSlashCommandName(value: string): string {
+  return value.trim().replace(/^\/+/, "").toLowerCase();
+}
+
+const CLAUDE_NATIVE_COMMAND_ALIASES: Record<string, readonly string[]> = {
+  clear: ["reset", "new"],
+  config: ["settings"],
+  desktop: ["app"],
+  exit: ["quit"],
+  feedback: ["bug"],
+  branch: ["fork"],
+  mobile: ["ios", "android"],
+  permissions: ["allowed-tools"],
+  "remote-control": ["rc"],
+  resume: ["continue"],
+};
+
+function getProviderNativeSlashCommandAliases(
+  provider: ProviderKind,
+  command: string,
+): readonly string[] {
+  const normalizedCommand = normalizeSlashCommandName(command);
+  if (provider !== "claudeAgent") {
+    return [];
+  }
+  return CLAUDE_NATIVE_COMMAND_ALIASES[normalizedCommand] ?? [];
+}
+
+function expandProviderNativeSlashCommandNames(
+  provider: ProviderKind,
+  commandNames: ReadonlyArray<string>,
+): string[] {
+  const expandedNames = new Set<string>();
+  for (const commandName of commandNames) {
+    const normalizedCommandName = normalizeSlashCommandName(commandName);
+    if (!normalizedCommandName) {
+      continue;
+    }
+    expandedNames.add(normalizedCommandName);
+    for (const alias of getProviderNativeSlashCommandAliases(provider, normalizedCommandName)) {
+      expandedNames.add(alias);
+    }
+  }
+  return [...expandedNames];
+}
+
+export function getProviderNativeSlashCommandSearchTerms(
+  provider: ProviderKind,
+  command: string,
+): readonly string[] {
+  const normalizedCommand = normalizeSlashCommandName(command);
+  return [normalizedCommand, ...getProviderNativeSlashCommandAliases(provider, normalizedCommand)];
+}
 
 const COMPOSER_SLASH_COMMAND_DEFINITIONS: Record<
   ComposerSlashCommand,
@@ -90,20 +144,28 @@ const COMPOSER_SLASH_COMMAND_DEFINITIONS: Record<
 };
 
 export function isBuiltInComposerSlashCommand(value: string): value is ComposerSlashCommand {
-  return BUILT_IN_COMPOSER_SLASH_COMMANDS.some((command) => command === value);
+  const normalizedValue = normalizeSlashCommandName(value);
+  return BUILT_IN_COMPOSER_SLASH_COMMANDS.some((command) => command === normalizedValue);
 }
 
 export function parseComposerSlashInvocation(text: string): ComposerSlashInvocation | null {
+  return parseComposerSlashInvocationForCommands(text, BUILT_IN_COMPOSER_SLASH_COMMANDS);
+}
+
+export function parseComposerSlashInvocationForCommands(
+  text: string,
+  commands: ReadonlyArray<ComposerSlashCommand>,
+): ComposerSlashInvocation | null {
   const match = /^\/([a-z-]+)(?:\s+(.*))?$/i.exec(text.trim());
   if (!match) {
     return null;
   }
-  const command = match[1]?.toLowerCase();
-  if (!command || !isBuiltInComposerSlashCommand(command)) {
+  const command = normalizeSlashCommandName(match[1] ?? "");
+  if (!command || !commands.includes(command as ComposerSlashCommand)) {
     return null;
   }
   return {
-    command,
+    command: command as ComposerSlashCommand,
     args: (match[2] ?? "").trim(),
   };
 }
@@ -229,21 +291,43 @@ export function resolveComposerSlashRootBranch(input: {
 }
 
 export function getAvailableComposerSlashCommands(input: {
+  provider: ProviderKind;
   supportsFastSlashCommand: boolean;
   canOfferReviewCommand: boolean;
   canOfferForkCommand: boolean;
+  providerNativeCommandNames?: ReadonlyArray<string>;
 }): ComposerSlashCommand[] {
-  return [
-    "clear",
-    "model",
-    ...(input.supportsFastSlashCommand ? (["fast"] as const) : []),
-    "plan",
-    "default",
-    ...(input.canOfferReviewCommand ? (["review"] as const) : []),
-    ...(input.canOfferForkCommand ? (["fork"] as const) : []),
-    "status",
-    "subagents",
-  ];
+  const collidingNativeCommandNames = new Set<ComposerSlashCommand>(
+    expandProviderNativeSlashCommandNames(
+      input.provider,
+      input.providerNativeCommandNames ?? [],
+    ).filter((name): name is ComposerSlashCommand => isBuiltInComposerSlashCommand(name)),
+  );
+
+  const availableCommands: ComposerSlashCommand[] =
+    input.provider === "codex"
+      ? [
+          "clear",
+          "model",
+          ...(input.supportsFastSlashCommand ? (["fast"] as const) : []),
+          "plan",
+          "default",
+          ...(input.canOfferReviewCommand ? (["review"] as const) : []),
+          ...(input.canOfferForkCommand ? (["fork"] as const) : []),
+          "status",
+          "subagents",
+        ]
+      : [];
+  return availableCommands.filter((command) => !collidingNativeCommandNames.has(command));
+}
+
+export function hasProviderNativeSlashCommand(
+  provider: ProviderKind,
+  commandNames: ReadonlyArray<string>,
+  command: string,
+): boolean {
+  const normalizedCommand = normalizeSlashCommandName(command);
+  return expandProviderNativeSlashCommandNames(provider, commandNames).includes(normalizedCommand);
 }
 
 export function buildSlashReviewComposerPrompt(args: string): string {

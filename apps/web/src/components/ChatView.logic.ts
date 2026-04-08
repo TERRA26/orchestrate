@@ -1,7 +1,7 @@
 import { ProjectId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
+import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { isGenericTerminalThreadTitle } from "@t3tools/shared/terminalThreads";
 import { type ChatMessage, type Thread, type ThreadPrimarySurface } from "../types";
-import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
 import {
@@ -11,7 +11,7 @@ import {
 } from "../lib/terminalContext";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-const WORKTREE_BRANCH_PREFIX = "t3code";
+const WORKTREE_NAME_PREFIX = "dpcode";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -41,7 +41,6 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
-    archivedAt: null,
   };
 }
 
@@ -101,10 +100,19 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+export function buildSuggestedWorktreeName(input: {
+  associatedWorktreeBranch?: string | null;
+  title?: string | null;
+}): string {
+  const normalizedExisting =
+    input.associatedWorktreeBranch?.trim().replace(/^(codex|t3code|dpcode)\//i, "") ?? "";
+  const preferred =
+    normalizedExisting ||
+    `${WORKTREE_NAME_PREFIX}/${sanitizeBranchFragment(input.title ?? "update")}`;
+  const normalized = preferred.toLowerCase();
+  return normalized.startsWith(`${WORKTREE_NAME_PREFIX}/`)
+    ? normalized
+    : `${WORKTREE_NAME_PREFIX}/${sanitizeBranchFragment(normalized)}`;
 }
 
 export function cloneComposerImageForRetry(
@@ -172,40 +180,6 @@ export function shouldRenderTerminalWorkspace(options: {
   return (
     options.terminalOpen && options.presentationMode === "workspace" && options.activeProjectExists
   );
-}
-
-/**
- * Waits for a server thread (identified by threadId) to appear in the store.
- * Resolves `true` once the thread exists, or `false` after a timeout.
- */
-export function waitForStartedServerThread(
-  threadId: ThreadId,
-  timeoutMs = 15_000,
-): Promise<boolean> {
-  // Dynamically import the store to avoid circular deps at module scope
-  return import("../store").then(({ useStore }) => {
-    return new Promise<boolean>((resolve) => {
-      const check = () => {
-        const state = useStore.getState();
-        return state.threads.some((t) => t.id === threadId);
-      };
-      if (check()) {
-        resolve(true);
-        return;
-      }
-      const timer = setTimeout(() => {
-        unsub();
-        resolve(false);
-      }, timeoutMs);
-      const unsub = useStore.subscribe(() => {
-        if (check()) {
-          clearTimeout(timer);
-          unsub();
-          resolve(true);
-        }
-      });
-    });
-  });
 }
 
 export function shouldAutoDeleteTerminalThreadOnLastClose(options: {

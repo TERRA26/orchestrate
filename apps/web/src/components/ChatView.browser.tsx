@@ -13,7 +13,6 @@ import {
   WS_METHODS,
   OrchestrationSessionStatus,
 } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -119,17 +118,13 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
-        enabled: true,
-        installed: true,
-        version: null,
         status: "ready",
-        auth: { status: "authenticated" },
+        available: true,
+        authStatus: "authenticated",
         checkedAt: NOW_ISO,
-        models: [],
       },
     ],
     availableEditors: [],
-    settings: DEFAULT_SERVER_SETTINGS,
   };
 }
 
@@ -265,7 +260,6 @@ function createSnapshotForTargetUser(options: {
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
-        archivedAt: null,
         handoff: null,
         messages,
         activities: [],
@@ -292,27 +286,38 @@ function createSnapshotWithLongAssistantResponse(): OrchestrationReadModel {
     targetText: "start",
   });
 
+  const threads = [...snapshot.threads];
+  const threadIndex = threads.findIndex((thread) => thread.id === THREAD_ID);
+  if (threadIndex < 0) {
+    return snapshot;
+  }
+
+  const thread = threads[threadIndex]!;
+  const messages = [...thread.messages];
+  const messageIndex = messages.findIndex(
+    (message, index) => message.role === "assistant" && index === 7,
+  );
+  if (messageIndex < 0) {
+    return snapshot;
+  }
+
+  const message = messages[messageIndex]!;
+  messages[messageIndex] = {
+    ...message,
+    text: Array.from(
+      { length: 240 },
+      (_, lineIndex) =>
+        `${lineIndex + 1}. keep the viewport stable while this response keeps growing`,
+    ).join("\n"),
+  };
+  threads[threadIndex] = {
+    ...thread,
+    messages,
+  };
+
   return {
     ...snapshot,
-    threads: snapshot.threads.map((thread) =>
-      thread.id === THREAD_ID
-        ? {
-            ...thread,
-            messages: thread.messages.map((message, index) =>
-              message.role === "assistant" && index === 7
-                ? {
-                    ...message,
-                    text: Array.from(
-                      { length: 240 },
-                      (_, lineIndex) =>
-                        `${lineIndex + 1}. keep the viewport stable while this response keeps growing`,
-                    ).join("\n"),
-                  }
-                : message,
-            ),
-          }
-        : thread,
-    ),
+    threads,
   };
 }
 
@@ -355,7 +360,6 @@ function addThreadToSnapshot(
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
-        archivedAt: null,
         handoff: null,
         messages: [],
         activities: [],
