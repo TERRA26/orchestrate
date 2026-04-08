@@ -1,4 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// xterm addons access browser globals (`self`, native font APIs) at module init,
+// which doesn't work in Node/Vitest. Mock all xterm packages so the pure utility
+// functions exported from ThreadTerminalDrawer can be tested without a browser.
+vi.mock("@xterm/addon-clipboard", () => ({ ClipboardAddon: vi.fn() }));
+vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn() }));
+vi.mock("@xterm/addon-image", () => ({ ImageAddon: vi.fn() }));
+vi.mock("@xterm/addon-ligatures", () => ({ LigaturesAddon: vi.fn() }));
+vi.mock("@xterm/addon-search", () => ({ SearchAddon: vi.fn() }));
+vi.mock("@xterm/addon-unicode11", () => ({ Unicode11Addon: vi.fn() }));
+vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: vi.fn() }));
+vi.mock("@xterm/xterm", () => ({ Terminal: vi.fn() }));
 
 import {
   resolveTerminalSelectionActionPosition,

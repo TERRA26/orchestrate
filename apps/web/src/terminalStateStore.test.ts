@@ -5,7 +5,7 @@ import { createJSONStorage } from "zustand/middleware";
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
-const ORIGINAL_TERMINAL_STORAGE = useTerminalStateStore.persist.getOptions().storage;
+const ORIGINAL_TERMINAL_STORAGE = useTerminalStateStore.persist?.getOptions?.()?.storage;
 
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
@@ -19,14 +19,14 @@ describe("terminalStateStore actions", () => {
         storage.delete(key);
       },
     };
-    useTerminalStateStore.persist.setOptions({
+    useTerminalStateStore.persist?.setOptions?.({
       storage: createJSONStorage(() => stateStorage),
     });
     useTerminalStateStore.setState({ terminalStateByThreadId: {} });
   });
 
   afterEach(() => {
-    useTerminalStateStore.persist.setOptions({
+    useTerminalStateStore.persist?.setOptions?.({
       storage: ORIGINAL_TERMINAL_STORAGE,
     });
   });
