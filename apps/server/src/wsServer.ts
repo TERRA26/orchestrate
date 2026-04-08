@@ -356,7 +356,14 @@ function handleOrchestratorComplete(
         ? (input.modelOptions as any).reasoningEffort
         : null,
     );
-    const codexArgs: string[] = ["-m", input.model, "--reasoning-effort", effort, "-q", prompt];
+    const codexArgs: string[] = [
+      "-m",
+      input.model,
+      "--config",
+      `model_reasoning_effort=${effort}`,
+      "-q",
+      prompt,
+    ];
 
     return yield* Effect.tryPromise({
       try: async () => {
