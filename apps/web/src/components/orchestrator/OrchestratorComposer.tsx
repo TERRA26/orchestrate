@@ -130,20 +130,16 @@ export function OrchestratorComposer({
                     : {})}
                   onProviderModelChange={onModelChange}
                 />
-                {selectedProviderModels.length > 0 ? (
-                  <>
-                    <Separator orientation="vertical" className="mx-0.5 h-4 shrink-0" />
-                    <TraitsPicker
-                      provider={selectedProvider}
-                      threadId={"orchestrator" as unknown as ThreadId}
-                      models={selectedProviderModels}
-                      model={selectedModel}
-                      prompt={input}
-                      modelOptions={composerModelOptions?.[selectedProvider]}
-                      onPromptChange={onPromptChangeFromTraits}
-                    />
-                  </>
-                ) : null}
+                <Separator orientation="vertical" className="mx-0.5 h-4 shrink-0" />
+                <TraitsPicker
+                  provider={selectedProvider}
+                  threadId={"orchestrator" as unknown as ThreadId}
+                  models={selectedProviderModels}
+                  model={selectedModel}
+                  prompt={input}
+                  modelOptions={composerModelOptions?.[selectedProvider]}
+                  onPromptChange={onPromptChangeFromTraits}
+                />
               </div>
 
               {/* Send button — matches main chat style */}
