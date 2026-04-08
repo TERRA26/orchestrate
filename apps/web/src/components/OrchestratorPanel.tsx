@@ -62,7 +62,6 @@ import {
   inferCheckpointTurnCountByTurnId,
 } from "~/session-logic";
 import { waitForStartedServerThread } from "./ChatView.logic";
-import { ComposerPromptEditor } from "./ComposerPromptEditor";
 import {
   buildAdHocBrowserValidationRun,
   buildChecklistItemsFromTaskDraft,
@@ -573,7 +572,7 @@ export function OrchestratorPanel() {
   );
 
   // -- Orchestrator state --
-  const [inputCursor, setInputCursor] = useState(0);
+
   const [statusByThreadId, setStatusByThreadId] = useState<
     Partial<Record<ThreadId, OrchestratorStatus>>
   >({});
@@ -669,8 +668,7 @@ export function OrchestratorPanel() {
       return;
     }
     previousThreadIdRef.current = currentThreadId;
-    setInputCursor(orchestratorThreadState.prompt.length);
-  }, [currentThreadId, orchestratorThreadState.prompt.length]);
+  }, [currentThreadId]);
 
   const managedThreadId =
     currentThreadId === ORCHESTRATOR_DRAFT_THREAD_ID
@@ -1766,7 +1764,6 @@ export function OrchestratorPanel() {
     const previousStatusDetail = statusDetail;
     try {
       setOrchestratorPrompt(currentThreadId, "");
-      setInputCursor(0);
       addMessage(conversationThreadId, "user", text);
       setStatusForThread(conversationThreadId, "thinking", "Understanding the request...");
       addProgressMessage(conversationThreadId, "Understanding the request...");
@@ -2069,7 +2066,6 @@ export function OrchestratorPanel() {
     resetThreadConversation(ORCHESTRATOR_DRAFT_THREAD_ID);
     closeThreadBrowserSession(ORCHESTRATOR_DRAFT_THREAD_ID);
     setStatusForThread(ORCHESTRATOR_DRAFT_THREAD_ID, "idle");
-    setInputCursor(0);
     if (routeThreadId) {
       try {
         await navigate({ to: "/" });
@@ -2103,43 +2099,28 @@ export function OrchestratorPanel() {
     threadBrowserSession,
   ]);
 
-  const handleInputChange = useCallback(
-    (
-      nextValue: string,
-      nextCursor: number,
-      _expandedCursor: number,
-      _cursorAdjacentToMention: boolean,
-      _terminalContextIds: string[],
-    ) => {
-      setOrchestratorPrompt(currentThreadId, nextValue);
-      setInputCursor(nextCursor);
-    },
-    [currentThreadId, setOrchestratorPrompt],
-  );
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleComposerCommandKey = useCallback(
-    (key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab", event: KeyboardEvent) => {
-      if (key === "Enter" && !event.shiftKey) {
+  const handleTextareaKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
         void handleSend();
-        return true;
       }
-      return false;
     },
     [handleSend],
   );
 
-  const handleComposerPaste = useCallback(() => {}, []);
   const handlePromptChangeFromTraits = useCallback(
     (nextPrompt: string) => {
       setOrchestratorPrompt(currentThreadId, nextPrompt);
-      setInputCursor(nextPrompt.length);
     },
     [currentThreadId, setOrchestratorPrompt],
   );
 
   return (
     <div
-      className="relative flex h-dvh flex-col border-r border-border/50 bg-sidebar text-foreground"
+      className="relative flex h-dvh flex-col border-r border-border/30 bg-background/80 text-foreground backdrop-blur-xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/80"
       style={{
         width,
         minWidth: ORCHESTRATOR_MIN_WIDTH,
@@ -2149,7 +2130,7 @@ export function OrchestratorPanel() {
       <ResizeEdgeHandle label="Resize orchestrator panel" onResize={handleResize} />
 
       {/* ---- Header ---- */}
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/30 px-3 dark:border-white/[0.03]">
         <div className="flex items-center gap-2">
           <BrainIcon className="size-4 text-muted-foreground" />
           <span className="text-sm font-medium">Orchestrator</span>
@@ -2202,7 +2183,7 @@ export function OrchestratorPanel() {
 
       {/* ---- Agent context bar ---- */}
       {managedThread ? (
-        <div className="flex shrink-0 items-center justify-between border-b border-sidebar-border px-3 py-1.5">
+        <div className="flex shrink-0 items-center justify-between border-b border-border/30 px-3 py-1.5 dark:border-white/[0.03]">
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs">
               <span className="text-muted-foreground">Agent:</span>{" "}
@@ -2224,7 +2205,7 @@ export function OrchestratorPanel() {
       <OrchestratorStatusBar status={status} detail={statusDetail} />
 
       {/* ---- Messages ---- */}
-      <ScrollArea className="min-h-0 flex-1 bg-background">
+      <ScrollArea className="min-h-0 flex-1">
         <div ref={scrollRef} className="mx-auto flex w-full max-w-xl flex-col gap-4 px-4 py-5">
           {requirementsChecklist.length > 0 ? (
             <RequirementsChecklistCard items={requirementsChecklist} />
@@ -2247,7 +2228,7 @@ export function OrchestratorPanel() {
       </ScrollArea>
 
       {/* ---- Composer ---- */}
-      <div className="shrink-0 border-t border-border/50 bg-background px-3 pb-3 pt-2">
+      <div className="shrink-0 border-t border-border/30 px-3 pb-3 pt-2 dark:border-white/[0.03]">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2257,84 +2238,80 @@ export function OrchestratorPanel() {
         >
           <div
             className={cn(
-              "group rounded-2xl p-px transition-colors duration-200",
-              composerProviderState.composerFrameClassName,
+              "rounded-md border bg-card transition-colors duration-200 focus-within:border-neutral-500/15",
+              isBusy ? "border-border/40 opacity-60" : "border-border/60",
+              composerProviderState.composerSurfaceClassName,
             )}
           >
-            <div
-              className={cn(
-                "rounded-md border bg-card transition-colors duration-200 focus-within:border-neutral-500/15",
-                isBusy ? "border-border/40 opacity-60" : "border-border/60",
-                composerProviderState.composerSurfaceClassName,
-              )}
-            >
-              <div className="relative px-4 pb-1 pt-3.5">
-                <ComposerPromptEditor
-                  value={input}
-                  cursor={inputCursor}
-                  terminalContexts={[]}
-                  disabled={!canUseSelectedModel || isBusy}
-                  placeholder={
-                    !canUseSelectedModel
-                      ? "Select a model to start"
-                      : isBusy
-                        ? "Working..."
-                        : "Describe what you want built..."
-                  }
-                  onRemoveTerminalContext={() => {}}
-                  onChange={handleInputChange}
-                  onCommandKeyDown={handleComposerCommandKey}
-                  onPaste={handleComposerPaste}
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(event) => setOrchestratorPrompt(currentThreadId, event.target.value)}
+              onKeyDown={handleTextareaKeyDown}
+              disabled={!canUseSelectedModel || isBusy}
+              placeholder={
+                !canUseSelectedModel
+                  ? "Select a model to start"
+                  : isBusy
+                    ? "Working..."
+                    : "Describe what you want built..."
+              }
+              rows={1}
+              className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              style={
+                {
+                  minHeight: "3.5rem",
+                  maxHeight: "200px",
+                  fieldSizing: "content",
+                } as React.CSSProperties
+              }
+            />
+            <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-hidden px-3 pb-2.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <ProviderModelPicker
+                  compact
+                  provider={selectedProvider}
+                  model={selectedModel}
+                  lockedProvider={null}
+                  modelOptionsByProvider={modelOptionsByProvider}
+                  disabled={isBusy || providers.length === 0}
+                  {...(composerProviderState.modelPickerIconClassName
+                    ? {
+                        activeProviderIconClassName: composerProviderState.modelPickerIconClassName,
+                      }
+                    : {})}
+                  onProviderModelChange={handleModelChange}
                 />
+                {selectedProviderModels.length > 0 ? (
+                  <>
+                    <Separator orientation="vertical" className="mx-0.5 h-4 shrink-0" />
+                    <TraitsPicker
+                      provider={selectedProvider}
+                      threadId={"orchestrator" as unknown as ThreadId}
+                      models={selectedProviderModels}
+                      model={selectedModel}
+                      prompt={input}
+                      modelOptions={composerModelOptions?.[selectedProvider]}
+                      onPromptChange={handlePromptChangeFromTraits}
+                    />
+                  </>
+                ) : null}
               </div>
-              <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-hidden px-3 pb-2.5">
-                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  <ProviderModelPicker
-                    compact
-                    provider={selectedProvider}
-                    model={selectedModel}
-                    lockedProvider={null}
-                    modelOptionsByProvider={modelOptionsByProvider}
-                    disabled={isBusy || providers.length === 0}
-                    {...(composerProviderState.modelPickerIconClassName
-                      ? {
-                          activeProviderIconClassName:
-                            composerProviderState.modelPickerIconClassName,
-                        }
-                      : {})}
-                    onProviderModelChange={handleModelChange}
-                  />
-                  {selectedProviderModels.length > 0 ? (
-                    <>
-                      <Separator orientation="vertical" className="mx-0.5 h-4 shrink-0" />
-                      <TraitsPicker
-                        provider={selectedProvider}
-                        threadId={"orchestrator" as unknown as ThreadId}
-                        models={selectedProviderModels}
-                        model={selectedModel}
-                        prompt={input}
-                        modelOptions={composerModelOptions?.[selectedProvider]}
-                        onPromptChange={handlePromptChangeFromTraits}
-                      />
-                    </>
-                  ) : null}
-                </div>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  type="submit"
-                  className={cn(
-                    "size-7 shrink-0 rounded-full transition-colors",
-                    input.trim() && !isBusy && canUseSelectedModel
-                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "text-muted-foreground/40",
-                  )}
-                  disabled={!input.trim() || !canUseSelectedModel || isBusy}
-                >
-                  <ArrowUpIcon className="size-3.5" />
-                  <span className="sr-only">Send</span>
-                </Button>
-              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                type="submit"
+                className={cn(
+                  "size-7 shrink-0 rounded-full transition-colors",
+                  input.trim() && !isBusy && canUseSelectedModel
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "text-muted-foreground/40",
+                )}
+                disabled={!input.trim() || !canUseSelectedModel || isBusy}
+              >
+                <ArrowUpIcon className="size-3.5" />
+                <span className="sr-only">Send</span>
+              </Button>
             </div>
           </div>
         </form>
