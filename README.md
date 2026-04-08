@@ -1,11 +1,13 @@
-# T3 Code
+# Orchestrate
 
-T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
+A multi-agent orchestrator for coding agents with browser validation, built on an event-sourced runtime.
+
+Orchestrate coordinates multiple coding agents (Codex, Claude, and more) through a web GUI, providing session management, provider health monitoring, and an orchestration layer that decomposes tasks and drives agent execution.
 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex and Claude.
+> Orchestrate currently supports Codex and Claude providers.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://github.com/openai/codex) and run `codex login`
@@ -17,36 +19,12 @@ T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more
 npx t3
 ```
 
-### Desktop app
+### Security
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
-
-```bash
-winget install T3Tools.T3Code
-```
-
-#### macOS (Homebrew)
-
-```bash
-brew install --cask t3-code
-```
-
-#### Arch Linux (AUR)
-
-```bash
-yay -S t3code-bin
-```
+By default, Orchestrate binds to `127.0.0.1` (loopback only). To expose the server on the network, set `--host 0.0.0.0` and configure an auth token via `--auth-token` or `T3CODE_AUTH_TOKEN`.
 
 ## Some notes
 
-We are very very early in this project. Expect bugs.
-
-We are not accepting contributions yet.
-
-## If you REALLY want to contribute still.... read this first
+We are very early in this project. Expect bugs.
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
