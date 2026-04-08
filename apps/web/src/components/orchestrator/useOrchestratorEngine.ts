@@ -24,7 +24,7 @@ import {
   resolveEmbeddedBrowserAbsoluteUrl,
   useEmbeddedBrowserStateStore,
 } from "~/embeddedBrowserStateStore";
-import { getCustomModelOptionsByProvider } from "~/modelSelection";
+import { getCustomModelOptionsByProvider, useAppSettings } from "~/appSettings";
 import { useProjectById, useThreadById } from "~/storeSelectors";
 import { useStore } from "~/store";
 import { readNativeApi } from "~/nativeApi";
@@ -119,10 +119,7 @@ const ORCHESTRATOR_REVIEW_CHECKPOINT_GRACE_MS = 5_000;
 const ORCHESTRATOR_REVIEW_ARTIFACT_WAIT_MS = 30_000;
 const ORCHESTRATOR_BROWSER_VALIDATION_MAX_STEPS = 20;
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
-const EMPTY_MODEL_OPTIONS_BY_PROVIDER: Record<
-  ProviderKind,
-  ReadonlyArray<{ slug: string; name: string }>
-> = {
+const EMPTY_MODEL_OPTIONS: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> = {
   codex: [],
   claudeAgent: [],
 };
@@ -199,6 +196,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   // -- Active thread observation --
   const navigate = useNavigate();
   const settings = useSettings();
+  const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
     select: (params: Record<string, string | undefined>) =>
@@ -353,11 +351,8 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
   );
   const modelOptionsByProvider = useMemo(
-    () =>
-      providers.length > 0
-        ? getCustomModelOptionsByProvider(settings, providers, selectedProvider, selectedModel)
-        : EMPTY_MODEL_OPTIONS_BY_PROVIDER,
-    [providers, selectedModel, selectedProvider, settings],
+    () => getCustomModelOptionsByProvider(appSettings),
+    [appSettings],
   );
   const handleModelChange = useCallback(
     (provider: ProviderKind, model: string) => {
