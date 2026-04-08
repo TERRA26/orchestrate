@@ -1,4 +1,4 @@
-import { LoaderIcon } from "lucide-react";
+import { CheckIcon, LoaderIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -14,7 +14,13 @@ import type { OrchestratorMessage } from "~/orchestratorStateStore";
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function MessageBubble({ message }: { message: OrchestratorMessage }) {
+function MessageBubble({
+  message,
+  isActiveThinking,
+}: {
+  message: OrchestratorMessage;
+  isActiveThinking?: boolean;
+}) {
   if (message.role === "user") {
     return (
       <div className="pb-4" data-message-role="user">
@@ -33,9 +39,13 @@ function MessageBubble({ message }: { message: OrchestratorMessage }) {
   if (message.role === "thinking") {
     return (
       <div className="pb-3">
-        <div className="flex items-start gap-2 text-muted-foreground">
-          <LoaderIcon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
-          <span className="text-sm leading-relaxed">{message.content}</span>
+        <div className="flex items-start gap-2 text-muted-foreground/70">
+          {isActiveThinking ? (
+            <LoaderIcon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+          ) : (
+            <CheckIcon className="mt-0.5 size-3.5 shrink-0" />
+          )}
+          <span className="text-xs leading-relaxed">{message.content}</span>
         </div>
       </div>
     );
@@ -116,6 +126,7 @@ export interface OrchestratorMessagesProps {
   requirementsChecklist: ReadonlyArray<OrchestratorChecklistItem>;
   threadBrowserSession: EmbeddedBrowserSession | null;
   isThreadBrowserSessionVisible: boolean;
+  isBusy: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -128,9 +139,18 @@ export function OrchestratorMessages({
   requirementsChecklist,
   threadBrowserSession,
   isThreadBrowserSessionVisible,
+  isBusy,
   scrollRef,
 }: OrchestratorMessagesProps) {
   const hasContent = messages.length > 0 || requirementsChecklist.length > 0;
+
+  // Find the index of the last "thinking" message — only that one should spin (and only if busy)
+  const lastThinkingIndex = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === "thinking") return i;
+    }
+    return -1;
+  })();
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -152,7 +172,13 @@ export function OrchestratorMessages({
             </div>
           ) : null}
           {hasContent ? (
-            messages.map((message) => <MessageBubble key={message.id} message={message} />)
+            messages.map((message, index) => (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                isActiveThinking={isBusy && index === lastThinkingIndex}
+              />
+            ))
           ) : (
             <div className="flex min-h-[40vh] items-center justify-center">
               <p className="text-sm text-muted-foreground/60">Describe what you want built.</p>

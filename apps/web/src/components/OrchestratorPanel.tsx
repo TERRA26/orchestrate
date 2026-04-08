@@ -119,6 +119,7 @@ function OrchestratorPanelInner() {
         requirementsChecklist={engine.requirementsChecklist}
         threadBrowserSession={engine.threadBrowserSession}
         isThreadBrowserSessionVisible={engine.isThreadBrowserSessionVisible}
+        isBusy={engine.isBusy}
         scrollRef={engine.scrollRef}
       />
 

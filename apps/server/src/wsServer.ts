@@ -315,6 +315,10 @@ function handleOrchestratorComplete(
       userPrompt: userMessage,
     });
 
+    const processOptions = {
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+    };
+
     if (input.provider === "claudeAgent") {
       const claudeArgs = [
         "-p",
@@ -333,6 +337,7 @@ function handleOrchestratorComplete(
       return yield* Effect.tryPromise({
         try: async () => {
           const result = await runProcess("claude", claudeArgs, {
+            ...processOptions,
             timeoutMs: 180_000,
             allowNonZeroExit: true,
           });
@@ -355,7 +360,10 @@ function handleOrchestratorComplete(
 
     return yield* Effect.tryPromise({
       try: async () => {
-        const result = await runProcess("codex", codexArgs, { timeoutMs: 120_000 });
+        const result = await runProcess("codex", codexArgs, {
+          ...processOptions,
+          timeoutMs: 120_000,
+        });
         return { text: result.stdout } satisfies OrchestratorCompleteResult;
       },
       catch: (cause) =>

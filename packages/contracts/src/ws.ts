@@ -141,6 +141,7 @@ export const OrchestratorCompleteInput = Schema.Struct({
   provider: ProviderKind,
   model: TrimmedNonEmptyString,
   modelOptions: Schema.optionalKey(Schema.Union([CodexModelOptions, ClaudeModelOptions])),
+  cwd: Schema.optionalKey(Schema.String),
   messages: Schema.Array(
     Schema.Struct({
       role: Schema.Literals(["user", "assistant", "system"]),

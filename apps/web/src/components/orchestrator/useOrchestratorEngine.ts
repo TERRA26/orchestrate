@@ -557,6 +557,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         provider: selectedModelSelection.provider,
         model: selectedModelSelection.model,
         ...(selectedModelSelection.options ? { modelOptions: selectedModelSelection.options } : {}),
+        ...(currentProject?.cwd ? { cwd: currentProject.cwd } : {}),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userContent },
@@ -564,7 +565,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       });
       return result.text.trim();
     },
-    [selectedModel, selectedModelSelection],
+    [currentProject?.cwd, selectedModel, selectedModelSelection],
   );
 
   // -- Helper: create a new thread and return its IDs --
