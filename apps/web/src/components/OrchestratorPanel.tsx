@@ -215,32 +215,29 @@ function AgentStatusBadge({ phase }: { phase: ReturnType<typeof derivePhase> }) 
 function MessageBubble({ message }: { message: OrchestratorMessage }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[86%] rounded-[18px] bg-primary px-3 py-2 text-[13px] leading-5 text-primary-foreground shadow-sm">
-          {message.content}
+      <div className="flex w-full justify-end pb-1">
+        <div className="max-w-[85%] rounded-xl border border-border/70 bg-secondary px-3.5 py-2">
+          <div className="whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
+            {message.content}
+          </div>
         </div>
       </div>
     );
   }
   if (message.role === "thinking") {
     return (
-      <div className="flex gap-2">
-        <div className="mt-0.5 flex size-5.5 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
-          <BrainIcon className="size-3 text-amber-500" />
-        </div>
-        <div className="min-w-0 flex-1 rounded-[18px] bg-muted/45 px-3 py-2 text-[13px] leading-5 text-muted-foreground">
-          {message.content}
+      <div className="pb-1">
+        <div className="flex items-start gap-2 text-muted-foreground">
+          <LoaderIcon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+          <span className="text-sm leading-relaxed">{message.content}</span>
         </div>
       </div>
     );
   }
   if (message.role === "agent-result") {
     return (
-      <div className="flex gap-2">
-        <div className="mt-0.5 flex size-5.5 shrink-0 items-center justify-center rounded-full bg-green-500/15">
-          <CheckCircleIcon className="size-3 text-green-500" />
-        </div>
-        <div className="chat-markdown min-w-0 flex-1 rounded-[18px] bg-green-500/5 px-3 py-2 text-[13px] leading-5 text-foreground">
+      <div className="pb-1">
+        <div className="chat-markdown text-sm leading-relaxed text-foreground">
           <ChatMarkdown text={message.content} cwd={undefined} />
         </div>
       </div>
@@ -248,11 +245,8 @@ function MessageBubble({ message }: { message: OrchestratorMessage }) {
   }
   // orchestrator
   return (
-    <div className="flex gap-2">
-      <div className="mt-0.5 flex size-5.5 shrink-0 items-center justify-center rounded-full bg-primary/10">
-        <SendIcon className="size-3 text-primary" />
-      </div>
-      <div className="chat-markdown min-w-0 flex-1 rounded-[18px] bg-muted/45 px-3 py-2 text-[13px] leading-5 text-foreground">
+    <div className="pb-1">
+      <div className="chat-markdown text-sm leading-relaxed text-foreground">
         <ChatMarkdown text={message.content} cwd={undefined} />
       </div>
     </div>
@@ -287,9 +281,9 @@ function OrchestratorStatusBar({
   const Icon = config.icon;
 
   return (
-    <div className="flex items-center justify-center gap-2 border-b border-border/40 bg-muted/15 py-1">
-      <Icon className={cn("size-3", config.color, config.spin && "animate-spin")} />
-      <span className={cn("text-[11px]", config.color)}>{detail ?? config.label}</span>
+    <div className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5">
+      <Icon className={cn("size-3 shrink-0", config.color, config.spin && "animate-spin")} />
+      <span className="truncate text-xs text-muted-foreground">{detail ?? config.label}</span>
     </div>
   );
 }
@@ -1748,8 +1742,24 @@ export function OrchestratorPanel() {
   // -- Core flow --
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || providers.length === 0) return;
-    if (!readNativeApi()) return;
+    if (!text) return;
+    if (providers.length === 0) {
+      addMessage(
+        currentThreadId,
+        "orchestrator",
+        "No providers available. Check your server configuration.",
+      );
+      return;
+    }
+    const api = readNativeApi();
+    if (!api) {
+      addMessage(
+        currentThreadId,
+        "orchestrator",
+        "Server connection not available. Try refreshing.",
+      );
+      return;
+    }
 
     let conversationThreadId = currentThreadId;
     const previousStatus = status;
@@ -2129,7 +2139,7 @@ export function OrchestratorPanel() {
 
   return (
     <div
-      className="relative flex h-dvh flex-col border-r border-border/70 bg-background text-foreground"
+      className="relative flex h-dvh flex-col border-r border-border/50 bg-sidebar text-foreground"
       style={{
         width,
         minWidth: ORCHESTRATOR_MIN_WIDTH,
@@ -2139,13 +2149,17 @@ export function OrchestratorPanel() {
       <ResizeEdgeHandle label="Resize orchestrator panel" onResize={handleResize} />
 
       {/* ---- Header ---- */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-border/70 px-3">
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
         <div className="flex items-center gap-2">
+          <BrainIcon className="size-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Orchestrator</span>
+        </div>
+        <div className="flex items-center gap-0.5">
           <Button
             type="button"
             size="icon"
             variant="ghost"
-            className="size-7 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-45"
+            className="size-7 text-muted-foreground hover:text-foreground disabled:opacity-45"
             title={
               threadBrowserSession
                 ? isThreadBrowserSessionVisible
@@ -2169,56 +2183,49 @@ export function OrchestratorPanel() {
               <EyeIcon className="size-3.5" />
             )}
           </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="size-7 text-muted-foreground hover:text-foreground"
+            title="New orchestrator chat"
+            aria-label="New orchestrator chat"
+            disabled={isBusy}
+            onClick={() => {
+              void handleStartNewOrchestratorChat();
+            }}
+          >
+            <SquarePenIcon className="size-3.5" />
+          </Button>
         </div>
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="size-7 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-          title="New orchestrator chat"
-          aria-label="New orchestrator chat"
-          disabled={isBusy}
-          onClick={() => {
-            void handleStartNewOrchestratorChat();
-          }}
-        >
-          <SquarePenIcon className="size-3.5" />
-        </Button>
       </div>
 
       {/* ---- Agent context bar ---- */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border/50 bg-muted/15 px-3 py-1.5">
-        {managedThread ? (
+      {managedThread ? (
+        <div className="flex shrink-0 items-center justify-between border-b border-sidebar-border px-3 py-1.5">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px]">
+            <p className="truncate text-xs">
               <span className="text-muted-foreground">Agent:</span>{" "}
               <span className="font-medium">{managedThread.title}</span>
             </p>
             {latestActivity ? (
-              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                 {latestActivity.summary}
               </p>
             ) : null}
-            {activeRun ? (
-              <p className="mt-0.5 truncate text-[10px] text-muted-foreground/80">
-                Iteration {activeRun.iteration}
-              </p>
-            ) : null}
           </div>
-        ) : (
-          <p className="text-[11px] text-muted-foreground">New thread will be created on send</p>
-        )}
-        <div className="ml-2 shrink-0">
-          <AgentStatusBadge phase={agentPhase} />
+          <div className="ml-2 shrink-0">
+            <AgentStatusBadge phase={agentPhase} />
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {/* ---- Status bar ---- */}
       <OrchestratorStatusBar status={status} detail={statusDetail} />
 
       {/* ---- Messages ---- */}
-      <ScrollArea className="min-h-0 flex-1">
-        <div ref={scrollRef} className="flex flex-col gap-3 px-3 py-4">
+      <ScrollArea className="min-h-0 flex-1 bg-background">
+        <div ref={scrollRef} className="mx-auto flex w-full max-w-xl flex-col gap-4 px-4 py-5">
           {requirementsChecklist.length > 0 ? (
             <RequirementsChecklistCard items={requirementsChecklist} />
           ) : null}
@@ -2230,15 +2237,8 @@ export function OrchestratorPanel() {
             />
           ) : null}
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center">
-              <div className="mb-3 flex size-10 items-center justify-center rounded-2xl bg-primary/10">
-                <BrainIcon className="size-5 text-primary/50" />
-              </div>
-              <p className="text-[13px] font-medium text-foreground/80">Orchestrator</p>
-              <p className="mt-1 max-w-[220px] text-[11px] leading-relaxed text-muted-foreground">
-                Describe a task. I&apos;ll plan it, require a detailed report, inspect the results,
-                and iterate until it&apos;s done.
-              </p>
+            <div className="flex flex-1 flex-col items-center justify-center py-20 text-center">
+              <p className="text-sm text-muted-foreground">Describe what you want built.</p>
             </div>
           ) : (
             messages.map((message) => <MessageBubble key={message.id} message={message} />)
@@ -2246,8 +2246,8 @@ export function OrchestratorPanel() {
         </div>
       </ScrollArea>
 
-      {/* ---- Composer (aligned with main chat input) ---- */}
-      <div className="shrink-0 px-2.5 pb-2.5 pt-1.5">
+      {/* ---- Composer ---- */}
+      <div className="shrink-0 border-t border-border/50 bg-background px-3 pb-3 pt-2">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2257,18 +2257,18 @@ export function OrchestratorPanel() {
         >
           <div
             className={cn(
-              "group rounded-[20px] p-px transition-colors duration-200",
+              "group rounded-2xl p-px transition-colors duration-200",
               composerProviderState.composerFrameClassName,
             )}
           >
             <div
               className={cn(
-                "rounded-[18px] border bg-card/96 transition-colors duration-200 has-focus-visible:border-ring/45",
-                isBusy ? "border-border/50 opacity-60" : "border-border",
+                "rounded-md border bg-card transition-colors duration-200 focus-within:border-neutral-500/15",
+                isBusy ? "border-border/40 opacity-60" : "border-border/60",
                 composerProviderState.composerSurfaceClassName,
               )}
             >
-              <div className="relative px-3 pb-1.5 pt-2.5 sm:px-3.5 sm:pt-3">
+              <div className="relative px-4 pb-1 pt-3.5">
                 <ComposerPromptEditor
                   value={input}
                   cursor={inputCursor}
@@ -2276,7 +2276,7 @@ export function OrchestratorPanel() {
                   disabled={!canUseSelectedModel || isBusy}
                   placeholder={
                     !canUseSelectedModel
-                      ? "Select a model to start the orchestrator"
+                      ? "Select a model to start"
                       : isBusy
                         ? "Working..."
                         : "Describe what you want built..."
@@ -2287,7 +2287,7 @@ export function OrchestratorPanel() {
                   onPaste={handleComposerPaste}
                 />
               </div>
-              <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-hidden px-2.5 pb-2 sm:px-3 sm:pb-2.5">
+              <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-hidden px-3 pb-2.5">
                 <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <ProviderModelPicker
                     compact

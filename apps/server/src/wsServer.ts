@@ -307,8 +307,6 @@ function summarizePushForLog(push: WsPushEnvelopeBase): unknown {
 function handleOrchestratorComplete(
   input: OrchestratorCompleteInput,
 ): Effect.Effect<OrchestratorCompleteResult, RouteRequestError> {
-  // TODO: Wire up to provider adapter for real model completion.
-  // For now, delegate to the provider binary via CLI using runProcess.
   return Effect.gen(function* () {
     const systemMessage = input.messages.find((m) => m.role === "system")?.content ?? "";
     const userMessage = input.messages.find((m) => m.role === "user")?.content ?? "";
@@ -316,22 +314,53 @@ function handleOrchestratorComplete(
       systemPrompt: systemMessage,
       userPrompt: userMessage,
     });
+
+    if (input.provider === "claudeAgent") {
+      const claudeArgs = [
+        "-p",
+        prompt,
+        "--model",
+        input.model,
+        "--output-format",
+        "text",
+        "--no-session-persistence",
+        "--tools",
+        "",
+      ];
+      if (systemMessage) {
+        claudeArgs.push("--system-prompt", systemMessage);
+      }
+      return yield* Effect.tryPromise({
+        try: async () => {
+          const result = await runProcess("claude", claudeArgs, {
+            timeoutMs: 180_000,
+            allowNonZeroExit: true,
+          });
+          return { text: result.stdout.trim() } satisfies OrchestratorCompleteResult;
+        },
+        catch: (cause) =>
+          new RouteRequestError({
+            message: `Claude CLI failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      });
+    }
+
+    // Codex provider path
     const effort = resolveCodexCliReasoningEffort(
       input.modelOptions && "reasoningEffort" in input.modelOptions
         ? (input.modelOptions as any).reasoningEffort
         : null,
     );
-
-    const args: string[] = ["-m", input.model, "--reasoning-effort", effort, "-q", prompt];
+    const codexArgs: string[] = ["-m", input.model, "--reasoning-effort", effort, "-q", prompt];
 
     return yield* Effect.tryPromise({
       try: async () => {
-        const result = await runProcess("codex", args, { timeoutMs: 120_000 });
+        const result = await runProcess("codex", codexArgs, { timeoutMs: 120_000 });
         return { text: result.stdout } satisfies OrchestratorCompleteResult;
       },
       catch: (cause) =>
         new RouteRequestError({
-          message: `Orchestrator completion failed: ${String(cause)}`,
+          message: `Codex CLI failed: ${cause instanceof Error ? cause.message : String(cause)}`,
         }),
     });
   });
