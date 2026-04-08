@@ -132,7 +132,6 @@ function OrchestratorPanelInner() {
         modelOptionsByProvider={engine.modelOptionsByProvider}
         composerModelOptions={engine.composerModelOptions}
         composerProviderState={engine.composerProviderState}
-        providers={engine.providers}
         onInputChange={engine.setInput}
         onSend={engine.send}
         onModelChange={engine.handleModelChange}

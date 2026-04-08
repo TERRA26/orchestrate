@@ -555,7 +555,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   // -- Helper: call orchestrator LLM --
   const callOrchestratorLLM = useCallback(
     async (systemPrompt: string, userContent: string) => {
-      if (providers.length === 0) throw new Error("No model selected");
+      if (!selectedModel) throw new Error("No model selected");
       const api = readNativeApi();
       if (!api) throw new Error("API not available");
       const result = await api.orchestration.complete({
@@ -569,7 +569,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       });
       return result.text.trim();
     },
-    [providers.length, selectedModelSelection],
+    [selectedModel, selectedModelSelection],
   );
 
   // -- Helper: create a new thread and return its IDs --
@@ -1572,11 +1572,11 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      if (providers.length === 0) {
+      if (!selectedModel) {
         addMessage(
           currentThreadId,
           "orchestrator",
-          "No providers available. Check your server configuration.",
+          "No model selected. Pick a model in the composer toolbar.",
         );
         return;
       }
@@ -1889,7 +1889,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       managedThread,
       activeRun,
       preferDraftConversation,
-      providers.length,
+      selectedModel,
       requirementsChecklist,
       routeThread,
       runDirectBrowserValidation,

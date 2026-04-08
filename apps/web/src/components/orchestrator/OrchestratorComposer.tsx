@@ -25,7 +25,6 @@ export interface OrchestratorComposerProps {
     composerSurfaceClassName?: string;
     modelPickerIconClassName?: string;
   };
-  providers: ReadonlyArray<unknown>;
   onInputChange: (text: string) => void;
   onSend: (text: string) => Promise<void>;
   onModelChange: (provider: ProviderKind, model: string) => void;
@@ -46,7 +45,6 @@ export function OrchestratorComposer({
   modelOptionsByProvider,
   composerModelOptions,
   composerProviderState,
-  providers,
   onInputChange,
   onSend,
   onModelChange,
@@ -124,7 +122,7 @@ export function OrchestratorComposer({
                   model={selectedModel}
                   lockedProvider={null}
                   modelOptionsByProvider={modelOptionsByProvider}
-                  disabled={isBusy || providers.length === 0}
+                  disabled={isBusy}
                   {...(composerProviderState.modelPickerIconClassName
                     ? {
                         activeProviderIconClassName: composerProviderState.modelPickerIconClassName,
