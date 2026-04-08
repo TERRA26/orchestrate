@@ -169,10 +169,7 @@ const ServerConfigLive = (input: CliInput) =>
         env.logWebSocketEvents ?? false,
       );
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
-      const host =
-        Option.getOrUndefined(input.host) ??
-        env.host ??
-        "127.0.0.1";
+      const host = Option.getOrUndefined(input.host) ?? env.host ?? "127.0.0.1";
 
       const config: ServerConfigShape = {
         mode,

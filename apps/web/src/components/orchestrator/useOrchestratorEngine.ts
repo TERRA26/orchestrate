@@ -6,7 +6,6 @@ import {
   type ModelSelection,
   type ProviderInteractionMode,
   type ProviderKind,
-  type ProviderModelOptions,
   type RuntimeMode,
   type ServerProvider,
   type ServerProviderModel,
@@ -119,10 +118,6 @@ const ORCHESTRATOR_REVIEW_CHECKPOINT_GRACE_MS = 5_000;
 const ORCHESTRATOR_REVIEW_ARTIFACT_WAIT_MS = 30_000;
 const ORCHESTRATOR_BROWSER_VALIDATION_MAX_STEPS = 20;
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
-const EMPTY_MODEL_OPTIONS: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> = {
-  codex: [],
-  claudeAgent: [],
-};
 
 // ---------------------------------------------------------------------------
 // Helpers (module-level, not in hook)
@@ -369,17 +364,6 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       setOrchestratorModelSelection,
     ],
   );
-  const handleProviderModelOptionsChange = useCallback(
-    (nextOptions: ProviderModelOptions[ProviderKind] | undefined) => {
-      setOrchestratorModelSelection(currentThreadId, {
-        provider: selectedProvider,
-        model: selectedModel,
-        ...(nextOptions ? { options: nextOptions } : {}),
-      });
-    },
-    [currentThreadId, selectedModel, selectedProvider, setOrchestratorModelSelection],
-  );
-
   // -- Orchestrator state --
 
   const [statusByThreadId, setStatusByThreadId] = useState<

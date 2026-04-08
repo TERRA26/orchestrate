@@ -30,7 +30,6 @@ import {
   type OrchestratorCompleteInput,
   type OrchestratorCompleteResult,
 } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,
@@ -315,9 +314,7 @@ function handleOrchestratorComplete(
       userPrompt: userMessage,
     });
 
-    const processOptions = {
-      ...(input.cwd ? { cwd: input.cwd } : {}),
-    };
+    const processOptions = input.cwd ? { cwd: input.cwd } : {};
 
     if (input.provider === "claudeAgent") {
       const claudeArgs = [

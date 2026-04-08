@@ -49,11 +49,9 @@ export function getModelOptions(provider: ProviderKind): ReadonlyArray<Selectabl
 // ── Default model capabilities ────────────────────────────────────────
 
 const DEFAULT_CODEX_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: CODEX_REASONING_EFFORT_OPTIONS.map((value) => ({
-    value,
-    label: value,
-    ...(value === "high" ? { isDefault: true } : {}),
-  })),
+  reasoningEffortLevels: CODEX_REASONING_EFFORT_OPTIONS.map((value) =>
+    value === "high" ? { value, label: value, isDefault: true as const } : { value, label: value },
+  ),
   supportsFastMode: true,
   supportsThinkingToggle: false,
   contextWindowOptions: [],
@@ -61,12 +59,8 @@ const DEFAULT_CODEX_CAPABILITIES: ModelCapabilities = {
 };
 
 const DEFAULT_CLAUDE_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: CLAUDE_CODE_EFFORT_OPTIONS.filter((v) => v !== "ultrathink").map(
-    (value) => ({
-      value,
-      label: value,
-      ...(value === "high" ? { isDefault: true } : {}),
-    }),
+  reasoningEffortLevels: CLAUDE_CODE_EFFORT_OPTIONS.filter((v) => v !== "ultrathink").map((value) =>
+    value === "high" ? { value, label: value, isDefault: true as const } : { value, label: value },
   ),
   supportsFastMode: true,
   supportsThinkingToggle: true,
