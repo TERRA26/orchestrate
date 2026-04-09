@@ -996,7 +996,7 @@ const scenario6: Scenario = {
           ctx.harness,
           rootProvider,
           rootModel,
-          "use GPT to implement the API changes",
+          "use GPT to implement a REST API with CRUD endpoints for a user management system",
         );
         return { pass: true, detail: `Router returned kind=${decision.kind}` };
       }),
@@ -1096,7 +1096,7 @@ const scenario7: Scenario = {
           ctx.harness,
           defaultProvider,
           defaultModel,
-          "use Claude Sonnet for this frontend task",
+          "use Claude Sonnet to build a responsive React dashboard component with charts and sidebar navigation",
         );
         return { pass: true, detail: `Router returned kind=${decision.kind}` };
       }),
@@ -1122,7 +1122,7 @@ const scenario7: Scenario = {
         const runInfo = await createRun(
           ctx.harness,
           projectId,
-          "use Claude Sonnet for this frontend task",
+          "use Claude Sonnet to build a responsive React dashboard component with charts and sidebar navigation",
           decision!.acceptanceCriteria ?? ["Frontend task completed"],
         );
         runId = runInfo.runId;
@@ -1254,7 +1254,12 @@ const scenario10: Scenario = {
     let decision: RouterDecision | undefined;
     steps.push(
       await runStep("Route prompt: build a landing page", async () => {
-        decision = await routePrompt(ctx.harness, ctx.provider, ctx.model, "build a landing page");
+        decision = await routePrompt(
+          ctx.harness,
+          ctx.provider,
+          ctx.model,
+          "create a TypeScript utility function that generates a random hex color string",
+        );
         return { pass: true, detail: `Router returned kind=${decision.kind}` };
       }),
     );
@@ -1279,7 +1284,7 @@ const scenario10: Scenario = {
         const runInfo = await createRun(
           ctx.harness,
           projectId,
-          "build a landing page",
+          "create a TypeScript utility function that generates a random hex color string",
           decision!.acceptanceCriteria ?? ["Landing page created"],
         );
         runId = runInfo.runId;
