@@ -1459,6 +1459,7 @@ export const RequiredCapability = Schema.Literals([
   "fast-response",
   "low-cost",
 ]);
+export type RequiredCapability = typeof RequiredCapability.Type;
 
 // SpawnBudget
 export const SpawnBudget = Schema.Struct({
@@ -1596,6 +1597,7 @@ export const OrchestratorModelCandidate = Schema.Struct({
   weight: Schema.Number,
   reason: Schema.String,
 });
+export type OrchestratorModelCandidate = typeof OrchestratorModelCandidate.Type;
 
 // ModelPolicy
 export const OrchestratorModelPolicy = Schema.Struct({
