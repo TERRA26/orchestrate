@@ -1359,8 +1359,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.orchestratorGetEvidence: {
         const body = stripRequestTag(request.body);
-        const orchestratorRuntime = yield* OrchestratorRuntimeService;
-        return yield* orchestratorRuntime.getEvidence(OrchestratorTaskId.makeUnsafe(body.taskId));
+        const orchestrationEngine = yield* OrchestrationEngineService;
+        const evidenceEvents = yield* Stream.runCollect(orchestrationEngine.readEvents(0));
+        return Array.from(evidenceEvents)
+          .filter(
+            (e): e is Extract<typeof e, { type: "orchestrator.evidence.captured" }> =>
+              e.type === "orchestrator.evidence.captured",
+          )
+          .filter((e) => e.payload.taskId === body.taskId)
+          .map((e) => ({
+            evidenceId: e.payload.evidenceId,
+            taskId: e.payload.taskId,
+            workerId: e.payload.workerId ?? null,
+            type: e.payload.evidenceType,
+            content: e.payload.content,
+            contentTruncated: e.payload.contentTruncated,
+            metadata: e.payload.metadata ?? {},
+            capturedAt: e.occurredAt,
+          }));
       }
 
       case WS_METHODS.orchestratorGetDecisions: {

@@ -12,6 +12,7 @@ import { Effect } from "effect";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import { hasNativeHandoffMessages } from "./handoff.ts";
 import {
+  requireOrchestratorRun,
   requireOrchestratorRunAbsent,
   requireOrchestratorRunActive,
   requireOrchestratorTask,
@@ -1356,7 +1357,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.decision.record": {
-      yield* requireOrchestratorRunActive({
+      // Decisions can be recorded on any run (including cancelled/completed/failed)
+      // because decisions about cancellation/failure need to be recorded after
+      // the run transitions out of active status.
+      yield* requireOrchestratorRun({
         readModel,
         command,
         runId: command.runId,

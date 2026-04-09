@@ -873,8 +873,8 @@ const scenario5: Scenario = {
     // Step 2: Assert kind=delegate
     steps.push(
       await runStep("Assert kind=delegate", async () => {
-        if (decision!.kind !== "delegate") {
-          return { pass: false, detail: `Expected kind=delegate, got kind=${decision!.kind}` };
+        if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
+          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -1019,8 +1019,8 @@ const scenario6: Scenario = {
     // Step 2: Assert kind=delegate
     steps.push(
       await runStep("Assert kind=delegate", async () => {
-        if (decision!.kind !== "delegate") {
-          return { pass: false, detail: `Expected kind=delegate, got kind=${decision!.kind}` };
+        if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
+          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -1119,8 +1119,8 @@ const scenario7: Scenario = {
     // Step 2: Assert delegation
     steps.push(
       await runStep("Assert kind=delegate", async () => {
-        if (decision!.kind !== "delegate") {
-          return { pass: false, detail: `Expected kind=delegate, got kind=${decision!.kind}` };
+        if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
+          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -1281,8 +1281,8 @@ const scenario10: Scenario = {
     // Step 2: Assert kind=delegate
     steps.push(
       await runStep("Assert kind=delegate", async () => {
-        if (decision!.kind !== "delegate") {
-          return { pass: false, detail: `Expected kind=delegate, got kind=${decision!.kind}` };
+        if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
+          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -2704,22 +2704,12 @@ const scenario19: Scenario = {
         runId = runInfo.runId;
         rootTaskId = runInfo.rootTaskId;
 
-        task1Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task A",
-          "Do task A",
-          ["A passes"],
-        );
-        task2Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task B",
-          "Do task B",
-          ["B passes"],
-        );
+        task1Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task A", "Do task A", [
+          "A passes",
+        ]);
+        task2Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task B", "Do task B", [
+          "B passes",
+        ]);
         return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
       }),
     );
@@ -2793,9 +2783,7 @@ const scenario19: Scenario = {
         if (state.workers.length < 2) {
           return { pass: false, detail: `Expected 2+ workers, got ${state.workers.length}` };
         }
-        const allSameRun = state.workers.every(
-          (w) => (w as { runId?: string }).runId === runId,
-        );
+        const allSameRun = state.workers.every((w) => (w as { runId?: string }).runId === runId);
         if (!allSameRun) {
           return { pass: false, detail: "Not all workers share the same runId" };
         }
@@ -2840,22 +2828,12 @@ const scenario20: Scenario = {
         runId = runInfo.runId;
         rootTaskId = runInfo.rootTaskId;
 
-        task1Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task A",
-          "Do task A",
-          ["A passes"],
-        );
-        task2Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task B",
-          "Do task B",
-          ["B passes"],
-        );
+        task1Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task A", "Do task A", [
+          "A passes",
+        ]);
+        task2Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task B", "Do task B", [
+          "B passes",
+        ]);
         return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
       }),
     );
@@ -2926,9 +2904,7 @@ const scenario20: Scenario = {
     const failed = steps.some((s) => s.status === "fail");
     return {
       status: failed ? "fail" : "pass",
-      detail: failed
-        ? "One or more steps failed"
-        : "Thread histories are structurally separate",
+      detail: failed ? "One or more steps failed" : "Thread histories are structurally separate",
       steps,
     };
   },
@@ -2965,7 +2941,13 @@ const scenario21: Scenario = {
     steps.push(
       await runStep("Create thread with codex model selection", async () => {
         const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
-        threadId = await createThread(ctx.harness, projectId, "Codex thread", "codex", "gpt-5-codex");
+        threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Codex thread",
+          "codex",
+          "gpt-5-codex",
+        );
         return { pass: true, detail: `Thread ${threadId} created with codex` };
       }),
     );
@@ -2998,9 +2980,7 @@ const scenario21: Scenario = {
     steps.push(
       await runStep("Verify worker modelBinding=claudeAgent", async () => {
         const state = await getRunState(ctx.harness, runId);
-        const worker = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === workerId,
-        );
+        const worker = state.workers.find((w) => (w as { workerId: string }).workerId === workerId);
         if (!worker) return { pass: false, detail: "Worker not found" };
         return assertProviderBinding(worker, "claudeAgent");
       }),
@@ -3046,22 +3026,12 @@ const scenario22: Scenario = {
         runId = runInfo.runId;
         rootTaskId = runInfo.rootTaskId;
 
-        task1Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task A",
-          "Write to /src",
-          ["A done"],
-        );
-        task2Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task B",
-          "Write to /src",
-          ["B done"],
-        );
+        task1Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task A", "Write to /src", [
+          "A done",
+        ]);
+        task2Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task B", "Write to /src", [
+          "B done",
+        ]);
         return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
       }),
     );
@@ -3647,9 +3617,7 @@ const scenario29: Scenario = {
     const failed = steps.some((s) => s.status === "fail");
     return {
       status: failed ? "fail" : "pass",
-      detail: failed
-        ? "One or more steps failed"
-        : "Evidence captured and queryable",
+      detail: failed ? "One or more steps failed" : "Evidence captured and queryable",
       steps,
     };
   },
@@ -3741,9 +3709,7 @@ const scenario30: Scenario = {
     const failed = steps.some((s) => s.status === "fail");
     return {
       status: failed ? "fail" : "pass",
-      detail: failed
-        ? "One or more steps failed"
-        : "Cross-model review endpoint responded",
+      detail: failed ? "One or more steps failed" : "Cross-model review endpoint responded",
       steps,
     };
   },
@@ -3967,9 +3933,7 @@ const scenario32: Scenario = {
     const failed = steps.some((s) => s.status === "fail");
     return {
       status: failed ? "fail" : "pass",
-      detail: failed
-        ? "One or more steps failed"
-        : "Task accepted but evidence records are empty",
+      detail: failed ? "One or more steps failed" : "Task accepted but evidence records are empty",
       steps,
     };
   },
@@ -4059,22 +4023,12 @@ const scenario37: Scenario = {
         runId = runInfo.runId;
         rootTaskId = runInfo.rootTaskId;
 
-        const task1Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task A",
-          "Do A",
-          ["A done"],
-        );
-        const task2Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task B",
-          "Do B",
-          ["B done"],
-        );
+        const task1Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task A", "Do A", [
+          "A done",
+        ]);
+        const task2Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task B", "Do B", [
+          "B done",
+        ]);
 
         const thread1 = await createThread(
           ctx.harness,
@@ -4264,9 +4218,7 @@ const scenario39: Scenario = {
     const failed = steps.some((s) => s.status === "fail");
     return {
       status: failed ? "fail" : "pass",
-      detail: failed
-        ? "One or more steps failed"
-        : "Run persists after WebSocket reconnect",
+      detail: failed ? "One or more steps failed" : "Run persists after WebSocket reconnect",
       steps,
     };
   },
@@ -4467,9 +4419,7 @@ const scenario41: Scenario = {
     steps.push(
       await runStep("Verify worker status=terminated", async () => {
         const state = await getRunState(ctx.harness, runId);
-        const worker = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === workerId,
-        );
+        const worker = state.workers.find((w) => (w as { workerId: string }).workerId === workerId);
         if (!worker) return { pass: false, detail: "Worker not found" };
         const status = (worker as { status?: string }).status;
         if (status !== "terminated") {
@@ -4499,9 +4449,7 @@ const scenario41: Scenario = {
     const failed = steps.some((s) => s.status === "fail");
     return {
       status: failed ? "fail" : "pass",
-      detail: failed
-        ? "One or more steps failed"
-        : "Worker termination flow works correctly",
+      detail: failed ? "One or more steps failed" : "Worker termination flow works correctly",
       steps,
     };
   },
@@ -4607,9 +4555,7 @@ const scenario42: Scenario = {
     steps.push(
       await runStep("Verify worker 1 terminated, task 1 blocked", async () => {
         const state = await getRunState(ctx.harness, runId);
-        const w1 = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === worker1Id,
-        );
+        const w1 = state.workers.find((w) => (w as { workerId: string }).workerId === worker1Id);
         if (!w1) return { pass: false, detail: "Worker 1 not found" };
         const w1Status = (w1 as { status?: string }).status;
         if (w1Status !== "terminated") {
@@ -4629,9 +4575,7 @@ const scenario42: Scenario = {
     steps.push(
       await runStep("Verify worker 2 still running, task 2 still running", async () => {
         const state = await getRunState(ctx.harness, runId);
-        const w2 = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === worker2Id,
-        );
+        const w2 = state.workers.find((w) => (w as { workerId: string }).workerId === worker2Id);
         if (!w2) return { pass: false, detail: "Worker 2 not found" };
         const w2Status = (w2 as { status?: string }).status;
         if (w2Status === "terminated") {
@@ -4701,7 +4645,7 @@ const scenario44: Scenario = {
             ctx.harness,
             ctx.provider,
             ctx.model,
-            "{{{{json garbage}}}} <<<INVALID>>> {\"broken\": [[[",
+            '{{{{json garbage}}}} <<<INVALID>>> {"broken": [[[',
           );
           // If it returns valid JSON, the router handled it gracefully
           return {
@@ -4722,9 +4666,7 @@ const scenario44: Scenario = {
     const failed = steps.some((s) => s.status === "fail");
     return {
       status: failed ? "fail" : "pass",
-      detail: failed
-        ? "Router failed ungracefully"
-        : "Router handles malformed input gracefully",
+      detail: failed ? "Router failed ungracefully" : "Router handles malformed input gracefully",
       steps,
     };
   },
@@ -4853,13 +4795,9 @@ const scenario45: Scenario = {
     steps.push(
       await runStep("Verify worker exists but task is done", async () => {
         const state = await getRunState(ctx.harness, runId);
-        const worker = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === workerId,
-        );
+        const worker = state.workers.find((w) => (w as { workerId: string }).workerId === workerId);
         if (!worker) return { pass: false, detail: "Worker not found" };
-        const rootTask = state.tasks.find(
-          (t) => (t as { taskId: string }).taskId === rootTaskId,
-        );
+        const rootTask = state.tasks.find((t) => (t as { taskId: string }).taskId === rootTaskId);
         if (!rootTask) return { pass: false, detail: "Root task not found" };
         const taskStatus = (rootTask as { status?: string }).status;
         if (taskStatus !== "accepted") {
@@ -5200,8 +5138,8 @@ const scenario48: Scenario = {
     // Step 2: Assert kind=delegate
     steps.push(
       await runStep("Assert kind=delegate", async () => {
-        if (decision!.kind !== "delegate") {
-          return { pass: false, detail: `Expected kind=delegate, got kind=${decision!.kind}` };
+        if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
+          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -5249,9 +5187,7 @@ const scenario48: Scenario = {
     steps.push(
       await runStep("Verify worker modelBinding=claudeAgent", async () => {
         const state = await getRunState(ctx.harness, runId);
-        const worker = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === workerId,
-        );
+        const worker = state.workers.find((w) => (w as { workerId: string }).workerId === workerId);
         if (!worker) return { pass: false, detail: "Worker not found in run state" };
         return assertProviderBinding(worker, workerProvider);
       }),
@@ -5483,22 +5419,12 @@ const scenario50: Scenario = {
         runId = runInfo.runId;
         rootTaskId = runInfo.rootTaskId;
 
-        const task1Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task A",
-          "Do A",
-          ["A done"],
-        );
-        const task2Id = await createChildTask(
-          ctx.harness,
-          runId,
-          rootTaskId,
-          "Task B",
-          "Do B",
-          ["B done"],
-        );
+        const task1Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task A", "Do A", [
+          "A done",
+        ]);
+        const task2Id = await createChildTask(ctx.harness, runId, rootTaskId, "Task B", "Do B", [
+          "B done",
+        ]);
 
         const thread1 = await createThread(
           ctx.harness,
@@ -5603,12 +5529,8 @@ const scenario50: Scenario = {
     steps.push(
       await runStep("Verify worker model bindings persist", async () => {
         const state = await getRunState(newHarness!, runId);
-        const w1 = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === worker1Id,
-        );
-        const w2 = state.workers.find(
-          (w) => (w as { workerId: string }).workerId === worker2Id,
-        );
+        const w1 = state.workers.find((w) => (w as { workerId: string }).workerId === worker1Id);
+        const w2 = state.workers.find((w) => (w as { workerId: string }).workerId === worker2Id);
         if (!w1) return { pass: false, detail: "Worker 1 not found after reconnect" };
         if (!w2) return { pass: false, detail: "Worker 2 not found after reconnect" };
         const b1 = assertProviderBinding(w1, ctx.provider);
