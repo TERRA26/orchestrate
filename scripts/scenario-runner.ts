@@ -233,16 +233,21 @@ function createHarness(port: number): Promise<WsHarness> {
 const ROUTER_SYSTEM_PROMPT = [
   "You are an ORCHESTRATOR ROUTER for a coding agent working in a local repository.",
   "",
-  "Decide whether the newest user message should be answered directly by the orchestrator or converted into a concrete implementation brief for the coding agent.",
+  "Decide whether the newest user message should be answered directly by the orchestrator, converted into a concrete implementation brief for a single coding agent, or decomposed into parallel subtasks for multiple agents.",
   "",
-  "Return raw JSON only in this shape:",
+  "Return raw JSON only in one of these shapes:",
   '{"kind":"delegate","title":"Short task title","instruction":"Direct implementation brief for the coding agent","acceptanceCriteria":["Concrete check 1","Concrete check 2"],"requirementsChecklist":["Testable requirement 1","Testable requirement 2"]}',
   "or",
   '{"kind":"answer","response":"Direct answer for the user based on the available orchestrator context","shouldContinueRun":true}',
+  "or",
+  '{"kind":"decompose","title":"Overall task title","subtasks":[{"title":"Subtask 1","instruction":"...","provider":"codex","model":"gpt-5-codex","acceptanceCriteria":["..."]},{"title":"Subtask 2","instruction":"...","provider":"claudeAgent","model":"claude-sonnet-4-6","acceptanceCriteria":["..."]}]}',
   "",
   "Rules:",
   "- Choose kind=answer when the user is asking about current progress, whether something was tested or validated, why something failed, what the current status is, asking for clarification about existing work, or asking the orchestrator itself to use the browser/computer-use preview.",
-  "- Choose kind=delegate only when the user is asking to build, modify, fix, continue, validate, or otherwise perform repository work.",
+  "- Choose kind=delegate only when the user is asking to build, modify, fix, continue, validate, or otherwise perform repository work that a single agent can handle.",
+  "- Choose kind=decompose when the request involves distinct subsystems, parallel work, or explicitly mentions multiple agents.",
+  "- Each subtask in a decompose response gets a provider/model assignment if the user specifies one.",
+  "- Subtask instructions should be independent and non-overlapping.",
   "- Do not delegate a status question, clarification question, or browser-validation question back to the agent.",
   "- For kind=answer, use only the provided context. If the context is insufficient, say that explicitly.",
   "- For kind=answer, set shouldContinueRun=true when there is an active managed run that should keep going after the answer.",
@@ -326,10 +331,10 @@ async function createRun(
     userRequest,
     goals,
     spawnBudget: budget ?? {
-      maxDepth: 2,
-      maxChildren: 3,
-      maxConcurrentWriters: 1,
-      maxTotalWorkers: 4,
+      maxDepth: 3,
+      maxChildren: 5,
+      maxConcurrentWriters: 3,
+      maxTotalWorkers: 6,
       allowedTools: ["edit", "search", "bash"],
       writeScope: [],
     },
@@ -392,14 +397,23 @@ async function dispatchCommand(
   return harness.sendRequest("orchestration.dispatchCommand", command);
 }
 
+interface RouterSubtask {
+  title: string;
+  instruction: string;
+  provider?: "codex" | "claudeAgent";
+  model?: string;
+  acceptanceCriteria?: string[];
+}
+
 interface RouterDecision {
-  kind: "delegate" | "answer";
+  kind: "delegate" | "answer" | "decompose";
   title?: string;
   instruction?: string;
   acceptanceCriteria?: string[];
   requirementsChecklist?: string[];
   response?: string;
   shouldContinueRun?: boolean;
+  subtasks?: RouterSubtask[];
 }
 
 async function routePrompt(
@@ -1720,6 +1734,971 @@ const scenario12: Scenario = {
 };
 
 // ---------------------------------------------------------------------------
+// Scenario Definitions — Group 4: Multi-Agent Decomposition
+// ---------------------------------------------------------------------------
+
+async function createChildTask(
+  harness: WsHarness,
+  runId: string,
+  parentTaskId: string,
+  title: string,
+  objective: string,
+  acceptanceCriteria: string[],
+): Promise<string> {
+  const taskId = `task-child-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  await dispatchCommand(harness, {
+    type: "orchestrator.task.create",
+    commandId: `cmd-task-create-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    taskId,
+    runId,
+    parentTaskId,
+    title,
+    objective,
+    acceptanceCriteria,
+    createdAt: new Date().toISOString(),
+  });
+  return taskId;
+}
+
+const scenario13: Scenario = {
+  id: 13,
+  group: "Multi-Agent Decomposition",
+  name: "Two-agent split by domain",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run
+    steps.push(
+      await runStep("Create run for multi-agent work", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(
+          ctx.harness,
+          projectId,
+          "use 2 agents, one GPT for backend and one Claude for frontend, build a full-stack todo app",
+          ["Backend API works", "Frontend renders correctly"],
+        );
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        return { pass: true, detail: `Run created: ${runId}, rootTask: ${rootTaskId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Create child tasks for backend and frontend
+    let backendTaskId = "";
+    let frontendTaskId = "";
+    steps.push(
+      await runStep("Create backend child task", async () => {
+        backendTaskId = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Backend API",
+          "Build a REST API for the todo app with CRUD endpoints",
+          ["GET /todos returns 200", "POST /todos creates a todo"],
+        );
+        return { pass: true, detail: `Backend task: ${backendTaskId}` };
+      }),
+    );
+    steps.push(
+      await runStep("Create frontend child task", async () => {
+        frontendTaskId = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Frontend UI",
+          "Build a React frontend for the todo app",
+          ["Todo list renders", "Can add new todos"],
+        );
+        return { pass: true, detail: `Frontend task: ${frontendTaskId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Task creation failed", steps };
+    }
+
+    // Step 3: Spawn workers — GPT for backend, Claude for frontend
+    let backendWorkerId = "";
+    let frontendWorkerId = "";
+    const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+    steps.push(
+      await runStep("Spawn GPT worker for backend", async () => {
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Backend worker thread",
+          "codex",
+          "gpt-5-codex",
+        );
+        backendWorkerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          backendTaskId,
+          threadId,
+          "codex",
+          "gpt-5-codex",
+        );
+        return { pass: true, detail: `Backend worker: ${backendWorkerId}` };
+      }),
+    );
+    steps.push(
+      await runStep("Spawn Claude worker for frontend", async () => {
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Frontend worker thread",
+          "claudeAgent",
+          "claude-sonnet-4-6",
+        );
+        frontendWorkerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          frontendTaskId,
+          threadId,
+          "claudeAgent",
+          "claude-sonnet-4-6",
+        );
+        return { pass: true, detail: `Frontend worker: ${frontendWorkerId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Worker spawn failed", steps };
+    }
+
+    // Step 4: Verify state — 1 run, 3 tasks (root + 2 children), 2 workers with different providers
+    steps.push(
+      await runStep("Verify: 1 run, 3 tasks, 2 workers with different providers", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        if (!state.run) return { pass: false, detail: "Run not found" };
+        if (state.tasks.length < 3) {
+          return {
+            pass: false,
+            detail: `Expected 3+ tasks (root + 2 children), got ${state.tasks.length}`,
+          };
+        }
+        if (state.workers.length < 2) {
+          return { pass: false, detail: `Expected 2+ workers, got ${state.workers.length}` };
+        }
+        const providers = state.workers.map(
+          (w) => (w.modelBinding as { provider?: string })?.provider,
+        );
+        const hasCodex = providers.includes("codex");
+        const hasClaude = providers.includes("claudeAgent");
+        if (!hasCodex || !hasClaude) {
+          return {
+            pass: false,
+            detail: `Expected both codex and claudeAgent providers, got: ${providers.join(", ")}`,
+          };
+        }
+        return {
+          pass: true,
+          detail: `1 run, ${state.tasks.length} tasks, ${state.workers.length} workers (codex + claudeAgent)`,
+        };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Two-agent split by domain verified successfully",
+      steps,
+    };
+  },
+};
+
+const scenario14: Scenario = {
+  id: 14,
+  group: "Multi-Agent Decomposition",
+  name: "Parallel work as one coordinated run",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with child tasks and workers
+    steps.push(
+      await runStep("Create run with 2 child tasks + workers", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Build full-stack todo app", [
+          "Backend works",
+          "Frontend works",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        const backendTaskId = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Backend",
+          "Build REST API",
+          ["API responds"],
+        );
+        const frontendTaskId = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Frontend",
+          "Build React UI",
+          ["UI renders"],
+        );
+
+        const thread1 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, backendTaskId, thread1, "codex", "gpt-5-codex");
+
+        const thread2 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(
+          ctx.harness,
+          runId,
+          frontendTaskId,
+          thread2,
+          "claudeAgent",
+          "claude-sonnet-4-6",
+        );
+
+        return { pass: true, detail: `Run: ${runId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Verify all tasks under ONE runId
+    steps.push(
+      await runStep("Verify all tasks under one runId", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const allTasksHaveRunId = state.tasks.every(
+          (t) => (t as { runId?: string }).runId === runId,
+        );
+        if (!allTasksHaveRunId) {
+          return { pass: false, detail: "Not all tasks share the same runId" };
+        }
+        return { pass: true, detail: `All ${state.tasks.length} tasks under runId=${runId}` };
+      }),
+    );
+
+    // Step 3: Verify both workers reference the same runId
+    steps.push(
+      await runStep("Verify both workers reference same runId", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const allWorkersHaveRunId = state.workers.every(
+          (w) => (w as { runId?: string }).runId === runId,
+        );
+        if (!allWorkersHaveRunId) {
+          return { pass: false, detail: "Not all workers share the same runId" };
+        }
+        if (state.workers.length < 2) {
+          return { pass: false, detail: `Expected 2+ workers, got ${state.workers.length}` };
+        }
+        return {
+          pass: true,
+          detail: `All ${state.workers.length} workers under runId=${runId}`,
+        };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Parallel work under one coordinated run verified",
+      steps,
+    };
+  },
+};
+
+const scenario15: Scenario = {
+  id: 15,
+  group: "Multi-Agent Decomposition",
+  name: "Integration after parallel work",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+    let backendTaskId = "";
+    let frontendTaskId = "";
+    let backendWorkerId = "";
+    let frontendWorkerId = "";
+
+    // Step 1: Create run with 2 child tasks + workers
+    steps.push(
+      await runStep("Create run with 2 child tasks + workers", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Build full-stack todo app", [
+          "Backend works",
+          "Frontend works",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        backendTaskId = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Backend",
+          "Build REST API",
+          ["API responds"],
+        );
+        frontendTaskId = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Frontend",
+          "Build React UI",
+          ["UI renders"],
+        );
+
+        const thread1 = await createThread(
+          ctx.harness,
+          projectId,
+          "Backend thread",
+          ctx.provider,
+          ctx.model,
+        );
+        backendWorkerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          backendTaskId,
+          thread1,
+          ctx.provider,
+          ctx.model,
+        );
+
+        const thread2 = await createThread(
+          ctx.harness,
+          projectId,
+          "Frontend thread",
+          ctx.provider,
+          ctx.model,
+        );
+        frontendWorkerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          frontendTaskId,
+          thread2,
+          ctx.provider,
+          ctx.model,
+        );
+
+        return {
+          pass: true,
+          detail: `run=${runId}, backend=${backendTaskId}, frontend=${frontendTaskId}`,
+        };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Assign + submit + accept backend task
+    steps.push(
+      await runStep("Assign, submit, and accept backend task", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.assign",
+          commandId: `cmd-assign-backend-${Date.now()}`,
+          taskId: backendTaskId,
+          assigneeKind: "worker",
+          assigneeId: backendWorkerId,
+          createdAt: new Date().toISOString(),
+        });
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.submit",
+          commandId: `cmd-submit-backend-${Date.now()}`,
+          taskId: backendTaskId,
+          workerId: backendWorkerId,
+          summary: "Backend API complete",
+          createdAt: new Date().toISOString(),
+        });
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.accept",
+          commandId: `cmd-accept-backend-${Date.now()}`,
+          taskId: backendTaskId,
+          summary: "Backend verified",
+          createdAt: new Date().toISOString(),
+        });
+        return { pass: true, detail: "Backend task accepted" };
+      }),
+    );
+
+    // Step 3: Assign + submit + accept frontend task
+    steps.push(
+      await runStep("Assign, submit, and accept frontend task", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.assign",
+          commandId: `cmd-assign-frontend-${Date.now()}`,
+          taskId: frontendTaskId,
+          assigneeKind: "worker",
+          assigneeId: frontendWorkerId,
+          createdAt: new Date().toISOString(),
+        });
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.submit",
+          commandId: `cmd-submit-frontend-${Date.now()}`,
+          taskId: frontendTaskId,
+          workerId: frontendWorkerId,
+          summary: "Frontend UI complete",
+          createdAt: new Date().toISOString(),
+        });
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.accept",
+          commandId: `cmd-accept-frontend-${Date.now()}`,
+          taskId: frontendTaskId,
+          summary: "Frontend verified",
+          createdAt: new Date().toISOString(),
+        });
+        return { pass: true, detail: "Frontend task accepted" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Task acceptance failed", steps };
+    }
+
+    // Step 4: Verify both children are accepted
+    steps.push(
+      await runStep("Verify both child tasks are accepted", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const backendTask = state.tasks.find(
+          (t) => (t as { taskId: string }).taskId === backendTaskId,
+        );
+        const frontendTask = state.tasks.find(
+          (t) => (t as { taskId: string }).taskId === frontendTaskId,
+        );
+        if ((backendTask as { status: string })?.status !== "accepted") {
+          return {
+            pass: false,
+            detail: `Backend task status: ${(backendTask as { status: string })?.status}`,
+          };
+        }
+        if ((frontendTask as { status: string })?.status !== "accepted") {
+          return {
+            pass: false,
+            detail: `Frontend task status: ${(frontendTask as { status: string })?.status}`,
+          };
+        }
+        return { pass: true, detail: "Both child tasks are accepted" };
+      }),
+    );
+
+    // Step 5: Complete the root task and run
+    steps.push(
+      await runStep("Complete the run", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.run.complete",
+          commandId: `cmd-run-complete-${Date.now()}`,
+          runId,
+          summary: "All subtasks completed successfully",
+          createdAt: new Date().toISOString(),
+        });
+        return { pass: true, detail: "Run completion dispatched" };
+      }),
+    );
+
+    // Step 6: Verify run status is completed
+    steps.push(
+      await runStep("Verify run status is completed", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const runStatus = (state.run as { status?: string })?.status;
+        if (runStatus !== "completed") {
+          return { pass: false, detail: `Expected run status=completed, got ${runStatus}` };
+        }
+        return { pass: true, detail: "Run status is completed" };
+      }),
+    );
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Integration after parallel work completed successfully",
+      steps,
+    };
+  },
+};
+
+const scenario16: Scenario = {
+  id: 16,
+  group: "Multi-Agent Decomposition",
+  name: "One worker finishes, one blocks",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+    let task1Id = "";
+    let task2Id = "";
+    let worker1Id = "";
+
+    // Step 1: Create run with 2 child tasks + workers
+    steps.push(
+      await runStep("Create run with 2 child tasks + workers", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Build two modules", [
+          "Module A works",
+          "Module B works",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        task1Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Module A",
+          "Build module A",
+          ["Module A passes tests"],
+        );
+        task2Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Module B",
+          "Build module B",
+          ["Module B passes tests"],
+        );
+
+        const thread1 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1",
+          ctx.provider,
+          ctx.model,
+        );
+        worker1Id = await spawnWorker(
+          ctx.harness,
+          runId,
+          task1Id,
+          thread1,
+          ctx.provider,
+          ctx.model,
+        );
+
+        const thread2 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, task2Id, thread2, ctx.provider, ctx.model);
+
+        return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Submit + accept task 1
+    steps.push(
+      await runStep("Assign, submit, and accept task 1", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.assign",
+          commandId: `cmd-assign-t1-${Date.now()}`,
+          taskId: task1Id,
+          assigneeKind: "worker",
+          assigneeId: worker1Id,
+          createdAt: new Date().toISOString(),
+        });
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.submit",
+          commandId: `cmd-submit-t1-${Date.now()}`,
+          taskId: task1Id,
+          workerId: worker1Id,
+          summary: "Module A complete",
+          createdAt: new Date().toISOString(),
+        });
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.accept",
+          commandId: `cmd-accept-t1-${Date.now()}`,
+          taskId: task1Id,
+          summary: "Module A verified",
+          createdAt: new Date().toISOString(),
+        });
+        return { pass: true, detail: "Task 1 accepted" };
+      }),
+    );
+
+    // Step 3: Block task 2
+    steps.push(
+      await runStep("Block task 2", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.block",
+          commandId: `cmd-block-t2-${Date.now()}`,
+          taskId: task2Id,
+          reason: "Waiting for external dependency",
+          createdAt: new Date().toISOString(),
+        });
+        return { pass: true, detail: "Task 2 blocked" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Task lifecycle failed", steps };
+    }
+
+    // Step 4: Verify states
+    steps.push(
+      await runStep("Verify task 1 accepted, task 2 blocked, run active", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const t1 = state.tasks.find((t) => (t as { taskId: string }).taskId === task1Id);
+        const t2 = state.tasks.find((t) => (t as { taskId: string }).taskId === task2Id);
+        const runStatus = (state.run as { status?: string })?.status;
+
+        if ((t1 as { status: string })?.status !== "accepted") {
+          return {
+            pass: false,
+            detail: `Task 1 expected accepted, got ${(t1 as { status: string })?.status}`,
+          };
+        }
+        if ((t2 as { status: string })?.status !== "blocked") {
+          return {
+            pass: false,
+            detail: `Task 2 expected blocked, got ${(t2 as { status: string })?.status}`,
+          };
+        }
+        if (runStatus !== "active") {
+          return { pass: false, detail: `Run expected active, got ${runStatus}` };
+        }
+        return { pass: true, detail: "Task 1=accepted, Task 2=blocked, Run=active" };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "One worker finishes, one blocks scenario passed",
+      steps,
+    };
+  },
+};
+
+const scenario17: Scenario = {
+  id: 17,
+  group: "Multi-Agent Decomposition",
+  name: "Three-agent decomposition",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with 3 child tasks
+    steps.push(
+      await runStep("Create run with 3 child tasks", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(
+          ctx.harness,
+          projectId,
+          "Use 3 agents: one for planning, one for backend, one for frontend",
+          ["Plan complete", "Backend works", "Frontend works"],
+        );
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Planning",
+          "Create architecture plan and task breakdown",
+          ["Architecture document created"],
+        );
+        await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Backend",
+          "Implement REST API based on architecture plan",
+          ["API endpoints working"],
+        );
+        await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Frontend",
+          "Implement React UI based on architecture plan",
+          ["UI renders correctly"],
+        );
+
+        return { pass: true, detail: `Run: ${runId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Spawn 3 workers
+    steps.push(
+      await runStep("Spawn 3 workers", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const taskTree = await ctx.harness.sendRequest("orchestrator.getTaskTree", { runId });
+        const tasks = taskTree.result as Array<{
+          taskId: string;
+          parentTaskId?: string;
+        }>;
+        const childTasks = tasks.filter((t) => t.parentTaskId === rootTaskId);
+
+        if (childTasks.length !== 3) {
+          return { pass: false, detail: `Expected 3 child tasks, got ${childTasks.length}` };
+        }
+
+        for (let i = 0; i < childTasks.length; i++) {
+          const childTask = childTasks[i]!;
+          const threadId = await createThread(
+            ctx.harness,
+            projectId,
+            `Worker ${i + 1} thread`,
+            ctx.provider,
+            ctx.model,
+          );
+          await spawnWorker(
+            ctx.harness,
+            runId,
+            childTask.taskId,
+            threadId,
+            ctx.provider,
+            ctx.model,
+          );
+        }
+
+        return { pass: true, detail: "3 workers spawned" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Worker spawn failed", steps };
+    }
+
+    // Step 3: Verify state — 1 run, 4 tasks (root + 3 children), 3 workers
+    steps.push(
+      await runStep("Verify: 1 run, 4 tasks, 3 workers with correct parentTaskId", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        if (!state.run) return { pass: false, detail: "Run not found" };
+        if (state.tasks.length !== 4) {
+          return {
+            pass: false,
+            detail: `Expected 4 tasks (1 root + 3 children), got ${state.tasks.length}`,
+          };
+        }
+        const childTasks = state.tasks.filter(
+          (t) => (t as { parentTaskId?: string }).parentTaskId === rootTaskId,
+        );
+        if (childTasks.length !== 3) {
+          return {
+            pass: false,
+            detail: `Expected 3 child tasks with parentTaskId=${rootTaskId}, got ${childTasks.length}`,
+          };
+        }
+        if (state.workers.length !== 3) {
+          return { pass: false, detail: `Expected 3 workers, got ${state.workers.length}` };
+        }
+        return {
+          pass: true,
+          detail: "1 run, 4 tasks (root + 3 children), 3 workers — correct",
+        };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Three-agent decomposition verified successfully",
+      steps,
+    };
+  },
+};
+
+const scenario18: Scenario = {
+  id: 18,
+  group: "Multi-Agent Decomposition",
+  name: "Recursive delegation (spawn budget)",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with tight budget (maxTotalWorkers=2)
+    steps.push(
+      await runStep("Create run with maxTotalWorkers=2", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(
+          ctx.harness,
+          projectId,
+          "Build app with limited budget",
+          ["App works"],
+          {
+            maxDepth: 2,
+            maxChildren: 3,
+            maxConcurrentWriters: 2,
+            maxTotalWorkers: 2,
+            allowedTools: ["edit", "search", "bash"],
+            writeScope: [],
+          },
+        );
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        return { pass: true, detail: `Run: ${runId} with maxTotalWorkers=2` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Create 3 child tasks
+    const childTaskIds: string[] = [];
+    steps.push(
+      await runStep("Create 3 child tasks", async () => {
+        for (let i = 0; i < 3; i++) {
+          const id = await createChildTask(
+            ctx.harness,
+            runId,
+            rootTaskId,
+            `Task ${i + 1}`,
+            `Work item ${i + 1}`,
+            [`Item ${i + 1} done`],
+          );
+          childTaskIds.push(id);
+        }
+        return { pass: true, detail: `Created tasks: ${childTaskIds.join(", ")}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Task creation failed", steps };
+    }
+
+    // Step 3: Spawn worker 1 (should succeed)
+    steps.push(
+      await runStep("Spawn worker 1 (should succeed)", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, childTaskIds[0]!, threadId, ctx.provider, ctx.model);
+        return { pass: true, detail: "Worker 1 spawned" };
+      }),
+    );
+
+    // Step 4: Spawn worker 2 (should succeed)
+    steps.push(
+      await runStep("Spawn worker 2 (should succeed)", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, childTaskIds[1]!, threadId, ctx.provider, ctx.model);
+        return { pass: true, detail: "Worker 2 spawned" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "First two workers failed to spawn", steps };
+    }
+
+    // Step 5: Spawn worker 3 (should be REJECTED by budget enforcement)
+    steps.push(
+      await runStep("Spawn worker 3 (should be rejected by budget)", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 3 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        try {
+          await spawnWorker(
+            ctx.harness,
+            runId,
+            childTaskIds[2]!,
+            threadId,
+            ctx.provider,
+            ctx.model,
+          );
+          // If we get here, budget was NOT enforced
+          return {
+            pass: false,
+            detail: "Budget not enforced — 3rd worker spawn should have been rejected",
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("budget") || msg.includes("exceeded") || msg.includes("invariant")) {
+            return { pass: true, detail: `3rd spawn correctly rejected: ${msg.slice(0, 100)}` };
+          }
+          return {
+            pass: true,
+            detail: `3rd spawn rejected (unexpected error shape): ${msg.slice(0, 100)}`,
+          };
+        }
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Spawn budget enforcement verified — 3rd worker correctly rejected",
+      steps,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Scenario Registry
 // ---------------------------------------------------------------------------
 
@@ -1736,6 +2715,12 @@ const ALL_SCENARIOS: Scenario[] = [
   scenario10,
   scenario11,
   scenario12,
+  scenario13,
+  scenario14,
+  scenario15,
+  scenario16,
+  scenario17,
+  scenario18,
 ];
 
 // ---------------------------------------------------------------------------

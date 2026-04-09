@@ -1015,6 +1015,50 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "orchestrator.run.complete": {
+      yield* requireOrchestratorRunActive({
+        readModel,
+        command,
+        runId: command.runId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.run.completed",
+        payload: {
+          runId: command.runId,
+          summary: command.summary,
+          completedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.run.fail": {
+      yield* requireOrchestratorRunActive({
+        readModel,
+        command,
+        runId: command.runId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.run.failed",
+        payload: {
+          runId: command.runId,
+          reason: command.reason,
+          failedAt: command.createdAt,
+        },
+      };
+    }
+
     case "orchestrator.task.create": {
       yield* requireOrchestratorRunActive({
         readModel,
@@ -1219,7 +1263,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.worker.spawn": {
-      yield* requireOrchestratorRunActive({
+      const activeRun = yield* requireOrchestratorRunActive({
         readModel,
         command,
         runId: command.runId,
@@ -1229,6 +1273,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         taskId: command.taskId,
       });
+
+      // Budget enforcement: reject if maxTotalWorkers would be exceeded
+      const existingWorkerCount = (readModel.orchestratorWorkers ?? []).filter(
+        (w) => w.runId === command.runId && w.status !== "terminated",
+      ).length;
+      if (existingWorkerCount >= activeRun.spawnBudget.maxTotalWorkers) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Spawn budget exceeded: run '${command.runId}' already has ${existingWorkerCount} active worker(s) (maxTotalWorkers=${activeRun.spawnBudget.maxTotalWorkers}).`,
+        });
+      }
+
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1241,6 +1297,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workerId: command.workerId,
           runId: command.runId,
           taskId: command.taskId,
+          threadId: command.threadId,
           spawnBudget: command.spawnBudget,
           workspace: command.workspace,
           modelBinding: command.modelBinding,

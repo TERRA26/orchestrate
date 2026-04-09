@@ -15,16 +15,21 @@ export const ORCHESTRATOR_MAX_REVIEW_WORK_LOG_DETAIL_CHARS = 4_000;
 export const ORCHESTRATOR_ROUTER_SYSTEM_PROMPT = [
   "You are an ORCHESTRATOR ROUTER for a coding agent working in a local repository.",
   "",
-  "Decide whether the newest user message should be answered directly by the orchestrator or converted into a concrete implementation brief for the coding agent.",
+  "Decide whether the newest user message should be answered directly by the orchestrator, converted into a concrete implementation brief for a single coding agent, or decomposed into parallel subtasks for multiple agents.",
   "",
-  "Return raw JSON only in this shape:",
+  "Return raw JSON only in one of these shapes:",
   '{"kind":"delegate","title":"Short task title","instruction":"Direct implementation brief for the coding agent","acceptanceCriteria":["Concrete check 1","Concrete check 2"],"requirementsChecklist":["Testable requirement 1","Testable requirement 2"]}',
   "or",
   '{"kind":"answer","response":"Direct answer for the user based on the available orchestrator context","shouldContinueRun":true}',
+  "or",
+  '{"kind":"decompose","title":"Overall task title","subtasks":[{"title":"Subtask 1","instruction":"...","provider":"codex","model":"gpt-5-codex","acceptanceCriteria":["..."]},{"title":"Subtask 2","instruction":"...","provider":"claudeAgent","model":"claude-sonnet-4-6","acceptanceCriteria":["..."]}]}',
   "",
   "Rules:",
   "- Choose kind=answer when the user is asking about current progress, whether something was tested or validated, why something failed, what the current status is, asking for clarification about existing work, or asking the orchestrator itself to use the browser/computer-use preview.",
-  "- Choose kind=delegate only when the user is asking to build, modify, fix, continue, validate, or otherwise perform repository work.",
+  "- Choose kind=delegate only when the user is asking to build, modify, fix, continue, validate, or otherwise perform repository work that a single agent can handle.",
+  "- Choose kind=decompose when the request involves distinct subsystems, parallel work, or explicitly mentions multiple agents.",
+  "- Each subtask in a decompose response gets a provider/model assignment if the user specifies one.",
+  "- Subtask instructions should be independent and non-overlapping.",
   "- Do not delegate a status question, clarification question, or browser-validation question back to the agent.",
   "- For kind=answer, use only the provided context. If the context is insufficient, say that explicitly.",
   "- For kind=answer, set shouldContinueRun=true when there is an active managed run that should keep going after the answer.",
@@ -520,6 +525,52 @@ export function buildAdHocBrowserValidationRun(input: {
   };
 }
 
+function buildFallbackTaskTitle(userRequest: string): string {
+  const firstLine = userRequest.trim().split("\n")[0] ?? userRequest.trim();
+  return firstLine.length > 72 ? `${firstLine.slice(0, 69)}...` : firstLine;
+}
+
+export function buildFallbackOrchestratorRouterDecision(input: {
+  userRequest: string;
+  hasActiveRun: boolean;
+}): OrchestratorRouterDecision {
+  const trimmed = input.userRequest.trim();
+
+  if (/^(?:hi|hello|hey|yo|thanks|thank you|ok|okay)\b/i.test(trimmed) && trimmed.length <= 80) {
+    return {
+      kind: "answer",
+      response: input.hasActiveRun
+        ? "I'm here. The current managed run is still active."
+        : "Hi. Tell me what you want to build, inspect, or validate.",
+      shouldContinueRun: input.hasActiveRun,
+    };
+  }
+
+  if (
+    /\b(status|progress|what happened|why did|why is|tested|validated|browser|preview)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return {
+      kind: "answer",
+      response: input.hasActiveRun
+        ? "The managed run is still active. I can give a more specific status once the latest turn completes."
+        : "There is no active managed run yet.",
+      shouldContinueRun: input.hasActiveRun,
+    };
+  }
+
+  return {
+    kind: "delegate",
+    taskDraft: {
+      title: buildFallbackTaskTitle(trimmed || "Managed task"),
+      instruction: trimmed || "Continue the managed task.",
+      acceptanceCriteria: ["Implementation matches the user request."],
+      requirementsChecklist: ["The requested change is implemented and verified."],
+    },
+  };
+}
+
 export function parseOrchestratorRouterDecision(raw: string): OrchestratorRouterDecision {
   const parsed = parseJsonObject(raw);
   const kind = toNonEmptyString(parsed?.kind);
@@ -960,6 +1011,9 @@ export function shouldRequireBrowserValidation(userRequest: string): boolean {
 
 function browserValidationCandidateScore(candidate: EmbeddedBrowserPresentationCandidate): number {
   let score = 0;
+  if (candidate.source === "active browser session") {
+    score += 10;
+  }
   if (/^https?:\/\/(?:localhost|127\.0\.0\.1)/i.test(candidate.url)) {
     score += 5;
   } else if (candidate.url.startsWith("/")) {
