@@ -7,6 +7,10 @@
  * @module Server
  */
 import http from "node:http";
+import { randomUUID } from "node:crypto";
+import * as fs from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as nodePath from "node:path";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -247,6 +251,13 @@ class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("Ro
   message: Schema.String,
 }) {}
 
+class OrchestratorCompletionProcessError extends Schema.TaggedErrorClass<OrchestratorCompletionProcessError>()(
+  "OrchestratorCompletionProcessError",
+  {
+    detail: Schema.String,
+  },
+) {}
+
 // Summarize noisy websocket pushes so explicit debug logging stays useful
 // without dumping ANSI-heavy terminal redraw traffic into the server logs.
 function summarizePushForLog(push: WsPushEnvelopeBase): unknown {
@@ -345,39 +356,60 @@ function handleOrchestratorComplete(
           return { text: result.stdout.trim() } satisfies OrchestratorCompleteResult;
         },
         catch: (cause) =>
-          new RouteRequestError({
-            message: `Claude CLI failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          new OrchestratorCompletionProcessError({
+            detail: describeOrchestratorCompletionCause(cause),
           }),
-      });
+      }).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("orchestrator completion failed").pipe(
+            Effect.annotateLogs({
+              provider: input.provider,
+              model: input.model,
+              detail: describeOrchestratorCompletionCause(cause),
+            }),
+          ),
+        ),
+        Effect.mapError(
+          () =>
+            new RouteRequestError({
+              message: "Claude completion request failed.",
+            }),
+        ),
+      );
     }
 
-    // Codex provider path
-    const effort = resolveCodexCliReasoningEffort(
-      input.modelOptions && "reasoningEffort" in input.modelOptions
-        ? (input.modelOptions as any).reasoningEffort
-        : null,
-    );
-    const codexArgs: string[] = [
-      "-m",
-      input.model,
-      "--config",
-      `model_reasoning_effort=${effort}`,
-      prompt,
-    ];
-
     return yield* Effect.tryPromise({
-      try: async () => {
-        const result = await runProcess("codex", codexArgs, {
-          ...processOptions,
-          timeoutMs: 120_000,
-        });
-        return { text: result.stdout } satisfies OrchestratorCompleteResult;
-      },
-      catch: (cause) =>
-        new RouteRequestError({
-          message: `Codex CLI failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      try: () =>
+        runCodexOrchestratorCompletion({
+          model: input.model,
+          reasoningEffort:
+            input.modelOptions && "reasoningEffort" in input.modelOptions
+              ? (input.modelOptions as any).reasoningEffort
+              : null,
+          prompt,
+          cwd: input.cwd,
         }),
-    });
+      catch: (cause) =>
+        new OrchestratorCompletionProcessError({
+          detail: describeOrchestratorCompletionCause(cause),
+        }),
+    }).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("orchestrator completion failed").pipe(
+          Effect.annotateLogs({
+            provider: input.provider,
+            model: input.model,
+            detail: describeOrchestratorCompletionCause(cause),
+          }),
+        ),
+      ),
+      Effect.mapError(
+        () =>
+          new RouteRequestError({
+            message: "Codex completion request failed.",
+          }),
+      ),
+    );
   });
 }
 
@@ -409,6 +441,69 @@ function resolveCodexCliReasoningEffort(
     return "high";
   }
   return "high";
+}
+
+function describeOrchestratorCompletionCause(cause: unknown): string {
+  if (cause instanceof Error && cause.message.trim().length > 0) {
+    return cause.message;
+  }
+  try {
+    return JSON.stringify(cause);
+  } catch {
+    return String(cause);
+  }
+}
+
+async function runCodexOrchestratorCompletion(input: {
+  model: string;
+  reasoningEffort: string | null | undefined;
+  prompt: string;
+  cwd?: string | undefined;
+}): Promise<OrchestratorCompleteResult> {
+  const tempDir = await fs.mkdtemp(
+    nodePath.join(tmpdir(), `orchestrator-complete-${process.pid}-${randomUUID()}-`),
+  );
+  const outputPath = nodePath.join(tempDir, "last-message.txt");
+
+  try {
+    const effort = resolveCodexCliReasoningEffort(input.reasoningEffort);
+    const result = await runProcess(
+      "codex",
+      [
+        "exec",
+        "--model",
+        input.model,
+        "--color",
+        "never",
+        "--skip-git-repo-check",
+        "--config",
+        "mcp_servers={}",
+        "--config",
+        `model_reasoning_effort="${effort}"`,
+        "--output-last-message",
+        outputPath,
+        "-",
+      ],
+      {
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        timeoutMs: 120_000,
+        stdin: input.prompt,
+        allowNonZeroExit: true,
+      },
+    );
+
+    const fileOutput = await fs.readFile(outputPath, "utf8").catch(() => "");
+    const text = fileOutput.trim() || result.stdout.trim();
+    if (!text) {
+      const detail = result.stderr.trim() || `Codex CLI exited with code ${result.code ?? "null"}.`;
+      throw new Error(detail);
+    }
+    return {
+      text,
+    } satisfies OrchestratorCompleteResult;
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
@@ -1266,6 +1361,43 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         const orchestratorRuntime = yield* OrchestratorRuntimeService;
         return yield* orchestratorRuntime.getEvidence(OrchestratorTaskId.makeUnsafe(body.taskId));
+      }
+
+      case WS_METHODS.orchestratorGetDecisions: {
+        const body = stripRequestTag(request.body);
+        const orchestrationEngine = yield* OrchestrationEngineService;
+        const allEvents = yield* Stream.runCollect(orchestrationEngine.readEvents(0));
+        return Array.from(allEvents)
+          .filter(
+            (e): e is Extract<typeof e, { type: "orchestrator.decision.recorded" }> =>
+              e.type === "orchestrator.decision.recorded",
+          )
+          .filter(
+            (e) =>
+              e.payload.runId === body.runId &&
+              (body.taskId ? e.payload.taskId === body.taskId : true),
+          )
+          .map((e) => ({
+            decisionId: e.payload.decisionId,
+            runId: e.payload.runId,
+            taskId: e.payload.taskId,
+            type: e.payload.decisionType,
+            reason: e.payload.reason,
+            inputs: e.payload.inputs,
+            createdAt: e.occurredAt,
+          }));
+      }
+
+      case WS_METHODS.orchestratorGetRunEvents: {
+        const body = stripRequestTag(request.body);
+        const orchestrationEngine = yield* OrchestrationEngineService;
+        const allEvents = yield* Stream.runCollect(orchestrationEngine.readEvents(0));
+        return Array.from(allEvents).filter((e) => e.aggregateId === body.runId);
+      }
+
+      case WS_METHODS.providerGetStatuses: {
+        const providerHealth = yield* ProviderHealth;
+        return yield* providerHealth.getStatuses;
       }
 
       default: {

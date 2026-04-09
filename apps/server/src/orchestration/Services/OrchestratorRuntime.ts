@@ -23,6 +23,7 @@ import type {
   OrchestratorModelPolicy,
   OrchestratorWorkerModelBinding,
   OrchestratorFallbackPolicy,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
@@ -58,6 +59,7 @@ export interface CreateTaskInput {
 export interface SpawnWorkerInput {
   readonly runId: OrchestratorRunId;
   readonly taskId: OrchestratorTaskId;
+  readonly threadId: ThreadId;
   readonly spawnBudget: SpawnBudget;
   readonly workspace: OrchestratorWorkspace;
   readonly modelBinding?: OrchestratorWorkerModelBinding;
@@ -118,6 +120,14 @@ export interface OrchestratorRuntimeShape {
   readonly createRun: (
     input: CreateRunInput,
   ) => Effect.Effect<OrchestratorRun, OrchestrationDispatchError>;
+  readonly completeRun: (
+    runId: OrchestratorRunId,
+    summary?: string,
+  ) => Effect.Effect<void, OrchestrationDispatchError>;
+  readonly failRun: (
+    runId: OrchestratorRunId,
+    reason: string,
+  ) => Effect.Effect<void, OrchestrationDispatchError>;
   readonly cancelRun: (
     runId: OrchestratorRunId,
     reason: string,
@@ -184,6 +194,10 @@ export interface OrchestratorRuntimeShape {
   readonly getEvidence: (
     taskId: OrchestratorTaskId,
   ) => Effect.Effect<ReadonlyArray<OrchestratorEvidenceRecord>>;
+  readonly getDecisions: (
+    runId: OrchestratorRunId,
+    taskId?: OrchestratorTaskId,
+  ) => Effect.Effect<ReadonlyArray<OrchestratorDecision>>;
 
   // Multi-model selection
   readonly selectReviewModel: (

@@ -2029,6 +2029,20 @@ export const OrchestratorGetEvidenceInput = Schema.Struct({
 });
 export type OrchestratorGetEvidenceInput = typeof OrchestratorGetEvidenceInput.Type;
 
+export const OrchestratorGetDecisionsInput = Schema.Struct({
+  runId: OrchestratorRunId,
+  taskId: Schema.optional(OrchestratorTaskId),
+});
+export type OrchestratorGetDecisionsInput = typeof OrchestratorGetDecisionsInput.Type;
+
+export const OrchestratorGetRunEventsInput = Schema.Struct({
+  runId: OrchestratorRunId,
+});
+export type OrchestratorGetRunEventsInput = typeof OrchestratorGetRunEventsInput.Type;
+
+export const ProviderGetStatusesInput = Schema.Struct({});
+export type ProviderGetStatusesInput = typeof ProviderGetStatusesInput.Type;
+
 export const OrchestrationRpcSchemas = {
   getSnapshot: {
     input: OrchestrationGetSnapshotInput,

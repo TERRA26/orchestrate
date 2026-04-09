@@ -20,9 +20,6 @@ import type {
   OrchestratorDecision,
   OrchestratorEvidenceRecord,
   OrchestratorFallbackPolicy,
-  OrchestratorRun,
-  OrchestratorTask,
-  OrchestratorWorker,
   OrchestratorWorkerModelBinding,
 } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
@@ -58,12 +55,11 @@ const FAILURE_TO_POLICY_KEY: Record<FailureType, keyof OrchestratorFallbackPolic
   "capability-mismatch": "onCapabilityMismatch",
   "provider-unavailable": "onProviderUnavailable",
 };
+const now = () => new Date().toISOString();
 
 const makeOrchestratorRuntime = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const modelRegistry = yield* ModelRegistryService;
-
-  const now = () => new Date().toISOString();
 
   // -----------------------------------------------------------------------
   // Run lifecycle
@@ -103,6 +99,28 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
       const run = (readModel.orchestratorRuns ?? []).find((r) => r.runId === runId);
       return run!;
     });
+
+  const completeRun: OrchestratorRuntimeShape["completeRun"] = (runId, summary) =>
+    engine
+      .dispatch({
+        type: "orchestrator.run.complete",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        runId,
+        summary,
+        createdAt: now(),
+      })
+      .pipe(Effect.asVoid);
+
+  const failRun: OrchestratorRuntimeShape["failRun"] = (runId, reason) =>
+    engine
+      .dispatch({
+        type: "orchestrator.run.fail",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        runId,
+        reason,
+        createdAt: now(),
+      })
+      .pipe(Effect.asVoid);
 
   const cancelRun: OrchestratorRuntimeShape["cancelRun"] = (runId, reason) =>
     Effect.gen(function* () {
@@ -311,6 +329,7 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
         workerId,
         runId: input.runId,
         taskId: input.taskId,
+        threadId: input.threadId,
         spawnBudget: input.spawnBudget,
         workspace: input.workspace,
         modelBinding: resolvedBinding,
@@ -450,6 +469,12 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
     // Evidence is stored in the DB, not the in-memory read model.
     // For now, return an empty array -- callers should use the
     // OrchestratorRunsRepository for DB-backed evidence queries.
+    Effect.succeed([]);
+
+  const getDecisions: OrchestratorRuntimeShape["getDecisions"] = (_runId, _taskId) =>
+    // Decisions are persisted to DB, not the in-memory read model.
+    // Callers should use OrchestratorRunsRepository for DB-backed queries.
+    // The wsServer route handler queries the repository directly.
     Effect.succeed([]);
 
   // -----------------------------------------------------------------------
@@ -727,6 +752,8 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
 
   return {
     createRun,
+    completeRun,
+    failRun,
     cancelRun,
     createTask,
     assignTask,
@@ -746,6 +773,7 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
     getTaskTree,
     getWorkers,
     getEvidence,
+    getDecisions,
     resumeActiveRuns,
   } satisfies OrchestratorRuntimeShape;
 });

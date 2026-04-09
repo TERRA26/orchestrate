@@ -17,6 +17,9 @@ import {
   OrchestratorGetRunInput,
   OrchestratorGetTaskTreeInput,
   OrchestratorGetWorkersInput,
+  OrchestratorGetDecisionsInput,
+  OrchestratorGetRunEventsInput,
+  ProviderGetStatusesInput,
   ProviderKind,
 } from "./orchestration";
 import {
@@ -126,6 +129,9 @@ export const WS_METHODS = {
   orchestratorGetTaskTree: "orchestrator.getTaskTree",
   orchestratorGetWorkers: "orchestrator.getWorkers",
   orchestratorGetEvidence: "orchestrator.getEvidence",
+  orchestratorGetDecisions: "orchestrator.getDecisions",
+  orchestratorGetRunEvents: "orchestrator.getRunEvents",
+  providerGetStatuses: "provider.getStatuses",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -241,6 +247,9 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.orchestratorGetTaskTree, OrchestratorGetTaskTreeInput),
   tagRequestBody(WS_METHODS.orchestratorGetWorkers, OrchestratorGetWorkersInput),
   tagRequestBody(WS_METHODS.orchestratorGetEvidence, OrchestratorGetEvidenceInput),
+  tagRequestBody(WS_METHODS.orchestratorGetDecisions, OrchestratorGetDecisionsInput),
+  tagRequestBody(WS_METHODS.orchestratorGetRunEvents, OrchestratorGetRunEventsInput),
+  tagRequestBody(WS_METHODS.providerGetStatuses, ProviderGetStatusesInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({
