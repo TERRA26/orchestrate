@@ -37,6 +37,8 @@ import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/La
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { OrchestratorRunsRepositoryLive } from "../../persistence/Layers/OrchestratorRuns.ts";
+import { OrchestratorRunsRepository } from "../../persistence/Services/OrchestratorRuns.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -59,6 +61,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  orchestrator: "projection.orchestrator",
 } as const;
 
 type ProjectorName =
@@ -349,6 +352,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+  const orchestratorRunsRepository = yield* OrchestratorRunsRepository;
 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1139,6 +1143,324 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
       }
     });
 
+  const applyOrchestratorProjection: ProjectorDefinition["apply"] = (
+    event,
+    _attachmentSideEffects,
+  ) =>
+    Effect.gen(function* () {
+      switch (event.type) {
+        case "orchestrator.run.created":
+          yield* orchestratorRunsRepository.upsertRun({
+            runId: event.payload.runId,
+            projectId: event.payload.projectId,
+            userRequest: event.payload.userRequest,
+            status: "active",
+            rootTaskId: "",
+            goalsJson: JSON.stringify(event.payload.goals),
+            constraintsJson:
+              event.payload.constraints !== undefined
+                ? JSON.stringify(event.payload.constraints)
+                : null,
+            spawnBudgetJson: JSON.stringify(event.payload.spawnBudget),
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.createdAt,
+            completedAt: null,
+            completionSummary: null,
+          });
+          return;
+
+        case "orchestrator.run.cancelled": {
+          const existingRun = yield* orchestratorRunsRepository.getRunById({
+            runId: event.payload.runId,
+          });
+          if (Option.isNone(existingRun)) return;
+          yield* orchestratorRunsRepository.upsertRun({
+            ...existingRun.value,
+            status: "cancelled",
+            updatedAt: event.payload.cancelledAt,
+            completedAt: event.payload.cancelledAt,
+          });
+          return;
+        }
+
+        case "orchestrator.run.completed": {
+          const existingRun = yield* orchestratorRunsRepository.getRunById({
+            runId: event.payload.runId,
+          });
+          if (Option.isNone(existingRun)) return;
+          yield* orchestratorRunsRepository.upsertRun({
+            ...existingRun.value,
+            status: "completed",
+            updatedAt: event.payload.completedAt,
+            completedAt: event.payload.completedAt,
+            completionSummary: event.payload.summary ?? null,
+          });
+          return;
+        }
+
+        case "orchestrator.run.failed": {
+          const existingRun = yield* orchestratorRunsRepository.getRunById({
+            runId: event.payload.runId,
+          });
+          if (Option.isNone(existingRun)) return;
+          yield* orchestratorRunsRepository.upsertRun({
+            ...existingRun.value,
+            status: "failed",
+            updatedAt: event.payload.failedAt,
+            completedAt: event.payload.failedAt,
+            completionSummary: event.payload.reason,
+          });
+          return;
+        }
+
+        case "orchestrator.task.created": {
+          yield* orchestratorRunsRepository.upsertTask({
+            taskId: event.payload.taskId,
+            runId: event.payload.runId,
+            parentTaskId: event.payload.parentTaskId ?? null,
+            title: event.payload.title,
+            objective: event.payload.objective,
+            status: "pending",
+            ownerKind: "orchestrator",
+            ownerId: null,
+            stopCondition: event.payload.stopCondition ?? null,
+            readScopeJson:
+              event.payload.readScope !== undefined
+                ? JSON.stringify(event.payload.readScope)
+                : null,
+            writeScopeJson:
+              event.payload.writeScope !== undefined
+                ? JSON.stringify(event.payload.writeScope)
+                : null,
+            allowedToolsJson:
+              event.payload.allowedTools !== undefined
+                ? JSON.stringify(event.payload.allowedTools)
+                : null,
+            evidenceRequiredJson:
+              event.payload.evidenceRequired !== undefined
+                ? JSON.stringify(event.payload.evidenceRequired)
+                : null,
+            escalationRules: null,
+            acceptanceCriteriaJson: JSON.stringify(event.payload.acceptanceCriteria),
+            checklistJson: "[]",
+            dependsOnJson:
+              event.payload.dependsOn !== undefined
+                ? JSON.stringify(event.payload.dependsOn)
+                : null,
+            blockedBy: null,
+            modelPolicyJson:
+              event.payload.modelPolicy !== undefined
+                ? JSON.stringify(event.payload.modelPolicy)
+                : null,
+            assignedWorkerId: null,
+            iteration: 0,
+            maxIterations: event.payload.maxIterations ?? 3,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.createdAt,
+            submittedAt: null,
+            acceptedAt: null,
+          });
+          // Set rootTaskId on run if this is the first task
+          const existingRun = yield* orchestratorRunsRepository.getRunById({
+            runId: event.payload.runId,
+          });
+          if (Option.isSome(existingRun) && existingRun.value.rootTaskId === "") {
+            yield* orchestratorRunsRepository.upsertRun({
+              ...existingRun.value,
+              rootTaskId: event.payload.taskId,
+              updatedAt: event.payload.createdAt,
+            });
+          }
+          return;
+        }
+
+        case "orchestrator.task.assigned": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            status: "assigned",
+            ownerKind: event.payload.assigneeKind,
+            ownerId: event.payload.assigneeId ?? null,
+            assignedWorkerId: event.payload.assigneeId ?? null,
+            updatedAt: event.payload.assignedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.task.submitted": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            status: "submitted",
+            updatedAt: event.payload.submittedAt,
+            submittedAt: event.payload.submittedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.task.accepted": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            status: "accepted",
+            updatedAt: event.payload.acceptedAt,
+            acceptedAt: event.payload.acceptedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.task.rejected": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            status: "needs-rework",
+            iteration: existingTask.iteration + 1,
+            updatedAt: event.payload.rejectedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.task.blocked": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            status: "blocked",
+            blockedBy: event.payload.reason,
+            updatedAt: event.payload.blockedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.task.cancelled": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            status: "cancelled",
+            updatedAt: event.payload.cancelledAt,
+          });
+          return;
+        }
+
+        case "orchestrator.task.failed": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            status: "failed",
+            updatedAt: event.payload.failedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.worker.spawned":
+          yield* orchestratorRunsRepository.upsertWorker({
+            workerId: event.payload.workerId,
+            runId: event.payload.runId,
+            threadId: "" as any, // Thread linked externally
+            status: "running",
+            activeTaskId: event.payload.taskId,
+            parentWorkerId: null,
+            spawnBudgetJson: JSON.stringify(event.payload.spawnBudget),
+            workspaceJson: JSON.stringify(event.payload.workspace),
+            modelBindingJson:
+              event.payload.modelBinding !== undefined
+                ? JSON.stringify(event.payload.modelBinding)
+                : null,
+            createdAt: event.payload.spawnedAt,
+            updatedAt: event.payload.spawnedAt,
+            terminatedAt: null,
+            terminationReason: null,
+          });
+          return;
+
+        case "orchestrator.worker.terminated": {
+          const workers = yield* orchestratorRunsRepository.getWorkersByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingWorker = workers.find((w) => w.workerId === event.payload.workerId);
+          if (!existingWorker) return;
+          yield* orchestratorRunsRepository.upsertWorker({
+            ...existingWorker,
+            status: "terminated",
+            terminatedAt: event.payload.terminatedAt,
+            terminationReason: event.payload.reason,
+            updatedAt: event.payload.terminatedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.evidence.captured":
+          yield* orchestratorRunsRepository.insertEvidence({
+            evidenceId: event.payload.evidenceId,
+            taskId: event.payload.taskId,
+            workerId: event.payload.workerId ?? null,
+            type: event.payload.evidenceType,
+            capturedAt: event.payload.capturedAt,
+            content: event.payload.content,
+            contentTruncated: event.payload.contentTruncated ? 1 : 0,
+            metadataJson:
+              event.payload.metadata !== undefined ? JSON.stringify(event.payload.metadata) : null,
+          });
+          return;
+
+        case "orchestrator.decision.recorded":
+          yield* orchestratorRunsRepository.insertDecision({
+            decisionId: event.payload.decisionId,
+            runId: event.payload.runId,
+            taskId: event.payload.taskId ?? null,
+            type: event.payload.decisionType,
+            reason: event.payload.reason,
+            inputs: event.payload.inputs ?? null,
+            createdAt: event.payload.recordedAt,
+          });
+          return;
+
+        case "orchestrator.checklist.updated": {
+          const tasks = yield* orchestratorRunsRepository.getTasksByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
+          if (!existingTask) return;
+          yield* orchestratorRunsRepository.upsertTask({
+            ...existingTask,
+            checklistJson: JSON.stringify(event.payload.checklist),
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
   const projectors: ReadonlyArray<ProjectorDefinition> = [
     {
       name: ORCHESTRATION_PROJECTOR_NAMES.projects,
@@ -1175,6 +1497,10 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     {
       name: ORCHESTRATION_PROJECTOR_NAMES.threads,
       apply: applyThreadsProjection,
+    },
+    {
+      name: ORCHESTRATION_PROJECTOR_NAMES.orchestrator,
+      apply: applyOrchestratorProjection,
     },
   ];
 
@@ -1276,5 +1602,6 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
+  Layer.provideMerge(OrchestratorRunsRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
 );
