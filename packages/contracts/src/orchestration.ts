@@ -365,6 +365,15 @@ export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
+  orchestratorRuns: Schema.optional(Schema.Array(Schema.suspend(() => OrchestratorRun))).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
+  orchestratorTasks: Schema.optional(Schema.Array(Schema.suspend(() => OrchestratorTask))).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
+  orchestratorWorkers: Schema.optional(Schema.Array(Schema.suspend(() => OrchestratorWorker))).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -651,6 +660,21 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  Schema.suspend(() => OrchestratorRunCreateCommand),
+  Schema.suspend(() => OrchestratorRunCancelCommand),
+  Schema.suspend(() => OrchestratorTaskCreateCommand),
+  Schema.suspend(() => OrchestratorTaskAssignCommand),
+  Schema.suspend(() => OrchestratorTaskSubmitCommand),
+  Schema.suspend(() => OrchestratorTaskAcceptCommand),
+  Schema.suspend(() => OrchestratorTaskRejectCommand),
+  Schema.suspend(() => OrchestratorTaskBlockCommand),
+  Schema.suspend(() => OrchestratorTaskCancelCommand),
+  Schema.suspend(() => OrchestratorTaskFailCommand),
+  Schema.suspend(() => OrchestratorWorkerSpawnCommand),
+  Schema.suspend(() => OrchestratorWorkerTerminateCommand),
+  Schema.suspend(() => OrchestratorEvidenceCaptureCommand),
+  Schema.suspend(() => OrchestratorDecisionRecordCommand),
+  Schema.suspend(() => OrchestratorChecklistUpdateCommand),
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -674,6 +698,21 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  Schema.suspend(() => OrchestratorRunCreateCommand),
+  Schema.suspend(() => OrchestratorRunCancelCommand),
+  Schema.suspend(() => OrchestratorTaskCreateCommand),
+  Schema.suspend(() => OrchestratorTaskAssignCommand),
+  Schema.suspend(() => OrchestratorTaskSubmitCommand),
+  Schema.suspend(() => OrchestratorTaskAcceptCommand),
+  Schema.suspend(() => OrchestratorTaskRejectCommand),
+  Schema.suspend(() => OrchestratorTaskBlockCommand),
+  Schema.suspend(() => OrchestratorTaskCancelCommand),
+  Schema.suspend(() => OrchestratorTaskFailCommand),
+  Schema.suspend(() => OrchestratorWorkerSpawnCommand),
+  Schema.suspend(() => OrchestratorWorkerTerminateCommand),
+  Schema.suspend(() => OrchestratorEvidenceCaptureCommand),
+  Schema.suspend(() => OrchestratorDecisionRecordCommand),
+  Schema.suspend(() => OrchestratorChecklistUpdateCommand),
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -784,10 +823,27 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "orchestrator.run.created",
+  "orchestrator.run.cancelled",
+  "orchestrator.run.completed",
+  "orchestrator.run.failed",
+  "orchestrator.task.created",
+  "orchestrator.task.assigned",
+  "orchestrator.task.submitted",
+  "orchestrator.task.accepted",
+  "orchestrator.task.rejected",
+  "orchestrator.task.blocked",
+  "orchestrator.task.cancelled",
+  "orchestrator.task.failed",
+  "orchestrator.worker.spawned",
+  "orchestrator.worker.terminated",
+  "orchestrator.evidence.captured",
+  "orchestrator.decision.recorded",
+  "orchestrator.checklist.updated",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "orchestrator"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -994,7 +1050,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, Schema.suspend(() => OrchestratorRunId)]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1118,6 +1174,91 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.run.created"),
+    payload: Schema.suspend(() => OrchestratorRunCreatedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.run.cancelled"),
+    payload: Schema.suspend(() => OrchestratorRunCancelledPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.run.completed"),
+    payload: Schema.suspend(() => OrchestratorRunCompletedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.run.failed"),
+    payload: Schema.suspend(() => OrchestratorRunFailedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.created"),
+    payload: Schema.suspend(() => OrchestratorTaskCreatedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.assigned"),
+    payload: Schema.suspend(() => OrchestratorTaskAssignedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.submitted"),
+    payload: Schema.suspend(() => OrchestratorTaskSubmittedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.accepted"),
+    payload: Schema.suspend(() => OrchestratorTaskAcceptedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.rejected"),
+    payload: Schema.suspend(() => OrchestratorTaskRejectedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.blocked"),
+    payload: Schema.suspend(() => OrchestratorTaskBlockedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.cancelled"),
+    payload: Schema.suspend(() => OrchestratorTaskCancelledPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.task.failed"),
+    payload: Schema.suspend(() => OrchestratorTaskFailedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.worker.spawned"),
+    payload: Schema.suspend(() => OrchestratorWorkerSpawnedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.worker.terminated"),
+    payload: Schema.suspend(() => OrchestratorWorkerTerminatedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.evidence.captured"),
+    payload: Schema.suspend(() => OrchestratorEvidenceCapturedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.decision.recorded"),
+    payload: Schema.suspend(() => OrchestratorDecisionRecordedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.checklist.updated"),
+    payload: Schema.suspend(() => OrchestratorChecklistUpdatedPayload),
+  }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
@@ -1215,6 +1356,612 @@ export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInp
 
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
+
+// ---------------------------------------------------------------------------
+// Task 7: Core Orchestrator Domain Schemas
+// ---------------------------------------------------------------------------
+
+// Branded IDs
+export const OrchestratorRunId = Schema.String.pipe(Schema.brand("OrchestratorRunId"));
+export type OrchestratorRunId = typeof OrchestratorRunId.Type;
+
+export const OrchestratorTaskId = Schema.String.pipe(Schema.brand("OrchestratorTaskId"));
+export type OrchestratorTaskId = typeof OrchestratorTaskId.Type;
+
+export const OrchestratorWorkerId = Schema.String.pipe(Schema.brand("OrchestratorWorkerId"));
+export type OrchestratorWorkerId = typeof OrchestratorWorkerId.Type;
+
+export const OrchestratorEvidenceId = Schema.String.pipe(Schema.brand("OrchestratorEvidenceId"));
+export type OrchestratorEvidenceId = typeof OrchestratorEvidenceId.Type;
+
+export const OrchestratorDecisionId = Schema.String.pipe(Schema.brand("OrchestratorDecisionId"));
+export type OrchestratorDecisionId = typeof OrchestratorDecisionId.Type;
+
+// Status/Enum Schemas
+export const OrchestratorRunStatus = Schema.Literals([
+  "active",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export const OrchestratorTaskStatus = Schema.Literals([
+  "pending",
+  "assigned",
+  "running",
+  "submitted",
+  "accepted",
+  "needs-rework",
+  "blocked",
+  "cancelled",
+  "failed",
+]);
+export const OrchestratorWorkerStatus = Schema.Literals([
+  "idle",
+  "running",
+  "submitted",
+  "stuck",
+  "terminated",
+]);
+export const OrchestratorRoutingAction = Schema.Literals([
+  "answer",
+  "inspect",
+  "delegate",
+  "decompose",
+]);
+export const OrchestratorEvidenceType = Schema.Literals([
+  "diff",
+  "file-snapshot",
+  "test-result",
+  "command-result",
+  "browser-trace",
+  "screenshot",
+  "log",
+  "aria-snapshot",
+  "computed-style",
+  "evaluate-result",
+]);
+export const OrchestratorChecklistEvidenceType = Schema.Literals([
+  "dom",
+  "interaction",
+  "computed-style",
+  "visual",
+  "test",
+  "command",
+  "diff",
+  "inferred",
+]);
+export const OrchestratorDecisionType = Schema.Literals([
+  "answered",
+  "inspected",
+  "delegated",
+  "decomposed",
+  "spawned-worker",
+  "reassigned",
+  "accepted",
+  "rejected",
+  "blocked",
+  "cancelled",
+  "completed",
+  "self-demoted",
+  "budget-exceeded",
+  "stuck-detected",
+  "escalated",
+]);
+export const RequiredCapability = Schema.Literals([
+  "code-edit",
+  "repo-inspection",
+  "browser-use",
+  "structured-review",
+  "planning",
+  "integration",
+  "test-execution",
+  "large-context",
+  "fast-response",
+  "low-cost",
+]);
+
+// SpawnBudget
+export const SpawnBudget = Schema.Struct({
+  maxDepth: Schema.Number,
+  maxChildren: Schema.Number,
+  maxConcurrentWriters: Schema.Number,
+  maxTotalWorkers: Schema.Number,
+  allowedTools: Schema.Array(Schema.String),
+  writeScope: Schema.Array(Schema.String),
+});
+export type SpawnBudget = typeof SpawnBudget.Type;
+
+// Workspace
+export const OrchestratorWorkspace = Schema.Struct({
+  mode: Schema.Literals(["local", "worktree"]),
+  branch: Schema.optional(Schema.String),
+  worktreePath: Schema.optional(Schema.String),
+  cwd: Schema.String,
+  terminalIds: Schema.Array(Schema.String),
+  browserSessionId: Schema.optional(Schema.String),
+});
+export type OrchestratorWorkspace = typeof OrchestratorWorkspace.Type;
+
+// ChecklistItem
+export const OrchestratorChecklistItem = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  status: Schema.Literals(["pending", "passed", "failed"]),
+  evidenceType: Schema.optional(OrchestratorChecklistEvidenceType),
+  evidenceRefs: Schema.optional(Schema.Array(Schema.String)),
+  notes: Schema.optional(Schema.String),
+  verifiedAt: Schema.optional(IsoDateTime),
+});
+export type OrchestratorChecklistItem = typeof OrchestratorChecklistItem.Type;
+
+// EvidenceRecord
+export const OrchestratorEvidenceRecord = Schema.Struct({
+  evidenceId: OrchestratorEvidenceId,
+  taskId: OrchestratorTaskId,
+  workerId: Schema.optional(OrchestratorWorkerId),
+  type: OrchestratorEvidenceType,
+  capturedAt: IsoDateTime,
+  content: Schema.String,
+  contentTruncated: Schema.Boolean,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+export type OrchestratorEvidenceRecord = typeof OrchestratorEvidenceRecord.Type;
+
+// Decision
+export const OrchestratorDecision = Schema.Struct({
+  decisionId: OrchestratorDecisionId,
+  runId: OrchestratorRunId,
+  taskId: Schema.optional(OrchestratorTaskId),
+  type: OrchestratorDecisionType,
+  reason: Schema.String,
+  inputs: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+export type OrchestratorDecision = typeof OrchestratorDecision.Type;
+
+// Task (uses suspend for ModelPolicy forward reference)
+export const OrchestratorTask = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  runId: OrchestratorRunId,
+  parentTaskId: Schema.optional(OrchestratorTaskId),
+  title: Schema.String,
+  objective: Schema.String,
+  status: OrchestratorTaskStatus,
+  ownerKind: Schema.Literals(["orchestrator", "worker"]),
+  ownerId: Schema.optional(Schema.String),
+  stopCondition: Schema.optional(Schema.String),
+  readScope: Schema.optional(Schema.Array(Schema.String)),
+  writeScope: Schema.optional(Schema.Array(Schema.String)),
+  allowedTools: Schema.optional(Schema.Array(Schema.String)),
+  evidenceRequired: Schema.optional(Schema.Array(OrchestratorEvidenceType)),
+  escalationRules: Schema.optional(Schema.String),
+  acceptanceCriteria: Schema.Array(Schema.String),
+  checklist: Schema.Array(OrchestratorChecklistItem),
+  dependsOn: Schema.optional(Schema.Array(OrchestratorTaskId)),
+  blockedBy: Schema.optional(Schema.String),
+  modelPolicy: Schema.optional(Schema.suspend(() => OrchestratorModelPolicy)),
+  assignedWorkerId: Schema.optional(OrchestratorWorkerId),
+  iteration: Schema.Number,
+  maxIterations: Schema.Number,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  submittedAt: Schema.optional(IsoDateTime),
+  acceptedAt: Schema.optional(IsoDateTime),
+});
+export type OrchestratorTask = typeof OrchestratorTask.Type;
+
+// Worker (uses suspend for WorkerModelBinding forward reference)
+export const OrchestratorWorker = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  threadId: ThreadId,
+  status: OrchestratorWorkerStatus,
+  activeTaskId: Schema.optional(OrchestratorTaskId),
+  parentWorkerId: Schema.optional(OrchestratorWorkerId),
+  spawnBudget: SpawnBudget,
+  workspace: OrchestratorWorkspace,
+  modelBinding: Schema.optional(Schema.suspend(() => OrchestratorWorkerModelBinding)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  terminatedAt: Schema.optional(IsoDateTime),
+  terminationReason: Schema.optional(Schema.String),
+});
+export type OrchestratorWorker = typeof OrchestratorWorker.Type;
+
+// Run
+export const OrchestratorRun = Schema.Struct({
+  runId: OrchestratorRunId,
+  projectId: ProjectId,
+  userRequest: Schema.String,
+  status: OrchestratorRunStatus,
+  rootTaskId: OrchestratorTaskId,
+  goals: Schema.Array(Schema.String),
+  constraints: Schema.optional(Schema.Array(Schema.String)),
+  spawnBudget: SpawnBudget,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.optional(IsoDateTime),
+  completionSummary: Schema.optional(Schema.String),
+});
+export type OrchestratorRun = typeof OrchestratorRun.Type;
+
+// ---------------------------------------------------------------------------
+// Task 8: Multi-Model Schemas
+// ---------------------------------------------------------------------------
+
+// ModelCandidate
+export const OrchestratorModelCandidate = Schema.Struct({
+  provider: ProviderKind,
+  model: Schema.String,
+  weight: Schema.Number,
+  reason: Schema.String,
+});
+
+// ModelPolicy
+export const OrchestratorModelPolicy = Schema.Struct({
+  executionMode: Schema.Literals(["root-direct", "worker"]),
+  preferredModels: Schema.Array(OrchestratorModelCandidate),
+  fallbackModels: Schema.optional(Schema.Array(OrchestratorModelCandidate)),
+  requiredCapabilities: Schema.Array(RequiredCapability),
+  switchPolicy: Schema.Literals(["forbidden", "allow-on-retry", "allow-on-boundary"]),
+  reviewMode: Schema.Literals([
+    "same-model",
+    "same-provider-different-model",
+    "cross-provider",
+    "root-decides",
+  ]),
+  maxRetriesPerModel: Schema.optional(Schema.Number),
+});
+export type OrchestratorModelPolicy = typeof OrchestratorModelPolicy.Type;
+
+// WorkerModelBinding
+export const OrchestratorWorkerModelBinding = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  provider: ProviderKind,
+  model: Schema.String,
+  selectedAt: IsoDateTime,
+  selectedBy: Schema.Literals(["root-policy", "root-override", "parent-request", "retry-policy"]),
+  selectionReason: Schema.String,
+  inheritedFromTaskPolicy: Schema.Boolean,
+  supersedesBindingId: Schema.optional(Schema.String),
+});
+export type OrchestratorWorkerModelBinding = typeof OrchestratorWorkerModelBinding.Type;
+
+// CapabilityProfile
+export const OrchestratorCapabilityProfile = Schema.Struct({
+  provider: ProviderKind,
+  model: Schema.String,
+  supports: Schema.Array(RequiredCapability),
+  costTier: Schema.Literals(["low", "medium", "high"]),
+  latencyTier: Schema.Literals(["low", "medium", "high"]),
+});
+export type OrchestratorCapabilityProfile = typeof OrchestratorCapabilityProfile.Type;
+
+// Fallback Policy
+export const FailureClass = Schema.Literals([
+  "timeout",
+  "tool-failure",
+  "malformed-output",
+  "review-rejected",
+  "capability-mismatch",
+  "provider-unavailable",
+]);
+
+export const FallbackAction = Schema.Struct({
+  action: Schema.Literals([
+    "retry-same-model",
+    "retry-same-provider",
+    "switch-provider",
+    "escalate",
+  ]),
+  maxAttempts: Schema.Number,
+});
+
+export const OrchestratorFallbackPolicy = Schema.Struct({
+  onTimeout: FallbackAction,
+  onToolFailure: FallbackAction,
+  onMalformedOutput: FallbackAction,
+  onReviewRejected: FallbackAction,
+  onCapabilityMismatch: FallbackAction,
+  onProviderUnavailable: FallbackAction,
+});
+export type OrchestratorFallbackPolicy = typeof OrchestratorFallbackPolicy.Type;
+
+// ---------------------------------------------------------------------------
+// Task 9: Orchestrator Commands
+// ---------------------------------------------------------------------------
+
+// Run lifecycle
+const OrchestratorRunCreateCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.run.create"),
+  commandId: CommandId,
+  runId: OrchestratorRunId,
+  projectId: ProjectId,
+  userRequest: Schema.String,
+  goals: Schema.Array(Schema.String),
+  constraints: Schema.optional(Schema.Array(Schema.String)),
+  spawnBudget: SpawnBudget,
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorRunCancelCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.run.cancel"),
+  commandId: CommandId,
+  runId: OrchestratorRunId,
+  reason: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+// Task lifecycle
+const OrchestratorTaskCreateCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.create"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  runId: OrchestratorRunId,
+  parentTaskId: Schema.optional(OrchestratorTaskId),
+  title: Schema.String,
+  objective: Schema.String,
+  acceptanceCriteria: Schema.Array(Schema.String),
+  stopCondition: Schema.optional(Schema.String),
+  readScope: Schema.optional(Schema.Array(Schema.String)),
+  writeScope: Schema.optional(Schema.Array(Schema.String)),
+  allowedTools: Schema.optional(Schema.Array(Schema.String)),
+  evidenceRequired: Schema.optional(Schema.Array(OrchestratorEvidenceType)),
+  dependsOn: Schema.optional(Schema.Array(OrchestratorTaskId)),
+  modelPolicy: Schema.optional(OrchestratorModelPolicy),
+  maxIterations: Schema.optional(Schema.Number),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorTaskAssignCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.assign"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  assigneeKind: Schema.Literals(["orchestrator", "worker"]),
+  assigneeId: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorTaskSubmitCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.submit"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  workerId: OrchestratorWorkerId,
+  summary: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorTaskAcceptCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.accept"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  summary: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorTaskRejectCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.reject"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  instruction: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorTaskBlockCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.block"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  reason: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorTaskCancelCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.cancel"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  reason: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorTaskFailCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.task.fail"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  reason: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+// Worker lifecycle
+const OrchestratorWorkerSpawnCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.worker.spawn"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  taskId: OrchestratorTaskId,
+  spawnBudget: SpawnBudget,
+  workspace: OrchestratorWorkspace,
+  modelBinding: Schema.optional(OrchestratorWorkerModelBinding),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorWorkerTerminateCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.worker.terminate"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  reason: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+// Evidence and decisions
+const OrchestratorEvidenceCaptureCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.evidence.capture"),
+  commandId: CommandId,
+  evidenceId: OrchestratorEvidenceId,
+  taskId: OrchestratorTaskId,
+  workerId: Schema.optional(OrchestratorWorkerId),
+  evidenceType: OrchestratorEvidenceType,
+  content: Schema.String,
+  contentTruncated: Schema.Boolean,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorDecisionRecordCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.decision.record"),
+  commandId: CommandId,
+  decisionId: OrchestratorDecisionId,
+  runId: OrchestratorRunId,
+  taskId: Schema.optional(OrchestratorTaskId),
+  decisionType: OrchestratorDecisionType,
+  reason: Schema.String,
+  inputs: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorChecklistUpdateCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.checklist.update"),
+  commandId: CommandId,
+  taskId: OrchestratorTaskId,
+  checklist: Schema.Array(OrchestratorChecklistItem),
+  createdAt: IsoDateTime,
+});
+
+// ---------------------------------------------------------------------------
+// Task 9: Orchestrator Event Payloads
+// ---------------------------------------------------------------------------
+
+export const OrchestratorRunCreatedPayload = Schema.Struct({
+  runId: OrchestratorRunId,
+  projectId: ProjectId,
+  userRequest: Schema.String,
+  goals: Schema.Array(Schema.String),
+  constraints: Schema.optional(Schema.Array(Schema.String)),
+  spawnBudget: SpawnBudget,
+  createdAt: IsoDateTime,
+});
+
+export const OrchestratorRunCancelledPayload = Schema.Struct({
+  runId: OrchestratorRunId,
+  reason: Schema.String,
+  cancelledAt: IsoDateTime,
+});
+
+export const OrchestratorRunCompletedPayload = Schema.Struct({
+  runId: OrchestratorRunId,
+  summary: Schema.optional(Schema.String),
+  completedAt: IsoDateTime,
+});
+
+export const OrchestratorRunFailedPayload = Schema.Struct({
+  runId: OrchestratorRunId,
+  reason: Schema.String,
+  failedAt: IsoDateTime,
+});
+
+export const OrchestratorTaskCreatedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  runId: OrchestratorRunId,
+  parentTaskId: Schema.optional(OrchestratorTaskId),
+  title: Schema.String,
+  objective: Schema.String,
+  acceptanceCriteria: Schema.Array(Schema.String),
+  stopCondition: Schema.optional(Schema.String),
+  readScope: Schema.optional(Schema.Array(Schema.String)),
+  writeScope: Schema.optional(Schema.Array(Schema.String)),
+  allowedTools: Schema.optional(Schema.Array(Schema.String)),
+  evidenceRequired: Schema.optional(Schema.Array(OrchestratorEvidenceType)),
+  dependsOn: Schema.optional(Schema.Array(OrchestratorTaskId)),
+  modelPolicy: Schema.optional(OrchestratorModelPolicy),
+  maxIterations: Schema.optional(Schema.Number),
+  createdAt: IsoDateTime,
+});
+
+export const OrchestratorTaskAssignedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  assigneeKind: Schema.Literals(["orchestrator", "worker"]),
+  assigneeId: Schema.optional(Schema.String),
+  assignedAt: IsoDateTime,
+});
+
+export const OrchestratorTaskSubmittedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  workerId: OrchestratorWorkerId,
+  summary: Schema.optional(Schema.String),
+  submittedAt: IsoDateTime,
+});
+
+export const OrchestratorTaskAcceptedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  summary: Schema.optional(Schema.String),
+  acceptedAt: IsoDateTime,
+});
+
+export const OrchestratorTaskRejectedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  instruction: Schema.String,
+  rejectedAt: IsoDateTime,
+});
+
+export const OrchestratorTaskBlockedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  reason: Schema.String,
+  blockedAt: IsoDateTime,
+});
+
+export const OrchestratorTaskCancelledPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  reason: Schema.optional(Schema.String),
+  cancelledAt: IsoDateTime,
+});
+
+export const OrchestratorTaskFailedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  reason: Schema.String,
+  failedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerSpawnedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  taskId: OrchestratorTaskId,
+  spawnBudget: SpawnBudget,
+  workspace: OrchestratorWorkspace,
+  modelBinding: Schema.optional(OrchestratorWorkerModelBinding),
+  spawnedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerTerminatedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  reason: Schema.String,
+  terminatedAt: IsoDateTime,
+});
+
+export const OrchestratorEvidenceCapturedPayload = Schema.Struct({
+  evidenceId: OrchestratorEvidenceId,
+  taskId: OrchestratorTaskId,
+  workerId: Schema.optional(OrchestratorWorkerId),
+  evidenceType: OrchestratorEvidenceType,
+  content: Schema.String,
+  contentTruncated: Schema.Boolean,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  capturedAt: IsoDateTime,
+});
+
+export const OrchestratorDecisionRecordedPayload = Schema.Struct({
+  decisionId: OrchestratorDecisionId,
+  runId: OrchestratorRunId,
+  taskId: Schema.optional(OrchestratorTaskId),
+  decisionType: OrchestratorDecisionType,
+  reason: Schema.String,
+  inputs: Schema.optional(Schema.String),
+  recordedAt: IsoDateTime,
+});
+
+export const OrchestratorChecklistUpdatedPayload = Schema.Struct({
+  taskId: OrchestratorTaskId,
+  checklist: Schema.Array(OrchestratorChecklistItem),
+  updatedAt: IsoDateTime,
+});
 
 export const OrchestrationRpcSchemas = {
   getSnapshot: {
