@@ -662,6 +662,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadSessionStopCommand,
   Schema.suspend(() => OrchestratorRunCreateCommand),
   Schema.suspend(() => OrchestratorRunCancelCommand),
+  Schema.suspend(() => OrchestratorRunCompleteCommand),
+  Schema.suspend(() => OrchestratorRunFailCommand),
   Schema.suspend(() => OrchestratorTaskCreateCommand),
   Schema.suspend(() => OrchestratorTaskAssignCommand),
   Schema.suspend(() => OrchestratorTaskSubmitCommand),
@@ -700,6 +702,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadSessionStopCommand,
   Schema.suspend(() => OrchestratorRunCreateCommand),
   Schema.suspend(() => OrchestratorRunCancelCommand),
+  Schema.suspend(() => OrchestratorRunCompleteCommand),
+  Schema.suspend(() => OrchestratorRunFailCommand),
   Schema.suspend(() => OrchestratorTaskCreateCommand),
   Schema.suspend(() => OrchestratorTaskAssignCommand),
   Schema.suspend(() => OrchestratorTaskSubmitCommand),
@@ -1674,7 +1678,7 @@ export type OrchestratorFallbackPolicy = typeof OrchestratorFallbackPolicy.Type;
 // ---------------------------------------------------------------------------
 
 // Run lifecycle
-const OrchestratorRunCreateCommand = Schema.Struct({
+export const OrchestratorRunCreateCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.run.create"),
   commandId: CommandId,
   runId: OrchestratorRunId,
@@ -1686,7 +1690,7 @@ const OrchestratorRunCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const OrchestratorRunCancelCommand = Schema.Struct({
+export const OrchestratorRunCancelCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.run.cancel"),
   commandId: CommandId,
   runId: OrchestratorRunId,
@@ -1694,8 +1698,24 @@ const OrchestratorRunCancelCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const OrchestratorRunCompleteCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.run.complete"),
+  commandId: CommandId,
+  runId: OrchestratorRunId,
+  summary: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+const OrchestratorRunFailCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.run.fail"),
+  commandId: CommandId,
+  runId: OrchestratorRunId,
+  reason: Schema.String,
+  createdAt: IsoDateTime,
+});
+
 // Task lifecycle
-const OrchestratorTaskCreateCommand = Schema.Struct({
+export const OrchestratorTaskCreateCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.task.create"),
   commandId: CommandId,
   taskId: OrchestratorTaskId,
@@ -1724,7 +1744,7 @@ const OrchestratorTaskAssignCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const OrchestratorTaskSubmitCommand = Schema.Struct({
+export const OrchestratorTaskSubmitCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.task.submit"),
   commandId: CommandId,
   taskId: OrchestratorTaskId,
@@ -1733,7 +1753,7 @@ const OrchestratorTaskSubmitCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const OrchestratorTaskAcceptCommand = Schema.Struct({
+export const OrchestratorTaskAcceptCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.task.accept"),
   commandId: CommandId,
   taskId: OrchestratorTaskId,
@@ -1741,7 +1761,7 @@ const OrchestratorTaskAcceptCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const OrchestratorTaskRejectCommand = Schema.Struct({
+export const OrchestratorTaskRejectCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.task.reject"),
   commandId: CommandId,
   taskId: OrchestratorTaskId,
@@ -1774,12 +1794,13 @@ const OrchestratorTaskFailCommand = Schema.Struct({
 });
 
 // Worker lifecycle
-const OrchestratorWorkerSpawnCommand = Schema.Struct({
+export const OrchestratorWorkerSpawnCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.worker.spawn"),
   commandId: CommandId,
   workerId: OrchestratorWorkerId,
   runId: OrchestratorRunId,
   taskId: OrchestratorTaskId,
+  threadId: ThreadId,
   spawnBudget: SpawnBudget,
   workspace: OrchestratorWorkspace,
   modelBinding: Schema.optional(OrchestratorWorkerModelBinding),
@@ -1795,7 +1816,7 @@ const OrchestratorWorkerTerminateCommand = Schema.Struct({
 });
 
 // Evidence and decisions
-const OrchestratorEvidenceCaptureCommand = Schema.Struct({
+export const OrchestratorEvidenceCaptureCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.evidence.capture"),
   commandId: CommandId,
   evidenceId: OrchestratorEvidenceId,
@@ -1808,7 +1829,7 @@ const OrchestratorEvidenceCaptureCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const OrchestratorDecisionRecordCommand = Schema.Struct({
+export const OrchestratorDecisionRecordCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.decision.record"),
   commandId: CommandId,
   decisionId: OrchestratorDecisionId,
@@ -1926,6 +1947,7 @@ export const OrchestratorWorkerSpawnedPayload = Schema.Struct({
   workerId: OrchestratorWorkerId,
   runId: OrchestratorRunId,
   taskId: OrchestratorTaskId,
+  threadId: ThreadId,
   spawnBudget: SpawnBudget,
   workspace: OrchestratorWorkspace,
   modelBinding: Schema.optional(OrchestratorWorkerModelBinding),
