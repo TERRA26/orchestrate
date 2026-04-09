@@ -26,6 +26,7 @@ import { Effect, Layer } from "effect";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ModelRegistryService } from "../Services/ModelRegistry.ts";
+import { OrchestratorRunsRepository } from "../../persistence/Services/OrchestratorRuns.ts";
 import {
   OrchestratorRuntimeService,
   type OrchestratorRuntimeShape,
@@ -60,6 +61,7 @@ const now = () => new Date().toISOString();
 const makeOrchestratorRuntime = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const modelRegistry = yield* ModelRegistryService;
+  const orchestratorRunsRepo = yield* OrchestratorRunsRepository;
 
   // -----------------------------------------------------------------------
   // Run lifecycle
@@ -465,11 +467,25 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
       (readModel.orchestratorWorkers ?? []).filter((w) => w.runId === runId),
     );
 
-  const getEvidence: OrchestratorRuntimeShape["getEvidence"] = (_taskId) =>
-    // Evidence is stored in the DB, not the in-memory read model.
-    // For now, return an empty array -- callers should use the
-    // OrchestratorRunsRepository for DB-backed evidence queries.
-    Effect.succeed([]);
+  const getEvidence: OrchestratorRuntimeShape["getEvidence"] = (taskId) =>
+    orchestratorRunsRepo.getEvidenceByTaskId({ taskId }).pipe(
+      Effect.map(
+        (rows): ReadonlyArray<OrchestratorEvidenceRecord> =>
+          rows.map((row) => ({
+            evidenceId: row.evidenceId,
+            taskId: row.taskId,
+            ...(row.workerId
+              ? { workerId: OrchestratorWorkerId.makeUnsafe(row.workerId) }
+              : {}),
+            type: row.type,
+            content: row.content,
+            contentTruncated: Boolean(row.contentTruncated),
+            metadata: row.metadataJson ? JSON.parse(row.metadataJson) : {},
+            capturedAt: row.capturedAt,
+          })),
+      ),
+      Effect.catch(() => Effect.succeed([] as ReadonlyArray<OrchestratorEvidenceRecord>)),
+    );
 
   const getDecisions: OrchestratorRuntimeShape["getDecisions"] = (_runId, _taskId) =>
     // Decisions are persisted to DB, not the in-memory read model.

@@ -7,6 +7,7 @@ import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { ServerConfig } from "./config";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
+import { OrchestratorRunsRepositoryLive } from "./persistence/Layers/OrchestratorRuns";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
@@ -121,6 +122,7 @@ export function makeServerRuntimeServicesLayer() {
   const orchestratorRuntimeLayer = OrchestratorRuntimeLive.pipe(
     Layer.provide(orchestrationLayer),
     Layer.provide(modelRegistryLayer),
+    Layer.provide(OrchestratorRunsRepositoryLive),
   );
   const orchestratorRouterLayer = OrchestratorRouterLive;
   const authorityPolicyLayer = AuthorityPolicyLive;
