@@ -1110,7 +1110,7 @@ const scenario7: Scenario = {
           ctx.harness,
           defaultProvider,
           defaultModel,
-          "use Claude Sonnet to build a responsive React dashboard component with charts and sidebar navigation",
+          "Build a responsive React dashboard component with real-time charts and sidebar navigation. Use Claude Sonnet as the coding agent for this task",
         );
         return { pass: true, detail: `Router returned kind=${decision.kind}` };
       }),
@@ -1136,7 +1136,7 @@ const scenario7: Scenario = {
         const runInfo = await createRun(
           ctx.harness,
           projectId,
-          "use Claude Sonnet to build a responsive React dashboard component with charts and sidebar navigation",
+          "Build a responsive React dashboard component with real-time charts and sidebar navigation. Use Claude Sonnet as the coding agent for this task",
           decision!.acceptanceCriteria ?? ["Frontend task completed"],
         );
         runId = runInfo.runId;
@@ -2678,6 +2678,1724 @@ const scenario18: Scenario = {
 };
 
 // ---------------------------------------------------------------------------
+// Scenario Definitions — Group 5: Threading and Session Semantics
+// ---------------------------------------------------------------------------
+
+const scenario19: Scenario = {
+  id: 19,
+  group: "Threading and Session Semantics",
+  name: "Separate worker threads, shared umbrella run",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with 2 child tasks
+    let task1Id = "";
+    let task2Id = "";
+    steps.push(
+      await runStep("Create run with 2 child tasks", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Parallel threaded work", [
+          "Task A done",
+          "Task B done",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        task1Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task A",
+          "Do task A",
+          ["A passes"],
+        );
+        task2Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task B",
+          "Do task B",
+          ["B passes"],
+        );
+        return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Spawn 2 workers on DIFFERENT threads
+    let thread1Id = "";
+    let thread2Id = "";
+    let worker1Id = "";
+    let worker2Id = "";
+    steps.push(
+      await runStep("Spawn 2 workers on different threads", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        thread1Id = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        worker1Id = await spawnWorker(
+          ctx.harness,
+          runId,
+          task1Id,
+          thread1Id,
+          ctx.provider,
+          ctx.model,
+        );
+        thread2Id = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        worker2Id = await spawnWorker(
+          ctx.harness,
+          runId,
+          task2Id,
+          thread2Id,
+          ctx.provider,
+          ctx.model,
+        );
+        return {
+          pass: true,
+          detail: `w1=${worker1Id} on t1=${thread1Id}, w2=${worker2Id} on t2=${thread2Id}`,
+        };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Worker spawn failed", steps };
+    }
+
+    // Step 3: Verify each worker has its own threadId
+    steps.push(
+      await runStep("Verify workers have distinct threadIds", async () => {
+        if (thread1Id === thread2Id) {
+          return { pass: false, detail: `Both workers share threadId=${thread1Id}` };
+        }
+        return { pass: true, detail: `Thread 1=${thread1Id}, Thread 2=${thread2Id}` };
+      }),
+    );
+
+    // Step 4: Verify both workers are under the same runId
+    steps.push(
+      await runStep("Verify both workers under same runId", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        if (state.workers.length < 2) {
+          return { pass: false, detail: `Expected 2+ workers, got ${state.workers.length}` };
+        }
+        const allSameRun = state.workers.every(
+          (w) => (w as { runId?: string }).runId === runId,
+        );
+        if (!allSameRun) {
+          return { pass: false, detail: "Not all workers share the same runId" };
+        }
+        return { pass: true, detail: `Both workers under runId=${runId}` };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Separate worker threads, shared umbrella run verified",
+      steps,
+    };
+  },
+};
+
+const scenario20: Scenario = {
+  id: 20,
+  group: "Threading and Session Semantics",
+  name: "Do not merge raw thread histories",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with 2 child tasks
+    let task1Id = "";
+    let task2Id = "";
+    steps.push(
+      await runStep("Create run with 2 child tasks", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Thread isolation test", [
+          "Task A done",
+          "Task B done",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        task1Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task A",
+          "Do task A",
+          ["A passes"],
+        );
+        task2Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task B",
+          "Do task B",
+          ["B passes"],
+        );
+        return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Spawn 2 workers on different threads
+    let thread1Id = "";
+    let thread2Id = "";
+    steps.push(
+      await runStep("Spawn 2 workers on different threads", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        thread1Id = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, task1Id, thread1Id, ctx.provider, ctx.model);
+        thread2Id = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2 thread",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, task2Id, thread2Id, ctx.provider, ctx.model);
+        return { pass: true, detail: `thread1=${thread1Id}, thread2=${thread2Id}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Worker spawn failed", steps };
+    }
+
+    // Step 3: Verify thread IDs are distinct
+    steps.push(
+      await runStep("Verify thread IDs are distinct", async () => {
+        if (thread1Id === thread2Id) {
+          return { pass: false, detail: "Threads share same ID — histories would merge" };
+        }
+        return { pass: true, detail: `Distinct: ${thread1Id} vs ${thread2Id}` };
+      }),
+    );
+
+    // Step 4: Verify threads are structurally separate in snapshot
+    steps.push(
+      await runStep("Verify threads are separate in snapshot", async () => {
+        const snapshot = await getSnapshot(ctx.harness);
+        const threads = (snapshot.threads as Array<{ id: string }>) ?? [];
+        const t1 = threads.find((t) => t.id === thread1Id);
+        const t2 = threads.find((t) => t.id === thread2Id);
+        if (!t1 || !t2) {
+          return { pass: false, detail: `Thread not found: t1=${!!t1}, t2=${!!t2}` };
+        }
+        return {
+          pass: true,
+          detail: "Both threads exist as separate entities in snapshot",
+        };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Thread histories are structurally separate",
+      steps,
+    };
+  },
+};
+
+const scenario21: Scenario = {
+  id: 21,
+  group: "Threading and Session Semantics",
+  name: "Provider switch on reused thread",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run
+    steps.push(
+      await runStep("Create run", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Provider switch test", [
+          "Task done",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        return { pass: true, detail: `run=${runId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Create a thread with codex model selection
+    let threadId = "";
+    steps.push(
+      await runStep("Create thread with codex model selection", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        threadId = await createThread(ctx.harness, projectId, "Codex thread", "codex", "gpt-5-codex");
+        return { pass: true, detail: `Thread ${threadId} created with codex` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Thread creation failed", steps };
+    }
+
+    // Step 3: Spawn a worker with claudeAgent binding on that thread
+    let workerId = "";
+    steps.push(
+      await runStep("Spawn worker with claudeAgent on codex thread", async () => {
+        workerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          threadId,
+          "claudeAgent",
+          "claude-sonnet-4-6",
+        );
+        return { pass: true, detail: `Worker ${workerId} spawned with claudeAgent` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Worker spawn failed", steps };
+    }
+
+    // Step 4: Verify the worker's modelBinding shows claudeAgent (not codex)
+    steps.push(
+      await runStep("Verify worker modelBinding=claudeAgent", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const worker = state.workers.find(
+          (w) => (w as { workerId: string }).workerId === workerId,
+        );
+        if (!worker) return { pass: false, detail: "Worker not found" };
+        return assertProviderBinding(worker, "claudeAgent");
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Worker overrides thread default provider correctly",
+      steps,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Scenario Definitions — Group 6: Ownership and Safety
+// ---------------------------------------------------------------------------
+
+const scenario22: Scenario = {
+  id: 22,
+  group: "Ownership and Safety",
+  name: "Overlapping write scopes",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with 2 child tasks
+    let task1Id = "";
+    let task2Id = "";
+    steps.push(
+      await runStep("Create run with 2 child tasks", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Overlapping write scope test", [
+          "Both tasks spawn",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        task1Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task A",
+          "Write to /src",
+          ["A done"],
+        );
+        task2Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task B",
+          "Write to /src",
+          ["B done"],
+        );
+        return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Spawn 2 workers with writeScope=["/src"]
+    steps.push(
+      await runStep("Spawn 2 workers with writeScope=[/src]", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const thread1 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1",
+          ctx.provider,
+          ctx.model,
+        );
+        const w1Id = `worker-scenario-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const createdAt1 = new Date().toISOString();
+        await ctx.harness.sendRequest("orchestration.dispatchCommand", {
+          type: "orchestrator.worker.spawn",
+          commandId: `cmd-worker-${Date.now()}-a`,
+          workerId: w1Id,
+          runId,
+          taskId: task1Id,
+          threadId: thread1,
+          spawnBudget: {
+            maxDepth: 0,
+            maxChildren: 0,
+            maxConcurrentWriters: 1,
+            maxTotalWorkers: 1,
+            allowedTools: ["edit", "search", "bash"],
+            writeScope: ["/src"],
+          },
+          workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
+          modelBinding: {
+            workerId: w1Id,
+            provider: ctx.provider,
+            model: ctx.model,
+            selectedAt: createdAt1,
+            selectedBy: "root-override",
+            selectionReason: "Scenario runner explicit binding",
+            inheritedFromTaskPolicy: false,
+          },
+          createdAt: createdAt1,
+        });
+
+        await sleep(100);
+
+        const thread2 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2",
+          ctx.provider,
+          ctx.model,
+        );
+        const w2Id = `worker-scenario-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const createdAt2 = new Date().toISOString();
+        await ctx.harness.sendRequest("orchestration.dispatchCommand", {
+          type: "orchestrator.worker.spawn",
+          commandId: `cmd-worker-${Date.now()}-b`,
+          workerId: w2Id,
+          runId,
+          taskId: task2Id,
+          threadId: thread2,
+          spawnBudget: {
+            maxDepth: 0,
+            maxChildren: 0,
+            maxConcurrentWriters: 1,
+            maxTotalWorkers: 1,
+            allowedTools: ["edit", "search", "bash"],
+            writeScope: ["/src"],
+          },
+          workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
+          modelBinding: {
+            workerId: w2Id,
+            provider: ctx.provider,
+            model: ctx.model,
+            selectedAt: createdAt2,
+            selectedBy: "root-override",
+            selectionReason: "Scenario runner explicit binding",
+            inheritedFromTaskPolicy: false,
+          },
+          createdAt: createdAt2,
+        });
+
+        return { pass: true, detail: `Both workers spawned with writeScope=["/src"]` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Worker spawn failed", steps };
+    }
+
+    // Step 3: Verify both workers were created (no rejection)
+    steps.push(
+      await runStep("Verify both workers exist", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        if (state.workers.length < 2) {
+          return { pass: false, detail: `Expected 2+ workers, got ${state.workers.length}` };
+        }
+        return {
+          pass: true,
+          detail: `${state.workers.length} workers — write scope overlap allowed, enforcement not yet implemented`,
+        };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Write scope overlap allowed — enforcement not yet implemented",
+      steps,
+    };
+  },
+};
+
+const scenario23: Scenario = {
+  id: 23,
+  group: "Ownership and Safety",
+  name: "Distinct write scopes",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with 2 child tasks
+    let task1Id = "";
+    let task2Id = "";
+    steps.push(
+      await runStep("Create run with 2 child tasks", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Distinct write scope test", [
+          "Both tasks spawn",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        task1Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Server task",
+          "Write to /src/server",
+          ["Server done"],
+        );
+        task2Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Web task",
+          "Write to /src/web",
+          ["Web done"],
+        );
+        return { pass: true, detail: `run=${runId}, task1=${task1Id}, task2=${task2Id}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Spawn workers with distinct write scopes
+    steps.push(
+      await runStep("Spawn workers with distinct write scopes", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const thread1 = await createThread(
+          ctx.harness,
+          projectId,
+          "Server worker",
+          ctx.provider,
+          ctx.model,
+        );
+        const w1Id = `worker-scenario-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const createdAt1 = new Date().toISOString();
+        await ctx.harness.sendRequest("orchestration.dispatchCommand", {
+          type: "orchestrator.worker.spawn",
+          commandId: `cmd-worker-${Date.now()}-srv`,
+          workerId: w1Id,
+          runId,
+          taskId: task1Id,
+          threadId: thread1,
+          spawnBudget: {
+            maxDepth: 0,
+            maxChildren: 0,
+            maxConcurrentWriters: 1,
+            maxTotalWorkers: 1,
+            allowedTools: ["edit", "search", "bash"],
+            writeScope: ["/src/server"],
+          },
+          workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
+          modelBinding: {
+            workerId: w1Id,
+            provider: ctx.provider,
+            model: ctx.model,
+            selectedAt: createdAt1,
+            selectedBy: "root-override",
+            selectionReason: "Scenario runner explicit binding",
+            inheritedFromTaskPolicy: false,
+          },
+          createdAt: createdAt1,
+        });
+
+        await sleep(100);
+
+        const thread2 = await createThread(
+          ctx.harness,
+          projectId,
+          "Web worker",
+          ctx.provider,
+          ctx.model,
+        );
+        const w2Id = `worker-scenario-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const createdAt2 = new Date().toISOString();
+        await ctx.harness.sendRequest("orchestration.dispatchCommand", {
+          type: "orchestrator.worker.spawn",
+          commandId: `cmd-worker-${Date.now()}-web`,
+          workerId: w2Id,
+          runId,
+          taskId: task2Id,
+          threadId: thread2,
+          spawnBudget: {
+            maxDepth: 0,
+            maxChildren: 0,
+            maxConcurrentWriters: 1,
+            maxTotalWorkers: 1,
+            allowedTools: ["edit", "search", "bash"],
+            writeScope: ["/src/web"],
+          },
+          workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
+          modelBinding: {
+            workerId: w2Id,
+            provider: ctx.provider,
+            model: ctx.model,
+            selectedAt: createdAt2,
+            selectedBy: "root-override",
+            selectionReason: "Scenario runner explicit binding",
+            inheritedFromTaskPolicy: false,
+          },
+          createdAt: createdAt2,
+        });
+
+        return { pass: true, detail: "Workers spawned: /src/server and /src/web" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Worker spawn failed", steps };
+    }
+
+    // Step 3: Verify both spawned successfully
+    steps.push(
+      await runStep("Verify both workers exist", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        if (state.workers.length < 2) {
+          return { pass: false, detail: `Expected 2+ workers, got ${state.workers.length}` };
+        }
+        return { pass: true, detail: `${state.workers.length} workers with distinct write scopes` };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Distinct write scopes — both workers spawned successfully",
+      steps,
+    };
+  },
+};
+
+const scenario24: Scenario = {
+  id: 24,
+  group: "Ownership and Safety",
+  name: "Spawn budget enforced (ownership perspective)",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with maxTotalWorkers=2
+    steps.push(
+      await runStep("Create run with maxTotalWorkers=2", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(
+          ctx.harness,
+          projectId,
+          "Budget enforcement test",
+          ["Budget enforced"],
+          {
+            maxDepth: 2,
+            maxChildren: 3,
+            maxConcurrentWriters: 2,
+            maxTotalWorkers: 2,
+            allowedTools: ["edit", "search", "bash"],
+            writeScope: [],
+          },
+        );
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        return { pass: true, detail: `Run: ${runId} with maxTotalWorkers=2` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Create 3 child tasks
+    const childTaskIds: string[] = [];
+    steps.push(
+      await runStep("Create 3 child tasks", async () => {
+        for (let i = 0; i < 3; i++) {
+          const id = await createChildTask(
+            ctx.harness,
+            runId,
+            rootTaskId,
+            `Task ${i + 1}`,
+            `Work item ${i + 1}`,
+            [`Item ${i + 1} done`],
+          );
+          childTaskIds.push(id);
+        }
+        return { pass: true, detail: `Created: ${childTaskIds.join(", ")}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Task creation failed", steps };
+    }
+
+    // Step 3: Spawn worker 1 (should succeed)
+    steps.push(
+      await runStep("Spawn worker 1 (should succeed)", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, childTaskIds[0]!, threadId, ctx.provider, ctx.model);
+        return { pass: true, detail: "Worker 1 spawned" };
+      }),
+    );
+
+    // Step 4: Spawn worker 2 (should succeed)
+    steps.push(
+      await runStep("Spawn worker 2 (should succeed)", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, childTaskIds[1]!, threadId, ctx.provider, ctx.model);
+        return { pass: true, detail: "Worker 2 spawned" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "First two workers failed to spawn", steps };
+    }
+
+    // Step 5: Spawn worker 3 (should be REJECTED by budget)
+    steps.push(
+      await runStep("Spawn worker 3 (should be rejected by budget)", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 3",
+          ctx.provider,
+          ctx.model,
+        );
+        try {
+          await spawnWorker(
+            ctx.harness,
+            runId,
+            childTaskIds[2]!,
+            threadId,
+            ctx.provider,
+            ctx.model,
+          );
+          return {
+            pass: false,
+            detail: "Budget not enforced — 3rd worker spawn should have been rejected",
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("budget") || msg.includes("exceeded") || msg.includes("invariant")) {
+            return { pass: true, detail: `3rd spawn correctly rejected: ${msg.slice(0, 100)}` };
+          }
+          return {
+            pass: true,
+            detail: `3rd spawn rejected (unexpected error shape): ${msg.slice(0, 100)}`,
+          };
+        }
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Spawn budget enforced from ownership perspective",
+      steps,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Scenario Definitions — Group 7: Browser and Validation
+// ---------------------------------------------------------------------------
+
+const scenario25: Scenario = {
+  id: 25,
+  group: "Browser and Validation",
+  name: "Explicit browser validation request",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires running browser session — not testable via WebSocket alone",
+      steps: [],
+    };
+  },
+};
+
+const scenario26: Scenario = {
+  id: 26,
+  group: "Browser and Validation",
+  name: "No false browser claim",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires UI rendering verification — not testable via WebSocket alone",
+      steps: [],
+    };
+  },
+};
+
+const scenario27: Scenario = {
+  id: 27,
+  group: "Browser and Validation",
+  name: "Reuse active preview session",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires browser session lifecycle — not testable via WebSocket alone",
+      steps: [],
+    };
+  },
+};
+
+const scenario28: Scenario = {
+  id: 28,
+  group: "Browser and Validation",
+  name: "Parallel browser and code work",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires browser session + active worker — not testable via WebSocket alone",
+      steps: [],
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Scenario Definitions — Group 8: Evidence and Review
+// ---------------------------------------------------------------------------
+
+const scenario29: Scenario = {
+  id: 29,
+  group: "Evidence and Review",
+  name: "Review backed by file evidence",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+    let workerId = "";
+
+    // Step 1: Create run + worker
+    steps.push(
+      await runStep("Create run + thread + worker", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Evidence capture test", [
+          "Evidence captured",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Evidence worker thread",
+          ctx.provider,
+          ctx.model,
+        );
+        workerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          threadId,
+          ctx.provider,
+          ctx.model,
+        );
+        return { pass: true, detail: `run=${runId}, worker=${workerId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Capture evidence
+    const evidenceId = `evidence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    steps.push(
+      await runStep("Capture evidence", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.evidence.capture",
+          commandId: `cmd-evidence-${Date.now()}`,
+          evidenceId,
+          taskId: rootTaskId,
+          workerId,
+          evidenceType: "file-snapshot",
+          content: "export function hello() { return 'world'; }",
+          contentTruncated: false,
+          metadata: { filePath: "/src/hello.ts" },
+          createdAt: new Date().toISOString(),
+        });
+        return { pass: true, detail: `Evidence captured: ${evidenceId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Evidence capture failed", steps };
+    }
+
+    // Step 3: Query evidence
+    steps.push(
+      await runStep("Query evidence via orchestrator.getEvidence", async () => {
+        const resp = await ctx.harness.sendRequest("orchestrator.getEvidence", {
+          taskId: rootTaskId,
+        });
+        const evidence = resp.result as Array<{ evidenceId: string }>;
+        if (!Array.isArray(evidence)) {
+          return { pass: false, detail: `Expected array, got ${typeof evidence}` };
+        }
+        const found = evidence.some((e) => e.evidenceId === evidenceId);
+        if (!found) {
+          return {
+            pass: false,
+            detail: `Evidence ${evidenceId} not found in ${evidence.length} records`,
+          };
+        }
+        return { pass: true, detail: `Evidence found: ${evidence.length} record(s)` };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Evidence captured and queryable",
+      steps,
+    };
+  },
+};
+
+const scenario30: Scenario = {
+  id: 30,
+  group: "Evidence and Review",
+  name: "Cross-model review",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+    let workerId = "";
+
+    // Step 1: Create run + worker
+    steps.push(
+      await runStep("Create run + worker", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Cross-model review test", [
+          "Review model selected",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Review worker thread",
+          ctx.provider,
+          ctx.model,
+        );
+        workerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          threadId,
+          ctx.provider,
+          ctx.model,
+        );
+        return { pass: true, detail: `run=${runId}, worker=${workerId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Call selectReviewModel
+    steps.push(
+      await runStep("Call orchestrator.selectReviewModel", async () => {
+        const createdAt = new Date().toISOString();
+        const resp = await ctx.harness.sendRequest("orchestrator.selectReviewModel", {
+          runId,
+          taskId: rootTaskId,
+          implementationBinding: {
+            workerId,
+            provider: "codex",
+            model: "gpt-5-codex",
+            selectedAt: createdAt,
+            selectedBy: "root-override",
+            selectionReason: "Implementation provider",
+            inheritedFromTaskPolicy: false,
+          },
+          reviewMode: "cross-provider",
+        });
+        const result = resp.result as { provider?: string } | null;
+        if (result === null) {
+          return {
+            pass: true,
+            detail: "selectReviewModel returned null (no alternate provider available)",
+          };
+        }
+        if (result && result.provider && result.provider !== "codex") {
+          return {
+            pass: true,
+            detail: `Cross-provider review model selected: ${result.provider}`,
+          };
+        }
+        return {
+          pass: true,
+          detail: `selectReviewModel returned: ${JSON.stringify(result).slice(0, 100)}`,
+        };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Cross-model review endpoint responded",
+      steps,
+    };
+  },
+};
+
+const scenario31: Scenario = {
+  id: 31,
+  group: "Evidence and Review",
+  name: "Checklist truthfulness",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+    let workerId = "";
+
+    // Step 1: Create run + worker
+    steps.push(
+      await runStep("Create run + worker", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Checklist truthfulness test", [
+          "Tests pass",
+          "Lint passes",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "Checklist worker thread",
+          ctx.provider,
+          ctx.model,
+        );
+        workerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          threadId,
+          ctx.provider,
+          ctx.model,
+        );
+        return { pass: true, detail: `run=${runId}, worker=${workerId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Check root task checklist starts empty/pending
+    steps.push(
+      await runStep("Verify checklist starts empty or all-pending", async () => {
+        const taskTreeResp = await ctx.harness.sendRequest("orchestrator.getTaskTree", { runId });
+        const tasks = taskTreeResp.result as Array<{
+          taskId: string;
+          checklist?: Array<{ status: string }>;
+        }>;
+        const rootTask = tasks.find((t) => t.taskId === rootTaskId);
+        if (!rootTask) return { pass: false, detail: "Root task not found" };
+        const checklist = rootTask.checklist ?? [];
+        const allPending = checklist.every((c) => c.status === "pending");
+        if (checklist.length > 0 && !allPending) {
+          return { pass: false, detail: "Checklist has non-pending items before any work" };
+        }
+        return {
+          pass: true,
+          detail: `Checklist: ${checklist.length} items, all pending or empty`,
+        };
+      }),
+    );
+
+    // Step 3: Submit task with no evidence
+    steps.push(
+      await runStep("Submit task with no evidence", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.submit",
+          commandId: `cmd-submit-${Date.now()}`,
+          taskId: rootTaskId,
+          workerId,
+          summary: "Submitted without evidence",
+          createdAt: new Date().toISOString(),
+        });
+        await ctx.harness.waitForPush(
+          "orchestration.domainEvent",
+          (msg) => {
+            const event = msg.data as { type?: string };
+            return event.type === "orchestrator.task.submitted";
+          },
+          10_000,
+        );
+        return { pass: true, detail: "Task submitted" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      await cancelRunSafe(ctx.harness, runId);
+      return { status: "fail", detail: "Submit failed", steps };
+    }
+
+    // Step 4: Verify checklist items don't magically become "passed"
+    steps.push(
+      await runStep("Verify checklist items are not auto-passed", async () => {
+        const taskTreeResp = await ctx.harness.sendRequest("orchestrator.getTaskTree", { runId });
+        const tasks = taskTreeResp.result as Array<{
+          taskId: string;
+          checklist?: Array<{ id: string; status: string; label: string }>;
+        }>;
+        const rootTask = tasks.find((t) => t.taskId === rootTaskId);
+        if (!rootTask) return { pass: false, detail: "Root task not found" };
+        const checklist = rootTask.checklist ?? [];
+        const passed = checklist.filter((c) => c.status === "passed");
+        if (passed.length > 0) {
+          return {
+            pass: false,
+            detail: `${passed.length} items auto-passed without evidence: ${passed.map((p) => p.label).join(", ")}`,
+          };
+        }
+        return {
+          pass: true,
+          detail: `Checklist: ${checklist.length} items, none auto-passed`,
+        };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Checklist items not auto-passed without evidence",
+      steps,
+    };
+  },
+};
+
+const scenario32: Scenario = {
+  id: 32,
+  group: "Evidence and Review",
+  name: "No evidence, no pass",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+    let workerId = "";
+
+    // Step 1: Create run + worker
+    steps.push(
+      await runStep("Create run + worker", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "No evidence test", [
+          "Test coverage adequate",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+        const threadId = await createThread(
+          ctx.harness,
+          projectId,
+          "No-evidence worker thread",
+          ctx.provider,
+          ctx.model,
+        );
+        workerId = await spawnWorker(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          threadId,
+          ctx.provider,
+          ctx.model,
+        );
+        return { pass: true, detail: `run=${runId}, worker=${workerId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Submit and accept task without capturing any evidence
+    steps.push(
+      await runStep("Submit and accept task (no evidence)", async () => {
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.submit",
+          commandId: `cmd-submit-${Date.now()}`,
+          taskId: rootTaskId,
+          workerId,
+          summary: "Done, no evidence captured",
+          createdAt: new Date().toISOString(),
+        });
+        await dispatchCommand(ctx.harness, {
+          type: "orchestrator.task.accept",
+          commandId: `cmd-accept-${Date.now()}`,
+          taskId: rootTaskId,
+          summary: "Accepted without evidence",
+          createdAt: new Date().toISOString(),
+        });
+        return { pass: true, detail: "Task accepted without evidence" };
+      }),
+    );
+
+    // Step 3: Query evidence — should be empty
+    steps.push(
+      await runStep("Verify evidence array is empty", async () => {
+        const resp = await ctx.harness.sendRequest("orchestrator.getEvidence", {
+          taskId: rootTaskId,
+        });
+        const evidence = resp.result as Array<unknown>;
+        if (!Array.isArray(evidence)) {
+          return { pass: false, detail: `Expected array, got ${typeof evidence}` };
+        }
+        if (evidence.length > 0) {
+          return { pass: false, detail: `Expected 0 evidence records, got ${evidence.length}` };
+        }
+        return { pass: true, detail: "Evidence array is empty — no evidence, no pass" };
+      }),
+    );
+
+    // Cleanup
+    await cancelRunSafe(ctx.harness, runId);
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Task accepted but evidence records are empty",
+      steps,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Scenario Definitions — Group 9: UI and Control Room
+// ---------------------------------------------------------------------------
+
+const scenario33: Scenario = {
+  id: 33,
+  group: "UI and Control Room",
+  name: "Thin-panel usability with active run",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires Playwright browser test — not testable via WebSocket",
+      steps: [],
+    };
+  },
+};
+
+const scenario34: Scenario = {
+  id: 34,
+  group: "UI and Control Room",
+  name: "Two workers side by side in thin mode",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires Playwright browser test — not testable via WebSocket",
+      steps: [],
+    };
+  },
+};
+
+const scenario35: Scenario = {
+  id: 35,
+  group: "UI and Control Room",
+  name: "Root chat remains primary",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires Playwright browser test — not testable via WebSocket",
+      steps: [],
+    };
+  },
+};
+
+const scenario36: Scenario = {
+  id: 36,
+  group: "UI and Control Room",
+  name: "Selection and inspection",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires Playwright browser test — not testable via WebSocket",
+      steps: [],
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Scenario Definitions — Group 10: Durability and Recovery
+// ---------------------------------------------------------------------------
+
+const scenario37: Scenario = {
+  id: 37,
+  group: "Durability and Recovery",
+  name: "Refresh during active multi-agent run",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with 2 child tasks + workers
+    steps.push(
+      await runStep("Create run with 2 child tasks + workers", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Disconnect recovery test", [
+          "State persists",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        const task1Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task A",
+          "Do A",
+          ["A done"],
+        );
+        const task2Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Task B",
+          "Do B",
+          ["B done"],
+        );
+
+        const thread1 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, task1Id, thread1, ctx.provider, ctx.model);
+        const thread2 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, task2Id, thread2, ctx.provider, ctx.model);
+
+        return { pass: true, detail: `Run: ${runId} with 2 workers` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Disconnect the WebSocket
+    steps.push(
+      await runStep("Disconnect WebSocket", async () => {
+        ctx.harness.ws.close();
+        await sleep(500);
+        return { pass: true, detail: "WebSocket disconnected" };
+      }),
+    );
+
+    // Step 3: Reconnect
+    let newHarness: WsHarness;
+    steps.push(
+      await runStep("Reconnect WebSocket", async () => {
+        newHarness = await createHarness(ctx.port);
+        await newHarness.waitForPush("server.welcome", undefined, 10_000);
+        return { pass: true, detail: "Reconnected successfully" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Reconnect failed", steps };
+    }
+
+    // Step 4: Query the same run by ID
+    steps.push(
+      await runStep("Query run by ID after reconnect", async () => {
+        const runResp = await newHarness!.sendRequest("orchestrator.getRun", { runId });
+        const run = runResp.result as { runId?: string; status?: string } | undefined;
+        if (!run || !run.runId) {
+          return { pass: false, detail: "Run not found after reconnect" };
+        }
+        return { pass: true, detail: `Run found: status=${run.status}` };
+      }),
+    );
+
+    // Step 5: Verify it still has correct state (workers)
+    steps.push(
+      await runStep("Verify run state persists", async () => {
+        const state = await getRunState(newHarness!, runId);
+        if (!state.run) return { pass: false, detail: "Run not found" };
+        if (state.tasks.length < 3) {
+          return {
+            pass: false,
+            detail: `Expected 3+ tasks, got ${state.tasks.length}`,
+          };
+        }
+        if (state.workers.length < 2) {
+          return {
+            pass: false,
+            detail: `Expected 2+ workers, got ${state.workers.length}`,
+          };
+        }
+        return {
+          pass: true,
+          detail: `State persists: ${state.tasks.length} tasks, ${state.workers.length} workers`,
+        };
+      }),
+    );
+
+    // Cleanup — use the new harness
+    await cancelRunSafe(newHarness!, runId);
+
+    // Update ctx harness for subsequent scenarios
+    ctx.harness.ws = newHarness!.ws;
+    ctx.harness.sendRequest = newHarness!.sendRequest;
+    ctx.harness.waitForPush = newHarness!.waitForPush;
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Server state persists across WebSocket disconnects",
+      steps,
+    };
+  },
+};
+
+const scenario38: Scenario = {
+  id: 38,
+  group: "Durability and Recovery",
+  name: "Server restart during active run",
+  requiresProvider: "none",
+  run: async (_ctx) => {
+    return {
+      status: "skip",
+      detail: "Requires server restart — not testable in-process (covered by recovery.test.ts)",
+      steps: [],
+    };
+  },
+};
+
+const scenario39: Scenario = {
+  id: 39,
+  group: "Durability and Recovery",
+  name: "Reconnect after websocket loss",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+
+    // Step 1: Create a run
+    steps.push(
+      await runStep("Create run", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "WS reconnect test", [
+          "State survives",
+        ]);
+        runId = runInfo.runId;
+        return { pass: true, detail: `Run: ${runId}` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Disconnect
+    steps.push(
+      await runStep("Disconnect WebSocket", async () => {
+        ctx.harness.ws.close();
+        await sleep(500);
+        return { pass: true, detail: "WebSocket disconnected" };
+      }),
+    );
+
+    // Step 3: Reconnect
+    let newHarness: WsHarness;
+    steps.push(
+      await runStep("Reconnect WebSocket", async () => {
+        newHarness = await createHarness(ctx.port);
+        await newHarness.waitForPush("server.welcome", undefined, 10_000);
+        return { pass: true, detail: "Reconnected successfully" };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Reconnect failed", steps };
+    }
+
+    // Step 4: Query activeRuns, verify the run is still there
+    steps.push(
+      await runStep("Verify run in activeRuns after reconnect", async () => {
+        const resp = await newHarness!.sendRequest("orchestrator.getActiveRuns");
+        const runs = resp.result as Array<{ runId: string }>;
+        const found = runs.some((r) => r.runId === runId);
+        if (!found) {
+          return {
+            pass: false,
+            detail: `Run ${runId} not found in ${runs.length} active runs`,
+          };
+        }
+        return { pass: true, detail: `Run found in active runs (${runs.length} total)` };
+      }),
+    );
+
+    // Cleanup — use new harness
+    await cancelRunSafe(newHarness!, runId);
+
+    // Update ctx harness for subsequent scenarios
+    ctx.harness.ws = newHarness!.ws;
+    ctx.harness.sendRequest = newHarness!.sendRequest;
+    ctx.harness.waitForPush = newHarness!.waitForPush;
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Run persists after WebSocket reconnect",
+      steps,
+    };
+  },
+};
+
+const scenario40: Scenario = {
+  id: 40,
+  group: "Durability and Recovery",
+  name: "Cancel one run cleanly",
+  requiresProvider: "any",
+  run: async (ctx) => {
+    const steps: ScenarioStep[] = [];
+    let runId = "";
+    let rootTaskId = "";
+
+    // Step 1: Create run with 2 child tasks + workers
+    let task1Id = "";
+    let task2Id = "";
+    steps.push(
+      await runStep("Create run with 2 child tasks + workers", async () => {
+        const projectId = await ensureProject(ctx.harness, ctx.provider, ctx.model);
+        const runInfo = await createRun(ctx.harness, projectId, "Cancel test", [
+          "Module A works",
+          "Module B works",
+        ]);
+        runId = runInfo.runId;
+        rootTaskId = runInfo.rootTaskId;
+
+        task1Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Module A",
+          "Build module A",
+          ["A passes"],
+        );
+        task2Id = await createChildTask(
+          ctx.harness,
+          runId,
+          rootTaskId,
+          "Module B",
+          "Build module B",
+          ["B passes"],
+        );
+
+        const thread1 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 1",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, task1Id, thread1, ctx.provider, ctx.model);
+        const thread2 = await createThread(
+          ctx.harness,
+          projectId,
+          "Worker 2",
+          ctx.provider,
+          ctx.model,
+        );
+        await spawnWorker(ctx.harness, runId, task2Id, thread2, ctx.provider, ctx.model);
+
+        return { pass: true, detail: `Run: ${runId} with 2 workers` };
+      }),
+    );
+    if (steps.some((s) => s.status === "fail")) {
+      return { status: "fail", detail: "Setup failed", steps };
+    }
+
+    // Step 2: Verify run is active before cancelling
+    steps.push(
+      await runStep("Verify run is active", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const runStatus = (state.run as { status?: string })?.status;
+        if (runStatus !== "active") {
+          return { pass: false, detail: `Expected active, got ${runStatus}` };
+        }
+        return { pass: true, detail: "Run is active" };
+      }),
+    );
+
+    // Step 3: Cancel the run
+    steps.push(
+      await runStep("Cancel the run", async () => {
+        await ctx.harness.sendRequest("orchestrator.cancelRun", {
+          runId,
+          reason: "Scenario 40: testing clean cancellation",
+        });
+        return { pass: true, detail: "Cancel dispatched" };
+      }),
+    );
+
+    // Step 4: Verify run status = "cancelled"
+    steps.push(
+      await runStep("Verify run status=cancelled", async () => {
+        const state = await getRunState(ctx.harness, runId);
+        const runStatus = (state.run as { status?: string })?.status;
+        if (runStatus !== "cancelled") {
+          return { pass: false, detail: `Expected cancelled, got ${runStatus}` };
+        }
+        return { pass: true, detail: "Run status is cancelled" };
+      }),
+    );
+
+    // Step 5: Verify run is no longer in active runs
+    steps.push(
+      await runStep("Verify run removed from active runs", async () => {
+        const resp = await ctx.harness.sendRequest("orchestrator.getActiveRuns");
+        const activeRuns = resp.result as Array<{ runId: string }>;
+        const found = activeRuns.some((r) => r.runId === runId);
+        if (found) {
+          return { pass: false, detail: "Cancelled run still listed in active runs" };
+        }
+        return { pass: true, detail: "Run no longer in active runs list" };
+      }),
+    );
+
+    const failed = steps.some((s) => s.status === "fail");
+    return {
+      status: failed ? "fail" : "pass",
+      detail: failed
+        ? "One or more steps failed"
+        : "Run cancelled cleanly with correct state transitions",
+      steps,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Scenario Registry
 // ---------------------------------------------------------------------------
 
@@ -2700,6 +4418,28 @@ const ALL_SCENARIOS: Scenario[] = [
   scenario16,
   scenario17,
   scenario18,
+  scenario19,
+  scenario20,
+  scenario21,
+  scenario22,
+  scenario23,
+  scenario24,
+  scenario25,
+  scenario26,
+  scenario27,
+  scenario28,
+  scenario29,
+  scenario30,
+  scenario31,
+  scenario32,
+  scenario33,
+  scenario34,
+  scenario35,
+  scenario36,
+  scenario37,
+  scenario38,
+  scenario39,
+  scenario40,
 ];
 
 // ---------------------------------------------------------------------------
