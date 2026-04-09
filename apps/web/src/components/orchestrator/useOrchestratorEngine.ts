@@ -4,6 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   DEFAULT_RUNTIME_MODE,
   type ModelSelection,
+  type OrchestratorRun,
+  type OrchestratorTask,
+  type OrchestratorWorker,
   type ProviderInteractionMode,
   type ProviderKind,
   type RuntimeMode,
@@ -181,6 +184,11 @@ export interface OrchestratorEngineResult {
   handleToggleBrowserPreview: () => void;
   handlePromptChangeFromTraits: (prompt: string) => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
+
+  // Server-canonical orchestrator state
+  orchestratorRun: OrchestratorRun | null;
+  orchestratorTasks: readonly OrchestratorTask[];
+  orchestratorWorkers: readonly OrchestratorWorker[];
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +289,44 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   // -- Server config --
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const providers = serverConfigQuery.data?.providers ?? EMPTY_PROVIDERS;
+
+  // -- Server-canonical orchestrator state --
+  const activeRunsQuery = useQuery({
+    queryKey: ["orchestrator", "activeRuns"],
+    queryFn: () => {
+      const api = readNativeApi();
+      return api?.orchestrator.getActiveRuns() ?? Promise.resolve([] as readonly OrchestratorRun[]);
+    },
+    refetchInterval: 5000,
+  });
+
+  const serverRun: OrchestratorRun | null = activeRunsQuery.data?.[0] ?? null;
+
+  const taskTreeQuery = useQuery({
+    queryKey: ["orchestrator", "taskTree", serverRun?.runId],
+    queryFn: () => {
+      const api = readNativeApi();
+      return serverRun
+        ? (api?.orchestrator.getTaskTree({ runId: serverRun.runId }) ??
+            Promise.resolve([] as readonly OrchestratorTask[]))
+        : ([] as readonly OrchestratorTask[]);
+    },
+    enabled: !!serverRun,
+    refetchInterval: 3000,
+  });
+
+  const workersQuery = useQuery({
+    queryKey: ["orchestrator", "workers", serverRun?.runId],
+    queryFn: () => {
+      const api = readNativeApi();
+      return serverRun
+        ? (api?.orchestrator.getWorkers({ runId: serverRun.runId }) ??
+            Promise.resolve([] as readonly OrchestratorWorker[]))
+        : ([] as readonly OrchestratorWorker[]);
+    },
+    enabled: !!serverRun,
+    refetchInterval: 3000,
+  });
 
   // -- Model selection --
   const currentThreadModelSelection = routeThread?.modelSelection ?? null;
@@ -1968,5 +2014,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     handleToggleBrowserPreview,
     handlePromptChangeFromTraits,
     scrollRef,
+
+    // Server-canonical orchestrator state
+    orchestratorRun: serverRun,
+    orchestratorTasks: taskTreeQuery.data ?? [],
+    orchestratorWorkers: workersQuery.data ?? [],
   };
 }

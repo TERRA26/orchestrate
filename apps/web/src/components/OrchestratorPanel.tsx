@@ -118,7 +118,11 @@ function OrchestratorPanelInner() {
       {/* Control Room wraps the existing messages+composer.
           When no orchestration data exists (run=null, tasks=[], workers=[]),
           the ControlRoom falls through and renders children directly. */}
-      <OrchestratorControlRoom run={null} tasks={[]} workers={[]}>
+      <OrchestratorControlRoom
+        run={engine.orchestratorRun}
+        tasks={engine.orchestratorTasks}
+        workers={engine.orchestratorWorkers}
+      >
         <div className="flex min-h-0 flex-1 flex-col">
           <OrchestratorMessages
             messages={engine.messages}
