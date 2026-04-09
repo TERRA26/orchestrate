@@ -39,6 +39,7 @@
     "test": "turbo run test",
     "test:orchestrator-smoke": "cd apps/server && bun run test:orchestrator-smoke",
     "test:gate": "bun scripts/test-gate.ts",
+    "test:live-smoke": "bun scripts/live-orchestrator-smoke.ts",
     "test:contracts": "cd packages/contracts && bun run test",
     "test:decider": "cd apps/server && vitest run src/orchestration/decider.orchestrator.test.ts",
     "test:projector": "cd apps/server && vitest run src/orchestration/projector.orchestrator.test.ts",
