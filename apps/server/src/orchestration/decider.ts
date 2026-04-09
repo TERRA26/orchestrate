@@ -955,6 +955,294 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    // --- Orchestrator commands ---
+
+    case "orchestrator.run.create": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.run.created",
+        payload: {
+          runId: command.runId,
+          projectId: command.projectId,
+          userRequest: command.userRequest,
+          goals: command.goals,
+          constraints: command.constraints,
+          spawnBudget: command.spawnBudget,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.run.cancel": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.run.cancelled",
+        payload: {
+          runId: command.runId,
+          reason: command.reason,
+          cancelledAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.create": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.created",
+        payload: {
+          taskId: command.taskId,
+          runId: command.runId,
+          parentTaskId: command.parentTaskId,
+          title: command.title,
+          objective: command.objective,
+          acceptanceCriteria: command.acceptanceCriteria,
+          stopCondition: command.stopCondition,
+          readScope: command.readScope,
+          writeScope: command.writeScope,
+          allowedTools: command.allowedTools,
+          evidenceRequired: command.evidenceRequired,
+          dependsOn: command.dependsOn,
+          modelPolicy: command.modelPolicy,
+          maxIterations: command.maxIterations,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.assign": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.assigned",
+        payload: {
+          taskId: command.taskId,
+          assigneeKind: command.assigneeKind,
+          assigneeId: command.assigneeId,
+          assignedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.submit": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.submitted",
+        payload: {
+          taskId: command.taskId,
+          workerId: command.workerId,
+          summary: command.summary,
+          submittedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.accept": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.accepted",
+        payload: {
+          taskId: command.taskId,
+          summary: command.summary,
+          acceptedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.reject": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.rejected",
+        payload: {
+          taskId: command.taskId,
+          instruction: command.instruction,
+          rejectedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.block": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.blocked",
+        payload: {
+          taskId: command.taskId,
+          reason: command.reason,
+          blockedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.cancel": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.cancelled",
+        payload: {
+          taskId: command.taskId,
+          reason: command.reason,
+          cancelledAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.task.fail": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.task.failed",
+        payload: {
+          taskId: command.taskId,
+          reason: command.reason,
+          failedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.worker.spawn": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.worker.spawned",
+        payload: {
+          workerId: command.workerId,
+          runId: command.runId,
+          taskId: command.taskId,
+          spawnBudget: command.spawnBudget,
+          workspace: command.workspace,
+          modelBinding: command.modelBinding,
+          spawnedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.worker.terminate": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.workerId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.worker.terminated",
+        payload: {
+          workerId: command.workerId,
+          reason: command.reason,
+          terminatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.evidence.capture": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.evidence.captured",
+        payload: {
+          evidenceId: command.evidenceId,
+          taskId: command.taskId,
+          workerId: command.workerId,
+          evidenceType: command.evidenceType,
+          content: command.content,
+          contentTruncated: command.contentTruncated,
+          metadata: command.metadata,
+          capturedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.decision.record": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.decision.recorded",
+        payload: {
+          decisionId: command.decisionId,
+          runId: command.runId,
+          taskId: command.taskId,
+          decisionType: command.decisionType,
+          reason: command.reason,
+          inputs: command.inputs,
+          recordedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "orchestrator.checklist.update": {
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.taskId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.checklist.updated",
+        payload: {
+          taskId: command.taskId,
+          checklist: command.checklist,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
     default: {
       command satisfies never;
       const fallback = command as never as { type: string };

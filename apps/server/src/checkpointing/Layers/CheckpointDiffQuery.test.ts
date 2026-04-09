@@ -26,6 +26,9 @@ function makeSnapshot(input: {
   return {
     snapshotSequence: 0,
     updatedAt: "2026-01-01T00:00:00.000Z",
+    orchestratorRuns: [],
+    orchestratorTasks: [],
+    orchestratorWorkers: [],
     projects: [
       {
         id: input.projectId,
@@ -184,6 +187,9 @@ describe("CheckpointDiffQueryLive", () => {
               snapshotSequence: 0,
               projects: [],
               threads: [],
+              orchestratorRuns: [],
+              orchestratorTasks: [],
+              orchestratorWorkers: [],
               updatedAt: "2026-01-01T00:00:00.000Z",
             } satisfies OrchestrationReadModel),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),

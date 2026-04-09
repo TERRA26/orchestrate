@@ -248,6 +248,9 @@ it.layer(testLayer)("server CLI command", (it) => {
             {} as OrchestrationReadModel["threads"][number],
             {} as OrchestrationReadModel["threads"][number],
           ],
+          orchestratorRuns: [],
+          orchestratorTasks: [],
+          orchestratorWorkers: [],
           updatedAt: new Date(1).toISOString(),
         } satisfies OrchestrationReadModel),
       );

@@ -158,6 +158,9 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     threads: [],
+    orchestratorRuns: [],
+    orchestratorTasks: [],
+    orchestratorWorkers: [],
     updatedAt: nowIso,
   };
 }

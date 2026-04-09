@@ -1,6 +1,7 @@
 import type {
   OrchestrationEvent,
   OrchestrationReadModel,
+  OrchestratorRunId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -30,8 +31,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "project" | "thread" | "orchestrator";
+  readonly aggregateId: ProjectId | ThreadId | OrchestratorRunId;
 } {
   switch (command.type) {
     case "project.create":
@@ -41,10 +42,49 @@ function commandToAggregateRef(command: OrchestrationCommand): {
         aggregateKind: "project",
         aggregateId: command.projectId,
       };
+    case "orchestrator.run.create":
+    case "orchestrator.run.cancel":
+      return {
+        aggregateKind: "orchestrator",
+        aggregateId: command.runId,
+      };
+    case "orchestrator.task.create":
+    case "orchestrator.task.assign":
+    case "orchestrator.task.submit":
+    case "orchestrator.task.accept":
+    case "orchestrator.task.reject":
+    case "orchestrator.task.block":
+    case "orchestrator.task.cancel":
+    case "orchestrator.task.fail":
+    case "orchestrator.checklist.update":
+      return {
+        aggregateKind: "orchestrator",
+        aggregateId: command.taskId as unknown as OrchestratorRunId,
+      };
+    case "orchestrator.worker.spawn":
+      return {
+        aggregateKind: "orchestrator",
+        aggregateId: command.runId,
+      };
+    case "orchestrator.worker.terminate":
+      return {
+        aggregateKind: "orchestrator",
+        aggregateId: command.workerId as unknown as OrchestratorRunId,
+      };
+    case "orchestrator.evidence.capture":
+      return {
+        aggregateKind: "orchestrator",
+        aggregateId: command.taskId as unknown as OrchestratorRunId,
+      };
+    case "orchestrator.decision.record":
+      return {
+        aggregateKind: "orchestrator",
+        aggregateId: command.runId,
+      };
     default:
       return {
         aggregateKind: "thread",
-        aggregateId: command.threadId,
+        aggregateId: (command as { threadId: ThreadId }).threadId,
       };
   }
 }
