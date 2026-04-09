@@ -2122,15 +2122,8 @@ const scenario15: Scenario = {
 
     // Step 2: Assign + submit + accept backend task
     steps.push(
-      await runStep("Assign, submit, and accept backend task", async () => {
-        await dispatchCommand(ctx.harness, {
-          type: "orchestrator.task.assign",
-          commandId: `cmd-assign-backend-${Date.now()}`,
-          taskId: backendTaskId,
-          assigneeKind: "worker",
-          assigneeId: backendWorkerId,
-          createdAt: new Date().toISOString(),
-        });
+      await runStep("Submit and accept backend task", async () => {
+        // No assign needed — worker.spawn auto-transitions task to "running"
         await dispatchCommand(ctx.harness, {
           type: "orchestrator.task.submit",
           commandId: `cmd-submit-backend-${Date.now()}`,
@@ -2152,15 +2145,8 @@ const scenario15: Scenario = {
 
     // Step 3: Assign + submit + accept frontend task
     steps.push(
-      await runStep("Assign, submit, and accept frontend task", async () => {
-        await dispatchCommand(ctx.harness, {
-          type: "orchestrator.task.assign",
-          commandId: `cmd-assign-frontend-${Date.now()}`,
-          taskId: frontendTaskId,
-          assigneeKind: "worker",
-          assigneeId: frontendWorkerId,
-          createdAt: new Date().toISOString(),
-        });
+      await runStep("Submit and accept frontend task", async () => {
+        // No assign needed — worker.spawn auto-transitions task to "running"
         await dispatchCommand(ctx.harness, {
           type: "orchestrator.task.submit",
           commandId: `cmd-submit-frontend-${Date.now()}`,
@@ -2322,15 +2308,8 @@ const scenario16: Scenario = {
 
     // Step 2: Submit + accept task 1
     steps.push(
-      await runStep("Assign, submit, and accept task 1", async () => {
-        await dispatchCommand(ctx.harness, {
-          type: "orchestrator.task.assign",
-          commandId: `cmd-assign-t1-${Date.now()}`,
-          taskId: task1Id,
-          assigneeKind: "worker",
-          assigneeId: worker1Id,
-          createdAt: new Date().toISOString(),
-        });
+      await runStep("Submit and accept task 1", async () => {
+        // No assign needed — worker.spawn auto-transitions task to "running"
         await dispatchCommand(ctx.harness, {
           type: "orchestrator.task.submit",
           commandId: `cmd-submit-t1-${Date.now()}`,
