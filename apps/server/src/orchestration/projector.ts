@@ -1,9 +1,35 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  OrchestratorRun,
+  OrchestratorTask,
+  OrchestratorTaskId,
+  OrchestratorWorker,
+  OrchestratorWorkerId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  OrchestratorChecklistUpdatedPayload,
+  OrchestratorDecisionRecordedPayload,
+  OrchestratorEvidenceCapturedPayload,
+  OrchestratorRunCancelledPayload,
+  OrchestratorRunCompletedPayload,
+  OrchestratorRunCreatedPayload,
+  OrchestratorRunFailedPayload,
+  OrchestratorTaskAcceptedPayload,
+  OrchestratorTaskAssignedPayload,
+  OrchestratorTaskBlockedPayload,
+  OrchestratorTaskCancelledPayload,
+  OrchestratorTaskCreatedPayload,
+  OrchestratorTaskFailedPayload,
+  OrchestratorTaskRejectedPayload,
+  OrchestratorTaskSubmittedPayload,
+  OrchestratorWorkerSpawnedPayload,
+  OrchestratorWorkerTerminatedPayload,
 } from "@t3tools/contracts";
 import { Effect, Schema } from "effect";
 
@@ -26,6 +52,9 @@ import {
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
+type RunPatch = Partial<Omit<OrchestratorRun, "runId">>;
+type TaskPatch = Partial<Omit<OrchestratorTask, "taskId" | "runId">>;
+type WorkerPatch = Partial<Omit<OrchestratorWorker, "workerId" | "runId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
@@ -41,6 +70,30 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function updateRun(
+  runs: ReadonlyArray<OrchestratorRun>,
+  runId: OrchestratorRun["runId"],
+  patch: RunPatch,
+): OrchestratorRun[] {
+  return runs.map((run) => (run.runId === runId ? { ...run, ...patch } : run));
+}
+
+function updateTask(
+  tasks: ReadonlyArray<OrchestratorTask>,
+  taskId: OrchestratorTaskId,
+  patch: TaskPatch,
+): OrchestratorTask[] {
+  return tasks.map((task) => (task.taskId === taskId ? { ...task, ...patch } : task));
+}
+
+function updateWorker(
+  workers: ReadonlyArray<OrchestratorWorker>,
+  workerId: OrchestratorWorkerId,
+  patch: WorkerPatch,
+): OrchestratorWorker[] {
+  return workers.map((worker) => (worker.workerId === workerId ? { ...worker, ...patch } : worker));
 }
 
 function decodeForEvent<A>(
@@ -647,6 +700,343 @@ export function projectEvent(
             }),
           };
         }),
+      );
+
+    // --- Orchestrator events ---
+
+    case "orchestrator.run.created":
+      return decodeForEvent(
+        OrchestratorRunCreatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorRuns: [
+            ...(nextBase.orchestratorRuns ?? []),
+            {
+              runId: payload.runId,
+              projectId: payload.projectId,
+              userRequest: payload.userRequest,
+              status: "active" as const,
+              rootTaskId: "" as OrchestratorTaskId,
+              goals: payload.goals,
+              constraints: payload.constraints,
+              spawnBudget: payload.spawnBudget,
+              createdAt: payload.createdAt,
+              updatedAt: payload.createdAt,
+            },
+          ],
+        })),
+      );
+
+    case "orchestrator.run.cancelled":
+      return decodeForEvent(
+        OrchestratorRunCancelledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorRuns: updateRun(nextBase.orchestratorRuns ?? [], payload.runId, {
+            status: "cancelled",
+            updatedAt: payload.cancelledAt,
+            completedAt: payload.cancelledAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.run.completed":
+      return decodeForEvent(
+        OrchestratorRunCompletedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorRuns: updateRun(nextBase.orchestratorRuns ?? [], payload.runId, {
+            status: "completed",
+            updatedAt: payload.completedAt,
+            completedAt: payload.completedAt,
+            completionSummary: payload.summary,
+          }),
+        })),
+      );
+
+    case "orchestrator.run.failed":
+      return decodeForEvent(
+        OrchestratorRunFailedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorRuns: updateRun(nextBase.orchestratorRuns ?? [], payload.runId, {
+            status: "failed",
+            updatedAt: payload.failedAt,
+            completedAt: payload.failedAt,
+            completionSummary: payload.reason,
+          }),
+        })),
+      );
+
+    case "orchestrator.task.created":
+      return decodeForEvent(
+        OrchestratorTaskCreatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const newTask: OrchestratorTask = {
+            taskId: payload.taskId,
+            runId: payload.runId,
+            parentTaskId: payload.parentTaskId,
+            title: payload.title,
+            objective: payload.objective,
+            status: "pending",
+            ownerKind: "orchestrator",
+            stopCondition: payload.stopCondition,
+            readScope: payload.readScope,
+            writeScope: payload.writeScope,
+            allowedTools: payload.allowedTools,
+            evidenceRequired: payload.evidenceRequired,
+            acceptanceCriteria: payload.acceptanceCriteria,
+            checklist: [],
+            dependsOn: payload.dependsOn,
+            modelPolicy: payload.modelPolicy,
+            iteration: 0,
+            maxIterations: payload.maxIterations ?? 3,
+            createdAt: payload.createdAt,
+            updatedAt: payload.createdAt,
+          };
+          // If this is the first task for the run, set it as rootTaskId.
+          const runs = (nextBase.orchestratorRuns ?? []).map((run) =>
+            run.runId === payload.runId && run.rootTaskId === ("" as OrchestratorTaskId)
+              ? { ...run, rootTaskId: payload.taskId, updatedAt: payload.createdAt }
+              : run,
+          );
+          return {
+            ...nextBase,
+            orchestratorRuns: runs,
+            orchestratorTasks: [...(nextBase.orchestratorTasks ?? []), newTask],
+          };
+        }),
+      );
+
+    case "orchestrator.task.assigned":
+      return decodeForEvent(
+        OrchestratorTaskAssignedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+            status: "assigned",
+            ownerKind: payload.assigneeKind,
+            ownerId: payload.assigneeId,
+            assignedWorkerId: payload.assigneeId as OrchestratorWorkerId | undefined,
+            updatedAt: payload.assignedAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.task.submitted":
+      return decodeForEvent(
+        OrchestratorTaskSubmittedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+            status: "submitted",
+            updatedAt: payload.submittedAt,
+            submittedAt: payload.submittedAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.task.accepted":
+      return decodeForEvent(
+        OrchestratorTaskAcceptedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+            status: "accepted",
+            updatedAt: payload.acceptedAt,
+            acceptedAt: payload.acceptedAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.task.rejected":
+      return decodeForEvent(
+        OrchestratorTaskRejectedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const existingTask = (nextBase.orchestratorTasks ?? []).find(
+            (t) => t.taskId === payload.taskId,
+          );
+          return {
+            ...nextBase,
+            orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+              status: "needs-rework",
+              iteration: (existingTask?.iteration ?? 0) + 1,
+              updatedAt: payload.rejectedAt,
+            }),
+          };
+        }),
+      );
+
+    case "orchestrator.task.blocked":
+      return decodeForEvent(
+        OrchestratorTaskBlockedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+            status: "blocked",
+            blockedBy: payload.reason,
+            updatedAt: payload.blockedAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.task.cancelled":
+      return decodeForEvent(
+        OrchestratorTaskCancelledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+            status: "cancelled",
+            updatedAt: payload.cancelledAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.task.failed":
+      return decodeForEvent(
+        OrchestratorTaskFailedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+            status: "failed",
+            updatedAt: payload.failedAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.worker.spawned":
+      return decodeForEvent(
+        OrchestratorWorkerSpawnedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const newWorker: OrchestratorWorker = {
+            workerId: payload.workerId,
+            runId: payload.runId,
+            threadId: "" as ThreadId, // Will be set when thread is linked
+            status: "running",
+            activeTaskId: payload.taskId,
+            spawnBudget: payload.spawnBudget,
+            workspace: payload.workspace,
+            modelBinding: payload.modelBinding,
+            createdAt: payload.spawnedAt,
+            updatedAt: payload.spawnedAt,
+          };
+          return {
+            ...nextBase,
+            orchestratorWorkers: [...(nextBase.orchestratorWorkers ?? []), newWorker],
+            // Also mark the task as running
+            orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+              status: "running",
+              assignedWorkerId: payload.workerId,
+              updatedAt: payload.spawnedAt,
+            }),
+          };
+        }),
+      );
+
+    case "orchestrator.worker.terminated":
+      return decodeForEvent(
+        OrchestratorWorkerTerminatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorWorkers: updateWorker(nextBase.orchestratorWorkers ?? [], payload.workerId, {
+            status: "terminated",
+            terminatedAt: payload.terminatedAt,
+            terminationReason: payload.reason,
+            updatedAt: payload.terminatedAt,
+          }),
+        })),
+      );
+
+    case "orchestrator.evidence.captured":
+      // Evidence is persisted directly to DB via the repository,
+      // not stored in the in-memory read model.
+      return decodeForEvent(
+        OrchestratorEvidenceCapturedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(Effect.map(() => nextBase));
+
+    case "orchestrator.decision.recorded":
+      // Decisions are persisted directly to DB via the repository,
+      // not stored in the in-memory read model.
+      return decodeForEvent(
+        OrchestratorDecisionRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(Effect.map(() => nextBase));
+
+    case "orchestrator.checklist.updated":
+      return decodeForEvent(
+        OrchestratorChecklistUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorTasks: updateTask(nextBase.orchestratorTasks ?? [], payload.taskId, {
+            checklist: payload.checklist,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
       );
 
     default:
