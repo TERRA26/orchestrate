@@ -1,15 +1,106 @@
+import { useState } from "react";
 import { XIcon } from "lucide-react";
-import type { OrchestratorTask, OrchestratorWorker } from "@t3tools/contracts";
+import type {
+  OrchestratorTask,
+  OrchestratorWorker,
+  OrchestratorEvidenceRecord,
+} from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 import type { SelectedEntity } from "./controlRoomTypes";
 import { getTaskStatusConfig, getWorkerStatusStyle, formatElapsedTime } from "./controlRoomHelpers";
 
 // ---------------------------------------------------------------------------
+// Evidence type badge
+// ---------------------------------------------------------------------------
+
+const EVIDENCE_TYPE_CONFIG: Record<string, { label: string; className: string }> = {
+  diff: { label: "Diff", className: "bg-violet-500/15 text-violet-400" },
+  "file-snapshot": { label: "File", className: "bg-sky-500/15 text-sky-400" },
+  "test-result": { label: "Test", className: "bg-emerald-500/15 text-emerald-400" },
+  "command-result": { label: "Cmd", className: "bg-amber-500/15 text-amber-400" },
+  "browser-trace": { label: "Browser", className: "bg-teal-500/15 text-teal-400" },
+  screenshot: { label: "Screenshot", className: "bg-pink-500/15 text-pink-400" },
+  log: { label: "Log", className: "bg-muted/30 text-muted-foreground" },
+  "aria-snapshot": { label: "ARIA", className: "bg-indigo-500/15 text-indigo-400" },
+};
+
+const DEFAULT_EVIDENCE_CONFIG = {
+  label: "Unknown",
+  className: "bg-muted/20 text-muted-foreground",
+};
+
+export function EvidenceTypeBadge({ type }: { type: string }) {
+  const c = EVIDENCE_TYPE_CONFIG[type] ?? DEFAULT_EVIDENCE_CONFIG;
+  return (
+    <span
+      className={cn(
+        "rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
+        c.className,
+      )}
+    >
+      {c.label}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Evidence viewer
+// ---------------------------------------------------------------------------
+
+function EvidenceViewer({ evidence }: { evidence: OrchestratorEvidenceRecord }) {
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      {/* Type badge */}
+      <div className="flex items-center gap-2">
+        <EvidenceTypeBadge type={evidence.type} />
+        <span className="font-mono text-[10px] text-muted-foreground/50">
+          {evidence.capturedAt}
+        </span>
+      </div>
+
+      {/* Content */}
+      <div className="rounded border border-border/15 bg-background/30">
+        {evidence.type === "screenshot" ? (
+          <div className="flex items-center justify-center p-4">
+            <span className="text-xs text-muted-foreground/40">Screenshot data</span>
+          </div>
+        ) : (
+          <pre className="overflow-x-auto p-2 font-mono text-[10px] leading-relaxed text-foreground/70">
+            {evidence.content}
+          </pre>
+        )}
+      </div>
+
+      {/* Metadata */}
+      {evidence.metadata && Object.keys(evidence.metadata).length > 0 && (
+        <div className="space-y-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+            Metadata
+          </span>
+          {Object.entries(evidence.metadata).map(([key, value]) => (
+            <div key={key} className="flex items-center gap-2 text-[10px]">
+              <span className="font-mono text-muted-foreground/50">{key}</span>
+              <span className="text-foreground/70">{String(value)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Task inspector
 // ---------------------------------------------------------------------------
 
-function TaskInspector({ task }: { task: OrchestratorTask }) {
+function TaskInspector({
+  task,
+  onSelectEvidence,
+}: {
+  task: OrchestratorTask;
+  onSelectEvidence?: (evidenceRef: string) => void;
+}) {
   const statusConfig = getTaskStatusConfig(task.status);
 
   return (
@@ -72,7 +163,7 @@ function TaskInspector({ task }: { task: OrchestratorTask }) {
           </p>
           <ul className="space-y-0.5">
             {task.checklist.map((item) => (
-              <li key={item.id} className="flex items-center gap-1.5 text-[11px]">
+              <li key={item.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
                 <span
                   className={cn(
                     "size-1.5 shrink-0 rounded-full",
@@ -84,6 +175,16 @@ function TaskInspector({ task }: { task: OrchestratorTask }) {
                   )}
                 />
                 <span className="text-foreground/60">{item.label}</span>
+                {item.evidenceRefs?.map((ref) => (
+                  <button
+                    key={ref}
+                    type="button"
+                    onClick={() => onSelectEvidence?.(ref)}
+                    className="font-mono text-[9px] text-sky-400/70 hover:text-sky-400 hover:underline"
+                  >
+                    ev:{ref.slice(-8)}
+                  </button>
+                ))}
               </li>
             ))}
           </ul>
@@ -194,12 +295,32 @@ function InspectorField({ label, value, mono }: { label: string; value: string; 
 // OrchestratorInspector
 // ---------------------------------------------------------------------------
 
+export type InspectorTab = "details" | "evidence";
+
 export interface OrchestratorInspectorProps {
   selectedEntity: SelectedEntity | null;
+  /** Evidence records available for viewing */
+  evidenceRecords?: ReadonlyArray<OrchestratorEvidenceRecord>;
   onClose: () => void;
 }
 
-export function OrchestratorInspector({ selectedEntity, onClose }: OrchestratorInspectorProps) {
+export function OrchestratorInspector({
+  selectedEntity,
+  evidenceRecords = [],
+  onClose,
+}: OrchestratorInspectorProps) {
+  const [activeTab, setActiveTab] = useState<InspectorTab>("details");
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
+
+  const selectedEvidence = selectedEvidenceId
+    ? (evidenceRecords.find((e) => e.evidenceId === selectedEvidenceId) ?? null)
+    : null;
+
+  const handleSelectEvidence = (evidenceRef: string) => {
+    setSelectedEvidenceId(evidenceRef);
+    setActiveTab("evidence");
+  };
+
   if (!selectedEntity) {
     return (
       <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-muted-foreground/50">
@@ -224,12 +345,72 @@ export function OrchestratorInspector({ selectedEntity, onClose }: OrchestratorI
         </button>
       </div>
 
+      {/* Tab bar */}
+      <div className="flex border-b border-border/20">
+        <button
+          type="button"
+          onClick={() => setActiveTab("details")}
+          className={cn(
+            "flex-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider transition-colors",
+            activeTab === "details"
+              ? "border-b border-sky-400 text-sky-400"
+              : "text-muted-foreground/50 hover:text-muted-foreground/70",
+          )}
+        >
+          Details
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("evidence")}
+          className={cn(
+            "flex-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider transition-colors",
+            activeTab === "evidence"
+              ? "border-b border-sky-400 text-sky-400"
+              : "text-muted-foreground/50 hover:text-muted-foreground/70",
+          )}
+        >
+          Evidence
+          {evidenceRecords.length > 0 && (
+            <span className="ml-1 font-mono text-muted-foreground/40">
+              {evidenceRecords.length}
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {selectedEntity.type === "task" ? (
-          <TaskInspector task={selectedEntity.data} />
+        {activeTab === "details" ? (
+          selectedEntity.type === "task" ? (
+            <TaskInspector task={selectedEntity.data} onSelectEvidence={handleSelectEvidence} />
+          ) : (
+            <WorkerInspector worker={selectedEntity.data} />
+          )
+        ) : selectedEvidence ? (
+          <EvidenceViewer evidence={selectedEvidence} />
+        ) : evidenceRecords.length > 0 ? (
+          <div className="space-y-1 p-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+              Evidence records
+            </p>
+            {evidenceRecords.map((record) => (
+              <button
+                key={record.evidenceId}
+                type="button"
+                onClick={() => setSelectedEvidenceId(record.evidenceId)}
+                className="flex w-full items-center gap-2 rounded border border-border/15 bg-background/20 px-2 py-1.5 text-left transition-colors hover:bg-accent/10"
+              >
+                <EvidenceTypeBadge type={record.type} />
+                <span className="truncate font-mono text-[10px] text-muted-foreground/50">
+                  {record.capturedAt}
+                </span>
+              </button>
+            ))}
+          </div>
         ) : (
-          <WorkerInspector worker={selectedEntity.data} />
+          <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground/40">
+            No evidence captured
+          </div>
         )}
       </div>
     </div>
