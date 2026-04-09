@@ -76,15 +76,57 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
     });
 
   const cancelRun: OrchestratorRuntimeShape["cancelRun"] = (runId, reason) =>
-    engine
-      .dispatch({
+    Effect.gen(function* () {
+      // Cancel the run itself
+      yield* engine.dispatch({
         type: "orchestrator.run.cancel",
         commandId: CommandId.makeUnsafe(crypto.randomUUID()),
         runId,
         reason,
         createdAt: now(),
-      })
-      .pipe(Effect.asVoid);
+      });
+
+      // Cancel all active tasks for this run
+      const readModel = yield* engine.getReadModel();
+      const terminalTaskStatuses = new Set(["cancelled", "failed", "accepted"]);
+      const activeTasks = (readModel.orchestratorTasks ?? []).filter(
+        (t) => t.runId === runId && !terminalTaskStatuses.has(t.status),
+      );
+      for (const task of activeTasks) {
+        yield* engine
+          .dispatch({
+            type: "orchestrator.task.cancel",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            taskId: task.taskId,
+            reason: `Run cancelled: ${reason}`,
+            createdAt: now(),
+          })
+          .pipe(Effect.catch(() => Effect.void));
+      }
+
+      // Terminate all active workers for this run
+      const activeWorkers = (readModel.orchestratorWorkers ?? []).filter(
+        (w) => w.runId === runId && w.status !== "terminated",
+      );
+      for (const worker of activeWorkers) {
+        yield* engine
+          .dispatch({
+            type: "orchestrator.worker.terminate",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            workerId: worker.workerId,
+            reason: `Run cancelled: ${reason}`,
+            createdAt: now(),
+          })
+          .pipe(Effect.catch(() => Effect.void));
+      }
+
+      // Record the cancellation decision
+      yield* recordDecision({
+        runId,
+        decisionType: "cancelled",
+        reason,
+      });
+    }).pipe(Effect.asVoid);
 
   // -----------------------------------------------------------------------
   // Task lifecycle
@@ -338,6 +380,60 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
       (readModel.orchestratorWorkers ?? []).filter((w) => w.runId === runId),
     );
 
+  const getEvidence: OrchestratorRuntimeShape["getEvidence"] = (_taskId) =>
+    // Evidence is stored in the DB, not the in-memory read model.
+    // For now, return an empty array -- callers should use the
+    // OrchestratorRunsRepository for DB-backed evidence queries.
+    Effect.succeed([]);
+
+  // -----------------------------------------------------------------------
+  // Recovery
+  // -----------------------------------------------------------------------
+
+  const resumeActiveRuns: OrchestratorRuntimeShape["resumeActiveRuns"] = () =>
+    Effect.gen(function* () {
+      const readModel = yield* engine.getReadModel();
+      const activeRuns = (readModel.orchestratorRuns ?? []).filter((r) => r.status === "active");
+
+      if (activeRuns.length === 0) {
+        yield* Effect.logInfo("resumeActiveRuns: no active runs found");
+        return;
+      }
+
+      yield* Effect.logInfo(`resumeActiveRuns: found ${activeRuns.length} active run(s)`);
+
+      for (const run of activeRuns) {
+        // Check worker health for this run
+        const workers = (readModel.orchestratorWorkers ?? []).filter(
+          (w) => w.runId === run.runId && w.status !== "terminated",
+        );
+        const tasks = (readModel.orchestratorTasks ?? []).filter((t) => t.runId === run.runId);
+        const terminalTaskStatuses = new Set(["cancelled", "failed", "accepted"]);
+        const pendingTasks = tasks.filter((t) => !terminalTaskStatuses.has(t.status));
+
+        yield* Effect.logInfo("resumeActiveRuns: run state on recovery", {
+          runId: run.runId,
+          activeWorkers: workers.length,
+          pendingTasks: pendingTasks.length,
+          totalTasks: tasks.length,
+        });
+
+        // Active steps without completion are logged for inspection.
+        // Completed steps are permanent (event-sourced) and need no recovery.
+        for (const worker of workers) {
+          if (worker.activeTaskId) {
+            const task = tasks.find((t) => t.taskId === worker.activeTaskId);
+            yield* Effect.logWarning("resumeActiveRuns: worker has incomplete task", {
+              runId: run.runId,
+              workerId: worker.workerId,
+              activeTaskId: worker.activeTaskId,
+              taskStatus: task?.status ?? "unknown",
+            });
+          }
+        }
+      }
+    });
+
   return {
     createRun,
     cancelRun,
@@ -356,6 +452,8 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
     getActiveRuns,
     getTaskTree,
     getWorkers,
+    getEvidence,
+    resumeActiveRuns,
   } satisfies OrchestratorRuntimeShape;
 });
 

@@ -149,6 +149,12 @@ export interface OrchestratorRuntimeShape {
   readonly getWorkers: (
     runId: OrchestratorRunId,
   ) => Effect.Effect<ReadonlyArray<OrchestratorWorker>>;
+  readonly getEvidence: (
+    taskId: OrchestratorTaskId,
+  ) => Effect.Effect<ReadonlyArray<OrchestratorEvidenceRecord>>;
+
+  // Recovery
+  readonly resumeActiveRuns: () => Effect.Effect<void>;
 }
 
 // --- Service tag ---
