@@ -362,7 +362,6 @@ function handleOrchestratorComplete(
       input.model,
       "--config",
       `model_reasoning_effort=${effort}`,
-      "-q",
       prompt,
     ];
 
