@@ -17,6 +17,10 @@ import { cn } from "~/lib/utils";
 import type { SelectedEntity } from "./controlRoomTypes";
 import { OrchestratorLeftRail } from "./OrchestratorLeftRail";
 import { OrchestratorInspector } from "./OrchestratorInspector";
+import {
+  OrchestratorBrowserWorkspace,
+  type BrowserWorkspaceProps,
+} from "./OrchestratorBrowserWorkspace";
 import { WorkerCanvas } from "./WorkerCanvas";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +31,8 @@ export interface OrchestratorControlRoomProps {
   run: OrchestratorRun | null;
   tasks: ReadonlyArray<OrchestratorTask>;
   workers: ReadonlyArray<OrchestratorWorker>;
+  /** Browser workspace state — omit or pass undefined when no session exists */
+  browserWorkspace?: Omit<BrowserWorkspaceProps, "isCollapsed" | "onToggleCollapse">;
   /** Slot for the existing transcript/messages view */
   children?: React.ReactNode;
 }
@@ -39,10 +45,12 @@ export function OrchestratorControlRoom({
   run,
   tasks,
   workers,
+  browserWorkspace,
   children,
 }: OrchestratorControlRoomProps) {
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
+  const [browserCollapsed, setBrowserCollapsed] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<
     OrchestratorTaskId | OrchestratorWorkerId | null
   >(null);
@@ -134,6 +142,13 @@ export function OrchestratorControlRoom({
             )}
           </button>
         </div>
+
+        {/* Browser workspace ribbon */}
+        <OrchestratorBrowserWorkspace
+          {...browserWorkspace}
+          isCollapsed={browserCollapsed}
+          onToggleCollapse={() => setBrowserCollapsed((p) => !p)}
+        />
 
         {/* Worker panels grid */}
         {workers.length > 0 && (
