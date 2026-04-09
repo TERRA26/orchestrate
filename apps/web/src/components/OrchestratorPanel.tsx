@@ -6,6 +6,7 @@ import { useOrchestratorEngine } from "./orchestrator/useOrchestratorEngine";
 import { OrchestratorHeader } from "./orchestrator/OrchestratorHeader";
 import { OrchestratorMessages } from "./orchestrator/OrchestratorMessages";
 import { OrchestratorComposer } from "./orchestrator/OrchestratorComposer";
+import { OrchestratorControlRoom } from "./orchestrator/OrchestratorControlRoom";
 import { ResizeEdgeHandle } from "./ResizeEdgeHandle";
 
 // ---------------------------------------------------------------------------
@@ -13,9 +14,9 @@ import { ResizeEdgeHandle } from "./ResizeEdgeHandle";
 // ---------------------------------------------------------------------------
 
 const ORCHESTRATOR_WIDTH_STORAGE_KEY = "orchestrator_panel_width";
-const ORCHESTRATOR_DEFAULT_WIDTH = 380;
+const ORCHESTRATOR_DEFAULT_WIDTH = 420;
 const ORCHESTRATOR_MIN_WIDTH = 280;
-const ORCHESTRATOR_MAX_WIDTH = 600;
+const ORCHESTRATOR_MAX_WIDTH = 900;
 
 // ---------------------------------------------------------------------------
 // Error boundary
@@ -114,30 +115,37 @@ function OrchestratorPanelInner() {
         onStartNewChat={engine.handleStartNewChat}
       />
 
-      <OrchestratorMessages
-        messages={engine.messages}
-        requirementsChecklist={engine.requirementsChecklist}
-        threadBrowserSession={engine.threadBrowserSession}
-        isThreadBrowserSessionVisible={engine.isThreadBrowserSessionVisible}
-        isBusy={engine.isBusy}
-        scrollRef={engine.scrollRef}
-      />
+      {/* Control Room wraps the existing messages+composer.
+          When no orchestration data exists (run=null, tasks=[], workers=[]),
+          the ControlRoom falls through and renders children directly. */}
+      <OrchestratorControlRoom run={null} tasks={[]} workers={[]}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <OrchestratorMessages
+            messages={engine.messages}
+            requirementsChecklist={engine.requirementsChecklist}
+            threadBrowserSession={engine.threadBrowserSession}
+            isThreadBrowserSessionVisible={engine.isThreadBrowserSessionVisible}
+            isBusy={engine.isBusy}
+            scrollRef={engine.scrollRef}
+          />
 
-      <OrchestratorComposer
-        input={engine.input}
-        canSend={engine.canSend}
-        isBusy={engine.isBusy}
-        selectedProvider={engine.selectedProvider}
-        selectedModel={engine.selectedModel}
-        selectedProviderModels={engine.selectedProviderModels}
-        modelOptionsByProvider={engine.modelOptionsByProvider}
-        composerModelOptions={engine.composerModelOptions}
-        composerProviderState={engine.composerProviderState}
-        onInputChange={engine.setInput}
-        onSend={engine.send}
-        onModelChange={engine.handleModelChange}
-        onPromptChangeFromTraits={engine.handlePromptChangeFromTraits}
-      />
+          <OrchestratorComposer
+            input={engine.input}
+            canSend={engine.canSend}
+            isBusy={engine.isBusy}
+            selectedProvider={engine.selectedProvider}
+            selectedModel={engine.selectedModel}
+            selectedProviderModels={engine.selectedProviderModels}
+            modelOptionsByProvider={engine.modelOptionsByProvider}
+            composerModelOptions={engine.composerModelOptions}
+            composerProviderState={engine.composerProviderState}
+            onInputChange={engine.setInput}
+            onSend={engine.send}
+            onModelChange={engine.handleModelChange}
+            onPromptChangeFromTraits={engine.handlePromptChangeFromTraits}
+          />
+        </div>
+      </OrchestratorControlRoom>
     </div>
   );
 }
