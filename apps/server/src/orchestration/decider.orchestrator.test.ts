@@ -79,10 +79,8 @@ async function decide(
   model: OrchestrationReadModel,
   command: OrchestrationCommand,
 ): Promise<ReadonlyArray<Omit<OrchestrationEvent, "sequence">>> {
-  const result = await Effect.runPromise(
-    decideOrchestrationCommand({ command, readModel: model }),
-  );
-  return Array.isArray(result) ? result : [result];
+  const result = await Effect.runPromise(decideOrchestrationCommand({ command, readModel: model }));
+  return (Array.isArray(result) ? result : [result]) as ReadonlyArray<Omit<OrchestrationEvent, "sequence">>;
 }
 
 /** Decide a single command, expecting a failure. */
@@ -168,10 +166,7 @@ describe("orchestrator decider — run lifecycle", () => {
     expect((event.payload as { runId: string }).runId).toBe(runId);
     expect((event.payload as { projectId: string }).projectId).toBe(projectId);
     expect((event.payload as { userRequest: string }).userRequest).toBe("Build a REST API");
-    expect((event.payload as { goals: string[] }).goals).toEqual([
-      "Create endpoints",
-      "Add tests",
-    ]);
+    expect((event.payload as unknown as { goals: string[] }).goals).toEqual(["Create endpoints", "Add tests"]);
   });
 
   it("rejects duplicate run creation", async () => {
@@ -196,9 +191,7 @@ describe("orchestrator decider — run lifecycle", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]!.type).toBe("orchestrator.run.cancelled");
-    expect((events[0]!.payload as { reason: string }).reason).toBe(
-      "User requested cancellation",
-    );
+    expect((events[0]!.payload as { reason: string }).reason).toBe("User requested cancellation");
   });
 
   it("completes an active run → produces orchestrator.run.completed", async () => {
@@ -277,10 +270,7 @@ describe("orchestrator decider — task lifecycle", () => {
   });
 
   it("assigns a task → produces orchestrator.task.assigned", async () => {
-    const model = await applyCommands(modelWithProject(), [
-      createRunCommand,
-      createTaskCommand,
-    ]);
+    const model = await applyCommands(modelWithProject(), [createRunCommand, createTaskCommand]);
 
     const events = await decide(model, {
       type: "orchestrator.task.assign",
@@ -440,10 +430,7 @@ describe("orchestrator decider — task lifecycle", () => {
 
 describe("orchestrator decider — worker lifecycle", () => {
   it("spawns a worker with modelBinding → produces orchestrator.worker.spawned with correct provider", async () => {
-    const model = await applyCommands(modelWithProject(), [
-      createRunCommand,
-      createTaskCommand,
-    ]);
+    const model = await applyCommands(modelWithProject(), [createRunCommand, createTaskCommand]);
 
     const modelBinding: OrchestratorWorkerModelBinding = {
       workerId,
