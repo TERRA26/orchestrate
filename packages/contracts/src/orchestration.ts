@@ -2040,6 +2040,19 @@ export const OrchestratorGetRunEventsInput = Schema.Struct({
 });
 export type OrchestratorGetRunEventsInput = typeof OrchestratorGetRunEventsInput.Type;
 
+export const OrchestratorSelectReviewModelInput = Schema.Struct({
+  runId: OrchestratorRunId,
+  taskId: OrchestratorTaskId,
+  implementationBinding: OrchestratorWorkerModelBinding,
+  reviewMode: Schema.Literals([
+    "same-model",
+    "same-provider-different-model",
+    "cross-provider",
+    "root-decides",
+  ]),
+});
+export type OrchestratorSelectReviewModelInput = typeof OrchestratorSelectReviewModelInput.Type;
+
 export const ProviderGetStatusesInput = Schema.Struct({});
 export type ProviderGetStatusesInput = typeof ProviderGetStatusesInput.Type;
 

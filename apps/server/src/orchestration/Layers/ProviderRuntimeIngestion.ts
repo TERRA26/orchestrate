@@ -527,7 +527,10 @@ function runtimeEventToActivities(
     }
 
     case "turn.completed": {
-      const totalCostUsd = event.payload.totalCostUsd;
+      const totalCostUsd =
+        event.payload && typeof event.payload === "object"
+          ? (event.payload as { totalCostUsd?: unknown }).totalCostUsd
+          : undefined;
       if (typeof totalCostUsd !== "number") {
         return [];
       }
@@ -1223,6 +1226,39 @@ const make = Effect.gen(function* () {
             turnId,
             updatedAt: now,
           });
+        }
+      }
+
+      // --- Orchestrator worker failure detection ---
+      // When a turn completes with a failure state for a thread managed by an
+      // orchestrator worker, terminate the worker so the orchestrator can react
+      // (reschedule, escalate, etc.).
+      if (event.type === "turn.completed" && runtimeTurnState(event) === "failed") {
+        const readModelForWorkerLookup = yield* orchestrationEngine.getReadModel();
+        const managedWorker = (readModelForWorkerLookup.orchestratorWorkers ?? []).find(
+          (w) => w.threadId === thread.id && w.status === "running",
+        );
+        if (managedWorker) {
+          yield* orchestrationEngine
+            .dispatch({
+              type: "orchestrator.worker.terminate",
+              commandId: providerCommandId(event, "worker-turn-failed"),
+              workerId: managedWorker.workerId,
+              reason: `Turn failed: ${runtimeTurnErrorMessage(event) ?? "unknown error"}`,
+              createdAt: now,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "provider runtime ingestion: failed to terminate worker after turn failure",
+                  {
+                    workerId: managedWorker.workerId,
+                    threadId: thread.id,
+                    cause: Cause.pretty(cause),
+                  },
+                ),
+              ),
+            );
         }
       }
 

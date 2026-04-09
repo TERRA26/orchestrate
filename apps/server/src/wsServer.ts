@@ -1395,6 +1395,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return Array.from(allEvents).filter((e) => e.aggregateId === body.runId);
       }
 
+      case WS_METHODS.orchestratorSelectReviewModel: {
+        const body = stripRequestTag(request.body);
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        return yield* orchestratorRuntime.selectReviewModel({
+          runId: OrchestratorRunId.makeUnsafe(body.runId),
+          taskId: OrchestratorTaskId.makeUnsafe(body.taskId),
+          implementationBinding: body.implementationBinding,
+          reviewMode: body.reviewMode,
+        });
+      }
+
       case WS_METHODS.providerGetStatuses: {
         const providerHealth = yield* ProviderHealth;
         return yield* providerHealth.getStatuses;

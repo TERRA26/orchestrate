@@ -6,7 +6,19 @@
  *
  * @module CliConfig
  */
-import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
+import {
+  Config,
+  Data,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schedule,
+  Schema,
+  ServiceMap,
+} from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
 import {
@@ -27,6 +39,7 @@ import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { ServerSettingsLive } from "./serverSettings";
 import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
+import { OrchestratorRuntimeService } from "./orchestration/Services/OrchestratorRuntime";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
@@ -253,6 +266,54 @@ const makeServerProgram = (input: CliInput) =>
 
     yield* start;
     yield* Effect.forkChild(recordStartupHeartbeat);
+
+    // Resume any in-progress orchestrator runs from before the restart.
+    const orchestratorRuntime = yield* OrchestratorRuntimeService;
+    yield* Effect.forkChild(
+      orchestratorRuntime.resumeActiveRuns().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("resumeActiveRuns failed on startup", {
+            cause: String(cause),
+          }),
+        ),
+      ),
+    );
+
+    // Periodic stuck-worker health check (every 60s, 5-minute timeout).
+    const STUCK_WORKER_CHECK_INTERVAL = Duration.seconds(60);
+    const STUCK_WORKER_TIMEOUT_MS = 300_000;
+    yield* Effect.forkChild(
+      Effect.repeat(
+        Effect.gen(function* () {
+          const stuckWorkerIds =
+            yield* orchestratorRuntime.detectStuckWorkers(STUCK_WORKER_TIMEOUT_MS);
+          if (stuckWorkerIds.length === 0) return;
+          yield* Effect.logWarning(
+            `detectStuckWorkers: found ${stuckWorkerIds.length} stuck worker(s)`,
+            { workerIds: stuckWorkerIds },
+          );
+          for (const workerId of stuckWorkerIds) {
+            yield* orchestratorRuntime
+              .terminateWorker(workerId, "Terminated by stuck-worker health check")
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("failed to terminate stuck worker", {
+                    workerId,
+                    cause: String(cause),
+                  }),
+                ),
+              );
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("detectStuckWorkers health check iteration failed", {
+              cause: String(cause),
+            }),
+          ),
+        ),
+        Schedule.spaced(STUCK_WORKER_CHECK_INTERVAL),
+      ),
+    );
 
     const localUrl = `http://localhost:${config.port}`;
     const bindUrl =

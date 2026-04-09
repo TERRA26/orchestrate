@@ -19,6 +19,7 @@ import {
   OrchestratorGetWorkersInput,
   OrchestratorGetDecisionsInput,
   OrchestratorGetRunEventsInput,
+  OrchestratorSelectReviewModelInput,
   ProviderGetStatusesInput,
   ProviderKind,
 } from "./orchestration";
@@ -131,6 +132,7 @@ export const WS_METHODS = {
   orchestratorGetEvidence: "orchestrator.getEvidence",
   orchestratorGetDecisions: "orchestrator.getDecisions",
   orchestratorGetRunEvents: "orchestrator.getRunEvents",
+  orchestratorSelectReviewModel: "orchestrator.selectReviewModel",
   providerGetStatuses: "provider.getStatuses",
 } as const;
 
@@ -249,6 +251,10 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.orchestratorGetEvidence, OrchestratorGetEvidenceInput),
   tagRequestBody(WS_METHODS.orchestratorGetDecisions, OrchestratorGetDecisionsInput),
   tagRequestBody(WS_METHODS.orchestratorGetRunEvents, OrchestratorGetRunEventsInput),
+  tagRequestBody(
+    WS_METHODS.orchestratorSelectReviewModel,
+    OrchestratorSelectReviewModelInput,
+  ),
   tagRequestBody(WS_METHODS.providerGetStatuses, ProviderGetStatusesInput),
 ]);
 
