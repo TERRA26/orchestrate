@@ -1,8 +1,9 @@
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import type { OrchestratorWorker, OrchestratorWorkerId } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 import { WorkerPanel, WorkerChip } from "./WorkerPanel";
+import { usePanelStateStore } from "./panelStateStore";
 
 // ---------------------------------------------------------------------------
 // Grid class helper
@@ -25,16 +26,27 @@ export interface WorkerCanvasProps {
 }
 
 export function WorkerCanvas({ workers }: WorkerCanvasProps) {
-  const [focusedWorkerId, setFocusedWorkerId] = useState<OrchestratorWorkerId | null>(null);
-  const [promotedWorkerId, setPromotedWorkerId] = useState<OrchestratorWorkerId | null>(null);
+  const focusedPanelId = usePanelStateStore((s) => s.focusedPanelId);
+  const promotedPanelId = usePanelStateStore((s) => s.promotedPanelId);
+  const focus = usePanelStateStore((s) => s.focus);
+  const promote = usePanelStateStore((s) => s.promote);
 
-  const handleFocus = useCallback((workerId: OrchestratorWorkerId) => {
-    setFocusedWorkerId(workerId);
-  }, []);
+  const focusedWorkerId = focusedPanelId as OrchestratorWorkerId | null;
+  const promotedWorkerId = promotedPanelId as OrchestratorWorkerId | null;
 
-  const handlePromote = useCallback((workerId: OrchestratorWorkerId) => {
-    setPromotedWorkerId((prev) => (prev === workerId ? null : workerId));
-  }, []);
+  const handleFocus = useCallback(
+    (workerId: OrchestratorWorkerId) => {
+      focus(workerId);
+    },
+    [focus],
+  );
+
+  const handlePromote = useCallback(
+    (workerId: OrchestratorWorkerId) => {
+      promote(workerId);
+    },
+    [promote],
+  );
 
   if (workers.length === 0) {
     return (

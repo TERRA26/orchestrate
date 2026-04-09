@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
@@ -22,6 +22,7 @@ import {
   type BrowserWorkspaceProps,
 } from "./OrchestratorBrowserWorkspace";
 import { WorkerCanvas } from "./WorkerCanvas";
+import { usePanelStateStore } from "./panelStateStore";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -48,12 +49,14 @@ export function OrchestratorControlRoom({
   browserWorkspace,
   children,
 }: OrchestratorControlRoomProps) {
-  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
-  const [browserCollapsed, setBrowserCollapsed] = useState(false);
-  const [selectedEntityId, setSelectedEntityId] = useState<
-    OrchestratorTaskId | OrchestratorWorkerId | null
-  >(null);
+  const panelState = usePanelStateStore();
+
+  // Derive a selected entity ID from the panel-state focused panel.
+  // The focused panel may be a task or worker ID.
+  const selectedEntityId = panelState.focusedPanelId as
+    | OrchestratorTaskId
+    | OrchestratorWorkerId
+    | null;
 
   // Resolve the currently selected entity from its ID
   const selectedEntity = useMemo((): SelectedEntity | null => {
@@ -65,20 +68,32 @@ export function OrchestratorControlRoom({
     return null;
   }, [selectedEntityId, tasks, workers]);
 
-  const handleSelectTask = useCallback((taskId: OrchestratorTaskId) => {
-    setSelectedEntityId(taskId);
-    setInspectorCollapsed(false);
-  }, []);
+  const handleSelectTask = useCallback(
+    (taskId: OrchestratorTaskId) => {
+      panelState.focus(taskId);
+      if (panelState.inspectorCollapsed) {
+        panelState.toggleInspector();
+      }
+    },
+    [panelState],
+  );
 
-  const handleSelectWorker = useCallback((workerId: OrchestratorWorkerId) => {
-    setSelectedEntityId(workerId);
-    setInspectorCollapsed(false);
-  }, []);
+  const handleSelectWorker = useCallback(
+    (workerId: OrchestratorWorkerId) => {
+      panelState.focus(workerId);
+      if (panelState.inspectorCollapsed) {
+        panelState.toggleInspector();
+      }
+    },
+    [panelState],
+  );
 
   const handleCloseInspector = useCallback(() => {
-    setSelectedEntityId(null);
-    setInspectorCollapsed(true);
-  }, []);
+    panelState.focus(null as unknown as string);
+    if (!panelState.inspectorCollapsed) {
+      panelState.toggleInspector();
+    }
+  }, [panelState]);
 
   // Determine whether we have orchestration data to show
   const hasOrchestrationData = run !== null || tasks.length > 0 || workers.length > 0;
@@ -91,7 +106,7 @@ export function OrchestratorControlRoom({
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* ---- Left Rail ---- */}
-      {!leftRailCollapsed && (
+      {!panelState.leftRailCollapsed && (
         <div className="flex w-60 shrink-0 flex-col border-r border-border/20 bg-background/40">
           <OrchestratorLeftRail
             run={run}
@@ -110,11 +125,11 @@ export function OrchestratorControlRoom({
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border/20 px-1.5">
           <button
             type="button"
-            onClick={() => setLeftRailCollapsed((p) => !p)}
+            onClick={panelState.toggleLeftRail}
             className="rounded p-1 text-muted-foreground/50 transition-colors hover:bg-accent/15 hover:text-muted-foreground"
-            title={leftRailCollapsed ? "Show left rail" : "Hide left rail"}
+            title={panelState.leftRailCollapsed ? "Show left rail" : "Hide left rail"}
           >
-            {leftRailCollapsed ? (
+            {panelState.leftRailCollapsed ? (
               <PanelLeftOpenIcon className="size-3.5" />
             ) : (
               <PanelLeftCloseIcon className="size-3.5" />
@@ -126,16 +141,16 @@ export function OrchestratorControlRoom({
           <button
             type="button"
             onClick={() => {
-              if (inspectorCollapsed) {
-                setInspectorCollapsed(false);
+              if (panelState.inspectorCollapsed) {
+                panelState.toggleInspector();
               } else {
                 handleCloseInspector();
               }
             }}
             className="rounded p-1 text-muted-foreground/50 transition-colors hover:bg-accent/15 hover:text-muted-foreground"
-            title={inspectorCollapsed ? "Show inspector" : "Hide inspector"}
+            title={panelState.inspectorCollapsed ? "Show inspector" : "Hide inspector"}
           >
-            {inspectorCollapsed ? (
+            {panelState.inspectorCollapsed ? (
               <PanelRightOpenIcon className="size-3.5" />
             ) : (
               <PanelRightCloseIcon className="size-3.5" />
@@ -146,8 +161,8 @@ export function OrchestratorControlRoom({
         {/* Browser workspace ribbon */}
         <OrchestratorBrowserWorkspace
           {...browserWorkspace}
-          isCollapsed={browserCollapsed}
-          onToggleCollapse={() => setBrowserCollapsed((p) => !p)}
+          isCollapsed={panelState.browserCollapsed}
+          onToggleCollapse={panelState.toggleBrowser}
         />
 
         {/* Worker panels grid */}
@@ -167,7 +182,7 @@ export function OrchestratorControlRoom({
       </div>
 
       {/* ---- Right Inspector ---- */}
-      {!inspectorCollapsed && (
+      {!panelState.inspectorCollapsed && (
         <div className="flex w-72 shrink-0 flex-col border-l border-border/20 bg-background/40">
           <OrchestratorInspector selectedEntity={selectedEntity} onClose={handleCloseInspector} />
         </div>
