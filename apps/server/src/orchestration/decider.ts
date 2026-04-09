@@ -12,6 +12,11 @@ import { Effect } from "effect";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import { hasNativeHandoffMessages } from "./handoff.ts";
 import {
+  requireOrchestratorRunAbsent,
+  requireOrchestratorRunActive,
+  requireOrchestratorTask,
+  requireOrchestratorTaskStatus,
+  requireOrchestratorWorker,
   requireProject,
   requireProjectAbsent,
   requireThread,
@@ -958,6 +963,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     // --- Orchestrator commands ---
 
     case "orchestrator.run.create": {
+      yield* requireOrchestratorRunAbsent({
+        readModel,
+        command,
+        runId: command.runId,
+      });
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -979,6 +994,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.run.cancel": {
+      yield* requireOrchestratorRunActive({
+        readModel,
+        command,
+        runId: command.runId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -996,6 +1016,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.create": {
+      yield* requireOrchestratorRunActive({
+        readModel,
+        command,
+        runId: command.runId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1025,6 +1050,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.assign": {
+      yield* requireOrchestratorTaskStatus({
+        readModel,
+        command,
+        taskId: command.taskId,
+        expectedStatus: ["pending", "needs-rework"],
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1043,6 +1074,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.submit": {
+      const submittingTask = yield* requireOrchestratorTaskStatus({
+        readModel,
+        command,
+        taskId: command.taskId,
+        expectedStatus: ["assigned", "running"],
+      });
+      if (
+        submittingTask.assignedWorkerId !== undefined &&
+        submittingTask.assignedWorkerId !== (command.workerId as unknown as string)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Worker '${command.workerId}' cannot submit task '${command.taskId}' — it is assigned to worker '${submittingTask.assignedWorkerId}'.`,
+        });
+      }
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1061,6 +1107,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.accept": {
+      yield* requireOrchestratorTaskStatus({
+        readModel,
+        command,
+        taskId: command.taskId,
+        expectedStatus: "submitted",
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1078,6 +1130,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.reject": {
+      yield* requireOrchestratorTaskStatus({
+        readModel,
+        command,
+        taskId: command.taskId,
+        expectedStatus: "submitted",
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1095,6 +1153,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.block": {
+      yield* requireOrchestratorTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1112,6 +1175,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.cancel": {
+      yield* requireOrchestratorTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1129,6 +1197,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.task.fail": {
+      yield* requireOrchestratorTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1146,6 +1219,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.worker.spawn": {
+      yield* requireOrchestratorRunActive({
+        readModel,
+        command,
+        runId: command.runId,
+      });
+      yield* requireOrchestratorTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1167,6 +1250,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.worker.terminate": {
+      yield* requireOrchestratorWorker({
+        readModel,
+        command,
+        workerId: command.workerId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1184,6 +1272,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.evidence.capture": {
+      yield* requireOrchestratorTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1206,6 +1299,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.decision.record": {
+      yield* requireOrchestratorRunActive({
+        readModel,
+        command,
+        runId: command.runId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
@@ -1227,6 +1325,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.checklist.update": {
+      yield* requireOrchestratorTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",

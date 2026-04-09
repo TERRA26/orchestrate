@@ -3,6 +3,12 @@ import type {
   OrchestrationProject,
   OrchestrationReadModel,
   OrchestrationThread,
+  OrchestratorRun,
+  OrchestratorRunId,
+  OrchestratorTask,
+  OrchestratorTaskId,
+  OrchestratorWorker,
+  OrchestratorWorkerId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -154,6 +160,140 @@ export function requireNonNegativeInteger(input: {
     invariantError(
       input.commandType,
       `${input.field} must be an integer greater than or equal to 0.`,
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator invariant helpers
+// ---------------------------------------------------------------------------
+
+export function findOrchestratorRunById(
+  readModel: OrchestrationReadModel,
+  runId: OrchestratorRunId,
+): OrchestratorRun | undefined {
+  return (readModel.orchestratorRuns ?? []).find((run) => run.runId === runId);
+}
+
+export function findOrchestratorTaskById(
+  readModel: OrchestrationReadModel,
+  taskId: OrchestratorTaskId,
+): OrchestratorTask | undefined {
+  return (readModel.orchestratorTasks ?? []).find((task) => task.taskId === taskId);
+}
+
+export function findOrchestratorWorkerById(
+  readModel: OrchestrationReadModel,
+  workerId: OrchestratorWorkerId,
+): OrchestratorWorker | undefined {
+  return (readModel.orchestratorWorkers ?? []).find((worker) => worker.workerId === workerId);
+}
+
+export function requireOrchestratorRun(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly runId: OrchestratorRunId;
+}): Effect.Effect<OrchestratorRun, OrchestrationCommandInvariantError> {
+  const run = findOrchestratorRunById(input.readModel, input.runId);
+  if (run) {
+    return Effect.succeed(run);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Orchestrator run '${input.runId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireOrchestratorRunAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly runId: OrchestratorRunId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findOrchestratorRunById(input.readModel, input.runId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Orchestrator run '${input.runId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+export function requireOrchestratorRunActive(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly runId: OrchestratorRunId;
+}): Effect.Effect<OrchestratorRun, OrchestrationCommandInvariantError> {
+  return requireOrchestratorRun(input).pipe(
+    Effect.flatMap((run) =>
+      run.status === "active"
+        ? Effect.succeed(run)
+        : Effect.fail(
+            invariantError(
+              input.command.type,
+              `Orchestrator run '${input.runId}' is not active (status: '${run.status}').`,
+            ),
+          ),
+    ),
+  );
+}
+
+export function requireOrchestratorTask(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly taskId: OrchestratorTaskId;
+}): Effect.Effect<OrchestratorTask, OrchestrationCommandInvariantError> {
+  const task = findOrchestratorTaskById(input.readModel, input.taskId);
+  if (task) {
+    return Effect.succeed(task);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Orchestrator task '${input.taskId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireOrchestratorTaskStatus(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly taskId: OrchestratorTaskId;
+  readonly expectedStatus: OrchestratorTask["status"] | ReadonlyArray<OrchestratorTask["status"]>;
+}): Effect.Effect<OrchestratorTask, OrchestrationCommandInvariantError> {
+  const expected = Array.isArray(input.expectedStatus)
+    ? input.expectedStatus
+    : [input.expectedStatus];
+  return requireOrchestratorTask(input).pipe(
+    Effect.flatMap((task) =>
+      expected.includes(task.status)
+        ? Effect.succeed(task)
+        : Effect.fail(
+            invariantError(
+              input.command.type,
+              `Orchestrator task '${input.taskId}' must be in status [${expected.join(", ")}] but is '${task.status}'.`,
+            ),
+          ),
+    ),
+  );
+}
+
+export function requireOrchestratorWorker(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workerId: OrchestratorWorkerId;
+}): Effect.Effect<OrchestratorWorker, OrchestrationCommandInvariantError> {
+  const worker = findOrchestratorWorkerById(input.readModel, input.workerId);
+  if (worker) {
+    return Effect.succeed(worker);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Orchestrator worker '${input.workerId}' does not exist for command '${input.command.type}'.`,
     ),
   );
 }
