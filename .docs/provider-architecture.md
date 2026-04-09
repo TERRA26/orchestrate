@@ -13,7 +13,32 @@ Methods mirror the `NativeApi` interface defined in `@t3tools/contracts`:
 - `providers.respondToRequest`, `providers.stopSession`
 - `shell.openInEditor`, `server.getConfig`
 
-Codex is the only implemented provider. `claudeCode` is reserved in contracts/UI.
+## Supported providers
+
+Two providers are supported. Provider selection is per-thread via `ModelSelection.provider`.
+
+### Codex (`codex`)
+
+The default provider. The server starts one `codex app-server` process per session (JSON-RPC over stdio) via `codexAppServerManager.ts`. Structured events from the process are streamed to the browser through WebSocket push messages.
+
+### Claude Agent (`claudeAgent`)
+
+A first-class provider adapter backed by `@anthropic-ai/claude-agent-sdk`. Implemented in `ClaudeAdapter.ts`. The adapter wraps SDK query sessions behind the generic provider adapter contract and emits canonical `ProviderRuntimeEvent` shapes — the same ingestion path used by Codex. No separate WebSocket channels or bypass paths.
+
+### Provider selection
+
+`ModelSelection` is a discriminated union:
+
+```ts
+CodexModelSelection  { provider: "codex";       model: string }
+ClaudeModelSelection { provider: "claudeAgent"; model: string }
+```
+
+Provider routing happens in `ProviderService`, which dispatches to the appropriate adapter based on `ModelSelection.provider`. The default provider when none is specified is `codex`.
+
+### Target: per-task model policy (planned)
+
+The planned multi-model orchestrator selects providers and models per task, not per run, using an explicit policy with capability profiles, fallback classes, and telemetry. See the contract spec at `docs/superpowers/specs/2026-04-07-orchestrator-contract-design.md` for the full `ModelPolicy`, `WorkerModelBinding`, `CapabilityProfile`, and `FallbackPolicy` schemas.
 
 ## Client transport
 
