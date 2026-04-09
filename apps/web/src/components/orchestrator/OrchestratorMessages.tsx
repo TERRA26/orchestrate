@@ -9,6 +9,7 @@ import {
 } from "~/orchestratorTypes";
 import type { EmbeddedBrowserSession } from "~/embeddedBrowserStateStore";
 import type { OrchestratorMessage } from "~/orchestratorStateStore";
+import { DecisionCard, VerdictBanner } from "./OrchestratorBlockRenderer";
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -118,6 +119,63 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
 }
 
 // ---------------------------------------------------------------------------
+// Transcript entry (control room mode)
+// ---------------------------------------------------------------------------
+
+function TranscriptEntry({ message }: { message: OrchestratorMessage }) {
+  switch (message.role) {
+    case "user":
+      return (
+        <div className="flex justify-end px-3 py-1.5">
+          <div className="max-w-[80%] rounded-lg border border-border/20 bg-secondary/50 px-3 py-1.5 text-[12px] text-foreground/90">
+            {message.content}
+          </div>
+        </div>
+      );
+
+    case "orchestrator":
+      return (
+        <div className="px-3 py-1">
+          <DecisionCard
+            decision={{
+              type: "delegated",
+              reason: message.content,
+              createdAt: message.timestamp,
+            }}
+          />
+        </div>
+      );
+
+    case "thinking":
+      return (
+        <div className="flex items-center gap-2 px-3 py-0.5">
+          <div className="size-1.5 shrink-0 animate-pulse rounded-full bg-sky-400/40" />
+          <span className="truncate text-[10px] italic text-muted-foreground/40">
+            {message.content}
+          </span>
+        </div>
+      );
+
+    case "agent-result":
+      return (
+        <div className="px-3 py-1">
+          <VerdictBanner
+            accepted={
+              message.content.toLowerCase().includes("accepted") ||
+              message.content.toLowerCase().includes("passed")
+            }
+            summary={message.content}
+            evidenceCount={0}
+          />
+        </div>
+      );
+
+    default:
+      return <div className="px-3 py-1 text-[11px] text-foreground/60">{message.content}</div>;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -128,6 +186,8 @@ export interface OrchestratorMessagesProps {
   isThreadBrowserSessionVisible: boolean;
   isBusy: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  /** When true, renders the decision-aware transcript instead of the default bubbles. */
+  controlRoomMode?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +201,7 @@ export function OrchestratorMessages({
   isThreadBrowserSessionVisible,
   isBusy,
   scrollRef,
+  controlRoomMode = false,
 }: OrchestratorMessagesProps) {
   const hasContent = messages.length > 0 || requirementsChecklist.length > 0;
 
@@ -152,6 +213,27 @@ export function OrchestratorMessages({
     return -1;
   })();
 
+  // Control room mode: dense transcript with decision cards
+  if (controlRoomMode) {
+    return (
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain py-2"
+        >
+          {hasContent ? (
+            messages.map((message) => <TranscriptEntry key={message.id} message={message} />)
+          ) : (
+            <div className="flex min-h-[20vh] items-center justify-center">
+              <p className="text-[11px] text-muted-foreground/40">No transcript entries yet</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Default mode: rich message bubbles
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
