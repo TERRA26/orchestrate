@@ -10,6 +10,13 @@ import {
   OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationReplayEventsInput,
+  OrchestratorCancelRunInput,
+  OrchestratorCreateRunInput,
+  OrchestratorGetActiveRunsInput,
+  OrchestratorGetEvidenceInput,
+  OrchestratorGetRunInput,
+  OrchestratorGetTaskTreeInput,
+  OrchestratorGetWorkersInput,
   ProviderKind,
 } from "./orchestration";
 import {
@@ -112,6 +119,13 @@ export const WS_METHODS = {
 
   // Orchestrator
   orchestratorComplete: "orchestrator.complete",
+  orchestratorCreateRun: "orchestrator.createRun",
+  orchestratorCancelRun: "orchestrator.cancelRun",
+  orchestratorGetRun: "orchestrator.getRun",
+  orchestratorGetActiveRuns: "orchestrator.getActiveRuns",
+  orchestratorGetTaskTree: "orchestrator.getTaskTree",
+  orchestratorGetWorkers: "orchestrator.getWorkers",
+  orchestratorGetEvidence: "orchestrator.getEvidence",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -220,6 +234,13 @@ const WebSocketRequestBody = Schema.Union([
 
   // Orchestrator
   tagRequestBody(WS_METHODS.orchestratorComplete, OrchestratorCompleteInput),
+  tagRequestBody(WS_METHODS.orchestratorCreateRun, OrchestratorCreateRunInput),
+  tagRequestBody(WS_METHODS.orchestratorCancelRun, OrchestratorCancelRunInput),
+  tagRequestBody(WS_METHODS.orchestratorGetRun, OrchestratorGetRunInput),
+  tagRequestBody(WS_METHODS.orchestratorGetActiveRuns, OrchestratorGetActiveRunsInput),
+  tagRequestBody(WS_METHODS.orchestratorGetTaskTree, OrchestratorGetTaskTreeInput),
+  tagRequestBody(WS_METHODS.orchestratorGetWorkers, OrchestratorGetWorkersInput),
+  tagRequestBody(WS_METHODS.orchestratorGetEvidence, OrchestratorGetEvidenceInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

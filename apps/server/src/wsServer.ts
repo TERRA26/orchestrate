@@ -29,6 +29,8 @@ import {
   type WsPushEnvelopeBase,
   type OrchestratorCompleteInput,
   type OrchestratorCompleteResult,
+  OrchestratorRunId,
+  OrchestratorTaskId,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -56,6 +58,7 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
+import { OrchestratorRuntimeService } from "./orchestration/Services/OrchestratorRuntime";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { ProviderDiscoveryService } from "./provider/Services/ProviderDiscoveryService";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
@@ -229,7 +232,8 @@ export type ServerRuntimeServices =
   | Open
   | AnalyticsService
   | WorkspaceEntries
-  | ServerSettingsService;
+  | ServerSettingsService
+  | OrchestratorRuntimeService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -1215,6 +1219,54 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         // This is used by OrchestratorPanel to generate plans, instructions, etc.
         const body = stripRequestTag(request.body);
         return yield* handleOrchestratorComplete(body);
+      }
+
+      case WS_METHODS.orchestratorCreateRun: {
+        const body = stripRequestTag(request.body);
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        return yield* orchestratorRuntime.createRun({
+          userRequest: body.userRequest,
+          goals: [...body.goals],
+          ...(body.constraints ? { constraints: [...body.constraints] } : {}),
+          spawnBudget: body.spawnBudget,
+          projectId: body.projectId,
+        });
+      }
+
+      case WS_METHODS.orchestratorCancelRun: {
+        const body = stripRequestTag(request.body);
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        yield* orchestratorRuntime.cancelRun(OrchestratorRunId.makeUnsafe(body.runId), body.reason);
+        return { ok: true };
+      }
+
+      case WS_METHODS.orchestratorGetRun: {
+        const body = stripRequestTag(request.body);
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        return yield* orchestratorRuntime.getRun(OrchestratorRunId.makeUnsafe(body.runId));
+      }
+
+      case WS_METHODS.orchestratorGetActiveRuns: {
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        return yield* orchestratorRuntime.getActiveRuns();
+      }
+
+      case WS_METHODS.orchestratorGetTaskTree: {
+        const body = stripRequestTag(request.body);
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        return yield* orchestratorRuntime.getTaskTree(OrchestratorRunId.makeUnsafe(body.runId));
+      }
+
+      case WS_METHODS.orchestratorGetWorkers: {
+        const body = stripRequestTag(request.body);
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        return yield* orchestratorRuntime.getWorkers(OrchestratorRunId.makeUnsafe(body.runId));
+      }
+
+      case WS_METHODS.orchestratorGetEvidence: {
+        const body = stripRequestTag(request.body);
+        const orchestratorRuntime = yield* OrchestratorRuntimeService;
+        return yield* orchestratorRuntime.getEvidence(OrchestratorTaskId.makeUnsafe(body.taskId));
       }
 
       default: {

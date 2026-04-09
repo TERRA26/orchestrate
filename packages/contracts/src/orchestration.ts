@@ -1963,6 +1963,48 @@ export const OrchestratorChecklistUpdatedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+// ---------------------------------------------------------------------------
+// Orchestrator WS Input/Output Schemas
+// ---------------------------------------------------------------------------
+
+export const OrchestratorCreateRunInput = Schema.Struct({
+  userRequest: Schema.String,
+  goals: Schema.Array(Schema.String),
+  constraints: Schema.optional(Schema.Array(Schema.String)),
+  spawnBudget: SpawnBudget,
+  projectId: ProjectId,
+});
+export type OrchestratorCreateRunInput = typeof OrchestratorCreateRunInput.Type;
+
+export const OrchestratorCancelRunInput = Schema.Struct({
+  runId: OrchestratorRunId,
+  reason: Schema.String,
+});
+export type OrchestratorCancelRunInput = typeof OrchestratorCancelRunInput.Type;
+
+export const OrchestratorGetRunInput = Schema.Struct({
+  runId: OrchestratorRunId,
+});
+export type OrchestratorGetRunInput = typeof OrchestratorGetRunInput.Type;
+
+export const OrchestratorGetActiveRunsInput = Schema.Struct({});
+export type OrchestratorGetActiveRunsInput = typeof OrchestratorGetActiveRunsInput.Type;
+
+export const OrchestratorGetTaskTreeInput = Schema.Struct({
+  runId: OrchestratorRunId,
+});
+export type OrchestratorGetTaskTreeInput = typeof OrchestratorGetTaskTreeInput.Type;
+
+export const OrchestratorGetWorkersInput = Schema.Struct({
+  runId: OrchestratorRunId,
+});
+export type OrchestratorGetWorkersInput = typeof OrchestratorGetWorkersInput.Type;
+
+export const OrchestratorGetEvidenceInput = Schema.Struct({
+  taskId: OrchestratorTaskId,
+});
+export type OrchestratorGetEvidenceInput = typeof OrchestratorGetEvidenceInput.Type;
+
 export const OrchestrationRpcSchemas = {
   getSnapshot: {
     input: OrchestrationGetSnapshotInput,

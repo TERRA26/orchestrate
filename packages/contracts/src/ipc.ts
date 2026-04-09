@@ -64,6 +64,18 @@ import type {
 } from "./browser";
 import type { OrchestratorCompleteInput, OrchestratorCompleteResult } from "./ws";
 import type {
+  OrchestratorRun,
+  OrchestratorTask,
+  OrchestratorWorker,
+  OrchestratorEvidenceRecord,
+  OrchestratorCreateRunInput,
+  OrchestratorCancelRunInput,
+  OrchestratorGetRunInput,
+  OrchestratorGetTaskTreeInput,
+  OrchestratorGetWorkersInput,
+  OrchestratorGetEvidenceInput,
+} from "./orchestration";
+import type {
   ProviderComposerCapabilities,
   ProviderGetComposerCapabilitiesInput,
   ProviderListCommandsInput,
@@ -323,5 +335,16 @@ export interface NativeApi {
     openSession: (input: BrowserOpenSessionInput) => Promise<BrowserOpenSessionResult>;
     act: (input: BrowserActInput) => Promise<BrowserActResult>;
     closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
+  };
+  orchestrator: {
+    createRun: (input: OrchestratorCreateRunInput) => Promise<OrchestratorRun>;
+    cancelRun: (input: OrchestratorCancelRunInput) => Promise<{ ok: boolean }>;
+    getRun: (input: OrchestratorGetRunInput) => Promise<OrchestratorRun | null>;
+    getActiveRuns: () => Promise<readonly OrchestratorRun[]>;
+    getTaskTree: (input: OrchestratorGetTaskTreeInput) => Promise<readonly OrchestratorTask[]>;
+    getWorkers: (input: OrchestratorGetWorkersInput) => Promise<readonly OrchestratorWorker[]>;
+    getEvidence: (
+      input: OrchestratorGetEvidenceInput,
+    ) => Promise<readonly OrchestratorEvidenceRecord[]>;
   };
 }

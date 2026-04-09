@@ -462,6 +462,15 @@ export function createWsNativeApi(): NativeApi {
       act: (input) => transport.request(WS_METHODS.browserAct, input, { timeoutMs: 90_000 }),
       closeSession: (input) => transport.request(WS_METHODS.browserCloseSession, input),
     },
+    orchestrator: {
+      createRun: (input) => transport.request(WS_METHODS.orchestratorCreateRun, input),
+      cancelRun: (input) => transport.request(WS_METHODS.orchestratorCancelRun, input),
+      getRun: (input) => transport.request(WS_METHODS.orchestratorGetRun, input),
+      getActiveRuns: () => transport.request(WS_METHODS.orchestratorGetActiveRuns),
+      getTaskTree: (input) => transport.request(WS_METHODS.orchestratorGetTaskTree, input),
+      getWorkers: (input) => transport.request(WS_METHODS.orchestratorGetWorkers, input),
+      getEvidence: (input) => transport.request(WS_METHODS.orchestratorGetEvidence, input),
+    },
   };
 
   instance = { api, transport };
