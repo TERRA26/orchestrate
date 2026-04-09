@@ -16,11 +16,13 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "node scripts/cli.ts build",
+    "build": "bun scripts/cli.ts build",
     "start": "node dist/index.mjs",
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:orchestrator-smoke": "vitest run src/wsServer.test.ts -t \"supports a server-driven orchestrator smoke flow with explicit provider override\"",
+    "test:orchestrator-journey": "vitest run src/wsServer.orchestrator.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
