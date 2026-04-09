@@ -19,20 +19,49 @@ import {
 import type {
   OrchestratorDecision,
   OrchestratorEvidenceRecord,
+  OrchestratorFallbackPolicy,
   OrchestratorRun,
   OrchestratorTask,
   OrchestratorWorker,
+  OrchestratorWorkerModelBinding,
 } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { ModelRegistryService } from "../Services/ModelRegistry.ts";
 import {
   OrchestratorRuntimeService,
   type OrchestratorRuntimeShape,
+  type FailureType,
+  type FallbackResult,
 } from "../Services/OrchestratorRuntime.ts";
+
+// ---------------------------------------------------------------------------
+// Default fallback policy (Task 23)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_FALLBACK_POLICY: OrchestratorFallbackPolicy = {
+  onTimeout: { action: "retry-same-model", maxAttempts: 2 },
+  onToolFailure: { action: "retry-same-model", maxAttempts: 2 },
+  onMalformedOutput: { action: "retry-same-provider", maxAttempts: 2 },
+  onReviewRejected: { action: "retry-same-model", maxAttempts: 3 },
+  onCapabilityMismatch: { action: "switch-provider", maxAttempts: 1 },
+  onProviderUnavailable: { action: "switch-provider", maxAttempts: 1 },
+};
+
+/** Map failure type to the corresponding fallback policy field. */
+const FAILURE_TO_POLICY_KEY: Record<FailureType, keyof OrchestratorFallbackPolicy> = {
+  timeout: "onTimeout",
+  "tool-failure": "onToolFailure",
+  "malformed-output": "onMalformedOutput",
+  "review-rejected": "onReviewRejected",
+  "capability-mismatch": "onCapabilityMismatch",
+  "provider-unavailable": "onProviderUnavailable",
+};
 
 const makeOrchestratorRuntime = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
+  const modelRegistry = yield* ModelRegistryService;
 
   const now = () => new Date().toISOString();
 
@@ -226,7 +255,44 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
     Effect.gen(function* () {
       const workerId = OrchestratorWorkerId.makeUnsafe(crypto.randomUUID());
 
+      // --- Task 21: Model selection ---
+      // Resolve model binding if not explicitly provided
+      let resolvedBinding: OrchestratorWorkerModelBinding | undefined = input.modelBinding;
+
+      if (!resolvedBinding) {
+        // Read the task's model policy from the read model
+        const readModelForPolicy = yield* engine.getReadModel();
+        const task = (readModelForPolicy.orchestratorTasks ?? []).find(
+          (t) => t.taskId === input.taskId,
+        );
+        const modelPolicy = task?.modelPolicy;
+
+        if (modelPolicy && modelPolicy.preferredModels.length > 0) {
+          // Use the task's model policy to resolve binding
+          resolvedBinding = yield* modelRegistry.resolveBinding(workerId, modelPolicy);
+        } else {
+          // No policy: use ModelRegistry.findCandidates with default capabilities
+          const defaultCapabilities: Array<"code-edit"> = ["code-edit"];
+          const candidates = yield* modelRegistry.findCandidates(defaultCapabilities);
+          if (candidates.length > 0) {
+            const top = candidates[0]!;
+            resolvedBinding = {
+              workerId,
+              provider: top.provider,
+              model: top.model,
+              selectedAt: now(),
+              selectedBy: "root-policy",
+              selectionReason: `Default selection: ${top.reason}`,
+              inheritedFromTaskPolicy: false,
+            };
+          }
+        }
+      }
+
       // Record the spawn decision before dispatching the command
+      const selectionInfo = resolvedBinding
+        ? ` with model ${resolvedBinding.provider}/${resolvedBinding.model}`
+        : "";
       yield* engine.dispatch({
         type: "orchestrator.decision.record",
         commandId: CommandId.makeUnsafe(crypto.randomUUID()),
@@ -234,11 +300,11 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
         runId: input.runId,
         taskId: input.taskId,
         decisionType: "spawned-worker",
-        reason: `Spawning worker ${workerId} for task ${input.taskId}`,
+        reason: `Spawning worker ${workerId} for task ${input.taskId}${selectionInfo}`,
         createdAt: now(),
       });
 
-      // Spawn the worker
+      // Spawn the worker with model binding
       yield* engine.dispatch({
         type: "orchestrator.worker.spawn",
         commandId: CommandId.makeUnsafe(crypto.randomUUID()),
@@ -247,7 +313,7 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
         taskId: input.taskId,
         spawnBudget: input.spawnBudget,
         workspace: input.workspace,
-        modelBinding: input.modelBinding,
+        modelBinding: resolvedBinding,
         createdAt: now(),
       });
 
@@ -387,6 +453,231 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
     Effect.succeed([]);
 
   // -----------------------------------------------------------------------
+  // Multi-model: review model selection (Task 22)
+  // -----------------------------------------------------------------------
+
+  const selectReviewModel: OrchestratorRuntimeShape["selectReviewModel"] = (input) =>
+    Effect.gen(function* () {
+      const { implementationBinding, reviewMode } = input;
+      const profiles = yield* modelRegistry.getProfiles();
+
+      switch (reviewMode) {
+        case "same-model": {
+          // Use the same model as the implementation worker
+          const binding: OrchestratorWorkerModelBinding = {
+            workerId: OrchestratorWorkerId.makeUnsafe(crypto.randomUUID()),
+            provider: implementationBinding.provider,
+            model: implementationBinding.model,
+            selectedAt: now(),
+            selectedBy: "root-policy",
+            selectionReason: "Review mode: same-model",
+            inheritedFromTaskPolicy: true,
+          };
+          return binding;
+        }
+
+        case "same-provider-different-model": {
+          // Find a different model from the same provider
+          const sameProviderDifferent = profiles.find(
+            (p) =>
+              p.provider === implementationBinding.provider &&
+              p.model !== implementationBinding.model &&
+              p.supports.includes("structured-review"),
+          );
+          // Fall back to any different model from same provider
+          const candidate =
+            sameProviderDifferent ??
+            profiles.find(
+              (p) =>
+                p.provider === implementationBinding.provider &&
+                p.model !== implementationBinding.model,
+            );
+          if (!candidate) return null;
+
+          const binding: OrchestratorWorkerModelBinding = {
+            workerId: OrchestratorWorkerId.makeUnsafe(crypto.randomUUID()),
+            provider: candidate.provider,
+            model: candidate.model,
+            selectedAt: now(),
+            selectedBy: "root-policy",
+            selectionReason: `Review mode: same-provider-different-model (impl: ${implementationBinding.model})`,
+            inheritedFromTaskPolicy: true,
+          };
+          return binding;
+        }
+
+        case "cross-provider": {
+          // Select a model from a different provider, preferring structured-review
+          const crossProvider = profiles.find(
+            (p) =>
+              p.provider !== implementationBinding.provider &&
+              p.supports.includes("structured-review"),
+          );
+          // Fall back to any model from a different provider
+          const candidate =
+            crossProvider ?? profiles.find((p) => p.provider !== implementationBinding.provider);
+          if (!candidate) return null;
+
+          const binding: OrchestratorWorkerModelBinding = {
+            workerId: OrchestratorWorkerId.makeUnsafe(crypto.randomUUID()),
+            provider: candidate.provider,
+            model: candidate.model,
+            selectedAt: now(),
+            selectedBy: "root-policy",
+            selectionReason: `Review mode: cross-provider (impl: ${implementationBinding.provider}/${implementationBinding.model})`,
+            inheritedFromTaskPolicy: true,
+          };
+          return binding;
+        }
+
+        case "root-decides": {
+          // Root orchestrator decides -- return null so caller handles it
+          return null;
+        }
+      }
+    });
+
+  // -----------------------------------------------------------------------
+  // Fallback/retry: worker failure handling (Task 23)
+  // -----------------------------------------------------------------------
+
+  const handleWorkerFailure: OrchestratorRuntimeShape["handleWorkerFailure"] = (input) =>
+    Effect.gen(function* () {
+      const policy = input.fallbackPolicy ?? DEFAULT_FALLBACK_POLICY;
+      const policyKey = FAILURE_TO_POLICY_KEY[input.failureType];
+      const fallbackAction = policy[policyKey];
+
+      // Check attempt count for the current model
+      const readModel = yield* engine.getReadModel();
+      const worker = (readModel.orchestratorWorkers ?? []).find(
+        (w) => w.workerId === input.workerId,
+      );
+      const currentModel = worker?.modelBinding
+        ? `${worker.modelBinding.provider}/${worker.modelBinding.model}`
+        : "unknown";
+      const currentAttempts = input.attemptCounts.get(currentModel) ?? 0;
+
+      // Exceeded max attempts for this action
+      if (currentAttempts >= fallbackAction.maxAttempts) {
+        const escalateResult: FallbackResult = {
+          action: "escalate",
+          reason: `Exceeded ${fallbackAction.maxAttempts} attempts for ${fallbackAction.action} on ${input.failureType}`,
+        };
+
+        yield* recordDecision({
+          runId: input.runId,
+          taskId: input.taskId,
+          decisionType: "escalated",
+          reason: escalateResult.reason,
+        });
+
+        return escalateResult;
+      }
+
+      const profiles = yield* modelRegistry.getProfiles();
+      let newBinding: OrchestratorWorkerModelBinding | null = null;
+
+      switch (fallbackAction.action) {
+        case "retry-same-model": {
+          // Re-use the same model
+          if (worker?.modelBinding) {
+            newBinding = {
+              ...worker.modelBinding,
+              workerId: OrchestratorWorkerId.makeUnsafe(crypto.randomUUID()),
+              selectedAt: now(),
+              selectedBy: "retry-policy",
+              selectionReason: `Retry same model after ${input.failureType} (attempt ${currentAttempts + 1}/${fallbackAction.maxAttempts})`,
+            };
+          }
+          break;
+        }
+
+        case "retry-same-provider": {
+          // Try a different model from the same provider
+          const currentProvider = worker?.modelBinding?.provider;
+          const currentModelName = worker?.modelBinding?.model;
+          const alternate = profiles.find(
+            (p) => p.provider === currentProvider && p.model !== currentModelName,
+          );
+          if (alternate) {
+            newBinding = {
+              workerId: OrchestratorWorkerId.makeUnsafe(crypto.randomUUID()),
+              provider: alternate.provider,
+              model: alternate.model,
+              selectedAt: now(),
+              selectedBy: "retry-policy",
+              selectionReason: `Retry same provider after ${input.failureType}: switched from ${currentModelName} to ${alternate.model}`,
+              inheritedFromTaskPolicy: false,
+              supersedesBindingId: worker?.modelBinding?.workerId,
+            };
+          }
+          break;
+        }
+
+        case "switch-provider": {
+          // Try a model from a different provider
+          const currentProvider = worker?.modelBinding?.provider;
+          const alternate = profiles.find((p) => p.provider !== currentProvider);
+          if (alternate) {
+            newBinding = {
+              workerId: OrchestratorWorkerId.makeUnsafe(crypto.randomUUID()),
+              provider: alternate.provider,
+              model: alternate.model,
+              selectedAt: now(),
+              selectedBy: "retry-policy",
+              selectionReason: `Switch provider after ${input.failureType}: from ${currentProvider} to ${alternate.provider}/${alternate.model}`,
+              inheritedFromTaskPolicy: false,
+              supersedesBindingId: worker?.modelBinding?.workerId,
+            };
+          }
+          break;
+        }
+
+        case "escalate": {
+          const escalateResult: FallbackResult = {
+            action: "escalate",
+            reason: `Policy requires escalation on ${input.failureType}`,
+          };
+
+          yield* recordDecision({
+            runId: input.runId,
+            taskId: input.taskId,
+            decisionType: "escalated",
+            reason: escalateResult.reason,
+          });
+
+          return escalateResult;
+        }
+      }
+
+      if (!newBinding) {
+        const escalateResult: FallbackResult = {
+          action: "escalate",
+          reason: `No alternative model available for ${fallbackAction.action} after ${input.failureType}`,
+        };
+
+        yield* recordDecision({
+          runId: input.runId,
+          taskId: input.taskId,
+          decisionType: "escalated",
+          reason: escalateResult.reason,
+        });
+
+        return escalateResult;
+      }
+
+      // Record the fallback decision
+      yield* recordDecision({
+        runId: input.runId,
+        taskId: input.taskId,
+        decisionType: "spawned-worker",
+        reason: newBinding.selectionReason,
+      });
+
+      return { action: "retry", modelBinding: newBinding } satisfies FallbackResult;
+    });
+
+  // -----------------------------------------------------------------------
   // Recovery
   // -----------------------------------------------------------------------
 
@@ -448,6 +739,8 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
     detectStuckWorkers,
     captureEvidence,
     recordDecision,
+    selectReviewModel,
+    handleWorkerFailure,
     getRun,
     getActiveRuns,
     getTaskTree,

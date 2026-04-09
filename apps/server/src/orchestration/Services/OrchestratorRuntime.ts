@@ -22,6 +22,7 @@ import type {
   OrchestratorWorkspace,
   OrchestratorModelPolicy,
   OrchestratorWorkerModelBinding,
+  OrchestratorFallbackPolicy,
 } from "@t3tools/contracts";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
@@ -77,6 +78,37 @@ export interface RecordDecisionInput {
   readonly decisionType: typeof import("@t3tools/contracts").OrchestratorDecisionType.Type;
   readonly reason: string;
   readonly inputs?: string;
+}
+
+// --- Multi-model input types ---
+
+export type FailureType =
+  | "timeout"
+  | "tool-failure"
+  | "malformed-output"
+  | "review-rejected"
+  | "capability-mismatch"
+  | "provider-unavailable";
+
+export interface HandleWorkerFailureInput {
+  readonly runId: OrchestratorRunId;
+  readonly taskId: OrchestratorTaskId;
+  readonly workerId: OrchestratorWorkerId;
+  readonly failureType: FailureType;
+  readonly failureMessage: string;
+  readonly attemptCounts: ReadonlyMap<string, number>;
+  readonly fallbackPolicy?: OrchestratorFallbackPolicy;
+}
+
+export type FallbackResult =
+  | { action: "retry"; modelBinding: OrchestratorWorkerModelBinding }
+  | { action: "escalate"; reason: string };
+
+export interface SelectReviewModelInput {
+  readonly runId: OrchestratorRunId;
+  readonly taskId: OrchestratorTaskId;
+  readonly implementationBinding: OrchestratorWorkerModelBinding;
+  readonly reviewMode: OrchestratorModelPolicy["reviewMode"];
 }
 
 // --- Service shape ---
@@ -152,6 +184,16 @@ export interface OrchestratorRuntimeShape {
   readonly getEvidence: (
     taskId: OrchestratorTaskId,
   ) => Effect.Effect<ReadonlyArray<OrchestratorEvidenceRecord>>;
+
+  // Multi-model selection
+  readonly selectReviewModel: (
+    input: SelectReviewModelInput,
+  ) => Effect.Effect<OrchestratorWorkerModelBinding | null>;
+
+  // Fallback/retry
+  readonly handleWorkerFailure: (
+    input: HandleWorkerFailureInput,
+  ) => Effect.Effect<FallbackResult, OrchestrationDispatchError>;
 
   // Recovery
   readonly resumeActiveRuns: () => Effect.Effect<void>;
