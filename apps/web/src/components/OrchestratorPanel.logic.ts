@@ -276,7 +276,8 @@ const FOLLOW_UP_EVIDENCE_REQUEST_PATTERNS = [
 const BROWSER_VALIDATION_REQUEST_PATTERN =
   /\b(?:website|web app|webpage|browser|preview|frontend|landing page|microsite|game|interactive|ui|visual|react website|hosted|url)\b/i;
 const DIRECT_BROWSER_VALIDATION_REQUEST_PATTERNS = [
-  /\buse (?:the )?(?:browser|preview|computer use)\b/i,
+  /\b(?:use|open|show|launch|start) (?:the )?(?:browser|preview|computer use)\b/i,
+  /\bopen (?:it |this |the (?:page|site|app|preview) )?in (?:the )?(?:browser|preview)\b/i,
   /\b(?:navigate|click around|test|validate|verify|check|inspect|exercise)\b[^.\n]{0,120}\b(?:browser|preview|site|website|web app|webpage|ui)\b/i,
   /\b(?:test|validate|verify|check)\b[^.\n]{0,80}\b(?:it|this)\b[^.\n]{0,80}\b(?:in the browser|with computer use)\b/i,
 ];
@@ -459,10 +460,8 @@ export function shouldHandleAsDirectBrowserValidationRequest(input: {
   userRequest: string;
   hasManagedThread: boolean;
 }): boolean {
-  if (!input.hasManagedThread) {
-    return false;
-  }
-
+  // Allow browser opening even without an active managed thread —
+  // the user may want to re-open a preview from a completed run.
   return DIRECT_BROWSER_VALIDATION_REQUEST_PATTERNS.some((pattern) =>
     pattern.test(input.userRequest),
   );

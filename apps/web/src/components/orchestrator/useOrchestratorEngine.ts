@@ -7,6 +7,7 @@ import {
   type OrchestratorRun,
   type OrchestratorTask,
   type OrchestratorWorker,
+  OrchestratorWorkerId,
   type ProviderInteractionMode,
   type ProviderKind,
   type RuntimeMode,
@@ -27,6 +28,7 @@ import {
   useEmbeddedBrowserStateStore,
 } from "~/embeddedBrowserStateStore";
 import { getCustomModelOptionsByProvider, useAppSettings } from "~/appSettings";
+import { isScrollContainerNearBottom } from "~/chat-scroll";
 import { useProjectById, useThreadById } from "~/storeSelectors";
 import { useStore } from "~/store";
 import { readNativeApi } from "~/nativeApi";
@@ -46,6 +48,7 @@ import {
 } from "~/session-logic";
 import { waitForStartedServerThread } from "../ChatView.logic";
 import {
+  buildFallbackOrchestratorRouterDecision,
   buildAdHocBrowserValidationRun,
   buildChecklistItemsFromTaskDraft,
   buildRouterUserPrompt,
@@ -88,6 +91,7 @@ import type { OrchestratorChecklistItem } from "../../orchestratorTypes";
 import type { Thread } from "~/types";
 import type { ProjectId } from "@t3tools/contracts";
 import type { BrowserAction } from "@t3tools/contracts";
+import { resolveRequestedWorkerModelSelection } from "./orchestratorModelSelection";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,6 +125,14 @@ const ORCHESTRATOR_REVIEW_CHECKPOINT_GRACE_MS = 5_000;
 const ORCHESTRATOR_REVIEW_ARTIFACT_WAIT_MS = 30_000;
 const ORCHESTRATOR_BROWSER_VALIDATION_MAX_STEPS = 20;
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const DEFAULT_ORCHESTRATOR_SPAWN_BUDGET = {
+  maxDepth: 1,
+  maxChildren: 1,
+  maxConcurrentWriters: 1,
+  maxTotalWorkers: 1,
+  allowedTools: [],
+  writeScope: [],
+} as const;
 
 // ---------------------------------------------------------------------------
 // Helpers (module-level, not in hook)
@@ -300,31 +312,36 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     refetchInterval: 5000,
   });
 
-  const serverRun: OrchestratorRun | null = activeRunsQuery.data?.[0] ?? null;
+  const trackedRunId = activeRun?.runId ?? null;
+  const serverRun: OrchestratorRun | null = trackedRunId
+    ? (activeRunsQuery.data?.find((run) => run.runId === trackedRunId) ?? null)
+    : (activeRunsQuery.data?.[0] ?? null);
 
   const taskTreeQuery = useQuery({
-    queryKey: ["orchestrator", "taskTree", serverRun?.runId],
+    queryKey: ["orchestrator", "taskTree", trackedRunId ?? serverRun?.runId ?? null],
     queryFn: () => {
       const api = readNativeApi();
-      return serverRun
-        ? (api?.orchestrator.getTaskTree({ runId: serverRun.runId }) ??
+      const runId = trackedRunId ?? serverRun?.runId;
+      return runId
+        ? (api?.orchestrator.getTaskTree({ runId }) ??
             Promise.resolve([] as readonly OrchestratorTask[]))
         : ([] as readonly OrchestratorTask[]);
     },
-    enabled: !!serverRun,
+    enabled: Boolean(trackedRunId ?? serverRun?.runId),
     refetchInterval: 3000,
   });
 
   const workersQuery = useQuery({
-    queryKey: ["orchestrator", "workers", serverRun?.runId],
+    queryKey: ["orchestrator", "workers", trackedRunId ?? serverRun?.runId ?? null],
     queryFn: () => {
       const api = readNativeApi();
-      return serverRun
-        ? (api?.orchestrator.getWorkers({ runId: serverRun.runId }) ??
+      const runId = trackedRunId ?? serverRun?.runId;
+      return runId
+        ? (api?.orchestrator.getWorkers({ runId }) ??
             Promise.resolve([] as readonly OrchestratorWorker[]))
         : ([] as readonly OrchestratorWorker[]);
     },
-    enabled: !!serverRun,
+    enabled: Boolean(trackedRunId ?? serverRun?.runId),
     refetchInterval: 3000,
   });
 
@@ -422,6 +439,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   const resumeReviewKeyRef = useRef<string | null>(null);
   const lastProgressMessageByThreadRef = useRef<Partial<Record<ThreadId, string>>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const status = statusByThreadId[currentThreadId] ?? "idle";
   const statusDetail = statusDetailByThreadId[currentThreadId] ?? null;
   const isBusy = status !== "idle";
@@ -507,6 +525,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       return;
     }
     previousThreadIdRef.current = currentThreadId;
+    shouldAutoScrollRef.current = true;
   }, [currentThreadId]);
 
   const managedThreadId =
@@ -521,10 +540,29 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   const latestActivity = managedThread?.activities?.at(-1) ?? null;
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const container = scrollRef.current;
+    if (!container) {
+      return;
     }
-  }, [messages.length]);
+
+    const handleScroll = () => {
+      shouldAutoScrollRef.current = isScrollContainerNearBottom(container);
+    };
+
+    handleScroll();
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+    };
+  }, [currentThreadId, messages.length]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container || !shouldAutoScrollRef.current) {
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+  }, [currentThreadId, messages.length]);
 
   // -- Helper: add a message --
   const addMessage = useCallback(
@@ -546,6 +584,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       text: string,
       runtimeMode: RuntimeMode,
       interactionMode: ProviderInteractionMode,
+      modelSelection?: ModelSelection,
     ) => {
       const api = readNativeApi();
       if (!api) throw new Error("API not available");
@@ -554,9 +593,35 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         commandId: newCommandId(),
         threadId,
         message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+        ...(modelSelection ? { modelSelection } : {}),
         runtimeMode,
         interactionMode,
         createdAt: new Date().toISOString(),
+      });
+    },
+    [],
+  );
+
+  const syncManagedThreadModelSelection = useCallback(
+    async (thread: Thread, modelSelection: ModelSelection) => {
+      const sameProvider = thread.modelSelection.provider === modelSelection.provider;
+      const sameModel = thread.modelSelection.model === modelSelection.model;
+      const sameOptions =
+        JSON.stringify(thread.modelSelection.options ?? null) ===
+        JSON.stringify(modelSelection.options ?? null);
+
+      if (sameProvider && sameModel && sameOptions) {
+        return;
+      }
+
+      const api = readNativeApi();
+      if (!api) throw new Error("API not available");
+
+      await api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: newCommandId(),
+        threadId: thread.id,
+        modelSelection,
       });
     },
     [],
@@ -600,7 +665,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
 
   // -- Helper: create a new thread and return its IDs --
   const createThread = useCallback(
-    async (title: string): Promise<{ threadId: ThreadId; projectId: ProjectId }> => {
+    async (
+      title: string,
+      modelSelection: ModelSelection,
+    ): Promise<{ threadId: ThreadId; projectId: ProjectId }> => {
       const api = readNativeApi();
       const projectId = currentProject?.id ?? firstProjectId;
       if (!api || !projectId) {
@@ -613,7 +681,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         threadId,
         projectId,
         title,
-        modelSelection: selectedModelSelection,
+        modelSelection,
         runtimeMode: DEFAULT_RUNTIME_MODE,
         interactionMode: "default",
         branch: null,
@@ -622,7 +690,160 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       });
       return { threadId, projectId };
     },
-    [currentProject?.id, firstProjectId, selectedModelSelection],
+    [currentProject?.id, firstProjectId],
+  );
+
+  const createServerRun = useCallback(
+    async (input: {
+      projectId: ProjectId;
+      userRequest: string;
+      requirementsChecklist: ReadonlyArray<OrchestratorChecklistItem>;
+    }) => {
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("API not available");
+      }
+      const goals =
+        input.requirementsChecklist.length > 0
+          ? input.requirementsChecklist.map((item) => item.label)
+          : [input.userRequest];
+      return api.orchestrator.createRun({
+        userRequest: input.userRequest,
+        goals,
+        spawnBudget: DEFAULT_ORCHESTRATOR_SPAWN_BUDGET,
+        projectId: input.projectId,
+      });
+    },
+    [],
+  );
+
+  const spawnServerWorker = useCallback(
+    async (input: {
+      runId: OrchestratorRun["runId"];
+      taskId: OrchestratorTask["taskId"];
+      workerId: OrchestratorWorker["workerId"];
+      threadId: ThreadId;
+      projectId: ProjectId;
+      startedAt: string;
+      modelSelection: ModelSelection;
+    }) => {
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("API not available");
+      }
+      const projectCwd =
+        useStore.getState().projects.find((project) => project.id === input.projectId)?.cwd ??
+        currentProject?.cwd ??
+        "";
+      await api.orchestration.dispatchCommand({
+        type: "orchestrator.worker.spawn",
+        commandId: newCommandId(),
+        workerId: input.workerId,
+        runId: input.runId,
+        taskId: input.taskId,
+        threadId: input.threadId,
+        spawnBudget: DEFAULT_ORCHESTRATOR_SPAWN_BUDGET,
+        workspace: {
+          mode: "local",
+          cwd: projectCwd,
+          terminalIds: [],
+        },
+        modelBinding: {
+          workerId: input.workerId,
+          provider: input.modelSelection.provider,
+          model: input.modelSelection.model,
+          selectedAt: input.startedAt,
+          selectedBy: "root-policy",
+          selectionReason: "Managed worker bound from the orchestrator composer selection",
+          inheritedFromTaskPolicy: false,
+        },
+        createdAt: input.startedAt,
+      });
+    },
+    [currentProject?.cwd],
+  );
+
+  const finalizeServerRun = useCallback(
+    async (
+      run: ActiveOrchestratorRun,
+      outcome:
+        | { kind: "completed"; summary: string }
+        | { kind: "failed"; reason: string }
+        | { kind: "cancelled"; reason: string },
+    ) => {
+      if (!run.runId) {
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+
+      if (outcome.kind === "cancelled") {
+        await api.orchestrator
+          .cancelRun({ runId: run.runId, reason: outcome.reason })
+          .catch(() => undefined);
+        return;
+      }
+
+      if (run.workerId) {
+        await api.orchestration
+          .dispatchCommand({
+            type: "orchestrator.worker.terminate",
+            commandId: newCommandId(),
+            workerId: run.workerId,
+            reason:
+              outcome.kind === "completed"
+                ? "Managed agent work accepted by orchestrator review"
+                : outcome.reason,
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+      }
+
+      if (run.rootTaskId) {
+        await api.orchestration
+          .dispatchCommand(
+            outcome.kind === "completed"
+              ? {
+                  type: "orchestrator.task.accept",
+                  commandId: newCommandId(),
+                  taskId: run.rootTaskId,
+                  summary: outcome.summary,
+                  createdAt: new Date().toISOString(),
+                }
+              : {
+                  type: "orchestrator.task.fail",
+                  commandId: newCommandId(),
+                  taskId: run.rootTaskId,
+                  reason: outcome.reason,
+                  createdAt: new Date().toISOString(),
+                },
+          )
+          .catch(() => undefined);
+      }
+
+      await api.orchestration
+        .dispatchCommand(
+          outcome.kind === "completed"
+            ? {
+                type: "orchestrator.run.complete",
+                commandId: newCommandId(),
+                runId: run.runId,
+                summary: outcome.summary,
+                createdAt: new Date().toISOString(),
+              }
+            : {
+                type: "orchestrator.run.fail",
+                commandId: newCommandId(),
+                runId: run.runId,
+                reason: outcome.reason,
+                createdAt: new Date().toISOString(),
+              },
+        )
+        .catch(() => undefined);
+    },
+    [],
   );
 
   const collectReviewArtifacts = useCallback(
@@ -873,14 +1094,6 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         };
       }
 
-      openThreadBrowserSession(
-        validationInput.run.threadId,
-        createEmbeddedBrowserSessionFromUrl({
-          source: "orchestrator",
-          title: previewCandidate.title,
-          url: previewCandidate.url,
-        }),
-      );
       addProgressMessage(
         validationInput.run.threadId,
         `Opening browser validation preview: ${absolutePreviewUrl}`,
@@ -891,6 +1104,15 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         const opened = (await api.browser.openSession({ url: absolutePreviewUrl })) as any;
         sessionId = opened.sessionId;
         let observation = opened.observation;
+        addProgressMessage(
+          validationInput.run.threadId,
+          "Browser session opened. Validating the current preview...",
+        );
+        setStatusForThread(
+          validationInput.run.threadId,
+          "reviewing",
+          "Browser session opened. Validating the current preview...",
+        );
         const steps: BrowserValidationResult["steps"] = [];
         let consecutiveErrors = 0;
         openThreadBrowserSession(
@@ -1142,11 +1364,11 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       setStatusForThread(
         directValidationInput.conversationThreadId,
         "reviewing",
-        "Using computer use to validate the current preview...",
+        "Preparing browser validation from the latest turn artifacts...",
       );
       addProgressMessage(
         directValidationInput.conversationThreadId,
-        "Using computer use to validate the current preview...",
+        "Preparing browser validation from the latest turn artifacts...",
       );
 
       let artifacts;
@@ -1183,12 +1405,33 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         return;
       }
 
-      const presentationCandidates = extractEmbeddedBrowserPresentationCandidates({
+      const currentBrowserCandidate =
+        threadBrowserSession &&
+        (() => {
+          const url = getEmbeddedBrowserAddress(threadBrowserSession);
+          return resolveEmbeddedBrowserAbsoluteUrl(url)
+            ? {
+                source: "active browser session",
+                title: threadBrowserSession.title,
+                url,
+              }
+            : null;
+        })();
+
+      const artifactCandidates = extractEmbeddedBrowserPresentationCandidates({
         agentReport: artifacts.agentReport,
         diffPatch: artifacts.diffPatch,
         fileSnapshots: artifacts.fileSnapshots,
         workLogEntries: artifacts.workLogEntries,
       });
+      const presentationCandidates = currentBrowserCandidate
+        ? [
+            currentBrowserCandidate,
+            ...artifactCandidates.filter(
+              (candidate) => candidate.url !== currentBrowserCandidate.url,
+            ),
+          ]
+        : artifactCandidates;
 
       const browserValidation = await runBrowserValidation({
         run: validationContext,
@@ -1275,6 +1518,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       runBrowserValidation,
       setOrchestratorRequirementsChecklist,
       setStatusForThread,
+      threadBrowserSession,
     ],
   );
 
@@ -1296,6 +1540,13 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           "orchestrator",
           `Failed to inspect the completed turn: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
+        await finalizeServerRun(run, {
+          kind: "failed",
+          reason:
+            error instanceof Error
+              ? `Failed to inspect the completed turn: ${error.message}`
+              : "Failed to inspect the completed turn",
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
         return;
@@ -1344,6 +1595,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
             ? `${artifacts.agentReport.slice(0, 500)}...`
             : artifacts.agentReport,
         );
+        await finalizeServerRun(run, {
+          kind: "failed",
+          reason: "Orchestrator review could not produce a reliable decision.",
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
         return;
@@ -1360,6 +1615,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           "orchestrator",
           `Browser validation could not complete: ${browserValidation.summary}`,
         );
+        await finalizeServerRun(run, {
+          kind: "failed",
+          reason: `Browser validation could not complete: ${browserValidation.summary}`,
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
         return;
@@ -1426,6 +1685,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           "orchestrator",
           `Review stopped before another agent iteration because ${followUpValidation.reason}. Summary: ${reviewDecision.summary}`,
         );
+        await finalizeServerRun(run, {
+          kind: "failed",
+          reason: `${followUpValidation.reason}. ${reviewDecision.summary}`,
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
         return;
@@ -1436,6 +1699,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           "orchestrator",
           `Review could not produce a safe follow-up instruction for the agent. Summary: ${reviewDecision.summary}`,
         );
+        await finalizeServerRun(run, {
+          kind: "failed",
+          reason: `Review could not produce a safe follow-up instruction. ${reviewDecision.summary}`,
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
         return;
@@ -1456,6 +1723,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
             `Opened preview in embedded browser: ${getEmbeddedBrowserAddress(browserSession)}`,
           );
         }
+        await finalizeServerRun(run, {
+          kind: "completed",
+          summary: reviewDecision.summary,
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
         return;
@@ -1478,6 +1749,13 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
             ? "Stopped after reaching the orchestrator iteration limit."
             : "The managed agent thread is no longer available for follow-up work.",
         );
+        await finalizeServerRun(run, {
+          kind: "failed",
+          reason:
+            run.iteration >= ORCHESTRATOR_MAX_ITERATIONS
+              ? "Stopped after reaching the orchestrator iteration limit."
+              : "The managed agent thread is no longer available for follow-up work.",
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
         return;
@@ -1508,6 +1786,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           followUpInstruction,
           latestManagedThread.runtimeMode,
           latestManagedThread.interactionMode,
+          latestManagedThread.modelSelection,
         );
         setOrchestratorActiveRun(run.threadId, {
           ...run,
@@ -1527,6 +1806,13 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           "orchestrator",
           `Failed to send follow-up to agent: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
+        await finalizeServerRun(run, {
+          kind: "failed",
+          reason:
+            error instanceof Error
+              ? `Failed to send follow-up to agent: ${error.message}`
+              : "Failed to send follow-up to agent",
+        });
         setOrchestratorActiveRun(run.threadId, null);
         setStatusForThread(run.threadId, "idle");
       }
@@ -1536,6 +1822,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       addProgressMessage,
       callOrchestratorLLM,
       collectReviewArtifacts,
+      finalizeServerRun,
       runBrowserValidation,
       sendToThread,
       setOrchestratorActiveRun,
@@ -1623,6 +1910,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       const previousStatus = status;
       const previousStatusDetail = statusDetail;
       try {
+        shouldAutoScrollRef.current = true;
         setOrchestratorPrompt(currentThreadId, "");
         addMessage(conversationThreadId, "user", trimmed);
         setStatusForThread(conversationThreadId, "thinking", "Understanding the request...");
@@ -1641,6 +1929,23 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
             previousStatusDetail,
           });
           return;
+        }
+
+        const explicitWorkerModelRequest = resolveRequestedWorkerModelSelection({
+          userRequest: trimmed,
+          providers,
+          fallbackSelection: selectedModelSelection,
+          storedModelSelections: orchestratorThreadState.modelSelectionByProvider,
+        });
+        const workerModelSelection =
+          explicitWorkerModelRequest?.selection ?? selectedModelSelection;
+
+        if (explicitWorkerModelRequest) {
+          setOrchestratorModelSelection(currentThreadId, workerModelSelection);
+          addProgressMessage(
+            conversationThreadId,
+            `Honoring the explicit ${workerModelSelection.provider === "claudeAgent" ? "Claude" : "GPT"} request for the managed agent.`,
+          );
         }
 
         let delegatedInstruction: string | null = null;
@@ -1696,14 +2001,32 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           addMessage(conversationThreadId, "orchestrator", formatTaskDraftForDisplay(taskDraft));
           delegatedInstruction = buildDelegationInstruction(taskDraft);
         } catch (error) {
-          setStatusForThread(conversationThreadId, "idle");
-          addMessage(
+          console.warn("Router model failed; using local routing decision", error);
+          const fallbackDecision = buildFallbackOrchestratorRouterDecision({
+            userRequest: trimmed,
+            hasActiveRun: previousStatus !== "idle",
+          });
+          if (fallbackDecision.kind === "answer") {
+            addMessage(conversationThreadId, "orchestrator", fallbackDecision.response);
+            if (fallbackDecision.shouldContinueRun && previousStatus !== "idle") {
+              setStatusForThread(conversationThreadId, previousStatus, previousStatusDetail);
+            } else {
+              setStatusForThread(conversationThreadId, "idle");
+            }
+            return;
+          }
+
+          const taskDraft = fallbackDecision.taskDraft;
+          const checklistItems = buildChecklistItemsFromTaskDraft(taskDraft);
+          nextRequirementsChecklist = checklistItems;
+          setStatusForThread(
             conversationThreadId,
-            "orchestrator",
-            `Error: ${error instanceof Error ? error.message : "Failed to plan the task"}`,
+            "thinking",
+            "Falling back to a local agent brief...",
           );
-          setOrchestratorPrompt(currentThreadId, savedText);
-          return;
+          setOrchestratorRequirementsChecklist(conversationThreadId, checklistItems);
+          addMessage(conversationThreadId, "orchestrator", formatTaskDraftForDisplay(taskDraft));
+          delegatedInstruction = buildDelegationInstruction(taskDraft);
         }
 
         if (!delegatedInstruction) {
@@ -1747,7 +2070,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           addProgressMessage(conversationThreadId, "Creating a managed agent thread...");
           try {
             const title = trimmed.length > 50 ? `${trimmed.slice(0, 47)}...` : trimmed;
-            const createdThread = await createThread(title);
+            const createdThread = await createThread(title, workerModelSelection);
             targetThreadId = createdThread.threadId;
             targetProjectId = createdThread.projectId;
             targetRuntimeMode = DEFAULT_RUNTIME_MODE;
@@ -1789,6 +2112,61 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           return;
         }
 
+        if (!createdNewThread && routeThread && targetThreadId === routeThread.id) {
+          try {
+            await syncManagedThreadModelSelection(routeThread, workerModelSelection);
+          } catch (error) {
+            setStatusForThread(conversationThreadId, "idle");
+            addMessage(
+              conversationThreadId,
+              "orchestrator",
+              `Failed to switch the managed thread to ${workerModelSelection.provider === "claudeAgent" ? "Claude" : "GPT"}: ${error instanceof Error ? error.message : "Unknown error"}`,
+            );
+            setOrchestratorPrompt(currentThreadId, savedText);
+            return;
+          }
+        }
+
+        let serverRunRecord: OrchestratorRun | null = null;
+        try {
+          setStatusForThread(
+            conversationThreadId,
+            "sending",
+            "Registering the managed run on the server...",
+          );
+          addProgressMessage(conversationThreadId, "Registering the managed run on the server...");
+          serverRunRecord = await createServerRun({
+            projectId: targetProjectId,
+            userRequest: trimmed,
+            requirementsChecklist: nextRequirementsChecklist,
+          });
+        } catch (error) {
+          if (createdNewThread) {
+            const innerApi = readNativeApi();
+            if (innerApi) {
+              await innerApi.orchestration
+                .dispatchCommand({
+                  type: "thread.delete",
+                  commandId: newCommandId(),
+                  threadId: targetThreadId,
+                })
+                .catch(() => undefined);
+            }
+            moveThreadState(targetThreadId, ORCHESTRATOR_DRAFT_THREAD_ID);
+            moveThreadStatus(targetThreadId, ORCHESTRATOR_DRAFT_THREAD_ID);
+            setPendingCreatedThreadId(null);
+            conversationThreadId = ORCHESTRATOR_DRAFT_THREAD_ID;
+          }
+          setStatusForThread(conversationThreadId, "idle");
+          addMessage(
+            conversationThreadId,
+            "orchestrator",
+            `Failed to register the managed run: ${error instanceof Error ? error.message : "Unknown error"}`,
+          );
+          setOrchestratorPrompt(currentThreadId, savedText);
+          return;
+        }
+
         setStatusForThread(
           conversationThreadId,
           "sending",
@@ -1809,8 +2187,20 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
             delegatedInstruction,
             targetRuntimeMode,
             targetInteractionMode,
+            workerModelSelection,
           );
         } catch (error) {
+          if (serverRunRecord) {
+            await api.orchestrator
+              .cancelRun({
+                runId: serverRunRecord.runId,
+                reason:
+                  error instanceof Error
+                    ? `Failed to send the initial instruction: ${error.message}`
+                    : "Failed to send the initial instruction",
+              })
+              .catch(() => undefined);
+          }
           if (createdNewThread) {
             const innerApi = readNativeApi();
             if (innerApi) {
@@ -1838,7 +2228,37 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           return;
         }
 
+        let serverWorkerId: OrchestratorWorker["workerId"] | undefined;
+        if (serverRunRecord?.rootTaskId) {
+          const nextWorkerId = OrchestratorWorkerId.makeUnsafe(crypto.randomUUID());
+          try {
+            await spawnServerWorker({
+              runId: serverRunRecord.runId,
+              taskId: serverRunRecord.rootTaskId,
+              workerId: nextWorkerId,
+              threadId: targetThreadId,
+              projectId: targetProjectId,
+              startedAt,
+              modelSelection: workerModelSelection,
+            });
+            serverWorkerId = nextWorkerId;
+          } catch (error) {
+            addMessage(
+              conversationThreadId,
+              "thinking",
+              `Managed thread started, but the control-room worker record could not be linked: ${error instanceof Error ? error.message : "Unknown error"}`,
+            );
+          }
+        }
+
         setOrchestratorActiveRun(conversationThreadId, {
+          ...(serverRunRecord ? { runId: serverRunRecord.runId } : {}),
+          ...(serverRunRecord?.rootTaskId
+            ? {
+                rootTaskId: serverRunRecord.rootTaskId,
+              }
+            : {}),
+          ...(serverWorkerId ? { workerId: serverWorkerId } : {}),
           threadId: targetThreadId,
           projectId: targetProjectId,
           userRequest: trimmed,
@@ -1904,6 +2324,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       addMessage,
       addProgressMessage,
       callOrchestratorLLM,
+      createServerRun,
       currentProject?.id,
       currentThreadId,
       createThread,
@@ -1914,16 +2335,22 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       messages,
       managedThread,
       activeRun,
+      orchestratorThreadState.modelSelectionByProvider,
       preferDraftConversation,
+      providers,
       selectedModel,
+      selectedModelSelection,
       requirementsChecklist,
       routeThread,
       runDirectBrowserValidation,
       sendToThread,
       setOrchestratorActiveRun,
+      setOrchestratorModelSelection,
       setOrchestratorRequirementsChecklist,
       setOrchestratorPrompt,
       setStatusForThread,
+      syncManagedThreadModelSelection,
+      spawnServerWorker,
       status,
       statusDetail,
     ],
