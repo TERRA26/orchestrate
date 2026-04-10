@@ -69,7 +69,7 @@ function resolveDisplayedAddress(session: EmbeddedBrowserSession | null): string
   return resolveEmbeddedBrowserAbsoluteUrl(address) ?? address;
 }
 
-function EmbeddedBrowserSurface({
+export function EmbeddedBrowserSurface({
   activeSession,
   activeScopeLabel,
   onCollapseToggle,

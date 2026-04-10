@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { ExternalLinkIcon, Maximize2Icon, Minimize2Icon, MonitorIcon } from "lucide-react";
 
-import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
+import { EmbeddedBrowserSurface } from "~/components/EmbeddedBrowserPane";
+import {
+  Sheet,
+  SheetDescription,
+  SheetHeader,
+  SheetPopup,
+  SheetTitle,
+} from "~/components/ui/sheet";
 import type { EmbeddedBrowserSession } from "~/embeddedBrowserStateStore";
 
 // ---------------------------------------------------------------------------
@@ -30,7 +37,8 @@ export function OrchestratorBrowserWorkspace({
   isCollapsed,
   onToggleCollapse,
 }: BrowserWorkspaceProps) {
-  const [expandedInApp, setExpandedInApp] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [reloadCount, setReloadCount] = useState(0);
 
   if (!session && !url && sessionMode === "stale") return null;
 
@@ -40,34 +48,6 @@ export function OrchestratorBrowserWorkspace({
   const handleOpenExternal = () => {
     if (displayedAddress) window.open(displayedAddress, "_blank", "noopener");
   };
-
-  // Expanded in-app view: full browser surface in the panel
-  if (expandedInApp && session) {
-    return (
-      <div className="border-b border-border/10">
-        <div className="flex items-center gap-2 px-3 py-1">
-          <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/35">
-            {displayedAddress}
-          </span>
-          <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => setExpandedInApp(false)}
-              className="rounded p-1 text-muted-foreground/25 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
-              title="Minimize preview"
-            >
-              <Minimize2Icon className="size-3" />
-            </button>
-          </div>
-        </div>
-        <InlineEmbeddedBrowserCard
-          session={session}
-          scopeLabel="Browser workspace"
-          className="h-[clamp(240px,35vh,380px)]"
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="border-b border-border/10">
@@ -87,7 +67,7 @@ export function OrchestratorBrowserWorkspace({
           {session ? (
             <button
               type="button"
-              onClick={() => setExpandedInApp(true)}
+              onClick={() => setSheetOpen(true)}
               className="rounded p-1 text-muted-foreground/25 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
               title="Open in app"
             >
@@ -146,6 +126,37 @@ export function OrchestratorBrowserWorkspace({
           </div>
         </div>
       )}
+
+      {/* Full browser sheet — opens maximized, closing returns to compact workspace */}
+      {session ? (
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <SheetPopup
+            side="right"
+            showCloseButton={false}
+            keepMounted
+            className="w-[calc(100vw-1.5rem)] max-w-[1600px] border-none bg-transparent p-3 shadow-none"
+          >
+            <SheetHeader className="sr-only">
+              <SheetTitle>{session.title}</SheetTitle>
+              <SheetDescription>Embedded browser preview</SheetDescription>
+            </SheetHeader>
+            <div className="h-full min-h-0">
+              <EmbeddedBrowserSurface
+                activeSession={session}
+                activeScopeLabel="Browser workspace"
+                onCollapseToggle={() => setSheetOpen(false)}
+                onExpandToggle={() => setSheetOpen(false)}
+                collapsed={false}
+                expanded
+                expandDisabled
+                collapseDisabled={false}
+                reloadCount={reloadCount}
+                onReload={() => setReloadCount((c) => c + 1)}
+              />
+            </div>
+          </SheetPopup>
+        </Sheet>
+      ) : null}
     </div>
   );
 }
