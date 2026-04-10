@@ -2,7 +2,7 @@ import { CheckIcon, LoaderIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "~/components/ChatMarkdown";
-import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
+
 import {
   countOrchestratorChecklistItems,
   type OrchestratorChecklistItem,
@@ -257,12 +257,22 @@ export function OrchestratorMessages({
           {threadBrowserSession &&
           isThreadBrowserSessionVisible &&
           !suppressInlineBrowserPreview ? (
-            <div className="mb-4">
-              <InlineEmbeddedBrowserCard
-                session={threadBrowserSession}
-                scopeLabel="Browser preview"
-                className="h-[clamp(360px,48vh,540px)]"
-              />
+            <div className="mb-3 h-36 overflow-hidden rounded bg-black/20">
+              {threadBrowserSession.kind === "automation" &&
+              threadBrowserSession.screenshotDataUrl ? (
+                <img
+                  src={threadBrowserSession.screenshotDataUrl}
+                  alt={threadBrowserSession.title}
+                  className="h-full w-full object-contain object-top"
+                />
+              ) : threadBrowserSession.kind === "url" ? (
+                <iframe
+                  title={threadBrowserSession.title}
+                  src={threadBrowserSession.url}
+                  className="h-full w-full border-0 bg-background"
+                  sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts"
+                />
+              ) : null}
             </div>
           ) : null}
           {hasContent ? (
