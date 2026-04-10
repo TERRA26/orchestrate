@@ -1,4 +1,5 @@
-import { Maximize2, Minimize2 } from "lucide-react";
+import { useCallback } from "react";
+import { ExternalLinkIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
 
 import type { EmbeddedBrowserSession } from "~/embeddedBrowserStateStore";
 
@@ -17,7 +18,7 @@ export interface BrowserWorkspaceProps {
 }
 
 // ---------------------------------------------------------------------------
-// Component — compact, chrome-free browser embed for orchestrator panel
+// Component — compact left-aligned thumbnail with action icons
 // ---------------------------------------------------------------------------
 
 export function OrchestratorBrowserWorkspace({
@@ -33,48 +34,75 @@ export function OrchestratorBrowserWorkspace({
   const displayedAddress =
     (session && "url" in session ? session.url : null) ?? session?.title ?? url ?? "";
 
+  const handleOpenExternal = useCallback(() => {
+    if (displayedAddress) window.open(displayedAddress, "_blank", "noopener");
+  }, [displayedAddress]);
+
   return (
     <div className="border-b border-border/10">
-      {/* Minimal status line */}
+      {/* URL + step progress + actions — single compact line */}
       <div className="flex items-center gap-2 px-3 py-1">
-        <span className="truncate font-mono text-[10px] text-muted-foreground/35">
+        <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/35">
           {displayedAddress || sessionMode}
         </span>
-        {stepProgress && (
+        {stepProgress ? (
           <span className="shrink-0 font-mono text-[10px] text-muted-foreground/40">
             {stepProgress.current}/{stepProgress.total}
           </span>
-        )}
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="ml-auto shrink-0 text-muted-foreground/30 hover:text-muted-foreground/60"
-        >
-          {isCollapsed ? <Maximize2 className="size-3" /> : <Minimize2 className="size-3" />}
-        </button>
+        ) : null}
+
+        {/* Action icons — right aligned */}
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {displayedAddress ? (
+            <button
+              type="button"
+              onClick={handleOpenExternal}
+              className="rounded p-1 text-muted-foreground/25 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
+              title="Open in new tab"
+            >
+              <ExternalLinkIcon className="size-3" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="rounded p-1 text-muted-foreground/25 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
+            title={isCollapsed ? "Show preview" : "Hide preview"}
+          >
+            {isCollapsed ? (
+              <Maximize2Icon className="size-3" />
+            ) : (
+              <Minimize2Icon className="size-3" />
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Browser content — clean, no chrome */}
+      {/* Browser content — left-aligned compact thumbnail */}
       {!isCollapsed && (
-        <div className="h-28 bg-black/20">
-          {session?.kind === "automation" && session.screenshotDataUrl ? (
-            <img
-              src={session.screenshotDataUrl}
-              alt={session.title}
-              className="h-full w-full object-contain object-top"
-            />
-          ) : session?.kind === "url" || (session && "url" in session) ? (
-            <iframe
-              title={session.title ?? "Browser preview"}
-              src={displayedAddress || undefined}
-              className="h-full w-full border-0 bg-background"
-              sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground/30">
-              {sessionMode === "idle" ? "Ready" : "No session"}
-            </div>
-          )}
+        <div className="flex items-start gap-2 px-3 pb-2">
+          <div className="h-20 w-32 shrink-0 overflow-hidden rounded bg-black/20">
+            {session?.kind === "automation" && session.screenshotDataUrl ? (
+              <img
+                src={session.screenshotDataUrl}
+                alt={session.title}
+                className="h-full w-full object-cover object-top"
+              />
+            ) : session?.kind === "url" ? (
+              <iframe
+                title={session.title ?? "Browser preview"}
+                src={session.url}
+                className="h-full w-full origin-top-left scale-50 border-0 bg-background"
+                style={{ width: "200%", height: "200%" }}
+                sandbox="allow-scripts"
+                tabIndex={-1}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-[9px] text-muted-foreground/20">
+                {sessionMode === "idle" ? "Ready" : "No session"}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
