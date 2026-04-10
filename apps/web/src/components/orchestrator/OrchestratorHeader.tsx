@@ -2,8 +2,7 @@ import {
   BrainIcon,
   CheckCircleIcon,
   CircleIcon,
-  EyeIcon,
-  EyeOffIcon,
+  GlobeIcon,
   LoaderIcon,
   PauseIcon,
   SendIcon,
@@ -23,7 +22,7 @@ type AgentPhase = "disconnected" | "connecting" | "ready" | "running";
 function AgentStatusBadge({ phase }: { phase: AgentPhase }) {
   if (phase === "running") {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-amber-500">
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <LoaderIcon className="size-3 animate-spin" />
         Running
       </span>
@@ -39,7 +38,7 @@ function AgentStatusBadge({ phase }: { phase: AgentPhase }) {
   }
   if (phase === "ready") {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-green-500">
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <CircleIcon className="size-2.5 fill-current" />
         Ready
       </span>
@@ -63,13 +62,28 @@ function OrchestratorStatusBar({
   if (status === "idle") return null;
 
   const config = {
-    thinking: { icon: LoaderIcon, label: "Thinking...", color: "text-amber-500", spin: true },
-    sending: { icon: SendIcon, label: "Sending to agent...", color: "text-blue-500", spin: false },
-    waiting: { icon: LoaderIcon, label: "Agent working...", color: "text-amber-500", spin: true },
+    thinking: {
+      icon: LoaderIcon,
+      label: "Thinking...",
+      color: "text-muted-foreground",
+      spin: true,
+    },
+    sending: {
+      icon: SendIcon,
+      label: "Sending to agent...",
+      color: "text-muted-foreground",
+      spin: false,
+    },
+    waiting: {
+      icon: LoaderIcon,
+      label: "Agent working...",
+      color: "text-muted-foreground",
+      spin: true,
+    },
     reviewing: {
       icon: CheckCircleIcon,
       label: "Reviewing output",
-      color: "text-green-500",
+      color: "text-muted-foreground",
       spin: false,
     },
   }[status];
@@ -96,6 +110,7 @@ export interface OrchestratorHeaderProps {
   statusDetail: string | null;
   threadBrowserSession: unknown;
   isThreadBrowserSessionVisible: boolean;
+  hasBrowserContext: boolean;
   isBusy: boolean;
   onToggleBrowserPreview: () => void;
   onStartNewChat: () => void;
@@ -113,10 +128,36 @@ export function OrchestratorHeader({
   statusDetail,
   threadBrowserSession,
   isThreadBrowserSessionVisible,
+  hasBrowserContext,
   isBusy,
   onToggleBrowserPreview,
   onStartNewChat,
 }: OrchestratorHeaderProps) {
+  const hasBrowserWorkspace = Boolean(threadBrowserSession);
+  const browserState = hasBrowserWorkspace
+    ? isThreadBrowserSessionVisible
+      ? "live"
+      : "hidden"
+    : hasBrowserContext
+      ? "idle"
+      : "unavailable";
+  const browserLabel =
+    browserState === "live"
+      ? "Browser live"
+      : browserState === "hidden"
+        ? "Browser hidden"
+        : browserState === "idle"
+          ? "Browser idle"
+          : "Browser unavailable";
+  const browserTitle =
+    browserState === "live"
+      ? "Hide browser workspace"
+      : browserState === "hidden"
+        ? "Show browser workspace"
+        : browserState === "idle"
+          ? "Browser workspace is ready and will attach when validation opens a session"
+          : "No browser workspace is attached to this thread";
+
   return (
     <>
       {/* ---- Title bar ---- */}
@@ -128,31 +169,16 @@ export function OrchestratorHeader({
         <div className="flex items-center gap-0.5">
           <Button
             type="button"
-            size="icon"
             variant="ghost"
-            className="size-7 text-muted-foreground hover:text-foreground disabled:opacity-45"
-            title={
-              threadBrowserSession
-                ? isThreadBrowserSessionVisible
-                  ? "Hide browser preview"
-                  : "Show browser preview"
-                : "No browser preview for this thread"
-            }
-            aria-label={
-              threadBrowserSession
-                ? isThreadBrowserSessionVisible
-                  ? "Hide browser preview"
-                  : "Show browser preview"
-                : "No browser preview for this thread"
-            }
-            disabled={!threadBrowserSession}
+            className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground/50 hover:text-foreground/70 disabled:opacity-45"
+            title={browserTitle}
+            aria-label={browserTitle}
+            disabled={!hasBrowserWorkspace}
             onClick={onToggleBrowserPreview}
           >
-            {threadBrowserSession && !isThreadBrowserSessionVisible ? (
-              <EyeOffIcon className="size-3.5" />
-            ) : (
-              <EyeIcon className="size-3.5" />
-            )}
+            <span className="size-1 rounded-full bg-foreground/30" />
+            <GlobeIcon className="size-3.5" />
+            <span className="hidden sm:inline">{browserLabel}</span>
           </Button>
           <Button
             type="button"

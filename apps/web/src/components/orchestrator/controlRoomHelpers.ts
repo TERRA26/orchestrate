@@ -24,19 +24,19 @@ export interface TaskStatusConfig {
 }
 
 const TASK_STATUS_MAP: Record<string, TaskStatusConfig> = {
-  pending: { color: "bg-muted-foreground/40", label: "P" },
-  assigned: { color: "bg-sky-400/60", label: "A" },
-  running: { color: "bg-sky-400", label: "R" },
-  submitted: { color: "bg-amber-400", label: "S" },
-  accepted: { color: "bg-emerald-400", label: "\u2713" },
-  "needs-rework": { color: "bg-amber-500", label: "!" },
-  blocked: { color: "bg-rose-400", label: "B" },
-  cancelled: { color: "bg-muted-foreground/30", label: "\u00d7" },
-  failed: { color: "bg-rose-500", label: "\u2717" },
+  pending: { color: "bg-muted-foreground/10", label: "P" },
+  assigned: { color: "bg-foreground/40", label: "A" },
+  running: { color: "bg-foreground/60", label: "R" },
+  submitted: { color: "bg-foreground/40", label: "S" },
+  accepted: { color: "bg-foreground/20", label: "\u2713" },
+  "needs-rework": { color: "bg-foreground/40", label: "!" },
+  blocked: { color: "bg-muted-foreground/20", label: "B" },
+  cancelled: { color: "bg-muted-foreground/10", label: "\u00d7" },
+  failed: { color: "bg-muted-foreground/30", label: "\u2717" },
 };
 
 const DEFAULT_TASK_STATUS: TaskStatusConfig = {
-  color: "bg-muted-foreground/40",
+  color: "bg-muted-foreground/10",
   label: "?",
 };
 
@@ -56,15 +56,15 @@ export interface WorkerStatusStyle {
 export function getWorkerStatusStyle(status: string): WorkerStatusStyle {
   switch (status) {
     case "running":
-      return { border: "border-sky-500/30", headerBg: "bg-sky-500/5" };
+      return { border: "border-border/15", headerBg: "bg-transparent" };
     case "submitted":
-      return { border: "border-amber-500/30", headerBg: "bg-amber-500/5" };
+      return { border: "border-border/15", headerBg: "bg-transparent" };
     case "stuck":
-      return { border: "border-orange-500/30 animate-pulse", headerBg: "bg-orange-500/5" };
+      return { border: "border-border/20 animate-pulse", headerBg: "bg-transparent" };
     case "terminated":
-      return { border: "border-muted-foreground/20", headerBg: "bg-muted/10" };
+      return { border: "border-border/10", headerBg: "bg-transparent" };
     default:
-      return { border: "border-border/20", headerBg: "bg-background/30" };
+      return { border: "border-border/10", headerBg: "bg-transparent" };
   }
 }
 
@@ -75,14 +75,14 @@ export function getWorkerStatusStyle(status: string): WorkerStatusStyle {
 export function getRunStatusDotColor(status: string): string {
   switch (status) {
     case "active":
-      return "bg-sky-400";
+      return "text-foreground/70";
     case "completed":
-      return "bg-emerald-400";
+      return "text-foreground/40";
     case "failed":
-      return "bg-rose-400";
+      return "text-muted-foreground/50";
     case "cancelled":
-      return "bg-muted-foreground/40";
+      return "text-muted-foreground/25";
     default:
-      return "bg-muted-foreground/30";
+      return "text-muted-foreground/20";
   }
 }

@@ -2,7 +2,6 @@ import { CheckCircle, XCircle } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { getTaskStatusConfig } from "./controlRoomHelpers";
-import { EvidenceTypeBadge } from "./OrchestratorInspector";
 
 // ---------------------------------------------------------------------------
 // Block types
@@ -30,65 +29,65 @@ interface DecisionTypeConfig {
 const DECISION_TYPE_MAP: Record<string, DecisionTypeConfig> = {
   answered: {
     label: "Answered",
-    textColor: "text-emerald-400",
-    borderColor: "border-l-emerald-500/40",
-    bg: "bg-emerald-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   inspected: {
     label: "Inspected",
-    textColor: "text-sky-400",
-    borderColor: "border-l-sky-500/40",
-    bg: "bg-sky-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   delegated: {
     label: "Delegated",
-    textColor: "text-violet-400",
-    borderColor: "border-l-violet-500/40",
-    bg: "bg-violet-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   decomposed: {
     label: "Decomposed",
-    textColor: "text-amber-400",
-    borderColor: "border-l-amber-500/40",
-    bg: "bg-amber-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   "spawned-worker": {
     label: "Spawned Worker",
-    textColor: "text-teal-400",
-    borderColor: "border-l-teal-500/40",
-    bg: "bg-teal-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   "terminated-worker": {
     label: "Terminated Worker",
-    textColor: "text-rose-400",
-    borderColor: "border-l-rose-500/40",
-    bg: "bg-rose-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   "accepted-work": {
     label: "Accepted",
-    textColor: "text-emerald-400",
-    borderColor: "border-l-emerald-500/40",
-    bg: "bg-emerald-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   "rejected-work": {
     label: "Rejected",
-    textColor: "text-rose-400",
-    borderColor: "border-l-rose-500/40",
-    bg: "bg-rose-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
   "requested-rework": {
     label: "Rework",
-    textColor: "text-amber-400",
-    borderColor: "border-l-amber-500/40",
-    bg: "bg-amber-500/5",
+    textColor: "text-foreground/70",
+    borderColor: "border-l-border/20",
+    bg: "bg-transparent",
   },
 };
 
 const DEFAULT_DECISION_CONFIG: DecisionTypeConfig = {
   label: "Decision",
   textColor: "text-muted-foreground",
-  borderColor: "border-l-muted-foreground/30",
-  bg: "bg-muted/5",
+  borderColor: "border-l-border/20",
+  bg: "bg-transparent",
 };
 
 function getDecisionTypeConfig(type: string): DecisionTypeConfig {
@@ -123,9 +122,9 @@ export function DecisionCard({
 }) {
   const config = getDecisionTypeConfig(decision.type);
   return (
-    <div className={cn("rounded-md border-l-2 px-3 py-2", config.borderColor, config.bg)}>
+    <div className={cn("rounded-md border-l px-3 py-2", config.borderColor, config.bg)}>
       <div className="flex items-center gap-2">
-        <span className={cn("text-[9px] font-semibold uppercase tracking-wider", config.textColor)}>
+        <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50">
           {config.label}
         </span>
         <span className="font-mono text-[10px] text-muted-foreground/40">
@@ -174,7 +173,9 @@ function EvidenceStrip({
       onClick={onClick}
       className="flex items-center gap-1.5 rounded border border-border/15 bg-background/20 px-2 py-1 text-[10px] hover:bg-accent/10"
     >
-      <EvidenceTypeBadge type={type} />
+      <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50">
+        {type}
+      </span>
       <span className="font-mono text-muted-foreground/50">{formatTime(timestamp)}</span>
     </button>
   );
@@ -190,24 +191,14 @@ export function VerdictBanner({
   evidenceCount: number;
 }) {
   return (
-    <div
-      className={cn(
-        "rounded-md border px-3 py-2",
-        accepted ? "border-emerald-500/20 bg-emerald-500/5" : "border-rose-500/20 bg-rose-500/5",
-      )}
-    >
+    <div className="rounded-md border border-border/10 bg-muted/5 px-3 py-2">
       <div className="flex items-center gap-2">
         {accepted ? (
-          <CheckCircle className="size-3.5 text-emerald-400" />
+          <CheckCircle className="size-3.5 text-muted-foreground/60" />
         ) : (
-          <XCircle className="size-3.5 text-rose-400" />
+          <XCircle className="size-3.5 text-muted-foreground/60" />
         )}
-        <span
-          className={cn(
-            "text-[11px] font-semibold",
-            accepted ? "text-emerald-400" : "text-rose-400",
-          )}
-        >
+        <span className="text-[11px] font-semibold text-foreground/70">
           {accepted ? "Accepted" : "Rejected"}
         </span>
         <span className="ml-auto text-[10px] text-muted-foreground/50">
@@ -224,7 +215,7 @@ export function WorkerMention({ label, onClick }: { label: string; onClick?: () 
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-0.5 rounded bg-sky-500/10 px-1 py-0.5 text-[10px] font-medium text-sky-400 hover:bg-sky-500/20"
+      className="inline-flex items-center gap-0.5 rounded bg-accent/5 px-1 py-0.5 text-[10px] font-medium text-foreground/70 hover:bg-accent/10"
     >
       @{label}
     </button>

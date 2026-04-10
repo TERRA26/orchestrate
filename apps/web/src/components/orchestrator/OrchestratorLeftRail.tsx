@@ -42,21 +42,14 @@ function WorkerListItem({
       className={cn(
         "flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] transition-colors",
         isSelected
-          ? "bg-accent/30 text-foreground"
-          : "text-foreground/70 hover:bg-accent/15 hover:text-foreground/90",
+          ? "bg-accent/10 text-foreground"
+          : "text-foreground/60 hover:bg-accent/5 hover:text-foreground/80",
       )}
     >
       <WorkerStatusIndicator status={worker.status} />
       <span className="truncate font-mono">W-{worker.workerId.slice(-6)}</span>
       {worker.modelBinding && (
-        <span
-          className={cn(
-            "ml-auto shrink-0 rounded px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wider",
-            worker.modelBinding.provider === "codex"
-              ? "bg-emerald-500/10 text-emerald-400/70"
-              : "bg-violet-500/10 text-violet-400/70",
-          )}
-        >
+        <span className="ml-auto shrink-0 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/40">
           {worker.modelBinding.provider === "codex" ? "GPT" : "CLD"}
         </span>
       )}

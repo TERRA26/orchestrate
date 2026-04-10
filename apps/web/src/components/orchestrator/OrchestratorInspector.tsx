@@ -14,32 +14,22 @@ import { getTaskStatusConfig, getWorkerStatusStyle, formatElapsedTime } from "./
 // Evidence type badge
 // ---------------------------------------------------------------------------
 
-const EVIDENCE_TYPE_CONFIG: Record<string, { label: string; className: string }> = {
-  diff: { label: "Diff", className: "bg-violet-500/15 text-violet-400" },
-  "file-snapshot": { label: "File", className: "bg-sky-500/15 text-sky-400" },
-  "test-result": { label: "Test", className: "bg-emerald-500/15 text-emerald-400" },
-  "command-result": { label: "Cmd", className: "bg-amber-500/15 text-amber-400" },
-  "browser-trace": { label: "Browser", className: "bg-teal-500/15 text-teal-400" },
-  screenshot: { label: "Screenshot", className: "bg-pink-500/15 text-pink-400" },
-  log: { label: "Log", className: "bg-muted/30 text-muted-foreground" },
-  "aria-snapshot": { label: "ARIA", className: "bg-indigo-500/15 text-indigo-400" },
-};
-
-const DEFAULT_EVIDENCE_CONFIG = {
-  label: "Unknown",
-  className: "bg-muted/20 text-muted-foreground",
+const EVIDENCE_TYPE_LABELS: Record<string, string> = {
+  diff: "Diff",
+  "file-snapshot": "File",
+  "test-result": "Test",
+  "command-result": "Cmd",
+  "browser-trace": "Browser",
+  screenshot: "Screenshot",
+  log: "Log",
+  "aria-snapshot": "ARIA",
 };
 
 export function EvidenceTypeBadge({ type }: { type: string }) {
-  const c = EVIDENCE_TYPE_CONFIG[type] ?? DEFAULT_EVIDENCE_CONFIG;
+  const label = EVIDENCE_TYPE_LABELS[type] ?? "Unknown";
   return (
-    <span
-      className={cn(
-        "rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
-        c.className,
-      )}
-    >
-      {c.label}
+    <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50">
+      {label}
     </span>
   );
 }
@@ -164,23 +154,14 @@ function TaskInspector({
           <ul className="space-y-0.5">
             {task.checklist.map((item) => (
               <li key={item.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    item.status === "passed"
-                      ? "bg-emerald-400"
-                      : item.status === "failed"
-                        ? "bg-rose-400"
-                        : "bg-muted-foreground/30",
-                  )}
-                />
+                <span className="size-1.5 shrink-0 rounded-full bg-foreground/30" />
                 <span className="text-foreground/60">{item.label}</span>
                 {item.evidenceRefs?.map((ref) => (
                   <button
                     key={ref}
                     type="button"
                     onClick={() => onSelectEvidence?.(ref)}
-                    className="font-mono text-[9px] text-sky-400/70 hover:text-sky-400 hover:underline"
+                    className="font-mono text-[9px] text-muted-foreground/50 hover:text-foreground/70 hover:underline"
                   >
                     ev:{ref.slice(-8)}
                   </button>
@@ -193,11 +174,11 @@ function TaskInspector({
 
       {/* Blocked reason */}
       {task.blockedBy && (
-        <div className="rounded border border-rose-500/20 bg-rose-500/5 px-2 py-1.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-rose-400/80">
+        <div className="rounded border border-border/10 bg-muted/5 px-2 py-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
             Blocked by
           </p>
-          <p className="mt-0.5 text-[11px] text-rose-300/70">{task.blockedBy}</p>
+          <p className="mt-0.5 text-[11px] text-foreground/60">{task.blockedBy}</p>
         </div>
       )}
     </div>
@@ -263,11 +244,11 @@ function WorkerInspector({ worker }: { worker: OrchestratorWorker }) {
 
       {/* Termination reason */}
       {worker.terminationReason && (
-        <div className="rounded border border-rose-500/20 bg-rose-500/5 px-2 py-1.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-rose-400/80">
+        <div className="rounded border border-border/10 bg-muted/5 px-2 py-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
             Termination reason
           </p>
-          <p className="mt-0.5 text-[11px] text-rose-300/70">{worker.terminationReason}</p>
+          <p className="mt-0.5 text-[11px] text-foreground/60">{worker.terminationReason}</p>
         </div>
       )}
     </div>
@@ -353,8 +334,8 @@ export function OrchestratorInspector({
           className={cn(
             "flex-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider transition-colors",
             activeTab === "details"
-              ? "border-b border-sky-400 text-sky-400"
-              : "text-muted-foreground/50 hover:text-muted-foreground/70",
+              ? "border-b border-foreground/30 text-foreground/80"
+              : "text-muted-foreground/40 hover:text-muted-foreground/60",
           )}
         >
           Details
@@ -365,8 +346,8 @@ export function OrchestratorInspector({
           className={cn(
             "flex-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider transition-colors",
             activeTab === "evidence"
-              ? "border-b border-sky-400 text-sky-400"
-              : "text-muted-foreground/50 hover:text-muted-foreground/70",
+              ? "border-b border-foreground/30 text-foreground/80"
+              : "text-muted-foreground/40 hover:text-muted-foreground/60",
           )}
         >
           Evidence

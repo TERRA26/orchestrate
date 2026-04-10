@@ -65,7 +65,7 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
   const counts = countOrchestratorChecklistItems(items);
 
   return (
-    <div className="mb-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+    <div className="mb-3 border border-border/10 bg-transparent px-3 py-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-xs font-medium text-foreground/88">Quality Gate</p>
@@ -75,35 +75,32 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
             {counts.pending > 0 ? `, ${counts.pending} pending` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span className="rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-green-600">
-            {counts.passed} passed
-          </span>
-          <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-600">
-            {counts.pending} pending
-          </span>
-          <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-red-600">
-            {counts.failed} failed
-          </span>
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="text-foreground/50">{counts.passed} passed</span>
+          <span className="text-muted-foreground/40">{counts.pending} pending</span>
+          <span className="text-muted-foreground/60">{counts.failed} failed</span>
         </div>
       </div>
       <div className="mt-2 flex flex-col gap-1.5">
         {items.map((item) => (
-          <div
-            key={item.id}
-            className="rounded-md border border-border/40 bg-background/55 px-2.5 py-2"
-          >
+          <div key={item.id} className="border border-border/10 bg-transparent px-2.5 py-2">
             <div className="flex items-start gap-2">
               <span
                 className={cn(
-                  "mt-1 size-2 shrink-0 rounded-full",
+                  "mt-1 shrink-0 text-[11px] leading-none",
                   item.status === "passed"
-                    ? "bg-green-500"
+                    ? "text-foreground/50"
                     : item.status === "failed"
-                      ? "bg-red-500"
-                      : "bg-amber-500",
+                      ? "text-muted-foreground/60"
+                      : "text-muted-foreground/40",
                 )}
-              />
+              >
+                {item.status === "passed"
+                  ? "\u2713"
+                  : item.status === "failed"
+                    ? "\u2717"
+                    : "\u00b7"}
+              </span>
               <div className="min-w-0">
                 <p className="text-xs leading-4 text-foreground/90">{item.label}</p>
                 {item.notes ? (
@@ -149,7 +146,7 @@ function TranscriptEntry({ message }: { message: OrchestratorMessage }) {
     case "thinking":
       return (
         <div className="flex items-center gap-2 px-3 py-0.5">
-          <div className="size-1.5 shrink-0 animate-pulse rounded-full bg-sky-400/40" />
+          <div className="size-1.5 shrink-0 animate-pulse rounded-full bg-foreground/30" />
           <span className="truncate text-[10px] italic text-muted-foreground/40">
             {message.content}
           </span>
@@ -184,6 +181,7 @@ export interface OrchestratorMessagesProps {
   requirementsChecklist: ReadonlyArray<OrchestratorChecklistItem>;
   threadBrowserSession: EmbeddedBrowserSession | null;
   isThreadBrowserSessionVisible: boolean;
+  suppressInlineBrowserPreview?: boolean;
   isBusy: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   /** When true, renders the decision-aware transcript instead of the default bubbles. */
@@ -199,6 +197,7 @@ export function OrchestratorMessages({
   requirementsChecklist,
   threadBrowserSession,
   isThreadBrowserSessionVisible,
+  suppressInlineBrowserPreview = false,
   isBusy,
   scrollRef,
   controlRoomMode = false,
@@ -244,7 +243,9 @@ export function OrchestratorMessages({
           {requirementsChecklist.length > 0 ? (
             <RequirementsChecklistCard items={requirementsChecklist} />
           ) : null}
-          {threadBrowserSession && isThreadBrowserSessionVisible ? (
+          {threadBrowserSession &&
+          isThreadBrowserSessionVisible &&
+          !suppressInlineBrowserPreview ? (
             <div className="mb-4">
               <InlineEmbeddedBrowserCard
                 session={threadBrowserSession}

@@ -12,14 +12,7 @@ import { getTaskStatusConfig } from "./controlRoomHelpers";
 function TaskStatusBadge({ status }: { status: string }) {
   const config = getTaskStatusConfig(status);
   return (
-    <span
-      className={cn(
-        "flex size-4 shrink-0 items-center justify-center rounded-sm text-[9px] font-bold text-white",
-        config.color,
-      )}
-    >
-      {config.label}
-    </span>
+    <span className={cn("size-1.5 shrink-0 rounded-full", config.color)} title={config.label} />
   );
 }
 
