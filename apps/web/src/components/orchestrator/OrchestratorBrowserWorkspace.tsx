@@ -1,6 +1,7 @@
-import { useCallback } from "react";
-import { ExternalLinkIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
+import { useState } from "react";
+import { ExternalLinkIcon, Maximize2Icon, Minimize2Icon, MonitorIcon } from "lucide-react";
 
+import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
 import type { EmbeddedBrowserSession } from "~/embeddedBrowserStateStore";
 
 // ---------------------------------------------------------------------------
@@ -29,14 +30,44 @@ export function OrchestratorBrowserWorkspace({
   isCollapsed,
   onToggleCollapse,
 }: BrowserWorkspaceProps) {
+  const [expandedInApp, setExpandedInApp] = useState(false);
+
   if (!session && !url && sessionMode === "stale") return null;
 
   const displayedAddress =
     (session && "url" in session ? session.url : null) ?? session?.title ?? url ?? "";
 
-  const handleOpenExternal = useCallback(() => {
+  const handleOpenExternal = () => {
     if (displayedAddress) window.open(displayedAddress, "_blank", "noopener");
-  }, [displayedAddress]);
+  };
+
+  // Expanded in-app view: full browser surface in the panel
+  if (expandedInApp && session) {
+    return (
+      <div className="border-b border-border/10">
+        <div className="flex items-center gap-2 px-3 py-1">
+          <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/35">
+            {displayedAddress}
+          </span>
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setExpandedInApp(false)}
+              className="rounded p-1 text-muted-foreground/25 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
+              title="Minimize preview"
+            >
+              <Minimize2Icon className="size-3" />
+            </button>
+          </div>
+        </div>
+        <InlineEmbeddedBrowserCard
+          session={session}
+          scopeLabel="Browser workspace"
+          className="h-[clamp(240px,35vh,380px)]"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="border-b border-border/10">
@@ -53,6 +84,16 @@ export function OrchestratorBrowserWorkspace({
 
         {/* Action icons — right aligned */}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {session ? (
+            <button
+              type="button"
+              onClick={() => setExpandedInApp(true)}
+              className="rounded p-1 text-muted-foreground/25 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
+              title="Open in app"
+            >
+              <MonitorIcon className="size-3" />
+            </button>
+          ) : null}
           {displayedAddress ? (
             <button
               type="button"
