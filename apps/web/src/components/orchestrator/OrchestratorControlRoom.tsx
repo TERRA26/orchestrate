@@ -115,64 +115,57 @@ function CompactRunHeader({
   onSelectTask: (taskId: OrchestratorTaskId) => void;
   onSelectWorker: (workerId: OrchestratorWorkerId) => void;
 }) {
-  return (
-    <div className="shrink-0 border-b border-border/20 bg-gradient-to-b from-background/95 to-background/70 px-3 py-2">
-      <div className="flex items-start gap-2">
-        <CircleIcon
-          className={cn(
-            "mt-0.5 size-2 shrink-0 fill-current",
-            getRunStatusDotColor(run?.status ?? "idle"),
-          )}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/55">
-              {run ? run.status : "Orchestrator"}
-            </p>
-            {run ? (
-              <span className="text-[10px] font-mono text-muted-foreground/45">
-                {formatElapsedTime(run.createdAt)}
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-foreground/80">
-            {run?.userRequest ?? "Active orchestrator run"}
-          </p>
-        </div>
-      </div>
+  // Only show task/worker selectors when there's more than one entity to pick
+  const showSelectors = tasks.length > 1 || workers.length > 1;
 
-      <div className="mt-1.5 flex flex-wrap gap-2">
-        {tasks.slice(0, 3).map((task) => (
-          <button
-            key={task.taskId}
-            type="button"
-            onClick={() => onSelectTask(task.taskId)}
-            className={cn(
-              "border-b pb-0.5 text-[10px] transition-colors",
-              selectedEntityId === task.taskId
-                ? "border-foreground/30 font-medium text-foreground"
-                : "border-transparent text-muted-foreground/40 hover:text-muted-foreground/60",
-            )}
-          >
-            {task.title}
-          </button>
-        ))}
-        {workers.map((worker) => (
-          <button
-            key={worker.workerId}
-            type="button"
-            onClick={() => onSelectWorker(worker.workerId)}
-            className={cn(
-              "border-b pb-0.5 text-[10px] transition-colors",
-              selectedEntityId === worker.workerId
-                ? "border-foreground/30 font-medium text-foreground"
-                : "border-transparent text-muted-foreground/40 hover:text-muted-foreground/60",
-            )}
-          >
-            W-{worker.workerId.slice(-4)}
-          </button>
-        ))}
-      </div>
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-b border-border/10 px-3 py-1">
+      <CircleIcon
+        className={cn("size-1.5 shrink-0 fill-current", getRunStatusDotColor(run?.status ?? "idle"))}
+      />
+      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/50">
+        {run ? run.status : "Orchestrator"}
+      </span>
+      {run ? (
+        <span className="font-mono text-[10px] text-muted-foreground/35">
+          {formatElapsedTime(run.createdAt)}
+        </span>
+      ) : null}
+
+      {showSelectors ? (
+        <div className="ml-auto flex items-center gap-1.5">
+          {tasks.slice(0, 3).map((task) => (
+            <button
+              key={task.taskId}
+              type="button"
+              onClick={() => onSelectTask(task.taskId)}
+              className={cn(
+                "text-[10px] transition-colors",
+                selectedEntityId === task.taskId
+                  ? "font-medium text-foreground/70"
+                  : "text-muted-foreground/30 hover:text-muted-foreground/50",
+              )}
+            >
+              {task.title}
+            </button>
+          ))}
+          {workers.map((worker) => (
+            <button
+              key={worker.workerId}
+              type="button"
+              onClick={() => onSelectWorker(worker.workerId)}
+              className={cn(
+                "text-[10px] transition-colors",
+                selectedEntityId === worker.workerId
+                  ? "font-medium text-foreground/70"
+                  : "text-muted-foreground/30 hover:text-muted-foreground/50",
+              )}
+            >
+              W-{worker.workerId.slice(-4)}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -302,8 +295,10 @@ export function OrchestratorControlRoom({
           </div>
         ) : null}
 
-        {selectedEntity?.type === "task" ? (
-          <div className="max-h-20 shrink-0 overflow-y-auto border-b border-border/20 bg-background/40 px-3 py-1.5">
+        {/* Only show task selection card when multiple tasks exist — single-task
+            info is already visible in the checklist card within the messages area */}
+        {selectedEntity?.type === "task" && tasks.length > 1 ? (
+          <div className="max-h-16 shrink-0 overflow-y-auto border-b border-border/10 px-3 py-1">
             <CompactSelectionCard selectedEntity={selectedEntity} />
           </div>
         ) : null}

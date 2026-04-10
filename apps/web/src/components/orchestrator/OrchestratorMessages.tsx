@@ -88,49 +88,37 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
   const counts = countOrchestratorChecklistItems(items);
 
   return (
-    <div className="mb-3 border border-border/10 bg-transparent px-3 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-xs font-medium text-foreground/88">Quality Gate</p>
-          <p className="text-[11px] text-muted-foreground">
-            {counts.passed}/{items.length} verified
-            {counts.failed > 0 ? `, ${counts.failed} failing` : ""}
-            {counts.pending > 0 ? `, ${counts.pending} pending` : ""}
-          </p>
-        </div>
-        <div className="flex items-center gap-3 text-[10px]">
-          <span className="text-foreground/50">{counts.passed} passed</span>
-          <span className="text-muted-foreground/40">{counts.pending} pending</span>
-          <span className="text-muted-foreground/60">{counts.failed} failed</span>
-        </div>
-      </div>
-      <div className="mt-2 flex flex-col gap-1.5">
+    <div className="mb-3 px-1">
+      <p className="mb-1.5 text-[10px] text-muted-foreground/40">
+        {counts.passed}/{items.length} verified
+      </p>
+      <div className="flex flex-col gap-0.5">
         {items.map((item) => (
-          <div key={item.id} className="border border-border/10 bg-transparent px-2.5 py-2">
-            <div className="flex items-start gap-2">
-              <span
-                className={cn(
-                  "mt-1 shrink-0 text-[11px] leading-none",
-                  item.status === "passed"
-                    ? "text-foreground/50"
-                    : item.status === "failed"
-                      ? "text-muted-foreground/60"
-                      : "text-muted-foreground/40",
-                )}
-              >
-                {item.status === "passed"
-                  ? "\u2713"
+          <div key={item.id} className="flex items-start gap-1.5 py-0.5">
+            <span
+              className={cn(
+                "mt-0.5 shrink-0 text-[11px] leading-none",
+                item.status === "passed"
+                  ? "text-foreground/45"
                   : item.status === "failed"
-                    ? "\u2717"
-                    : "\u00b7"}
-              </span>
-              <div className="min-w-0">
-                <p className="text-xs leading-4 text-foreground/90">{item.label}</p>
-                {item.notes ? (
-                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{item.notes}</p>
-                ) : null}
-              </div>
-            </div>
+                    ? "text-muted-foreground/50"
+                    : "text-muted-foreground/25",
+              )}
+            >
+              {item.status === "passed"
+                ? "\u2713"
+                : item.status === "failed"
+                  ? "\u2717"
+                  : "\u00b7"}
+            </span>
+            <p
+              className={cn(
+                "text-[11px] leading-4",
+                item.status === "passed" ? "text-foreground/50" : "text-foreground/70",
+              )}
+            >
+              {item.label}
+            </p>
           </div>
         ))}
       </div>
