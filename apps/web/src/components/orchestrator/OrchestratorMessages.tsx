@@ -1,7 +1,9 @@
-import { CheckIcon, LoaderIcon } from "lucide-react";
+import { useCallback, useState } from "react";
+import { CheckIcon, ExternalLinkIcon, LoaderIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
 
 import {
   countOrchestratorChecklistItems,
@@ -79,6 +81,93 @@ function MessageBubble({
     <div className="pb-4" data-message-role="assistant">
       <div className="chat-markdown prose prose-sm max-w-none text-sm leading-relaxed text-foreground">
         <ChatMarkdown text={displayContent} cwd={undefined} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Compact browser preview — left-aligned thumbnail with action icons
+// ---------------------------------------------------------------------------
+
+function CompactBrowserPreview({ session }: { session: EmbeddedBrowserSession }) {
+  const [expanded, setExpanded] = useState(false);
+  const url = "url" in session ? session.url : null;
+
+  const handleOpenExternal = useCallback(() => {
+    if (url) window.open(url, "_blank", "noopener");
+  }, [url]);
+
+  // Expanded: use the full InlineEmbeddedBrowserCard
+  if (expanded) {
+    return (
+      <div className="relative mb-3">
+        <div className="absolute right-2 top-2 z-10 flex gap-1">
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="rounded bg-black/50 p-1 text-white/60 backdrop-blur transition-colors hover:text-white/90"
+            title="Minimize preview"
+          >
+            <Minimize2Icon className="size-3.5" />
+          </button>
+        </div>
+        <InlineEmbeddedBrowserCard
+          session={session}
+          scopeLabel="Browser preview"
+          className="h-[clamp(280px,40vh,420px)]"
+        />
+      </div>
+    );
+  }
+
+  // Compact: small left-aligned thumbnail with action icons on the right
+  return (
+    <div className="mb-3 flex items-start gap-2">
+      {/* Thumbnail */}
+      <div className="h-20 w-32 shrink-0 overflow-hidden rounded bg-black/20">
+        {session.kind === "automation" && session.screenshotDataUrl ? (
+          <img
+            src={session.screenshotDataUrl}
+            alt={session.title}
+            className="h-full w-full object-cover object-top"
+          />
+        ) : session.kind === "url" ? (
+          <iframe
+            title={session.title}
+            src={session.url}
+            className="h-full w-full scale-[0.5] origin-top-left border-0 bg-background"
+            style={{ width: "200%", height: "200%" }}
+            sandbox="allow-scripts"
+            tabIndex={-1}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-[9px] text-muted-foreground/25">
+            Preview
+          </div>
+        )}
+      </div>
+
+      {/* Action icons */}
+      <div className="flex flex-col gap-1 pt-0.5">
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="rounded p-1 text-muted-foreground/30 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
+          title="Expand preview"
+        >
+          <Maximize2Icon className="size-3.5" />
+        </button>
+        {url ? (
+          <button
+            type="button"
+            onClick={handleOpenExternal}
+            className="rounded p-1 text-muted-foreground/30 transition-colors hover:bg-accent/10 hover:text-muted-foreground/60"
+            title="Open in new tab"
+          >
+            <ExternalLinkIcon className="size-3.5" />
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -257,23 +346,7 @@ export function OrchestratorMessages({
           {threadBrowserSession &&
           isThreadBrowserSessionVisible &&
           !suppressInlineBrowserPreview ? (
-            <div className="mb-3 h-36 overflow-hidden rounded bg-black/20">
-              {threadBrowserSession.kind === "automation" &&
-              threadBrowserSession.screenshotDataUrl ? (
-                <img
-                  src={threadBrowserSession.screenshotDataUrl}
-                  alt={threadBrowserSession.title}
-                  className="h-full w-full object-contain object-top"
-                />
-              ) : threadBrowserSession.kind === "url" ? (
-                <iframe
-                  title={threadBrowserSession.title}
-                  src={threadBrowserSession.url}
-                  className="h-full w-full border-0 bg-background"
-                  sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts"
-                />
-              ) : null}
-            </div>
+            <CompactBrowserPreview session={threadBrowserSession} />
           ) : null}
           {hasContent ? (
             messages.map((message, index) => (
