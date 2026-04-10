@@ -584,27 +584,53 @@ export function parseOrchestratorRouterDecision(raw: string): OrchestratorRouter
     };
   }
 
+  // Handle "decompose" by merging subtasks into a single task draft
+  if (kind === "decompose" && Array.isArray(parsed?.subtasks) && parsed.subtasks.length > 0) {
+    const subtasks = parsed.subtasks as Array<{
+      title?: string;
+      instruction?: string;
+      acceptanceCriteria?: string[];
+      provider?: string;
+      model?: string;
+    }>;
+    const title = toNonEmptyString(parsed.title) ?? "Multi-agent task";
+    const mergedInstruction = subtasks
+      .map((st, i) => {
+        const stTitle = toNonEmptyString(st.title) ?? `Part ${i + 1}`;
+        const stInstruction = toNonEmptyString(st.instruction) ?? "";
+        const provider = toNonEmptyString(st.provider);
+        const providerNote = provider ? ` (${provider})` : "";
+        return `**${stTitle}**${providerNote}: ${stInstruction}`;
+      })
+      .join("\n\n");
+    const mergedCriteria = subtasks.flatMap((st) => toStringArray(st.acceptanceCriteria));
+
+    return {
+      kind: "delegate",
+      taskDraft: {
+        title,
+        instruction: mergedInstruction,
+        acceptanceCriteria: mergedCriteria,
+        requirementsChecklist: normalizeRequirementsChecklist([], mergedCriteria),
+      },
+    };
+  }
+
   return {
     kind: "delegate",
     taskDraft: parseOrchestratorTaskDraft(raw),
   };
 }
 
+/** Marker prefix so the UI can visually distinguish delegated instructions from direct answers. */
+export const DELEGATION_MARKER = "\u200B\u200B\u200B"; // 3 zero-width spaces
+
 export function formatTaskDraftForDisplay(task: OrchestratorTaskDraft): string {
-  const sections = [`### ${task.title}`, task.instruction];
-  if (task.requirementsChecklist.length > 0) {
-    sections.push(
-      ["Requirements checklist:", ...task.requirementsChecklist.map((item) => `- ${item}`)].join(
-        "\n",
-      ),
-    );
-  }
-  if (task.acceptanceCriteria.length > 0) {
-    sections.push(
-      ["Acceptance criteria:", ...task.acceptanceCriteria.map((item) => `- ${item}`)].join("\n"),
-    );
-  }
-  return sections.join("\n\n");
+  // Compact display: title + instruction only.
+  // Requirements and acceptance criteria are shown in the Quality Gate card,
+  // so repeating them here wastes vertical space.
+  // Prefixed with DELEGATION_MARKER for visual differentiation in the UI.
+  return `${DELEGATION_MARKER}**${task.title}**\n\n${task.instruction}`;
 }
 
 export function buildDelegationInstruction(task: {

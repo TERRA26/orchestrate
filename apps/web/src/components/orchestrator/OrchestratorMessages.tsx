@@ -10,6 +10,7 @@ import {
 import type { EmbeddedBrowserSession } from "~/embeddedBrowserStateStore";
 import type { OrchestratorMessage } from "~/orchestratorStateStore";
 import { DecisionCard, VerdictBanner } from "./OrchestratorBlockRenderer";
+import { DELEGATION_MARKER } from "~/components/OrchestratorPanel.logic";
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -51,11 +52,33 @@ function MessageBubble({
       </div>
     );
   }
+  // Detect delegated instructions (prefixed with DELEGATION_MARKER)
+  const isDelegation = message.content.startsWith(DELEGATION_MARKER);
+  const displayContent = isDelegation
+    ? message.content.slice(DELEGATION_MARKER.length)
+    : message.content;
+
+  if (isDelegation) {
+    // Delegated instruction — muted white bubble to distinguish from orchestrator's own responses
+    return (
+      <div className="pb-4" data-message-role="delegation">
+        <div className="rounded-lg border border-border/15 bg-foreground/[0.06] px-4 py-3">
+          <p className="mb-1.5 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/40">
+            Delegated to agent
+          </p>
+          <div className="chat-markdown prose prose-sm max-w-none text-sm leading-relaxed text-foreground/85">
+            <ChatMarkdown text={displayContent} cwd={undefined} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // orchestrator or agent-result — rendered like assistant messages
   return (
     <div className="pb-4" data-message-role="assistant">
       <div className="chat-markdown prose prose-sm max-w-none text-sm leading-relaxed text-foreground">
-        <ChatMarkdown text={message.content} cwd={undefined} />
+        <ChatMarkdown text={displayContent} cwd={undefined} />
       </div>
     </div>
   );
