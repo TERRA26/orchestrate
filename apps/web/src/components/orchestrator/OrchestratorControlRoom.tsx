@@ -116,11 +116,11 @@ function CompactRunHeader({
   onSelectWorker: (workerId: OrchestratorWorkerId) => void;
 }) {
   return (
-    <div className="border-b border-border/20 bg-gradient-to-b from-background/95 to-background/70 px-3 py-3">
-      <div className="flex items-start gap-3">
+    <div className="shrink-0 border-b border-border/20 bg-gradient-to-b from-background/95 to-background/70 px-3 py-2">
+      <div className="flex items-start gap-2">
         <CircleIcon
           className={cn(
-            "mt-1 size-2.5 shrink-0 fill-current",
+            "mt-0.5 size-2 shrink-0 fill-current",
             getRunStatusDotColor(run?.status ?? "idle"),
           )}
         />
@@ -135,13 +135,13 @@ function CompactRunHeader({
               </span>
             ) : null}
           </div>
-          <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-foreground/90">
+          <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-foreground/80">
             {run?.userRequest ?? "Active orchestrator run"}
           </p>
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-3">
+      <div className="mt-1.5 flex flex-wrap gap-2">
         {tasks.slice(0, 3).map((task) => (
           <button
             key={task.taskId}
@@ -285,7 +285,7 @@ export function OrchestratorControlRoom({
         />
 
         {workers.length > 0 ? (
-          <div className="shrink-0 border-b border-border/20 bg-background/35 px-3 py-2">
+          <div className="shrink-0 border-b border-border/20 bg-background/35 px-3 py-1.5">
             <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/45">
                 Workers
@@ -303,12 +303,12 @@ export function OrchestratorControlRoom({
         ) : null}
 
         {selectedEntity?.type === "task" ? (
-          <div className="shrink-0 border-b border-border/20 bg-background/40 px-3 py-2">
+          <div className="max-h-20 shrink-0 overflow-y-auto border-b border-border/20 bg-background/40 px-3 py-1.5">
             <CompactSelectionCard selectedEntity={selectedEntity} />
           </div>
         ) : null}
 
-        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
       </div>
     );
   }
@@ -375,12 +375,12 @@ export function OrchestratorControlRoom({
           onToggleCollapse={panelState.toggleBrowser}
         />
 
-        {/* Worker panels grid */}
+        {/* Worker panels grid — capped height to preserve transcript/composer space */}
         {workers.length > 0 && (
           <div
             className={cn(
               "shrink-0 border-b border-border/20",
-              workers.length === 1 ? "h-52" : workers.length <= 2 ? "h-44" : "h-56",
+              workers.length === 1 ? "h-32" : workers.length <= 2 ? "h-28" : "h-36",
             )}
           >
             <WorkerCanvas workers={workers} tasks={tasks} />
@@ -388,7 +388,7 @@ export function OrchestratorControlRoom({
         )}
 
         {/* Transcript / existing messages (passed as children) */}
-        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
       </div>
 
       {/* ---- Right Inspector ---- */}
