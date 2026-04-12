@@ -9,6 +9,7 @@
 import {
   type CanUseTool,
   createSdkMcpServer,
+  tool as sdkTool,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -558,7 +559,8 @@ const CLAUDE_SETTING_SOURCES = [
 /** Short descriptions for orchestration tools exposed via the MCP server. */
 const ORCHESTRATION_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   // Agent lifecycle
-  spawn_agent: "Spawn a new worker agent with a task, model, and optional worktree.",
+  spawn_agent:
+    "Spawn a new worker agent with a simple task/objective and optional foreground/background mode. Run/task context is inferred automatically.",
   terminate_agent: "Terminate a running agent and release its resources.",
   restart_agent: "Restart a failed or stuck agent, optionally with a different model.",
   clone_agent: "Clone an agent's context into a new agent for parallel exploration.",
@@ -617,39 +619,47 @@ function buildOrchestrationMcpServer(deps: {
   readonly services: Effect.Effect.Context<never>;
   readonly threadId: string;
 }) {
-  const tools = ORCHESTRATION_TOOL_NAMES_LIST.map((toolName) => ({
-    name: toolName,
-    description: ORCHESTRATION_TOOL_DESCRIPTIONS[toolName] ?? toolName,
-    // Accept any JSON object — the router performs its own Effect Schema validation.
-    inputSchema: {} as Record<string, never>,
-    handler: async (args: Record<string, unknown>) => {
-      try {
-        const result = await Effect.runPromiseWith(deps.services)(
-          deps.router.executeTool({
-            toolName,
-            toolInput: args,
-            threadId: deps.threadId,
-            runId: null,
-          }),
-        );
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(result) }],
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                error: err instanceof Error ? err.message : String(err),
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-    },
-  }));
+  // Use the SDK's tool() helper with Zod schemas. The SDK requires Zod for
+  // input validation (it calls safeParseAsync internally). We use z.object({})
+  // with passthrough() so any JSON input is accepted — actual validation is
+  // handled downstream by OrchestrationToolRouter using Effect Schema.
+  const { z } = require("zod") as typeof import("zod");
+  const passthrough = z.object({}).passthrough();
+
+  const tools = ORCHESTRATION_TOOL_NAMES_LIST.map((toolName) =>
+    sdkTool(
+      toolName,
+      ORCHESTRATION_TOOL_DESCRIPTIONS[toolName] ?? toolName,
+      passthrough,
+      async (args: Record<string, unknown>) => {
+        try {
+          const result = await Effect.runPromiseWith(deps.services)(
+            deps.router.executeTool({
+              toolName,
+              toolInput: args,
+              threadId: deps.threadId,
+              runId: null,
+            }),
+          );
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(result) }],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  error: err instanceof Error ? err.message : String(err),
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      },
+    ),
+  );
 
   return createSdkMcpServer({
     name: "orchestrate",
@@ -1085,10 +1095,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* ServerConfig;
-
-    // Resolve orchestration tool router (optional — absent in non-orchestration builds).
-    const toolRouterOption = yield* Effect.serviceOption(OrchestrationToolRouterService);
-    const toolRouter = toolRouterOption._tag === "Some" ? toolRouterOption.value : undefined;
     const adapterServices = yield* Effect.services<never>();
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -2789,6 +2795,17 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 } satisfies PermissionResult;
               }
 
+              if (
+                input.threadType === "orchestrator" &&
+                classifyToolItemType(toolName) === "collab_agent_tool_call"
+              ) {
+                return {
+                  behavior: "deny",
+                  message:
+                    "Orchestrator threads must use the visible orchestration tools instead of Claude Code's built-in agent/subagent tool. Use spawn_agent, send_to_agent, promote_to_foreground, or related orchestrator tools.",
+                } satisfies PermissionResult;
+              }
+
               // Handle AskUserQuestion: surface clarifying questions to the
               // user via the user-input runtime event channel, regardless of
               // runtime mode (plan mode relies on this heavily).
@@ -2964,6 +2981,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         };
 
         // -- Orchestrator-specific: system prompt + MCP tool server -------
+        const toolRouterOption = yield* Effect.serviceOption(OrchestrationToolRouterService);
+        const toolRouter = toolRouterOption._tag === "Some" ? toolRouterOption.value : undefined;
         const isOrchestrator = input.threadType === "orchestrator" && toolRouter !== undefined;
         let orchestratorSystemPromptAppend: string | undefined;
         let orchestrationMcpServer: ReturnType<typeof buildOrchestrationMcpServer> | undefined;
@@ -2980,6 +2999,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             threadId,
           });
         }
+
+        const queryEnv = {
+          ...process.env,
+          ...(input.threadType === "orchestrator" ? { ENABLE_TOOL_SEARCH: "false" } : {}),
+        };
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -2999,7 +3023,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(newSessionId ? { sessionId: newSessionId } : {}),
           includePartialMessages: true,
           canUseTool,
-          env: process.env,
+          env: queryEnv,
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
           // Orchestrator threads: inject ORCHESTRATOR.md into system prompt
           // and register orchestration tools via an in-process MCP server.
