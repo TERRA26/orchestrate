@@ -2293,7 +2293,7 @@ export default function Sidebar() {
                     />
                   }
                   showOnHover
-                  className="top-1 right-7 size-5 rounded-md p-0 text-muted-foreground/60 hover:bg-white/8 hover:text-foreground"
+                  className="top-1 right-[2.875rem] size-5 rounded-md p-0 text-muted-foreground/60 hover:bg-white/8 hover:text-foreground"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2326,7 +2326,7 @@ export default function Sidebar() {
                     />
                   }
                   showOnHover
-                  className="top-1 right-[3.25rem] size-5 rounded-md p-0 text-muted-foreground/60 hover:bg-white/8 hover:text-foreground"
+                  className="top-1 right-[4.25rem] size-5 rounded-md p-0 text-muted-foreground/60 hover:bg-white/8 hover:text-foreground"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2351,7 +2351,37 @@ export default function Sidebar() {
                   render={
                     <button
                       type="button"
-                      aria-label={`Create new thread in ${project.name}`}
+                      aria-label={`Create new agent thread in ${project.name}`}
+                      data-testid="new-agent-thread-button"
+                    />
+                  }
+                  showOnHover
+                  className="top-1 right-[1.625rem] size-5 rounded-md p-0 text-muted-foreground/60 hover:bg-white/8 hover:text-foreground"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void handleNewThread(project.id, {
+                      envMode: resolveSidebarNewThreadEnvMode({
+                        defaultEnvMode: appSettings.defaultThreadEnvMode,
+                      }),
+                      threadType: "agent",
+                    });
+                  }}
+                >
+                  <TerminalIcon className="size-3.5" />
+                </SidebarMenuAction>
+              }
+            />
+            <TooltipPopup side="top">New agent thread</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarMenuAction
+                  render={
+                    <button
+                      type="button"
+                      aria-label={`Create new orchestrator thread in ${project.name}`}
                       data-testid="new-thread-button"
                     />
                   }
@@ -2364,6 +2394,7 @@ export default function Sidebar() {
                       envMode: resolveSidebarNewThreadEnvMode({
                         defaultEnvMode: appSettings.defaultThreadEnvMode,
                       }),
+                      threadType: "orchestrator",
                     });
                   }}
                 >
@@ -2372,7 +2403,9 @@ export default function Sidebar() {
               }
             />
             <TooltipPopup side="top">
-              {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+              {newThreadShortcutLabel
+                ? `New orchestrator thread (${newThreadShortcutLabel})`
+                : "New orchestrator thread"}
             </TooltipPopup>
           </Tooltip>
         </div>

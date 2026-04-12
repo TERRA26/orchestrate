@@ -27,6 +27,7 @@ export interface NewThreadOptions {
   envMode?: DraftThreadEnvMode;
   entryPoint?: ThreadPrimarySurface;
   temporary?: boolean;
+  threadType?: "orchestrator" | "agent";
 }
 
 interface ActiveThreadSnapshot {

@@ -112,6 +112,7 @@ export function useHandleNewThread() {
           modelSelection: creationState.modelSelection,
           runtimeMode: creationState.runtimeMode,
           interactionMode: creationState.interactionMode,
+          threadType: options?.threadType ?? "orchestrator",
           envMode: creationState.envMode,
           branch: creationState.branch,
           worktreePath: creationState.worktreePath,
