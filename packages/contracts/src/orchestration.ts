@@ -374,6 +374,12 @@ export const OrchestrationReadModel = Schema.Struct({
   orchestratorWorkers: Schema.optional(Schema.Array(Schema.suspend(() => OrchestratorWorker))).pipe(
     Schema.withDecodingDefault(() => []),
   ),
+  orchestratorMessages: Schema.optional(
+    Schema.Array(Schema.suspend(() => OrchestratorInterWorkerMessage)),
+  ).pipe(Schema.withDecodingDefault(() => [])),
+  orchestratorDependencies: Schema.optional(
+    Schema.Array(Schema.suspend(() => OrchestratorDependency)),
+  ).pipe(Schema.withDecodingDefault(() => [])),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -674,6 +680,15 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   Schema.suspend(() => OrchestratorTaskFailCommand),
   Schema.suspend(() => OrchestratorWorkerSpawnCommand),
   Schema.suspend(() => OrchestratorWorkerTerminateCommand),
+  Schema.suspend(() => OrchestratorWorkerPauseCommand),
+  Schema.suspend(() => OrchestratorWorkerResumeCommand),
+  Schema.suspend(() => OrchestratorWorkerPromoteCommand),
+  Schema.suspend(() => OrchestratorWorkerDemoteCommand),
+  Schema.suspend(() => OrchestratorMessageSendCommand),
+  Schema.suspend(() => OrchestratorMessageBroadcastCommand),
+  Schema.suspend(() => OrchestratorContextTransferCommand),
+  Schema.suspend(() => OrchestratorDependencySetCommand),
+  Schema.suspend(() => OrchestratorWorkMergeCommand),
   Schema.suspend(() => OrchestratorEvidenceCaptureCommand),
   Schema.suspend(() => OrchestratorDecisionRecordCommand),
   Schema.suspend(() => OrchestratorChecklistUpdateCommand),
@@ -714,6 +729,15 @@ export const ClientOrchestrationCommand = Schema.Union([
   Schema.suspend(() => OrchestratorTaskFailCommand),
   Schema.suspend(() => OrchestratorWorkerSpawnCommand),
   Schema.suspend(() => OrchestratorWorkerTerminateCommand),
+  Schema.suspend(() => OrchestratorWorkerPauseCommand),
+  Schema.suspend(() => OrchestratorWorkerResumeCommand),
+  Schema.suspend(() => OrchestratorWorkerPromoteCommand),
+  Schema.suspend(() => OrchestratorWorkerDemoteCommand),
+  Schema.suspend(() => OrchestratorMessageSendCommand),
+  Schema.suspend(() => OrchestratorMessageBroadcastCommand),
+  Schema.suspend(() => OrchestratorContextTransferCommand),
+  Schema.suspend(() => OrchestratorDependencySetCommand),
+  Schema.suspend(() => OrchestratorWorkMergeCommand),
   Schema.suspend(() => OrchestratorEvidenceCaptureCommand),
   Schema.suspend(() => OrchestratorDecisionRecordCommand),
   Schema.suspend(() => OrchestratorChecklistUpdateCommand),
@@ -841,6 +865,17 @@ export const OrchestrationEventType = Schema.Literals([
   "orchestrator.task.failed",
   "orchestrator.worker.spawned",
   "orchestrator.worker.terminated",
+  "orchestrator.worker.paused",
+  "orchestrator.worker.resumed",
+  "orchestrator.worker.promoted",
+  "orchestrator.worker.demoted",
+  "orchestrator.message.sent",
+  "orchestrator.message.broadcast-sent",
+  "orchestrator.context.transferred",
+  "orchestrator.dependency.set",
+  "orchestrator.work.merge-requested",
+  "orchestrator.work.merge-completed",
+  "orchestrator.work.merge-failed",
   "orchestrator.evidence.captured",
   "orchestrator.decision.recorded",
   "orchestrator.checklist.updated",
@@ -1250,6 +1285,61 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("orchestrator.worker.paused"),
+    payload: Schema.suspend(() => OrchestratorWorkerPausedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.worker.resumed"),
+    payload: Schema.suspend(() => OrchestratorWorkerResumedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.worker.promoted"),
+    payload: Schema.suspend(() => OrchestratorWorkerPromotedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.worker.demoted"),
+    payload: Schema.suspend(() => OrchestratorWorkerDemotedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.message.sent"),
+    payload: Schema.suspend(() => OrchestratorMessageSentPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.message.broadcast-sent"),
+    payload: Schema.suspend(() => OrchestratorMessageBroadcastSentPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.context.transferred"),
+    payload: Schema.suspend(() => OrchestratorContextTransferredPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.dependency.set"),
+    payload: Schema.suspend(() => OrchestratorDependencySetPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.work.merge-requested"),
+    payload: Schema.suspend(() => OrchestratorWorkMergeRequestedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.work.merge-completed"),
+    payload: Schema.suspend(() => OrchestratorWorkMergeCompletedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("orchestrator.work.merge-failed"),
+    payload: Schema.suspend(() => OrchestratorWorkMergeFailedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("orchestrator.evidence.captured"),
     payload: Schema.suspend(() => OrchestratorEvidenceCapturedPayload),
   }),
@@ -1402,6 +1492,7 @@ export const OrchestratorTaskStatus = Schema.Literals([
 export const OrchestratorWorkerStatus = Schema.Literals([
   "idle",
   "running",
+  "paused",
   "submitted",
   "stuck",
   "terminated",
@@ -1555,12 +1646,18 @@ export const OrchestratorTask = Schema.Struct({
 });
 export type OrchestratorTask = typeof OrchestratorTask.Type;
 
+export const OrchestratorWorkerVisibility = Schema.Literals(["foreground", "background"]);
+export type OrchestratorWorkerVisibility = typeof OrchestratorWorkerVisibility.Type;
+
 // Worker (uses suspend for WorkerModelBinding forward reference)
 export const OrchestratorWorker = Schema.Struct({
   workerId: OrchestratorWorkerId,
   runId: OrchestratorRunId,
   threadId: ThreadId,
   status: OrchestratorWorkerStatus,
+  visibility: Schema.optional(OrchestratorWorkerVisibility).pipe(
+    Schema.withDecodingDefault(() => "foreground" as const),
+  ),
   activeTaskId: Schema.optional(OrchestratorTaskId),
   parentWorkerId: Schema.optional(OrchestratorWorkerId),
   spawnBudget: SpawnBudget,
@@ -1572,6 +1669,29 @@ export const OrchestratorWorker = Schema.Struct({
   terminationReason: Schema.optional(Schema.String),
 });
 export type OrchestratorWorker = typeof OrchestratorWorker.Type;
+
+// InterWorkerMessage (read model entity for orchestrator messaging)
+export const OrchestratorInterWorkerMessage = Schema.Struct({
+  messageId: OrchestratorMessageId,
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: Schema.optional(OrchestratorWorkerId),
+  runId: Schema.optional(OrchestratorRunId),
+  broadcast: Schema.Boolean,
+  content: Schema.String,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  sentAt: IsoDateTime,
+});
+export type OrchestratorInterWorkerMessage = typeof OrchestratorInterWorkerMessage.Type;
+
+// Dependency (read model entity for worker dependencies)
+export const OrchestratorDependency = Schema.Struct({
+  dependencyId: OrchestratorDependencyId,
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: OrchestratorWorkerId,
+  description: Schema.optional(Schema.String),
+  setAt: IsoDateTime,
+});
+export type OrchestratorDependency = typeof OrchestratorDependency.Type;
 
 // Run
 export const OrchestratorRun = Schema.Struct({
@@ -1815,6 +1935,105 @@ const OrchestratorWorkerTerminateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Worker pause/resume/promote/demote
+export const OrchestratorWorkerPauseCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.worker.pause"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  reason: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerResumeCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.worker.resume"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  reason: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerPromoteCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.worker.promote"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  visibility: OrchestratorWorkerVisibility,
+  reason: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerDemoteCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.worker.demote"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  visibility: OrchestratorWorkerVisibility,
+  reason: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+// Inter-worker messaging
+export const OrchestratorMessageId = Schema.String.pipe(Schema.brand("OrchestratorMessageId"));
+export type OrchestratorMessageId = typeof OrchestratorMessageId.Type;
+
+export const OrchestratorMessageSendCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.message.send"),
+  commandId: CommandId,
+  messageId: OrchestratorMessageId,
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: OrchestratorWorkerId,
+  content: Schema.String,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  createdAt: IsoDateTime,
+});
+
+export const OrchestratorMessageBroadcastCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.message.broadcast"),
+  commandId: CommandId,
+  messageId: OrchestratorMessageId,
+  fromWorkerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  content: Schema.String,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  createdAt: IsoDateTime,
+});
+
+// Context transfer
+export const OrchestratorContextTransferCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.context.transfer"),
+  commandId: CommandId,
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: OrchestratorWorkerId,
+  summary: Schema.String,
+  artifacts: Schema.optional(Schema.Array(Schema.String)),
+  createdAt: IsoDateTime,
+});
+
+// Dependency management
+export const OrchestratorDependencyId = Schema.String.pipe(
+  Schema.brand("OrchestratorDependencyId"),
+);
+export type OrchestratorDependencyId = typeof OrchestratorDependencyId.Type;
+
+export const OrchestratorDependencySetCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.dependency.set"),
+  commandId: CommandId,
+  dependencyId: OrchestratorDependencyId,
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: OrchestratorWorkerId,
+  description: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+// Work merge
+export const OrchestratorWorkMergeCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.work.merge-request"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  sourceBranch: Schema.optional(Schema.String),
+  targetBranch: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
 // Evidence and decisions
 export const OrchestratorEvidenceCaptureCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.evidence.capture"),
@@ -1958,6 +2177,89 @@ export const OrchestratorWorkerTerminatedPayload = Schema.Struct({
   workerId: OrchestratorWorkerId,
   reason: Schema.String,
   terminatedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerPausedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  reason: Schema.optional(Schema.String),
+  pausedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerResumedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  reason: Schema.optional(Schema.String),
+  resumedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerPromotedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  visibility: OrchestratorWorkerVisibility,
+  reason: Schema.optional(Schema.String),
+  promotedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkerDemotedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  visibility: OrchestratorWorkerVisibility,
+  reason: Schema.optional(Schema.String),
+  demotedAt: IsoDateTime,
+});
+
+export const OrchestratorMessageSentPayload = Schema.Struct({
+  messageId: OrchestratorMessageId,
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: OrchestratorWorkerId,
+  content: Schema.String,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  sentAt: IsoDateTime,
+});
+
+export const OrchestratorMessageBroadcastSentPayload = Schema.Struct({
+  messageId: OrchestratorMessageId,
+  fromWorkerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  content: Schema.String,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  sentAt: IsoDateTime,
+});
+
+export const OrchestratorContextTransferredPayload = Schema.Struct({
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: OrchestratorWorkerId,
+  summary: Schema.String,
+  artifacts: Schema.optional(Schema.Array(Schema.String)),
+  transferredAt: IsoDateTime,
+});
+
+export const OrchestratorDependencySetPayload = Schema.Struct({
+  dependencyId: OrchestratorDependencyId,
+  fromWorkerId: OrchestratorWorkerId,
+  toWorkerId: OrchestratorWorkerId,
+  description: Schema.optional(Schema.String),
+  setAt: IsoDateTime,
+});
+
+export const OrchestratorWorkMergeRequestedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  sourceBranch: Schema.optional(Schema.String),
+  targetBranch: Schema.optional(Schema.String),
+  requestedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkMergeCompletedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  sourceBranch: Schema.optional(Schema.String),
+  targetBranch: Schema.optional(Schema.String),
+  completedAt: IsoDateTime,
+});
+
+export const OrchestratorWorkMergeFailedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  runId: OrchestratorRunId,
+  reason: Schema.String,
+  failedAt: IsoDateTime,
 });
 
 export const OrchestratorEvidenceCapturedPayload = Schema.Struct({
