@@ -2,12 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
-  DEFAULT_RUNTIME_MODE,
   type ModelSelection,
   type OrchestratorRun,
   type OrchestratorTask,
   type OrchestratorWorker,
-  OrchestratorWorkerId,
   type ProviderInteractionMode,
   type ProviderKind,
   type RuntimeMode,
@@ -16,7 +14,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
+import { newCommandId, newMessageId } from "~/lib/utils";
 import { useSettings } from "~/hooks/useSettings";
 import { deriveEffectiveComposerModelState } from "~/composerDraftStore";
 import {
@@ -46,12 +44,7 @@ import {
   deriveWorkLogEntries,
   inferCheckpointTurnCountByTurnId,
 } from "~/session-logic";
-import { waitForStartedServerThread } from "../ChatView.logic";
 import {
-  buildFallbackOrchestratorRouterDecision,
-  buildAdHocBrowserValidationRun,
-  buildChecklistItemsFromTaskDraft,
-  buildRouterUserPrompt,
   buildBrowserValidationUserPrompt,
   buildRecoveredOrchestratorMessages,
   buildDelegationInstruction,
@@ -60,7 +53,6 @@ import {
   extractEmbeddedBrowserPresentationCandidates,
   formatBrowserValidationActionSummary,
   formatReviewArtifactsWaitMessage,
-  formatTaskDraftForDisplay,
   mergeChecklistWithReview,
   ORCHESTRATOR_BROWSER_VALIDATION_SYSTEM_PROMPT,
   ORCHESTRATOR_MAX_ITERATIONS,
@@ -69,14 +61,11 @@ import {
   ORCHESTRATOR_MAX_REVIEW_WORK_LOG_DETAIL_CHARS,
   ORCHESTRATOR_MAX_REVIEW_WORK_LOG_ENTRIES,
   ORCHESTRATOR_REVIEW_SYSTEM_PROMPT,
-  ORCHESTRATOR_ROUTER_SYSTEM_PROMPT,
   parseBrowserValidationPlannerAction,
-  parseOrchestratorRouterDecision,
   parseOrchestratorReviewDecision,
   resolveOrchestratorConversationThreadId,
   resolveTurnReviewContext,
   selectBrowserValidationCandidate,
-  shouldHandleAsDirectBrowserValidationRequest,
   shouldRequireBrowserValidation,
   truncateForReview,
   validateReviewerFollowUpInstruction,
@@ -91,7 +80,6 @@ import type { OrchestratorChecklistItem } from "../../orchestratorTypes";
 import type { Thread } from "~/types";
 import type { ProjectId } from "@t3tools/contracts";
 import type { BrowserAction } from "@t3tools/contracts";
-import { resolveRequestedWorkerModelSelection } from "./orchestratorModelSelection";
 import { useMultiAgentLayoutStore } from "~/lib/multiAgentLayoutStore";
 
 // ---------------------------------------------------------------------------
@@ -126,15 +114,6 @@ const ORCHESTRATOR_REVIEW_CHECKPOINT_GRACE_MS = 5_000;
 const ORCHESTRATOR_REVIEW_ARTIFACT_WAIT_MS = 30_000;
 const ORCHESTRATOR_BROWSER_VALIDATION_MAX_STEPS = 20;
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
-const DEFAULT_ORCHESTRATOR_SPAWN_BUDGET = {
-  maxDepth: 3,
-  maxChildren: 4,
-  maxConcurrentWriters: 4,
-  maxTotalWorkers: 12,
-  allowedTools: [],
-  writeScope: [],
-} as const;
-
 // ---------------------------------------------------------------------------
 // Helpers (module-level, not in hook)
 // ---------------------------------------------------------------------------
@@ -603,31 +582,6 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     [],
   );
 
-  const syncManagedThreadModelSelection = useCallback(
-    async (thread: Thread, modelSelection: ModelSelection) => {
-      const sameProvider = thread.modelSelection.provider === modelSelection.provider;
-      const sameModel = thread.modelSelection.model === modelSelection.model;
-      const sameOptions =
-        JSON.stringify(thread.modelSelection.options ?? null) ===
-        JSON.stringify(modelSelection.options ?? null);
-
-      if (sameProvider && sameModel && sameOptions) {
-        return;
-      }
-
-      const api = readNativeApi();
-      if (!api) throw new Error("API not available");
-
-      await api.orchestration.dispatchCommand({
-        type: "thread.meta.update",
-        commandId: newCommandId(),
-        threadId: thread.id,
-        modelSelection,
-      });
-    },
-    [],
-  );
-
   const addProgressMessage = useCallback(
     (threadId: ThreadId, message: string | null | undefined) => {
       const nextMessage = message?.trim();
@@ -662,112 +616,6 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       return result.text.trim();
     },
     [currentProject?.cwd, selectedModel, selectedModelSelection],
-  );
-
-  // -- Helper: create a new thread and return its IDs --
-  const createThread = useCallback(
-    async (
-      title: string,
-      modelSelection: ModelSelection,
-    ): Promise<{ threadId: ThreadId; projectId: ProjectId }> => {
-      const api = readNativeApi();
-      const projectId = currentProject?.id ?? firstProjectId;
-      if (!api || !projectId) {
-        throw new Error("Cannot create thread: missing project or model");
-      }
-      const threadId = newThreadId();
-      await api.orchestration.dispatchCommand({
-        type: "thread.create",
-        commandId: newCommandId(),
-        threadId,
-        projectId,
-        title,
-        modelSelection,
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdAt: new Date().toISOString(),
-      });
-      return { threadId, projectId };
-    },
-    [currentProject?.id, firstProjectId],
-  );
-
-  const createServerRun = useCallback(
-    async (input: {
-      projectId: ProjectId;
-      userRequest: string;
-      requirementsChecklist: ReadonlyArray<OrchestratorChecklistItem>;
-    }) => {
-      const api = readNativeApi();
-      if (!api) {
-        throw new Error("API not available");
-      }
-      const goals =
-        input.requirementsChecklist.length > 0
-          ? input.requirementsChecklist.map((item) => item.label)
-          : [input.userRequest];
-      const runId = crypto.randomUUID();
-      await api.orchestration.dispatchCommand({
-        type: "orchestrator.run.create",
-        commandId: newCommandId(),
-        runId,
-        projectId: input.projectId,
-        userRequest: input.userRequest,
-        goals,
-        spawnBudget: DEFAULT_ORCHESTRATOR_SPAWN_BUDGET,
-        createdAt: new Date().toISOString(),
-      });
-      return { runId };
-    },
-    [],
-  );
-
-  const spawnServerWorker = useCallback(
-    async (input: {
-      runId: OrchestratorRun["runId"];
-      taskId: OrchestratorTask["taskId"];
-      workerId: OrchestratorWorker["workerId"];
-      threadId: ThreadId;
-      projectId: ProjectId;
-      startedAt: string;
-      modelSelection: ModelSelection;
-    }) => {
-      const api = readNativeApi();
-      if (!api) {
-        throw new Error("API not available");
-      }
-      const projectCwd =
-        useStore.getState().projects.find((project) => project.id === input.projectId)?.cwd ??
-        currentProject?.cwd ??
-        "";
-      await api.orchestration.dispatchCommand({
-        type: "orchestrator.worker.spawn",
-        commandId: newCommandId(),
-        workerId: input.workerId,
-        runId: input.runId,
-        taskId: input.taskId,
-        threadId: input.threadId,
-        spawnBudget: DEFAULT_ORCHESTRATOR_SPAWN_BUDGET,
-        workspace: {
-          mode: "local",
-          cwd: projectCwd,
-          terminalIds: [],
-        },
-        modelBinding: {
-          workerId: input.workerId,
-          provider: input.modelSelection.provider,
-          model: input.modelSelection.model,
-          selectedAt: input.startedAt,
-          selectedBy: "root-policy",
-          selectionReason: "Managed worker bound from the orchestrator composer selection",
-          inheritedFromTaskPolicy: false,
-        },
-        createdAt: input.startedAt,
-      });
-    },
-    [currentProject?.cwd],
   );
 
   const finalizeServerRun = useCallback(
@@ -1336,199 +1184,6 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     ],
   );
 
-  const runDirectBrowserValidation = useCallback(
-    async (directValidationInput: {
-      conversationThreadId: ThreadId;
-      userRequest: string;
-      previousStatus: OrchestratorStatus;
-      previousStatusDetail: string | null;
-    }) => {
-      const validationThread = managedThread ?? routeThread ?? null;
-      if (!validationThread) {
-        addMessage(
-          directValidationInput.conversationThreadId,
-          "orchestrator",
-          "There is no managed thread open yet for browser validation. Finish or open a thread with a preview URL first.",
-        );
-        setStatusForThread(directValidationInput.conversationThreadId, "idle");
-        return;
-      }
-
-      const adHocValidationContext = buildAdHocBrowserValidationRun({
-        thread: validationThread,
-        messages,
-        requirementsChecklist,
-        fallbackUserRequest: directValidationInput.userRequest,
-      });
-      const validationContext = activeRun ?? adHocValidationContext.run;
-
-      if (!activeRun) {
-        addProgressMessage(
-          directValidationInput.conversationThreadId,
-          adHocValidationContext.summary,
-        );
-      }
-      setStatusForThread(
-        directValidationInput.conversationThreadId,
-        "reviewing",
-        "Preparing browser validation from the latest turn artifacts...",
-      );
-      addProgressMessage(
-        directValidationInput.conversationThreadId,
-        "Preparing browser validation from the latest turn artifacts...",
-      );
-
-      let artifacts;
-      try {
-        artifacts = await collectReviewArtifacts(validationContext, (detail) => {
-          setStatusForThread(directValidationInput.conversationThreadId, "reviewing", detail);
-          addProgressMessage(directValidationInput.conversationThreadId, detail);
-        });
-      } catch (error) {
-        addMessage(
-          directValidationInput.conversationThreadId,
-          "orchestrator",
-          `Browser validation could not inspect the latest turn: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-        setStatusForThread(directValidationInput.conversationThreadId, "idle");
-        return;
-      }
-
-      if (artifacts.status !== "ready") {
-        addMessage(
-          directValidationInput.conversationThreadId,
-          "orchestrator",
-          `Browser validation could not proceed: ${artifacts.reason}`,
-        );
-        setStatusForThread(
-          directValidationInput.conversationThreadId,
-          activeRun && directValidationInput.previousStatus !== "idle"
-            ? directValidationInput.previousStatus
-            : "idle",
-          activeRun && directValidationInput.previousStatus !== "idle"
-            ? directValidationInput.previousStatusDetail
-            : null,
-        );
-        return;
-      }
-
-      const currentBrowserCandidate =
-        threadBrowserSession &&
-        (() => {
-          const url = getEmbeddedBrowserAddress(threadBrowserSession);
-          return resolveEmbeddedBrowserAbsoluteUrl(url)
-            ? {
-                source: "active browser session",
-                title: threadBrowserSession.title,
-                url,
-              }
-            : null;
-        })();
-
-      const artifactCandidates = extractEmbeddedBrowserPresentationCandidates({
-        agentReport: artifacts.agentReport,
-        diffPatch: artifacts.diffPatch,
-        fileSnapshots: artifacts.fileSnapshots,
-        workLogEntries: artifacts.workLogEntries,
-      });
-      const presentationCandidates = currentBrowserCandidate
-        ? [
-            currentBrowserCandidate,
-            ...artifactCandidates.filter(
-              (candidate) => candidate.url !== currentBrowserCandidate.url,
-            ),
-          ]
-        : artifactCandidates;
-
-      const browserValidation = await runBrowserValidation({
-        run: validationContext,
-        agentReport: artifacts.agentReport,
-        presentationCandidates,
-      });
-
-      let finalSummary =
-        browserValidation?.ready === true
-          ? `Browser validation completed: ${browserValidation.summary}`
-          : browserValidation
-            ? `Browser validation found issues: ${browserValidation.summary}`
-            : "Browser validation did not run because this task did not expose a browser-validated preview.";
-
-      if (browserValidation) {
-        try {
-          const reviewInput = buildReviewUserPrompt({
-            userRequest: validationContext.userRequest,
-            delegatedInstruction: validationContext.delegatedInstruction,
-            agentReport: artifacts.agentReport,
-            requirementsChecklist: validationContext.requirementsChecklist,
-            artifactSource: artifacts.artifactSource,
-            workLogEntries: artifacts.workLogEntries,
-            diffPatch: artifacts.diffPatch,
-            fileSnapshots: artifacts.fileSnapshots,
-            browserValidation,
-            presentationCandidates,
-          });
-          const raw = await callOrchestratorLLM(ORCHESTRATOR_REVIEW_SYSTEM_PROMPT, reviewInput);
-          const reviewDecision = parseOrchestratorReviewDecision(raw, { presentationCandidates });
-          const updatedChecklist = mergeChecklistWithReview({
-            checklist: validationContext.requirementsChecklist,
-            review: reviewDecision,
-          });
-          setOrchestratorRequirementsChecklist(
-            directValidationInput.conversationThreadId,
-            updatedChecklist,
-          );
-          if (updatedChecklist.length > 0) {
-            const checklistCounts = countOrchestratorChecklistItems(updatedChecklist);
-            addProgressMessage(
-              directValidationInput.conversationThreadId,
-              `Quality gate status: ${checklistCounts.passed}/${updatedChecklist.length} passed, ${checklistCounts.failed} failed, ${checklistCounts.pending} pending.`,
-            );
-          }
-          if (reviewDecision.presentation) {
-            openThreadBrowserSession(
-              directValidationInput.conversationThreadId,
-              createEmbeddedBrowserSessionFromUrl({
-                source: "orchestrator",
-                title: reviewDecision.presentation.title,
-                url: reviewDecision.presentation.url,
-              }),
-            );
-          }
-          finalSummary = reviewDecision.summary;
-        } catch {
-          // Keep the browser-validation summary when the reviewer output cannot be parsed safely.
-        }
-      }
-
-      addMessage(directValidationInput.conversationThreadId, "orchestrator", finalSummary);
-      setStatusForThread(
-        directValidationInput.conversationThreadId,
-        activeRun && directValidationInput.previousStatus !== "idle"
-          ? directValidationInput.previousStatus
-          : "idle",
-        activeRun && directValidationInput.previousStatus !== "idle"
-          ? directValidationInput.previousStatusDetail
-          : null,
-      );
-    },
-    [
-      activeRun,
-      addMessage,
-      addProgressMessage,
-      callOrchestratorLLM,
-      collectReviewArtifacts,
-      managedThread,
-      messages,
-      openThreadBrowserSession,
-      requirementsChecklist,
-      routeThread,
-      runBrowserValidation,
-      setOrchestratorRequirementsChecklist,
-      setStatusForThread,
-      threadBrowserSession,
-    ],
-  );
-
   // -- Review agent output and decide whether to iterate --
   const reviewAgentOutput = useCallback(
     async (run: ActiveOrchestratorRun) => {
@@ -1910,460 +1565,25 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         return;
       }
 
-      // Save the text so we can restore on error
-      const savedText = trimmed;
+      setOrchestratorPrompt(currentThreadId, "");
 
-      let conversationThreadId = currentThreadId;
-      const previousStatus = status;
-      const previousStatusDetail = statusDetail;
-      try {
-        shouldAutoScrollRef.current = true;
-        setOrchestratorPrompt(currentThreadId, "");
-        addMessage(conversationThreadId, "user", trimmed);
-        setStatusForThread(conversationThreadId, "thinking", "Understanding the request...");
-        addProgressMessage(conversationThreadId, "Understanding the request...");
-
-        if (
-          shouldHandleAsDirectBrowserValidationRequest({
-            userRequest: trimmed,
-            hasManagedThread: Boolean(managedThread ?? routeThread),
-          })
-        ) {
-          await runDirectBrowserValidation({
-            conversationThreadId,
-            userRequest: trimmed,
-            previousStatus,
-            previousStatusDetail,
-          });
-          return;
-        }
-
-        const explicitWorkerModelRequest = resolveRequestedWorkerModelSelection({
-          userRequest: trimmed,
-          providers,
-          fallbackSelection: selectedModelSelection,
-          storedModelSelections: orchestratorThreadState.modelSelectionByProvider,
-        });
-        const workerModelSelection =
-          explicitWorkerModelRequest?.selection ?? selectedModelSelection;
-
-        if (explicitWorkerModelRequest) {
-          setOrchestratorModelSelection(currentThreadId, workerModelSelection);
-          addProgressMessage(
-            conversationThreadId,
-            `Honoring the explicit ${workerModelSelection.provider === "claudeAgent" ? "Claude" : "GPT"} request for the managed agent.`,
-          );
-        }
-
-        let delegatedInstruction: string | null = null;
-        let nextRequirementsChecklist = requirementsChecklist;
-        try {
-          const rawTask = await callOrchestratorLLM(
-            ORCHESTRATOR_ROUTER_SYSTEM_PROMPT,
-            buildRouterUserPrompt({
-              userRequest: trimmed,
-              activeRun: activeRun
-                ? {
-                    iteration: activeRun.iteration,
-                    startedAt: activeRun.startedAt,
-                    userRequest: activeRun.userRequest,
-                  }
-                : null,
-              requirementsChecklist,
-              managedThreadTitle: managedThread?.title ?? null,
-              statusDetail,
-              latestAgentReport: resolveTurnReviewContext(managedThread ?? routeThread ?? undefined)
-                .agentReport,
-              recentMessages: messages.slice(-8),
-            }),
-          );
-          const routerDecision = parseOrchestratorRouterDecision(rawTask);
-
-          if (routerDecision.kind === "answer") {
-            addMessage(conversationThreadId, "orchestrator", routerDecision.response);
-            if (routerDecision.shouldContinueRun && previousStatus !== "idle") {
-              setStatusForThread(conversationThreadId, previousStatus, previousStatusDetail);
-            } else {
-              setStatusForThread(conversationThreadId, "idle");
-            }
-            return;
-          }
-
-          const taskDraft = routerDecision.taskDraft;
-          const checklistItems = buildChecklistItemsFromTaskDraft(taskDraft);
-          nextRequirementsChecklist = checklistItems;
-          setStatusForThread(
-            conversationThreadId,
-            "thinking",
-            "Breaking the request into an agent brief...",
-          );
-          addProgressMessage(conversationThreadId, "Breaking the request into an agent brief...");
-          setOrchestratorRequirementsChecklist(conversationThreadId, checklistItems);
-          if (checklistItems.length > 0) {
-            addProgressMessage(
-              conversationThreadId,
-              `Mapped ${checklistItems.length} testable requirements for the quality gate.`,
-            );
-          }
-          addMessage(conversationThreadId, "orchestrator", formatTaskDraftForDisplay(taskDraft));
-          delegatedInstruction = buildDelegationInstruction(taskDraft);
-        } catch (error) {
-          console.warn("Router model failed; using local routing decision", error);
-          const fallbackDecision = buildFallbackOrchestratorRouterDecision({
-            userRequest: trimmed,
-            hasActiveRun: previousStatus !== "idle",
-          });
-          if (fallbackDecision.kind === "answer") {
-            addMessage(conversationThreadId, "orchestrator", fallbackDecision.response);
-            if (fallbackDecision.shouldContinueRun && previousStatus !== "idle") {
-              setStatusForThread(conversationThreadId, previousStatus, previousStatusDetail);
-            } else {
-              setStatusForThread(conversationThreadId, "idle");
-            }
-            return;
-          }
-
-          const taskDraft = fallbackDecision.taskDraft;
-          const checklistItems = buildChecklistItemsFromTaskDraft(taskDraft);
-          nextRequirementsChecklist = checklistItems;
-          setStatusForThread(
-            conversationThreadId,
-            "thinking",
-            "Falling back to a local agent brief...",
-          );
-          setOrchestratorRequirementsChecklist(conversationThreadId, checklistItems);
-          addMessage(conversationThreadId, "orchestrator", formatTaskDraftForDisplay(taskDraft));
-          delegatedInstruction = buildDelegationInstruction(taskDraft);
-        }
-
-        if (!delegatedInstruction) {
-          setStatusForThread(conversationThreadId, "idle");
-          addMessage(
-            conversationThreadId,
-            "orchestrator",
-            "The orchestrator could not determine whether to answer directly or delegate the request.",
-          );
-          setOrchestratorPrompt(currentThreadId, savedText);
-          return;
-        }
-
-        let targetThreadId = preferDraftConversation ? null : (routeThread?.id ?? null);
-        let targetProjectId = preferDraftConversation ? null : (routeThread?.projectId ?? null);
-        let targetRuntimeMode = preferDraftConversation
-          ? DEFAULT_RUNTIME_MODE
-          : (routeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE);
-        let targetInteractionMode: ProviderInteractionMode = preferDraftConversation
-          ? "default"
-          : (routeThread?.interactionMode ?? "default");
-        let createdNewThread = false;
-
-        if (!targetThreadId || !targetProjectId) {
-          if (!currentProject?.id && !firstProjectId) {
-            addMessage(
-              conversationThreadId,
-              "orchestrator",
-              "No project available to create a thread.",
-            );
-            setStatusForThread(conversationThreadId, "idle");
-            setOrchestratorPrompt(currentThreadId, savedText);
-            return;
-          }
-
-          setStatusForThread(
-            conversationThreadId,
-            "sending",
-            "Creating the managed agent thread...",
-          );
-          addProgressMessage(conversationThreadId, "Creating a managed agent thread...");
-          try {
-            const title = trimmed.length > 50 ? `${trimmed.slice(0, 47)}...` : trimmed;
-            const createdThread = await createThread(title, workerModelSelection);
-            targetThreadId = createdThread.threadId;
-            targetProjectId = createdThread.projectId;
-            targetRuntimeMode = DEFAULT_RUNTIME_MODE;
-            targetInteractionMode = "default";
-            createdNewThread = true;
-            moveThreadState(conversationThreadId, targetThreadId);
-            moveThreadStatus(conversationThreadId, targetThreadId);
-            setPendingCreatedThreadId(targetThreadId);
-            conversationThreadId = targetThreadId;
-            setStatusForThread(
-              conversationThreadId,
-              "sending",
-              "Managed agent thread created. Preparing the first instruction...",
-            );
-            addProgressMessage(
-              conversationThreadId,
-              "Managed agent thread created. Preparing the first instruction...",
-            );
-          } catch (error) {
-            setStatusForThread(conversationThreadId, "idle");
-            addMessage(
-              conversationThreadId,
-              "orchestrator",
-              `Failed to create thread: ${error instanceof Error ? error.message : "Unknown error"}`,
-            );
-            setOrchestratorPrompt(currentThreadId, savedText);
-            return;
-          }
-        }
-
-        if (!targetThreadId || !targetProjectId) {
-          addMessage(
-            conversationThreadId,
-            "orchestrator",
-            "The orchestrator could not resolve a managed thread.",
-          );
-          setStatusForThread(conversationThreadId, "idle");
-          setOrchestratorPrompt(currentThreadId, savedText);
-          return;
-        }
-
-        if (!createdNewThread && routeThread && targetThreadId === routeThread.id) {
-          try {
-            await syncManagedThreadModelSelection(routeThread, workerModelSelection);
-          } catch (error) {
-            setStatusForThread(conversationThreadId, "idle");
-            addMessage(
-              conversationThreadId,
-              "orchestrator",
-              `Failed to switch the managed thread to ${workerModelSelection.provider === "claudeAgent" ? "Claude" : "GPT"}: ${error instanceof Error ? error.message : "Unknown error"}`,
-            );
-            setOrchestratorPrompt(currentThreadId, savedText);
-            return;
-          }
-        }
-
-        let serverRunRecord: { runId: string; rootTaskId?: string } | null = null;
-        try {
-          setStatusForThread(
-            conversationThreadId,
-            "sending",
-            "Registering the managed run on the server...",
-          );
-          addProgressMessage(conversationThreadId, "Registering the managed run on the server...");
-          serverRunRecord = await createServerRun({
-            projectId: targetProjectId,
-            userRequest: trimmed,
-            requirementsChecklist: nextRequirementsChecklist,
-          });
-        } catch (error) {
-          if (createdNewThread) {
-            const innerApi = readNativeApi();
-            if (innerApi) {
-              await innerApi.orchestration
-                .dispatchCommand({
-                  type: "thread.delete",
-                  commandId: newCommandId(),
-                  threadId: targetThreadId,
-                })
-                .catch(() => undefined);
-            }
-            moveThreadState(targetThreadId, ORCHESTRATOR_DRAFT_THREAD_ID);
-            moveThreadStatus(targetThreadId, ORCHESTRATOR_DRAFT_THREAD_ID);
-            setPendingCreatedThreadId(null);
-            conversationThreadId = ORCHESTRATOR_DRAFT_THREAD_ID;
-          }
-          setStatusForThread(conversationThreadId, "idle");
-          addMessage(
-            conversationThreadId,
-            "orchestrator",
-            `Failed to register the managed run: ${error instanceof Error ? error.message : "Unknown error"}`,
-          );
-          setOrchestratorPrompt(currentThreadId, savedText);
-          return;
-        }
-
-        setStatusForThread(
-          conversationThreadId,
-          "sending",
-          createdNewThread
-            ? "Sending the implementation brief to the new managed thread..."
-            : "Sending the implementation brief to the managed agent...",
-        );
-        addProgressMessage(
-          conversationThreadId,
-          createdNewThread
-            ? "Sending the implementation brief to the new managed thread..."
-            : "Sending the implementation brief to the managed agent...",
-        );
-        const startedAt = new Date().toISOString();
-        try {
-          await sendToThread(
-            targetThreadId,
-            delegatedInstruction,
-            targetRuntimeMode,
-            targetInteractionMode,
-            workerModelSelection,
-          );
-        } catch (error) {
-          if (serverRunRecord) {
-            await api.orchestration
-              .dispatchCommand({
-                type: "orchestrator.run.cancel",
-                commandId: newCommandId(),
-                runId: serverRunRecord.runId,
-                reason:
-                  error instanceof Error
-                    ? `Failed to send the initial instruction: ${error.message}`
-                    : "Failed to send the initial instruction",
-                createdAt: new Date().toISOString(),
-              })
-              .catch(() => undefined);
-          }
-          if (createdNewThread) {
-            const innerApi = readNativeApi();
-            if (innerApi) {
-              await innerApi.orchestration
-                .dispatchCommand({
-                  type: "thread.delete",
-                  commandId: newCommandId(),
-                  threadId: targetThreadId,
-                })
-                .catch(() => undefined);
-            }
-            moveThreadState(targetThreadId, ORCHESTRATOR_DRAFT_THREAD_ID);
-            moveThreadStatus(targetThreadId, ORCHESTRATOR_DRAFT_THREAD_ID);
-            setPendingCreatedThreadId(null);
-            conversationThreadId = ORCHESTRATOR_DRAFT_THREAD_ID;
-          }
-          setOrchestratorActiveRun(conversationThreadId, null);
-          setStatusForThread(conversationThreadId, "idle");
-          addMessage(
-            conversationThreadId,
-            "orchestrator",
-            `Failed to send to agent: ${error instanceof Error ? error.message : "Unknown error"}`,
-          );
-          setOrchestratorPrompt(currentThreadId, savedText);
-          return;
-        }
-
-        let serverWorkerId: OrchestratorWorker["workerId"] | undefined;
-        if (serverRunRecord?.rootTaskId) {
-          const nextWorkerId = OrchestratorWorkerId.makeUnsafe(crypto.randomUUID());
-          try {
-            await spawnServerWorker({
-              runId: serverRunRecord.runId,
-              taskId: serverRunRecord.rootTaskId,
-              workerId: nextWorkerId,
-              threadId: targetThreadId,
-              projectId: targetProjectId,
-              startedAt,
-              modelSelection: workerModelSelection,
-            });
-            serverWorkerId = nextWorkerId;
-          } catch (error) {
-            addMessage(
-              conversationThreadId,
-              "thinking",
-              `Managed thread started, but the control-room worker record could not be linked: ${error instanceof Error ? error.message : "Unknown error"}`,
-            );
-          }
-        }
-
-        setOrchestratorActiveRun(conversationThreadId, {
-          ...(serverRunRecord ? { runId: serverRunRecord.runId } : {}),
-          ...(serverRunRecord?.rootTaskId
-            ? {
-                rootTaskId: serverRunRecord.rootTaskId,
-              }
-            : {}),
-          ...(serverWorkerId ? { workerId: serverWorkerId } : {}),
-          threadId: targetThreadId,
-          projectId: targetProjectId,
-          userRequest: trimmed,
-          delegatedInstruction,
-          requirementsChecklist: nextRequirementsChecklist,
-          iteration: 1,
-          startedAt,
-        });
-        setStatusForThread(
-          conversationThreadId,
-          "waiting",
-          createdNewThread
-            ? "Instruction sent. Waiting for the new thread to sync into the workspace..."
-            : "Instruction sent. Waiting for the managed agent to start...",
-        );
-        addProgressMessage(
-          conversationThreadId,
-          createdNewThread
-            ? "Instruction sent. Waiting for the new thread to sync into the workspace..."
-            : "Instruction sent. Waiting for the managed agent to start...",
-        );
-
-        if (createdNewThread) {
-          const started = await waitForStartedServerThread(targetThreadId);
-          if (!started) {
-            setStatusForThread(
-              conversationThreadId,
-              "waiting",
-              "Waiting for the new agent thread to finish syncing into the workspace...",
-            );
-            addProgressMessage(
-              conversationThreadId,
-              "Waiting for the new agent thread to finish syncing into the workspace...",
-            );
-          } else {
-            addProgressMessage(
-              conversationThreadId,
-              "Managed thread synced. Opening the agent thread so you can follow progress...",
-            );
-          }
-          try {
-            await navigate({ to: "/$threadId", params: { threadId: targetThreadId } });
-          } catch (error) {
-            addMessage(
-              conversationThreadId,
-              "orchestrator",
-              `The new thread started, but navigation failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-            );
-          }
-        }
-      } catch (error) {
-        setOrchestratorActiveRun(conversationThreadId, null);
-        setStatusForThread(conversationThreadId, "idle");
-        addMessage(
-          conversationThreadId,
-          "orchestrator",
-          `Unexpected orchestrator error: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-        setOrchestratorPrompt(currentThreadId, savedText);
-      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.start",
+        commandId: newCommandId(),
+        threadId: currentThreadId,
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: trimmed,
+          attachments: [],
+        },
+        modelSelection: selectedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: new Date().toISOString(),
+      });
     },
-    [
-      addMessage,
-      addProgressMessage,
-      callOrchestratorLLM,
-      createServerRun,
-      currentProject?.id,
-      currentThreadId,
-      createThread,
-      firstProjectId,
-      moveThreadState,
-      moveThreadStatus,
-      navigate,
-      messages,
-      managedThread,
-      activeRun,
-      orchestratorThreadState.modelSelectionByProvider,
-      preferDraftConversation,
-      providers,
-      selectedModel,
-      selectedModelSelection,
-      requirementsChecklist,
-      routeThread,
-      runDirectBrowserValidation,
-      sendToThread,
-      setOrchestratorActiveRun,
-      setOrchestratorModelSelection,
-      setOrchestratorRequirementsChecklist,
-      setOrchestratorPrompt,
-      setStatusForThread,
-      syncManagedThreadModelSelection,
-      spawnServerWorker,
-      status,
-      statusDetail,
-    ],
+    [currentThreadId, selectedModel, selectedModelSelection, addMessage, setOrchestratorPrompt],
   );
 
   const setInput = useCallback(
