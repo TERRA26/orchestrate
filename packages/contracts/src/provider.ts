@@ -23,6 +23,7 @@ import {
   ProviderStartOptions,
   ProviderUserInputAnswers,
   RuntimeMode,
+  ThreadType,
 } from "./orchestration";
 import { ProviderMentionReference, ProviderSkillReference } from "./providerDiscovery";
 
@@ -59,6 +60,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   sandboxMode: Schema.optional(ProviderSandboxMode),
   providerOptions: Schema.optional(ProviderStartOptions),
   runtimeMode: RuntimeMode,
+  threadType: Schema.optional(ThreadType),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
@@ -74,6 +76,7 @@ export const ProviderSendTurnInput = Schema.Struct({
   mentions: Schema.optional(Schema.Array(ProviderMentionReference)),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  threadType: Schema.optional(ThreadType),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 export const ProviderSteerTurnInput = ProviderSendTurnInput;

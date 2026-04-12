@@ -45,6 +45,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { OrchestrationToolRouterService } from "../../orchestration/Services/OrchestrationToolRouter.ts";
 
 const PROVIDER = "codex" as const;
 
@@ -1354,6 +1355,28 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         }),
     );
 
+    // Register orchestration tool call handler when the router service is
+    // available. This allows the Codex app-server to emit function calls for
+    // the 38 orchestration tools and have them executed server-side.
+    const toolRouter = yield* Effect.serviceOption(OrchestrationToolRouterService);
+    if (toolRouter._tag === "Some") {
+      const router = toolRouter.value;
+      const adapterServices = yield* Effect.services<never>();
+      manager.setToolCallHandler(async ({ threadId, toolName, toolInput }) => {
+        if (!router.isOrchestrationTool(toolName)) {
+          throw new Error(`Unknown orchestration tool: ${toolName}`);
+        }
+        return Effect.runPromiseWith(adapterServices)(
+          router.executeTool({
+            toolName,
+            toolInput,
+            threadId,
+            runId: null,
+          }),
+        );
+      });
+    }
+
     const startSession: CodexAdapterShape["startSession"] = (input) => {
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return Effect.fail(
@@ -1445,6 +1468,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
           ...(input.interactionMode !== undefined
             ? { interactionMode: input.interactionMode }
             : {}),
+          ...(input.threadType !== undefined ? { threadType: input.threadType } : {}),
           ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
         };
 
@@ -1512,6 +1536,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
           ...(input.interactionMode !== undefined
             ? { interactionMode: input.interactionMode }
             : {}),
+          ...(input.threadType !== undefined ? { threadType: input.threadType } : {}),
           ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
         };
 

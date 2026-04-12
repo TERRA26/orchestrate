@@ -18,6 +18,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
 import { OrchestratorRuntimeLive } from "./orchestration/Layers/OrchestratorRuntime";
 import { OrchestratorRouterLive } from "./orchestration/Layers/OrchestratorRouter";
+import { OrchestrationToolRouterLive } from "./orchestration/Layers/OrchestrationToolRouter";
 import { ModelRegistryLive } from "./orchestration/Layers/ModelRegistry";
 import { AuthorityPolicyLive } from "./orchestration/Layers/AuthorityPolicy";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus";
@@ -127,10 +128,15 @@ export function makeServerRuntimeServicesLayer() {
   const orchestratorRouterLayer = OrchestratorRouterLive;
   const authorityPolicyLayer = AuthorityPolicyLive;
 
+  const orchestrationToolRouterLayer = OrchestrationToolRouterLive.pipe(
+    Layer.provide(orchestrationLayer),
+  );
+
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
     orchestratorRuntimeLayer,
     orchestratorRouterLayer,
+    orchestrationToolRouterLayer,
     modelRegistryLayer,
     authorityPolicyLayer,
     OrchestrationProjectionSnapshotQueryLive,

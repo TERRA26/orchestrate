@@ -563,6 +563,16 @@ function renderAllToolDefinitions(): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Return the rendered tool definitions block (no disk I/O required).
+ *
+ * Useful for injecting orchestration tool awareness into developer instructions
+ * without needing the full ORCHESTRATOR.md content.
+ */
+export function renderOrchestratorToolDefinitions(): string {
+  return renderAllToolDefinitions();
+}
+
+/**
  * Build the full orchestrator system prompt.
  *
  * Reads `docs/ORCHESTRATOR.md` fresh from disk (no caching) and appends

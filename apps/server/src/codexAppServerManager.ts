@@ -43,6 +43,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
+import { renderOrchestratorToolDefinitions } from "./orchestration/orchestratorSystemPrompt";
 
 type PendingRequestKey = string;
 
@@ -164,6 +165,7 @@ export interface CodexAppServerSendTurnInput {
   readonly serviceTier?: string | null;
   readonly effort?: string;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly threadType?: "orchestrator" | "agent";
 }
 
 type CodexAppServerReviewTarget = ProviderStartReviewInput["target"];
@@ -459,8 +461,33 @@ export function buildCodexInitializeParams() {
   } as const;
 }
 
+// Lazily cached orchestrator developer instructions (computed once on first use).
+let _cachedOrchestratorInstructions: string | undefined;
+
+function getOrchestratorDeveloperInstructions(): string {
+  if (_cachedOrchestratorInstructions === undefined) {
+    const toolBlock = renderOrchestratorToolDefinitions();
+    _cachedOrchestratorInstructions = `<collaboration_mode># Collaboration Mode: Orchestrator
+
+You are the orchestrator meta-agent. Your role is to decompose user tasks, spawn
+worker agents, monitor their progress, and coordinate merging of results.
+
+You MUST use the orchestration tools listed below to manage the agent pool. Emit
+tool calls by name with the documented parameters. The runtime will intercept
+these calls, execute them, and return structured results.
+
+Do NOT attempt to perform coding work directly. Delegate all implementation to
+spawned worker agents.
+
+${toolBlock}
+</collaboration_mode>`;
+  }
+  return _cachedOrchestratorInstructions;
+}
+
 function buildCodexCollaborationMode(input: {
   readonly interactionMode?: "default" | "plan";
+  readonly threadType?: "orchestrator" | "agent";
   readonly model?: string;
   readonly effort?: string;
 }):
@@ -473,6 +500,20 @@ function buildCodexCollaborationMode(input: {
       };
     }
   | undefined {
+  // Orchestrator threads always get orchestrator instructions, regardless of
+  // the interaction mode being set or not.
+  if (input.threadType === "orchestrator") {
+    const model = normalizeCodexModelSlug(input.model) ?? "gpt-5.3-codex";
+    return {
+      mode: input.interactionMode ?? "default",
+      settings: {
+        model,
+        reasoning_effort: input.effort ?? "medium",
+        developer_instructions: getOrchestratorDeveloperInstructions(),
+      },
+    };
+  }
+
   if (input.interactionMode === undefined) {
     return undefined;
   }
@@ -553,6 +594,20 @@ export function isRecoverableThreadResumeError(error: unknown): boolean {
   return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
 }
 
+/**
+ * Callback for handling tool call requests from the Codex app-server.
+ *
+ * When registered, the manager will invoke this callback for `item/tool/call`
+ * server requests instead of rejecting them. The callback receives the parsed
+ * tool name and input payload and must return a result (or throw on failure).
+ */
+export type CodexToolCallHandler = (input: {
+  readonly threadId: ThreadId;
+  readonly toolName: string;
+  readonly toolInput: unknown;
+  readonly jsonRpcId: string | number;
+}) => Promise<unknown>;
+
 export interface CodexAppServerManagerEvents {
   event: [event: ProviderEvent];
 }
@@ -564,11 +619,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   private readonly pluginsCache = new Map<string, ProviderListPluginsResult>();
   private readonly pluginDetailCache = new Map<string, ProviderReadPluginResult>();
   private readonly modelCache = new Map<string, ProviderListModelsResult>();
+  private toolCallHandler: CodexToolCallHandler | undefined;
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
     super();
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+  }
+
+  /**
+   * Register a callback to handle `item/tool/call` server requests.
+   *
+   * When Codex's LLM emits a tool call that the app-server cannot execute
+   * locally, it sends a JSON-RPC request to the host. This handler lets the
+   * adapter layer intercept orchestration tool calls, execute them, and feed
+   * the result back to the app-server conversation.
+   */
+  setToolCallHandler(handler: CodexToolCallHandler | undefined): void {
+    this.toolCallHandler = handler;
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
@@ -872,6 +940,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
     const collaborationMode = buildCodexCollaborationMode({
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.threadType !== undefined ? { threadType: input.threadType } : {}),
       ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),
       ...(input.effort !== undefined ? { effort: input.effort } : {}),
     });
@@ -1863,6 +1932,41 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     if (request.method === "item/tool/requestUserInput") {
       return;
+    }
+
+    // Intercept tool call requests when a handler is registered. The Codex
+    // app-server sends `item/tool/call` as a JSON-RPC request when the LLM
+    // emits a function call for a tool not built into the server. The adapter
+    // layer registers a handler that routes orchestration tool calls to the
+    // OrchestrationToolRouter and feeds the result back.
+    if (request.method === "item/tool/call" && this.toolCallHandler) {
+      const params = this.readObject(request.params);
+      const toolName = this.readString(params, "name") ?? this.readString(params, "tool_name");
+      const toolInput = params?.input ?? params?.arguments ?? params?.params;
+      if (toolName) {
+        this.toolCallHandler({
+          threadId: context.session.threadId,
+          toolName,
+          toolInput,
+          jsonRpcId: request.id,
+        })
+          .then((result) => {
+            this.writeMessage(context, {
+              id: request.id,
+              result: result ?? { ok: true },
+            });
+          })
+          .catch((error) => {
+            this.writeMessage(context, {
+              id: request.id,
+              error: {
+                code: -32000,
+                message: error instanceof Error ? error.message : `Tool call '${toolName}' failed.`,
+              },
+            });
+          });
+        return;
+      }
     }
 
     this.writeMessage(context, {
