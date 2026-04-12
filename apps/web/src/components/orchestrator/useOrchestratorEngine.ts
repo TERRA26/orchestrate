@@ -708,12 +708,18 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
         input.requirementsChecklist.length > 0
           ? input.requirementsChecklist.map((item) => item.label)
           : [input.userRequest];
-      return api.orchestrator.createRun({
+      const runId = crypto.randomUUID();
+      await api.orchestration.dispatchCommand({
+        type: "orchestrator.run.create",
+        commandId: newCommandId(),
+        runId,
+        projectId: input.projectId,
         userRequest: input.userRequest,
         goals,
         spawnBudget: DEFAULT_ORCHESTRATOR_SPAWN_BUDGET,
-        projectId: input.projectId,
+        createdAt: new Date().toISOString(),
       });
+      return { runId };
     },
     [],
   );
@@ -2128,7 +2134,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           }
         }
 
-        let serverRunRecord: OrchestratorRun | null = null;
+        let serverRunRecord: { runId: string; rootTaskId?: string } | null = null;
         try {
           setStatusForThread(
             conversationThreadId,
@@ -2192,13 +2198,16 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           );
         } catch (error) {
           if (serverRunRecord) {
-            await api.orchestrator
-              .cancelRun({
+            await api.orchestration
+              .dispatchCommand({
+                type: "orchestrator.run.cancel",
+                commandId: newCommandId(),
                 runId: serverRunRecord.runId,
                 reason:
                   error instanceof Error
                     ? `Failed to send the initial instruction: ${error.message}`
                     : "Failed to send the initial instruction",
+                createdAt: new Date().toISOString(),
               })
               .catch(() => undefined);
           }
