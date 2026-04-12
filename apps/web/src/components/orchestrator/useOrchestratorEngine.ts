@@ -92,6 +92,7 @@ import type { Thread } from "~/types";
 import type { ProjectId } from "@t3tools/contracts";
 import type { BrowserAction } from "@t3tools/contracts";
 import { resolveRequestedWorkerModelSelection } from "./orchestratorModelSelection";
+import { useMultiAgentLayoutStore } from "~/lib/multiAgentLayoutStore";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,10 +127,10 @@ const ORCHESTRATOR_REVIEW_ARTIFACT_WAIT_MS = 30_000;
 const ORCHESTRATOR_BROWSER_VALIDATION_MAX_STEPS = 20;
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const DEFAULT_ORCHESTRATOR_SPAWN_BUDGET = {
-  maxDepth: 1,
-  maxChildren: 1,
-  maxConcurrentWriters: 1,
-  maxTotalWorkers: 1,
+  maxDepth: 3,
+  maxChildren: 4,
+  maxConcurrentWriters: 4,
+  maxTotalWorkers: 12,
   allowedTools: [],
   writeScope: [],
 } as const;
@@ -2412,6 +2413,14 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     [currentThreadId, setOrchestratorPrompt],
   );
 
+  // -- Sync workers with multi-agent layout store --
+  const orchestratorWorkers = workersQuery.data ?? [];
+  const syncWithWorkers = useMultiAgentLayoutStore((s) => s.syncWithWorkers);
+
+  useEffect(() => {
+    syncWithWorkers(orchestratorWorkers);
+  }, [orchestratorWorkers, syncWithWorkers]);
+
   return {
     currentThreadId,
     messages,
@@ -2445,6 +2454,6 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     // Server-canonical orchestrator state
     orchestratorRun: serverRun,
     orchestratorTasks: taskTreeQuery.data ?? [],
-    orchestratorWorkers: workersQuery.data ?? [],
+    orchestratorWorkers,
   };
 }

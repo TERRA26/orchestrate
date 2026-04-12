@@ -7,6 +7,8 @@ import { OrchestratorHeader } from "./orchestrator/OrchestratorHeader";
 import { OrchestratorMessages } from "./orchestrator/OrchestratorMessages";
 import { OrchestratorComposer } from "./orchestrator/OrchestratorComposer";
 import { OrchestratorControlRoom } from "./orchestrator/OrchestratorControlRoom";
+import { MultiAgentLayout } from "./orchestrator/MultiAgentLayout";
+import { useMultiAgentLayoutStore } from "~/lib/multiAgentLayoutStore";
 import { ResizeEdgeHandle } from "./ResizeEdgeHandle";
 
 // ---------------------------------------------------------------------------
@@ -90,26 +92,27 @@ function OrchestratorPanelInner() {
 
   // -- Engine --
   const engine = useOrchestratorEngine();
+  const layoutMode = useMultiAgentLayoutStore((s) => s.mode);
 
-  return (
+  const orchestratorContent = (
     <div
       className="relative flex h-dvh flex-col border-r border-border/30 bg-background/80 text-foreground backdrop-blur-xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/80"
       style={{
-        width,
-        minWidth: ORCHESTRATOR_MIN_WIDTH,
-        maxWidth: ORCHESTRATOR_MAX_WIDTH,
+        width: layoutMode === "rail-and-panels" ? "100%" : width,
+        minWidth: layoutMode === "rail-and-panels" ? undefined : ORCHESTRATOR_MIN_WIDTH,
+        maxWidth: layoutMode === "rail-and-panels" ? undefined : ORCHESTRATOR_MAX_WIDTH,
       }}
     >
-      <ResizeEdgeHandle label="Resize orchestrator panel" onResize={handleResize} />
+      {layoutMode === "single-pane" && (
+        <ResizeEdgeHandle label="Resize orchestrator panel" onResize={handleResize} />
+      )}
 
       <OrchestratorHeader
-        managedThread={engine.managedThread}
-        agentPhase={engine.agentPhase}
-        latestActivity={engine.latestActivity}
         status={engine.status}
         statusDetail={engine.statusDetail}
         threadBrowserSession={engine.threadBrowserSession}
         isThreadBrowserSessionVisible={engine.isThreadBrowserSessionVisible}
+        hasBrowserContext={engine.threadBrowserSession !== null}
         isBusy={engine.isBusy}
         onToggleBrowserPreview={engine.handleToggleBrowserPreview}
         onStartNewChat={engine.handleStartNewChat}
@@ -122,6 +125,7 @@ function OrchestratorPanelInner() {
         run={engine.orchestratorRun}
         tasks={engine.orchestratorTasks}
         workers={engine.orchestratorWorkers}
+        panelWidth={width}
       >
         <div className="flex min-h-0 flex-1 flex-col">
           <OrchestratorMessages
@@ -152,6 +156,21 @@ function OrchestratorPanelInner() {
       </OrchestratorControlRoom>
     </div>
   );
+
+  if (layoutMode === "rail-and-panels") {
+    return (
+      <MultiAgentLayout
+        orchestratorContent={orchestratorContent}
+        agentContent={(threadId) => (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Agent thread {threadId.slice(0, 8)}... loading
+          </div>
+        )}
+      />
+    );
+  }
+
+  return orchestratorContent;
 }
 
 // ---------------------------------------------------------------------------
