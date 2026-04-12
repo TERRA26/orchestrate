@@ -137,12 +137,12 @@ describe("buildThreadTitlePrompt", () => {
 });
 
 describe("sanitizeThreadTitle", () => {
-  it("truncates long titles with the shared sidebar-safe limit", () => {
+  it("normalizes generated titles to the shared short sentence-case format", () => {
     expect(
       sanitizeThreadTitle(
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
-    ).toBe("Reconnect failures after restart because the se...");
+    ).toBe("Reconnect failures after restart");
   });
 });
 

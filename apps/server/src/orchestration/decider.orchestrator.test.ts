@@ -80,7 +80,9 @@ async function decide(
   command: OrchestrationCommand,
 ): Promise<ReadonlyArray<Omit<OrchestrationEvent, "sequence">>> {
   const result = await Effect.runPromise(decideOrchestrationCommand({ command, readModel: model }));
-  return (Array.isArray(result) ? result : [result]) as ReadonlyArray<Omit<OrchestrationEvent, "sequence">>;
+  return (Array.isArray(result) ? result : [result]) as ReadonlyArray<
+    Omit<OrchestrationEvent, "sequence">
+  >;
 }
 
 /** Decide a single command, expecting a failure. */
@@ -166,7 +168,10 @@ describe("orchestrator decider — run lifecycle", () => {
     expect((event.payload as { runId: string }).runId).toBe(runId);
     expect((event.payload as { projectId: string }).projectId).toBe(projectId);
     expect((event.payload as { userRequest: string }).userRequest).toBe("Build a REST API");
-    expect((event.payload as unknown as { goals: string[] }).goals).toEqual(["Create endpoints", "Add tests"]);
+    expect((event.payload as unknown as { goals: string[] }).goals).toEqual([
+      "Create endpoints",
+      "Add tests",
+    ]);
   });
 
   it("rejects duplicate run creation", async () => {

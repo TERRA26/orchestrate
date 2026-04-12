@@ -107,7 +107,7 @@ function extractSubtasks(message: string): ReadonlyArray<TaskDraft> {
   }));
 }
 
-function extractInspectionPlan(message: string) {
+function extractInspectionPlan() {
   return {
     steps: [
       { action: "search", target: "relevant source files" },
@@ -121,63 +121,92 @@ function extractInspectionPlan(message: string) {
 // Router implementation
 // ---------------------------------------------------------------------------
 
-const makeOrchestratorRouter = Effect.gen(function* () {
-  const route: OrchestratorRouterShape["route"] = (input: RoutingInput) =>
-    Effect.sync((): RoutingDecision => {
-      const msg = input.userMessage;
+const makeOrchestratorRouter = Effect.succeed(
+  (() => {
+    const route: OrchestratorRouterShape["route"] = (input: RoutingInput) =>
+      Effect.sync((): RoutingDecision => {
+        const msg = input.userMessage;
 
-      // No active run: classify from scratch
-      if (!input.activeRun) {
-        if (isSimpleRequest(msg)) {
+        // No active run: classify from scratch
+        if (!input.activeRun) {
+          if (isSimpleRequest(msg)) {
+            return {
+              action: "answer",
+              response: msg,
+              shouldContinueRun: false,
+            };
+          }
+
+          if (needsInspection(msg)) {
+            return {
+              action: "inspect",
+              plan: extractInspectionPlan(),
+            };
+          }
+
+          if (isDecomposable(msg)) {
+            return {
+              action: "decompose",
+              subtasks: extractSubtasks(msg),
+            };
+          }
+
+          // Default for non-trivial: delegate to a single worker
           return {
-            action: "answer",
-            response: msg,
-            shouldContinueRun: false,
+            action: "delegate",
+            taskDraft: {
+              title: extractTitle(msg),
+              objective: msg,
+              acceptanceCriteria: ["Implementation matches request"],
+            },
           };
         }
 
+        // Active run exists: classify within context
+
+        // If all tasks are completed/accepted, a new message likely means
+        // follow-up work
+        const pendingTasks = input.activeTasks.filter(
+          (t) => t.status !== "accepted" && t.status !== "cancelled" && t.status !== "failed",
+        );
+
+        if (pendingTasks.length === 0) {
+          // No pending work, treat like a fresh request
+          if (isSimpleRequest(msg)) {
+            return {
+              action: "answer",
+              response: msg,
+              shouldContinueRun: true,
+            };
+          }
+          return {
+            action: "delegate",
+            taskDraft: {
+              title: extractTitle(msg),
+              objective: msg,
+              acceptanceCriteria: ["Implementation matches request"],
+            },
+          };
+        }
+
+        // Workers are busy: if the message is an investigation request, inspect
         if (needsInspection(msg)) {
           return {
             action: "inspect",
-            plan: extractInspectionPlan(msg),
+            plan: extractInspectionPlan(),
           };
         }
 
-        if (isDecomposable(msg)) {
-          return {
-            action: "decompose",
-            subtasks: extractSubtasks(msg),
-          };
-        }
-
-        // Default for non-trivial: delegate to a single worker
-        return {
-          action: "delegate",
-          taskDraft: {
-            title: extractTitle(msg),
-            objective: msg,
-            acceptanceCriteria: ["Implementation matches request"],
-          },
-        };
-      }
-
-      // Active run exists: classify within context
-
-      // If all tasks are completed/accepted, a new message likely means
-      // follow-up work
-      const pendingTasks = input.activeTasks.filter(
-        (t) => t.status !== "accepted" && t.status !== "cancelled" && t.status !== "failed",
-      );
-
-      if (pendingTasks.length === 0) {
-        // No pending work, treat like a fresh request
+        // Otherwise: simple status-like or acknowledgement -> answer
         if (isSimpleRequest(msg)) {
           return {
             action: "answer",
-            response: msg,
+            response: "",
             shouldContinueRun: true,
           };
         }
+
+        // Complex follow-up: delegate as new task under the current run
         return {
           action: "delegate",
           taskDraft: {
@@ -186,38 +215,11 @@ const makeOrchestratorRouter = Effect.gen(function* () {
             acceptanceCriteria: ["Implementation matches request"],
           },
         };
-      }
+      });
 
-      // Workers are busy: if the message is an investigation request, inspect
-      if (needsInspection(msg)) {
-        return {
-          action: "inspect",
-          plan: extractInspectionPlan(msg),
-        };
-      }
-
-      // Otherwise: simple status-like or acknowledgement -> answer
-      if (isSimpleRequest(msg)) {
-        return {
-          action: "answer",
-          response: "",
-          shouldContinueRun: true,
-        };
-      }
-
-      // Complex follow-up: delegate as new task under the current run
-      return {
-        action: "delegate",
-        taskDraft: {
-          title: extractTitle(msg),
-          objective: msg,
-          acceptanceCriteria: ["Implementation matches request"],
-        },
-      };
-    });
-
-  return { route } satisfies OrchestratorRouterShape;
-});
+    return { route } satisfies OrchestratorRouterShape;
+  })(),
+);
 
 export const OrchestratorRouterLive = Layer.effect(
   OrchestratorRouterService,

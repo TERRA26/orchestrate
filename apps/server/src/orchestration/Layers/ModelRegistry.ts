@@ -63,111 +63,113 @@ const CAPABILITY_PROFILES: ReadonlyArray<OrchestratorCapabilityProfile> = [
 
 const COST_WEIGHT: Record<string, number> = { low: 3, medium: 2, high: 1 };
 const LATENCY_WEIGHT: Record<string, number> = { low: 3, medium: 2, high: 1 };
+const now = () => new Date().toISOString();
 
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
-const makeModelRegistry = Effect.gen(function* () {
-  const now = () => new Date().toISOString();
+const makeModelRegistry = Effect.succeed(
+  (() => {
+    const getProfiles: ModelRegistryShape["getProfiles"] = () =>
+      Effect.succeed(CAPABILITY_PROFILES);
 
-  const getProfiles: ModelRegistryShape["getProfiles"] = () => Effect.succeed(CAPABILITY_PROFILES);
-
-  const findCandidates: ModelRegistryShape["findCandidates"] = (required) =>
-    Effect.succeed(
-      CAPABILITY_PROFILES.filter((profile) =>
-        required.every((cap) => profile.supports.includes(cap)),
-      )
-        .map(
-          (profile): OrchestratorModelCandidate => ({
-            provider: profile.provider,
-            model: profile.model,
-            weight:
-              (COST_WEIGHT[profile.costTier] ?? 1) + (LATENCY_WEIGHT[profile.latencyTier] ?? 1),
-            reason: `Matched ${required.length} required capabilities`,
-          }),
+    const findCandidates: ModelRegistryShape["findCandidates"] = (required) =>
+      Effect.succeed(
+        CAPABILITY_PROFILES.filter((profile) =>
+          required.every((cap) => profile.supports.includes(cap)),
         )
-        .sort((a, b) => b.weight - a.weight),
-    );
+          .map(
+            (profile): OrchestratorModelCandidate => ({
+              provider: profile.provider,
+              model: profile.model,
+              weight:
+                (COST_WEIGHT[profile.costTier] ?? 1) + (LATENCY_WEIGHT[profile.latencyTier] ?? 1),
+              reason: `Matched ${required.length} required capabilities`,
+            }),
+          )
+          .toSorted((a, b) => b.weight - a.weight),
+      );
 
-  const resolveBinding: ModelRegistryShape["resolveBinding"] = (workerId, policy) =>
-    Effect.gen(function* () {
-      // Try preferred models first, filtered by required capabilities
-      const preferred = policy.preferredModels
-        .filter((candidate) => {
-          const profile = CAPABILITY_PROFILES.find(
-            (p) => p.provider === candidate.provider && p.model === candidate.model,
-          );
-          if (!profile) return false;
-          return policy.requiredCapabilities.every((cap) => profile.supports.includes(cap));
-        })
-        .sort((a, b) => b.weight - a.weight);
+    const resolveBinding: ModelRegistryShape["resolveBinding"] = (workerId, policy) =>
+      Effect.gen(function* () {
+        // Try preferred models first, filtered by required capabilities
+        const preferred = policy.preferredModels
+          .filter((candidate) => {
+            const profile = CAPABILITY_PROFILES.find(
+              (p) => p.provider === candidate.provider && p.model === candidate.model,
+            );
+            if (!profile) return false;
+            return policy.requiredCapabilities.every((cap) => profile.supports.includes(cap));
+          })
+          .toSorted((a, b) => b.weight - a.weight);
 
-      if (preferred.length > 0) {
-        const top = preferred[0]!;
+        if (preferred.length > 0) {
+          const top = preferred[0]!;
+          return {
+            workerId,
+            provider: top.provider,
+            model: top.model,
+            selectedAt: now(),
+            selectedBy: "root-policy",
+            selectionReason: `Preferred model matched ${policy.requiredCapabilities.length} required capabilities`,
+            inheritedFromTaskPolicy: true,
+          } satisfies OrchestratorWorkerModelBinding;
+        }
+
+        // Fall back to fallback models from policy
+        const fallbacks = (policy.fallbackModels ?? [])
+          .filter((candidate) => {
+            const profile = CAPABILITY_PROFILES.find(
+              (p) => p.provider === candidate.provider && p.model === candidate.model,
+            );
+            if (!profile) return false;
+            return policy.requiredCapabilities.every((cap) => profile.supports.includes(cap));
+          })
+          .toSorted((a, b) => b.weight - a.weight);
+
+        if (fallbacks.length > 0) {
+          const top = fallbacks[0]!;
+          return {
+            workerId,
+            provider: top.provider,
+            model: top.model,
+            selectedAt: now(),
+            selectedBy: "root-policy",
+            selectionReason: `Fallback model matched ${policy.requiredCapabilities.length} required capabilities`,
+            inheritedFromTaskPolicy: true,
+          } satisfies OrchestratorWorkerModelBinding;
+        }
+
+        // Fall back to registry-wide candidate search
+        const candidates = yield* findCandidates(policy.requiredCapabilities);
+        if (candidates.length > 0) {
+          const top = candidates[0]!;
+          return {
+            workerId,
+            provider: top.provider,
+            model: top.model,
+            selectedAt: now(),
+            selectedBy: "root-policy",
+            selectionReason: `Registry fallback: ${top.reason}`,
+            inheritedFromTaskPolicy: false,
+          } satisfies OrchestratorWorkerModelBinding;
+        }
+
+        // Absolute fallback: default to claude-sonnet-4-6
         return {
           workerId,
-          provider: top.provider,
-          model: top.model,
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-6",
           selectedAt: now(),
           selectedBy: "root-policy",
-          selectionReason: `Preferred model matched ${policy.requiredCapabilities.length} required capabilities`,
-          inheritedFromTaskPolicy: true,
-        } satisfies OrchestratorWorkerModelBinding;
-      }
-
-      // Fall back to fallback models from policy
-      const fallbacks = (policy.fallbackModels ?? [])
-        .filter((candidate) => {
-          const profile = CAPABILITY_PROFILES.find(
-            (p) => p.provider === candidate.provider && p.model === candidate.model,
-          );
-          if (!profile) return false;
-          return policy.requiredCapabilities.every((cap) => profile.supports.includes(cap));
-        })
-        .sort((a, b) => b.weight - a.weight);
-
-      if (fallbacks.length > 0) {
-        const top = fallbacks[0]!;
-        return {
-          workerId,
-          provider: top.provider,
-          model: top.model,
-          selectedAt: now(),
-          selectedBy: "root-policy",
-          selectionReason: `Fallback model matched ${policy.requiredCapabilities.length} required capabilities`,
-          inheritedFromTaskPolicy: true,
-        } satisfies OrchestratorWorkerModelBinding;
-      }
-
-      // Fall back to registry-wide candidate search
-      const candidates = yield* findCandidates(policy.requiredCapabilities);
-      if (candidates.length > 0) {
-        const top = candidates[0]!;
-        return {
-          workerId,
-          provider: top.provider,
-          model: top.model,
-          selectedAt: now(),
-          selectedBy: "root-policy",
-          selectionReason: `Registry fallback: ${top.reason}`,
+          selectionReason: "No candidates matched; defaulting to claude-sonnet-4-6",
           inheritedFromTaskPolicy: false,
         } satisfies OrchestratorWorkerModelBinding;
-      }
+      });
 
-      // Absolute fallback: default to claude-sonnet-4-6
-      return {
-        workerId,
-        provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
-        selectedAt: now(),
-        selectedBy: "root-policy",
-        selectionReason: "No candidates matched; defaulting to claude-sonnet-4-6",
-        inheritedFromTaskPolicy: false,
-      } satisfies OrchestratorWorkerModelBinding;
-    });
-
-  return { getProfiles, findCandidates, resolveBinding } satisfies ModelRegistryShape;
-});
+    return { getProfiles, findCandidates, resolveBinding } satisfies ModelRegistryShape;
+  })(),
+);
 
 export const ModelRegistryLive = Layer.effect(ModelRegistryService, makeModelRegistry);

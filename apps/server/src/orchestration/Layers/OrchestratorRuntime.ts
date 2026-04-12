@@ -474,9 +474,7 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
           rows.map((row) => ({
             evidenceId: row.evidenceId,
             taskId: row.taskId,
-            ...(row.workerId
-              ? { workerId: OrchestratorWorkerId.makeUnsafe(row.workerId) }
-              : {}),
+            ...(row.workerId ? { workerId: OrchestratorWorkerId.makeUnsafe(row.workerId) } : {}),
             type: row.type,
             content: row.content,
             contentTruncated: Boolean(row.contentTruncated),

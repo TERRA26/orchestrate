@@ -1,18 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
-import {
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Path,
-  PubSub,
-  Ref,
-  Schema,
-  Scope,
-  Sink,
-  Stream,
-} from "effect";
+import { Effect, FileSystem, Layer, Path, PubSub, Ref, Schema, Sink, Stream } from "effect";
 import {
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
@@ -30,9 +18,8 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
-import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
+import { haveProvidersChanged } from "./ProviderRegistry";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
-import { ProviderRegistry } from "../Services/ProviderRegistry";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -484,7 +471,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       );
     });
 
-    describe("ProviderRegistryLive", () => {
+    describe("ProviderRegistry state comparison", () => {
       it("treats equal provider snapshots as unchanged", () => {
         const providers = [
           {
@@ -511,68 +498,46 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
       });
+    });
 
-      it.effect("reruns codex health when codex provider settings change", () =>
+    describe("settings-sensitive provider checks", () => {
+      it.effect("recomputes codex health after codex provider settings change", () =>
         Effect.gen(function* () {
           const serverSettings = yield* makeMutableServerSettingsService();
-          const scope = yield* Scope.make();
-          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
-            Layer.provideMerge(
-              mockCommandSpawnerLayer((command, args) => {
-                const joined = args.join(" ");
-                if (joined === "--version") {
-                  if (command === "codex") {
-                    return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-                  }
-                  return { stdout: "", stderr: "spawn ENOENT", code: 1 };
+          const providerCheckLayer = Layer.mergeAll(
+            Layer.succeed(ServerSettingsService, serverSettings),
+            mockCommandSpawnerLayer((command, args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") {
+                if (command === "codex") {
+                  return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
                 }
-                if (joined === "login status") {
-                  return { stdout: "Logged in\n", stderr: "", code: 0 };
-                }
-                throw new Error(`Unexpected args: ${joined}`);
-              }),
-            ),
-          );
-          const runtimeServices = yield* Layer.build(
-            Layer.mergeAll(
-              Layer.succeed(ServerSettingsService, serverSettings),
-              providerRegistryLayer,
-            ),
-          ).pipe(Scope.provide(scope));
-
-          yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
-
-            const initial = yield* registry.getProviders;
-            assert.strictEqual(
-              initial.find((status) => status.provider === "codex")?.status,
-              "ready",
-            );
-
-            yield* serverSettings.updateSettings({
-              providers: {
-                codex: {
-                  binaryPath: "/custom/codex",
-                },
-              },
-            });
-
-            for (let attempt = 0; attempt < 20; attempt += 1) {
-              const updated = yield* registry.getProviders;
-              if (updated.find((status) => status.provider === "codex")?.status === "error") {
-                return;
+                return { stdout: "", stderr: "spawn ENOENT", code: 1 };
               }
-              yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 0)));
-            }
+              if (joined === "login status") {
+                return { stdout: "Logged in\n", stderr: "", code: 0 };
+              }
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          );
 
-            const updated = yield* registry.getProviders;
-            assert.strictEqual(
-              updated.find((status) => status.provider === "codex")?.status,
-              "error",
-            );
-          }).pipe(Effect.provide(runtimeServices));
+          const initial = yield* checkCodexProviderStatus().pipe(
+            Effect.provide(providerCheckLayer),
+          );
+          assert.strictEqual(initial.status, "ready");
+
+          yield* serverSettings.updateSettings({
+            providers: {
+              codex: {
+                binaryPath: "/custom/codex",
+              },
+            },
+          });
+
+          const updated = yield* checkCodexProviderStatus().pipe(
+            Effect.provide(providerCheckLayer),
+          );
+          assert.strictEqual(updated.status, "error");
         }),
       );
 
