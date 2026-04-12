@@ -5,7 +5,7 @@ import { useEffect } from "react";
 
 import { EmbeddedBrowserPane } from "../components/EmbeddedBrowserPane";
 import { OrchestratorPanel } from "../components/OrchestratorPanel";
-import { usePanelStateStore } from "../components/orchestrator/panelStateStore";
+// panelStateStore import removed — orchestrator is always the main view
 import ThreadSidebar from "../components/Sidebar";
 import { isElectron } from "../env";
 import { useDisposableThreadLifecycle } from "../hooks/useDisposableThreadLifecycle";
@@ -184,8 +184,6 @@ function CollapsedSidebarStrip() {
 
 function ChatRouteLayout() {
   useUIFont();
-  const orchestratorOpen = usePanelStateStore((state) => state.orchestratorOpen);
-
   return (
     <SidebarProvider defaultOpen>
       <ChatRouteGlobalShortcuts />
@@ -207,8 +205,7 @@ function ChatRouteLayout() {
         <SidebarRail />
       </Sidebar>
       <CollapsedSidebarStrip />
-      {orchestratorOpen && <OrchestratorPanel />}
-      <Outlet />
+      <OrchestratorPanel />
       <EmbeddedBrowserPane currentThreadId={null} />
     </SidebarProvider>
   );

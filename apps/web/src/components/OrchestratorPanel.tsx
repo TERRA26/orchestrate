@@ -1,7 +1,5 @@
-import React, { useCallback, useState } from "react";
-import { Schema } from "effect";
+import React from "react";
 
-import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { useOrchestratorEngine } from "./orchestrator/useOrchestratorEngine";
 import { OrchestratorHeader } from "./orchestrator/OrchestratorHeader";
 import { OrchestratorMessages } from "./orchestrator/OrchestratorMessages";
@@ -9,16 +7,6 @@ import { OrchestratorComposer } from "./orchestrator/OrchestratorComposer";
 import { OrchestratorControlRoom } from "./orchestrator/OrchestratorControlRoom";
 import { MultiAgentLayout } from "./orchestrator/MultiAgentLayout";
 import { useMultiAgentLayoutStore } from "~/lib/multiAgentLayoutStore";
-import { ResizeEdgeHandle } from "./ResizeEdgeHandle";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const ORCHESTRATOR_WIDTH_STORAGE_KEY = "orchestrator_panel_width";
-const ORCHESTRATOR_DEFAULT_WIDTH = 420;
-const ORCHESTRATOR_MIN_WIDTH = 280;
-const ORCHESTRATOR_MAX_WIDTH = 900;
 
 // ---------------------------------------------------------------------------
 // Error boundary
@@ -66,46 +54,13 @@ class OrchestratorErrorBoundary extends React.Component<
 // ---------------------------------------------------------------------------
 
 function OrchestratorPanelInner() {
-  // -- Width / resize --
-  const [width, setWidth] = useState(() => {
-    const stored = getLocalStorageItem(ORCHESTRATOR_WIDTH_STORAGE_KEY, Schema.Finite);
-    return stored ?? ORCHESTRATOR_DEFAULT_WIDTH;
-  });
-
-  const persistWidth = useCallback((w: number) => {
-    setLocalStorageItem(ORCHESTRATOR_WIDTH_STORAGE_KEY, w, Schema.Finite);
-  }, []);
-
-  const handleResize = useCallback(
-    (delta: number) => {
-      setWidth((prev) => {
-        const next = Math.max(
-          ORCHESTRATOR_MIN_WIDTH,
-          Math.min(ORCHESTRATOR_MAX_WIDTH, prev + delta),
-        );
-        persistWidth(next);
-        return next;
-      });
-    },
-    [persistWidth],
-  );
-
-  // -- Engine --
   const engine = useOrchestratorEngine();
   const layoutMode = useMultiAgentLayoutStore((s) => s.mode);
 
   const orchestratorContent = (
     <div
-      className="relative flex h-dvh flex-col border-r border-border/30 bg-background/80 text-foreground backdrop-blur-xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/80"
-      style={{
-        width: layoutMode === "rail-and-panels" ? "100%" : width,
-        minWidth: layoutMode === "rail-and-panels" ? undefined : ORCHESTRATOR_MIN_WIDTH,
-        maxWidth: layoutMode === "rail-and-panels" ? undefined : ORCHESTRATOR_MAX_WIDTH,
-      }}
+      className="relative flex h-dvh flex-1 flex-col bg-background/80 text-foreground backdrop-blur-xl backdrop-saturate-150 dark:bg-background/80"
     >
-      {layoutMode === "single-pane" && (
-        <ResizeEdgeHandle label="Resize orchestrator panel" onResize={handleResize} />
-      )}
 
       <OrchestratorHeader
         status={engine.status}
@@ -125,7 +80,7 @@ function OrchestratorPanelInner() {
         run={engine.orchestratorRun}
         tasks={engine.orchestratorTasks}
         workers={engine.orchestratorWorkers}
-        panelWidth={width}
+        panelWidth={0}
       >
         <div className="flex min-h-0 flex-1 flex-col">
           <OrchestratorMessages
