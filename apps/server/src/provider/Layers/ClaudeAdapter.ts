@@ -9,7 +9,6 @@
 import {
   type CanUseTool,
   createSdkMcpServer,
-  tool as sdkTool,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -619,19 +618,20 @@ function buildOrchestrationMcpServer(deps: {
   readonly services: Effect.Effect.Context<never>;
   readonly threadId: string;
 }) {
-  // Use the SDK's tool() helper with Zod schemas. The SDK requires Zod for
-  // input validation (it calls safeParseAsync internally). We use z.object({})
-  // with passthrough() so any JSON input is accepted — actual validation is
-  // handled downstream by OrchestrationToolRouter using Effect Schema.
-  const { z } = require("zod") as typeof import("zod");
-  const passthrough = z.object({}).passthrough();
+  // The SDK's createSdkMcpServer calls safeParseAsync on inputSchema internally.
+  // Rather than depending on Zod, we create a minimal passthrough object that
+  // satisfies the SDK's validation contract. Actual validation is handled
+  // downstream by OrchestrationToolRouter using Effect Schema.
+  const passthroughSchema = {
+    safeParseAsync: async (data: unknown) => ({ success: true, data }),
+    safeParse: (data: unknown) => ({ success: true, data }),
+  };
 
-  const tools = ORCHESTRATION_TOOL_NAMES_LIST.map((toolName) =>
-    sdkTool(
-      toolName,
-      ORCHESTRATION_TOOL_DESCRIPTIONS[toolName] ?? toolName,
-      passthrough,
-      async (args: Record<string, unknown>) => {
+  const tools = ORCHESTRATION_TOOL_NAMES_LIST.map((toolName) => ({
+    name: toolName,
+    description: ORCHESTRATION_TOOL_DESCRIPTIONS[toolName] ?? toolName,
+    inputSchema: passthroughSchema,
+    handler: async (args: Record<string, unknown>) => {
         try {
           const result = await Effect.runPromiseWith(deps.services)(
             deps.router.executeTool({
@@ -658,8 +658,7 @@ function buildOrchestrationMcpServer(deps: {
           };
         }
       },
-    ),
-  );
+    }));
 
   return createSdkMcpServer({
     name: "orchestrate",
