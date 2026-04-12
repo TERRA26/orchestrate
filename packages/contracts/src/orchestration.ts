@@ -1670,6 +1670,14 @@ export const OrchestratorWorker = Schema.Struct({
 });
 export type OrchestratorWorker = typeof OrchestratorWorker.Type;
 
+// Branded IDs for inter-worker messaging and dependencies
+export const OrchestratorMessageId = Schema.String.pipe(Schema.brand("OrchestratorMessageId"));
+export type OrchestratorMessageId = typeof OrchestratorMessageId.Type;
+export const OrchestratorDependencyId = Schema.String.pipe(
+  Schema.brand("OrchestratorDependencyId"),
+);
+export type OrchestratorDependencyId = typeof OrchestratorDependencyId.Type;
+
 // InterWorkerMessage (read model entity for orchestrator messaging)
 export const OrchestratorInterWorkerMessage = Schema.Struct({
   messageId: OrchestratorMessageId,
@@ -1971,9 +1979,6 @@ export const OrchestratorWorkerDemoteCommand = Schema.Struct({
 });
 
 // Inter-worker messaging
-export const OrchestratorMessageId = Schema.String.pipe(Schema.brand("OrchestratorMessageId"));
-export type OrchestratorMessageId = typeof OrchestratorMessageId.Type;
-
 export const OrchestratorMessageSendCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.message.send"),
   commandId: CommandId,
@@ -2008,11 +2013,6 @@ export const OrchestratorContextTransferCommand = Schema.Struct({
 });
 
 // Dependency management
-export const OrchestratorDependencyId = Schema.String.pipe(
-  Schema.brand("OrchestratorDependencyId"),
-);
-export type OrchestratorDependencyId = typeof OrchestratorDependencyId.Type;
-
 export const OrchestratorDependencySetCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.dependency.set"),
   commandId: CommandId,

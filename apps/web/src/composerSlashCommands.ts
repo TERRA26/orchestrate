@@ -304,20 +304,20 @@ export function getAvailableComposerSlashCommands(input: {
     ).filter((name): name is ComposerSlashCommand => isBuiltInComposerSlashCommand(name)),
   );
 
-  const availableCommands: ComposerSlashCommand[] =
-    input.provider === "codex"
-      ? [
-          "clear",
-          "model",
-          ...(input.supportsFastSlashCommand ? (["fast"] as const) : []),
-          "plan",
-          "default",
-          ...(input.canOfferReviewCommand ? (["review"] as const) : []),
-          ...(input.canOfferForkCommand ? (["fork"] as const) : []),
-          "status",
-          "subagents",
-        ]
-      : [];
+  // Core Orchestrate app-level commands that make sense for any provider.
+  // Codex-specific extensions (fork, review, fast) are added conditionally.
+  const isCodex = input.provider === "codex";
+  const availableCommands: ComposerSlashCommand[] = [
+    "clear",
+    "model",
+    ...(isCodex && input.supportsFastSlashCommand ? (["fast"] as const) : []),
+    "plan",
+    "default",
+    ...(isCodex && input.canOfferReviewCommand ? (["review"] as const) : []),
+    ...(isCodex && input.canOfferForkCommand ? (["fork"] as const) : []),
+    "status",
+    "subagents",
+  ];
   return availableCommands.filter((command) => !collidingNativeCommandNames.has(command));
 }
 

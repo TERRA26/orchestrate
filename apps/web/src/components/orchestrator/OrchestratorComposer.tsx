@@ -1,11 +1,41 @@
-import { useCallback, useRef } from "react";
-import type { ProviderKind, ServerProviderModel, ThreadId } from "@t3tools/contracts";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type {
+  ProviderKind,
+  ProviderMentionReference,
+  ProviderNativeCommandDescriptor,
+  ServerProviderModel,
+  ThreadId,
+} from "@t3tools/contracts";
+import { useQuery } from "@tanstack/react-query";
 
 import { cn } from "~/lib/utils";
 import type { ProviderOptions } from "~/providerModelOptions";
 import { Separator } from "~/components/ui/separator";
 import { ProviderModelPicker } from "~/components/chat/ProviderModelPicker";
 import { TraitsPicker } from "~/components/chat/TraitsPicker";
+import {
+  ComposerCommandMenu,
+  type ComposerCommandItem,
+} from "~/components/chat/ComposerCommandMenu";
+import {
+  ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "~/components/ComposerPromptEditor";
+import { useComposerCommandMenuItems } from "~/hooks/useComposerCommandMenuItems";
+import {
+  type ComposerTrigger,
+  type ComposerTriggerKind,
+  detectComposerTrigger,
+  stripComposerTriggerText,
+} from "~/composer-logic";
+import {
+  providerPluginsQueryOptions,
+  providerSkillsQueryOptions,
+  providerCommandsQueryOptions,
+  supportsNativeSlashCommandDiscovery,
+  providerComposerCapabilitiesQueryOptions,
+} from "~/lib/providerDiscoveryReactQuery";
+import { useTheme } from "~/hooks/useTheme";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -32,6 +62,20 @@ export interface OrchestratorComposerProps {
 }
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+type ComposerPluginSuggestion = {
+  plugin: import("@t3tools/contracts").ProviderPluginDescriptor;
+  mention: ProviderMentionReference;
+};
+
+const EMPTY_PLUGINS: ComposerPluginSuggestion[] = [];
+const EMPTY_NATIVE_COMMANDS: ProviderNativeCommandDescriptor[] = [];
+const EMPTY_SKILLS: import("@t3tools/contracts").ProviderSkillDescriptor[] = [];
+const EMPTY_TERMINAL_CONTEXTS: never[] = [];
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -50,8 +94,160 @@ export function OrchestratorComposer({
   onModelChange,
   onPromptChangeFromTraits,
 }: OrchestratorComposerProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<ComposerPromptEditorHandle>(null);
+  const { resolvedTheme } = useTheme();
 
+  // ── Editor state ───────────────────────────────────────────────────────
+  const [composerCursor, setComposerCursor] = useState(0);
+
+  // ── Trigger detection ──────────────────────────────────────────────────
+  const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(null);
+  const [activeMenuItemId, setActiveMenuItemId] = useState<string | null>(null);
+
+  const composerTriggerKind: ComposerTriggerKind | null = composerTrigger?.kind ?? null;
+
+  // ── Discovery queries (same as main chat) ──────────────────────────────
+  const capabilitiesQuery = useQuery(providerComposerCapabilitiesQueryOptions(selectedProvider));
+  const isSlashTrigger =
+    composerTriggerKind === "slash-command" || composerTriggerKind === "slash-model";
+
+  const providerCommandsQuery = useQuery(
+    providerCommandsQueryOptions({
+      provider: selectedProvider,
+      cwd: null,
+      threadId: undefined,
+      query: isSlashTrigger ? (composerTrigger?.query ?? "") : "",
+      enabled: isSlashTrigger && supportsNativeSlashCommandDiscovery(capabilitiesQuery.data),
+    }),
+  );
+  const providerSkillsQuery = useQuery(
+    providerSkillsQueryOptions({
+      provider: selectedProvider,
+      cwd: null,
+      threadId: undefined,
+      query: composerTrigger?.query ?? "",
+      enabled: true,
+    }),
+  );
+  const providerPluginsQuery = useQuery(
+    providerPluginsQueryOptions({
+      provider: selectedProvider,
+      cwd: null,
+      threadId: undefined,
+      enabled: true,
+    }),
+  );
+
+  const providerPlugins = useMemo<ComposerPluginSuggestion[]>(
+    () =>
+      providerPluginsQuery.data?.marketplaces.flatMap((m) =>
+        m.plugins.map((plugin) => ({
+          plugin,
+          mention: {
+            name: plugin.name,
+            path: `plugin://${plugin.name}@${m.name}`,
+          } satisfies ProviderMentionReference,
+        })),
+      ) ?? EMPTY_PLUGINS,
+    [providerPluginsQuery.data],
+  );
+  const providerNativeCommands = providerCommandsQuery.data?.commands ?? EMPTY_NATIVE_COMMANDS;
+  const providerSkills = providerSkillsQuery.data?.skills ?? EMPTY_SKILLS;
+
+  // ── Build menu items (same hook as main chat) ──────────────────────────
+  const composerMenuItems = useComposerCommandMenuItems({
+    composerTrigger,
+    provider: selectedProvider,
+    providerPlugins,
+    providerNativeCommands,
+    providerSkills,
+    workspaceEntries: [],
+    searchableModelOptions: [],
+    supportsFastSlashCommand: selectedProvider === "codex",
+    canOfferReviewCommand: selectedProvider === "codex",
+    canOfferForkCommand: selectedProvider === "codex",
+  });
+
+  const composerMenuOpen = composerMenuItems.length > 0 && composerTrigger !== null;
+
+  // ── Menu item selection ────────────────────────────────────────────────
+  const handleSelectMenuItem = useCallback(
+    (item: ComposerCommandItem) => {
+      if (!composerTrigger) return;
+      const stripped = stripComposerTriggerText(input, composerTrigger);
+      const insertAt = composerTrigger.rangeStart;
+
+      let insertText: string;
+      if (item.type === "slash-command" || item.type === "provider-native-command") {
+        insertText = `/${item.command} `;
+      } else if (item.type === "skill") {
+        // `$skillname ` gets rendered as an inline chip by Lexical.
+        insertText = `$${item.skill.name} `;
+      } else if (item.type === "plugin") {
+        // `@pluginname ` gets rendered as an inline mention chip by Lexical.
+        insertText = `@${item.mention.path} `;
+      } else {
+        insertText = `${item.label} `;
+      }
+
+      const next = `${stripped.slice(0, insertAt)}${insertText}${stripped.slice(insertAt)}`;
+      onInputChange(next);
+      setComposerTrigger(null);
+      setActiveMenuItemId(null);
+      requestAnimationFrame(() => {
+        editorRef.current?.focusAt(insertAt + insertText.length);
+      });
+    },
+    [composerTrigger, input, onInputChange],
+  );
+
+  // ── Keyboard navigation ────────────────────────────────────────────────
+  const handleCommandKey = useCallback(
+    (key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab", event: KeyboardEvent): boolean => {
+      if (!composerMenuOpen) return false;
+      event.preventDefault();
+
+      if (key === "ArrowDown") {
+        const idx = composerMenuItems.findIndex((i) => i.id === activeMenuItemId);
+        const next = (idx + 1) % composerMenuItems.length;
+        setActiveMenuItemId(composerMenuItems[next]?.id ?? null);
+        return true;
+      }
+      if (key === "ArrowUp") {
+        const idx = composerMenuItems.findIndex((i) => i.id === activeMenuItemId);
+        const next = (idx - 1 + composerMenuItems.length) % composerMenuItems.length;
+        setActiveMenuItemId(composerMenuItems[next]?.id ?? null);
+        return true;
+      }
+      if (key === "Enter" || key === "Tab") {
+        const active =
+          composerMenuItems.find((i) => i.id === activeMenuItemId) ?? composerMenuItems[0];
+        if (active) handleSelectMenuItem(active);
+        return true;
+      }
+      return false;
+    },
+    [composerMenuOpen, composerMenuItems, activeMenuItemId, handleSelectMenuItem],
+  );
+
+  // ── Editor change handler ──────────────────────────────────────────────
+  const handleEditorChange = useCallback(
+    (
+      nextValue: string,
+      _nextCursor: number,
+      expandedCursor: number,
+      _cursorAdjacentToMention: boolean,
+      _terminalContextIds: string[],
+    ) => {
+      onInputChange(nextValue);
+      setComposerCursor(expandedCursor);
+      setComposerTrigger(detectComposerTrigger(nextValue, expandedCursor));
+    },
+    [onInputChange],
+  );
+
+  // ── Submit ─────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
       event.preventDefault();
@@ -62,29 +258,32 @@ export function OrchestratorComposer({
     [input, canSend, isBusy, onSend],
   );
 
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        const trimmed = input.trim();
-        if (!trimmed || !canSend || isBusy) return;
-        void onSend(trimmed);
-      }
-    },
-    [input, canSend, isBusy, onSend],
-  );
-
   const hasSendableContent = input.trim().length > 0;
 
   return (
     <div className={cn("px-3 pt-4 sm:px-5 sm:pt-4", "pb-2.5 sm:pb-3")}>
       <form onSubmit={handleSubmit} className="w-full min-w-0">
         <div
+          ref={composerRef}
           className={cn(
-            "group rounded-2xl p-px transition-colors duration-200",
+            "group relative rounded-2xl p-px transition-colors duration-200",
             composerProviderState.composerFrameClassName,
           )}
         >
+          {/* Command menu — same component as main chat */}
+          {composerMenuOpen && (
+            <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 px-1">
+              <ComposerCommandMenu
+                items={composerMenuItems}
+                resolvedTheme={resolvedTheme === "dark" ? "dark" : "light"}
+                isLoading={providerSkillsQuery.isLoading || providerPluginsQuery.isLoading}
+                triggerKind={composerTriggerKind}
+                activeItemId={activeMenuItemId}
+                onHighlightedItemChange={setActiveMenuItemId}
+                onSelect={handleSelectMenuItem}
+              />
+            </div>
+          )}
           <div
             className={cn(
               "rounded-md border bg-card transition-colors duration-200 focus-within:border-neutral-500/15",
@@ -92,24 +291,21 @@ export function OrchestratorComposer({
               composerProviderState.composerSurfaceClassName,
             )}
           >
-            {/* Text area */}
+            {/* Lexical editor — same component as main chat */}
             <div className="relative px-4 pb-1 pt-3.5">
-              <textarea
-                ref={textareaRef}
+              <ComposerPromptEditor
+                ref={editorRef}
                 value={input}
-                onChange={(event) => onInputChange(event.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={isBusy}
-                placeholder={isBusy ? "Working..." : "Describe what you want built..."}
-                rows={1}
-                className="block w-full resize-none bg-transparent text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                style={
-                  {
-                    minHeight: "3.5rem",
-                    maxHeight: "200px",
-                    fieldSizing: "content",
-                  } as React.CSSProperties
+                cursor={composerCursor}
+                terminalContexts={EMPTY_TERMINAL_CONTEXTS}
+                onRemoveTerminalContext={() => {}}
+                onChange={handleEditorChange}
+                onCommandKeyDown={handleCommandKey}
+                onPaste={() => {}}
+                placeholder={
+                  isBusy ? "Working..." : "Ask anything, @tag plugins, or use / for commands"
                 }
+                disabled={isBusy}
               />
             </div>
 
@@ -142,7 +338,7 @@ export function OrchestratorComposer({
                 />
               </div>
 
-              {/* Send button — matches main chat style */}
+              {/* Send button */}
               <div className="flex shrink-0 items-center">
                 <button
                   type="submit"

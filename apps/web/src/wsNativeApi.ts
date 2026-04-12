@@ -2,17 +2,18 @@ import {
   type ThreadId,
   type ThreadBrowserState,
   type GitActionProgressEvent,
+  type TerminalEvent,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   type ContextMenuItem,
   type NativeApi,
   ServerConfigUpdatedPayload,
-  type ServerProviderUpdatedPayload,
   WS_CHANNELS,
   WS_METHODS,
   type WsWelcomePayload,
 } from "@t3tools/contracts";
 
+import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { WsTransport } from "./wsTransport";
 
@@ -20,7 +21,7 @@ let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => void>();
-const providersUpdatedListeners = new Set<(payload: ServerProviderUpdatedPayload) => void>();
+const terminalEventListeners = new Set<(payload: TerminalEvent) => void>();
 const fallbackBrowserStateListeners = new Set<(state: ThreadBrowserState) => void>();
 const fallbackBrowserStates = new Map<ThreadId, ThreadBrowserState>();
 
@@ -157,26 +158,6 @@ export function onServerConfigUpdated(
   };
 }
 
-export function onServerProvidersUpdated(
-  listener: (payload: ServerProviderUpdatedPayload) => void,
-): () => void {
-  providersUpdatedListeners.add(listener);
-
-  const latestProviders =
-    instance?.transport.getLatestPush(WS_CHANNELS.serverProvidersUpdated)?.data ?? null;
-  if (latestProviders) {
-    try {
-      listener(latestProviders);
-    } catch {
-      // Swallow listener errors
-    }
-  }
-
-  return () => {
-    providersUpdatedListeners.delete(listener);
-  };
-}
-
 export function createWsNativeApi(): NativeApi {
   if (instance) return instance.api;
 
@@ -202,9 +183,9 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
-  transport.subscribe(WS_CHANNELS.serverProvidersUpdated, (message) => {
+  transport.subscribe(WS_CHANNELS.gitActionProgress, (message) => {
     const payload = message.data;
-    for (const listener of providersUpdatedListeners) {
+    for (const listener of gitActionProgressListeners) {
       try {
         listener(payload);
       } catch {
@@ -212,9 +193,9 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
-  transport.subscribe(WS_CHANNELS.gitActionProgress, (message) => {
+  transport.subscribe(WS_CHANNELS.terminalEvent, (message) => {
     const payload = message.data;
-    for (const listener of gitActionProgressListeners) {
+    for (const listener of terminalEventListeners) {
       try {
         listener(payload);
       } catch {
@@ -230,10 +211,7 @@ export function createWsNativeApi(): NativeApi {
         return window.desktopBridge.pickFolder();
       },
       confirm: async (message) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.confirm(message);
-        }
-        return window.confirm(message);
+        return showConfirmDialogFallback(message);
       },
     },
     terminal: {
@@ -243,13 +221,16 @@ export function createWsNativeApi(): NativeApi {
       clear: (input) => transport.request(WS_METHODS.terminalClear, input),
       restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
       close: (input) => transport.request(WS_METHODS.terminalClose, input),
-      onEvent: (callback) =>
-        transport.subscribe(WS_CHANNELS.terminalEvent, (message) => callback(message.data)),
+      onEvent: (callback) => {
+        terminalEventListeners.add(callback);
+        return () => {
+          terminalEventListeners.delete(callback);
+        };
+      },
     },
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
-      readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>
@@ -297,17 +278,12 @@ export function createWsNativeApi(): NativeApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
-        }
         return showContextMenuFallback(items, position);
       },
     },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
-      refreshProviders: () => transport.request(WS_METHODS.serverRefreshProviders),
-      updateSettings: (patch) => transport.request(WS_METHODS.serverUpdateSettings, { patch }),
     },
     provider: {
       getComposerCapabilities: (input) =>
@@ -331,8 +307,6 @@ export function createWsNativeApi(): NativeApi {
         transport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (message) =>
           callback(message.data),
         ),
-      complete: (input) =>
-        transport.request(WS_METHODS.orchestratorComplete, input, { timeoutMs: 150_000 }),
     },
     browser: {
       open: async (input) => {
@@ -457,19 +431,6 @@ export function createWsNativeApi(): NativeApi {
           fallbackBrowserStateListeners.delete(callback);
         };
       },
-      openSession: (input) =>
-        transport.request(WS_METHODS.browserOpenSession, input, { timeoutMs: 90_000 }),
-      act: (input) => transport.request(WS_METHODS.browserAct, input, { timeoutMs: 90_000 }),
-      closeSession: (input) => transport.request(WS_METHODS.browserCloseSession, input),
-    },
-    orchestrator: {
-      createRun: (input) => transport.request(WS_METHODS.orchestratorCreateRun, input),
-      cancelRun: (input) => transport.request(WS_METHODS.orchestratorCancelRun, input),
-      getRun: (input) => transport.request(WS_METHODS.orchestratorGetRun, input),
-      getActiveRuns: () => transport.request(WS_METHODS.orchestratorGetActiveRuns),
-      getTaskTree: (input) => transport.request(WS_METHODS.orchestratorGetTaskTree, input),
-      getWorkers: (input) => transport.request(WS_METHODS.orchestratorGetWorkers, input),
-      getEvidence: (input) => transport.request(WS_METHODS.orchestratorGetEvidence, input),
     },
   };
 

@@ -13,7 +13,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WsPush,
-  type ServerProvider,
+  type ServerProviderStatus,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -92,16 +92,13 @@ function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unkn
   return testGlobal.window;
 }
 
-const defaultProviders: ReadonlyArray<ServerProvider> = [
+const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
   {
     provider: "codex",
-    enabled: true,
-    installed: true,
-    version: "0.116.0",
     status: "ready",
-    auth: { status: "authenticated" },
+    available: true,
+    authStatus: "authenticated",
     checkedAt: "2026-01-01T00:00:00.000Z",
-    models: [],
   },
 ];
 
@@ -128,7 +125,7 @@ describe("wsNativeApi", () => {
     const listener = vi.fn();
     onServerWelcome(listener);
 
-    const payload = { cwd: "/tmp/workspace", projectName: "t3-code" };
+    const payload = { cwd: "/tmp/workspace", homeDir: "/Users/tester", projectName: "t3-code" };
     emitPush(WS_CHANNELS.serverWelcome, payload);
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -150,6 +147,7 @@ describe("wsNativeApi", () => {
 
     emitPush(WS_CHANNELS.serverWelcome, {
       cwd: "/tmp/workspace",
+      homeDir: "/Users/tester",
       projectName: "t3-code",
       bootstrapProjectId: ProjectId.makeUnsafe("project-1"),
       bootstrapThreadId: ThreadId.makeUnsafe("thread-1"),
@@ -159,6 +157,7 @@ describe("wsNativeApi", () => {
     expect(listener).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: "/tmp/workspace",
+        homeDir: "/Users/tester",
         projectName: "t3-code",
         bootstrapProjectId: "project-1",
         bootstrapThreadId: "thread-1",
@@ -173,13 +172,22 @@ describe("wsNativeApi", () => {
     const listener = vi.fn();
     onServerWelcome(listener);
 
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/one", projectName: "one" });
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/workspace", projectName: "t3-code" });
+    emitPush(WS_CHANNELS.serverWelcome, {
+      cwd: "/tmp/one",
+      homeDir: "/Users/tester",
+      projectName: "one",
+    });
+    emitPush(WS_CHANNELS.serverWelcome, {
+      cwd: "/tmp/workspace",
+      homeDir: "/Users/tester",
+      projectName: "t3-code",
+    });
 
     expect(listener).toHaveBeenCalledTimes(2);
     expect(listener).toHaveBeenLastCalledWith(
       expect.objectContaining({
         cwd: "/tmp/workspace",
+        homeDir: "/Users/tester",
         projectName: "t3-code",
       }),
     );
@@ -200,6 +208,7 @@ describe("wsNativeApi", () => {
           message: "Entry at index 1 is invalid.",
         },
       ],
+      providers: defaultProviders,
     } as const;
     emitPush(WS_CHANNELS.serverConfigUpdated, payload);
 
@@ -221,36 +230,18 @@ describe("wsNativeApi", () => {
 
     emitPush(WS_CHANNELS.serverConfigUpdated, {
       issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
+      providers: defaultProviders,
     });
     emitPush(WS_CHANNELS.serverConfigUpdated, {
       issues: [],
+      providers: defaultProviders,
     });
 
     expect(listener).toHaveBeenCalledTimes(2);
     expect(listener).toHaveBeenLastCalledWith({
       issues: [],
-    });
-  });
-
-  it("delivers and caches valid server.providersUpdated payloads", async () => {
-    const { createWsNativeApi, onServerProvidersUpdated } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerProvidersUpdated(listener);
-
-    const payload = {
       providers: defaultProviders,
-    } as const;
-    emitPush(WS_CHANNELS.serverProvidersUpdated, payload);
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(payload);
-
-    const lateListener = vi.fn();
-    onServerProvidersUpdated(lateListener);
-    expect(lateListener).toHaveBeenCalledTimes(1);
-    expect(lateListener).toHaveBeenCalledWith(payload);
+    });
   });
 
   it("forwards valid terminal and orchestration events", async () => {
@@ -362,105 +353,6 @@ describe("wsNativeApi", () => {
     });
   });
 
-  it("forwards workspace file reads to the websocket project method", async () => {
-    requestMock.mockResolvedValue({ relativePath: "plan.md", contents: "# Plan\n" });
-    const { createWsNativeApi } = await import("./wsNativeApi");
-
-    const api = createWsNativeApi();
-    await api.projects.readFile({
-      cwd: "/tmp/project",
-      relativePath: "plan.md",
-    });
-
-    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.projectsReadFile, {
-      cwd: "/tmp/project",
-      relativePath: "plan.md",
-    });
-  });
-
-  it("forwards browser automation requests to websocket methods", async () => {
-    requestMock.mockResolvedValueOnce({
-      sessionId: "browser-session-1",
-      observation: {
-        sessionId: "browser-session-1",
-        url: "http://localhost:3333",
-        title: "Preview",
-        readyState: "complete",
-        textSummary: "Interactive page",
-        targets: [],
-        observedAt: "2026-04-01T00:00:00.000Z",
-      },
-    });
-    requestMock.mockResolvedValueOnce({
-      observation: {
-        sessionId: "browser-session-1",
-        url: "http://localhost:3333",
-        title: "Preview",
-        readyState: "complete",
-        textSummary: "Clicked the primary button",
-        targets: [],
-        observedAt: "2026-04-01T00:00:01.000Z",
-      },
-    });
-    requestMock.mockResolvedValueOnce(undefined);
-
-    const { createWsNativeApi } = await import("./wsNativeApi");
-    const api = createWsNativeApi();
-
-    await api.browser.openSession({ url: "http://localhost:3333" });
-    await api.browser.act({
-      sessionId: "browser-session-1",
-      action: { kind: "click", targetId: "target-1" },
-    });
-    await api.browser.closeSession({ sessionId: "browser-session-1" });
-
-    expect(requestMock).toHaveBeenNthCalledWith(
-      1,
-      WS_METHODS.browserOpenSession,
-      { url: "http://localhost:3333" },
-      { timeoutMs: 90_000 },
-    );
-    expect(requestMock).toHaveBeenNthCalledWith(
-      2,
-      WS_METHODS.browserAct,
-      { sessionId: "browser-session-1", action: { kind: "click", targetId: "target-1" } },
-      { timeoutMs: 90_000 },
-    );
-    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.browserCloseSession, {
-      sessionId: "browser-session-1",
-    });
-  });
-
-  it("forwards orchestrator model options to the websocket completion method", async () => {
-    requestMock.mockResolvedValue({ text: "planned" });
-    const { createWsNativeApi } = await import("./wsNativeApi");
-
-    const api = createWsNativeApi();
-    await api.orchestration.complete({
-      provider: "codex",
-      model: "gpt-5.4",
-      modelOptions: {
-        reasoningEffort: "high",
-        fastMode: true,
-      },
-      messages: [{ role: "user", content: "Plan this task" }],
-    });
-
-    expect(requestMock).toHaveBeenCalledWith(
-      WS_METHODS.orchestratorComplete,
-      {
-        provider: "codex",
-        model: "gpt-5.4",
-        modelOptions: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
-        messages: [{ role: "user", content: "Plan this task" }],
-      },
-      { timeoutMs: 150_000 },
-    );
-  });
-
   it("uses no client timeout for git.runStackedAction", async () => {
     requestMock.mockResolvedValue({
       action: "commit",
@@ -472,19 +364,11 @@ describe("wsNativeApi", () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    await api.git.runStackedAction({
-      actionId: "action-1",
-      cwd: "/repo",
-      action: "commit",
-    });
+    await api.git.runStackedAction({ actionId: "action-1", cwd: "/repo", action: "commit" });
 
     expect(requestMock).toHaveBeenCalledWith(
       WS_METHODS.gitRunStackedAction,
-      {
-        actionId: "action-1",
-        cwd: "/repo",
-        action: "commit",
-      },
+      { actionId: "action-1", cwd: "/repo", action: "commit" },
       { timeoutMs: null },
     );
   });

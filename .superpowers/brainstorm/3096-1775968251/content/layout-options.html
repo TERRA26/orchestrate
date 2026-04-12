@@ -1,0 +1,483 @@
+<h2>Multi-Agent Panel Layout</h2>
+<p class="subtitle">When the orchestrator spawns 2 agents, how should the workspace look?</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div
+        style="
+          display: flex;
+          gap: 2px;
+          height: 200px;
+          padding: 8px;
+          background: #1a1a2e;
+          border-radius: 8px;
+        "
+      >
+        <!-- Orchestrator left rail -->
+        <div
+          style="
+            width: 25%;
+            background: #16213e;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          "
+        >
+          <div
+            style="
+              font-size: 10px;
+              color: #8892b0;
+              font-weight: 600;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+            "
+          >
+            Orchestrator
+          </div>
+          <div
+            style="
+              background: #1a1a3e;
+              border-radius: 4px;
+              padding: 6px;
+              font-size: 9px;
+              color: #64ffda;
+            "
+          >
+            Task 1: Backend API
+          </div>
+          <div
+            style="
+              background: #1a1a3e;
+              border-radius: 4px;
+              padding: 6px;
+              font-size: 9px;
+              color: #ff6b6b;
+            "
+          >
+            Task 2: Frontend UI
+          </div>
+          <div style="flex: 1"></div>
+          <div
+            style="
+              background: #233554;
+              border-radius: 4px;
+              padding: 6px;
+              font-size: 9px;
+              color: #ccd6f6;
+            "
+          >
+            Type here...
+          </div>
+        </div>
+        <!-- Agent 1 -->
+        <div
+          style="
+            flex: 1;
+            background: #0d1b2a;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border: 1px solid #233554;
+          "
+        >
+          <div style="font-size: 9px; color: #64ffda; font-weight: 600">Agent 1 - Backend</div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 3px">
+            <div
+              style="
+                background: #1b2838;
+                border-radius: 3px;
+                padding: 4px;
+                font-size: 8px;
+                color: #8892b0;
+              "
+            >
+              Creating Express routes...
+            </div>
+            <div
+              style="
+                background: #1b2838;
+                border-radius: 3px;
+                padding: 4px;
+                font-size: 8px;
+                color: #8892b0;
+              "
+            >
+              Setting up database...
+            </div>
+          </div>
+        </div>
+        <!-- Agent 2 -->
+        <div
+          style="
+            flex: 1;
+            background: #0d1b2a;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border: 1px solid #233554;
+          "
+        >
+          <div style="font-size: 9px; color: #ff6b6b; font-weight: 600">Agent 2 - Frontend</div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 3px">
+            <div
+              style="
+                background: #1b2838;
+                border-radius: 3px;
+                padding: 4px;
+                font-size: 8px;
+                color: #8892b0;
+              "
+            >
+              Scaffolding React app...
+            </div>
+            <div
+              style="
+                background: #1b2838;
+                border-radius: 3px;
+                padding: 4px;
+                font-size: 8px;
+                color: #8892b0;
+              "
+            >
+              Building components...
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A: Orchestrator Rail + Agent Panels</h3>
+      <p>
+        Orchestrator lives in a narrow left rail (like today's panel). Agent threads fill the main
+        area side-by-side. You talk to the orchestrator in the rail, agents stream in the panels.
+      </p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div
+        style="
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          height: 200px;
+          padding: 8px;
+          background: #1a1a2e;
+          border-radius: 8px;
+        "
+      >
+        <!-- Top: Orchestrator bar -->
+        <div
+          style="
+            height: 30%;
+            background: #16213e;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+          "
+        >
+          <div style="font-size: 10px; color: #8892b0; font-weight: 600">ORCHESTRATOR</div>
+          <div style="flex: 1; display: flex; gap: 4px; align-items: center">
+            <div
+              style="
+                background: #1a1a3e;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 8px;
+                color: #64ffda;
+              "
+            >
+              Backend: running
+            </div>
+            <div
+              style="
+                background: #1a1a3e;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 8px;
+                color: #ff6b6b;
+              "
+            >
+              Frontend: running
+            </div>
+          </div>
+          <div
+            style="
+              background: #233554;
+              border-radius: 4px;
+              padding: 4px 8px;
+              font-size: 8px;
+              color: #ccd6f6;
+            "
+          >
+            Type here...
+          </div>
+        </div>
+        <!-- Bottom: Agent panels -->
+        <div style="flex: 1; display: flex; gap: 2px">
+          <div
+            style="
+              flex: 1;
+              background: #0d1b2a;
+              border-radius: 6px;
+              padding: 8px;
+              display: flex;
+              flex-direction: column;
+              gap: 4px;
+              border: 1px solid #233554;
+            "
+          >
+            <div style="font-size: 9px; color: #64ffda; font-weight: 600">Agent 1 - Backend</div>
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 3px">
+              <div
+                style="
+                  background: #1b2838;
+                  border-radius: 3px;
+                  padding: 4px;
+                  font-size: 8px;
+                  color: #8892b0;
+                "
+              >
+                Creating Express routes...
+              </div>
+              <div
+                style="
+                  background: #1b2838;
+                  border-radius: 3px;
+                  padding: 4px;
+                  font-size: 8px;
+                  color: #8892b0;
+                "
+              >
+                Setting up database...
+              </div>
+            </div>
+          </div>
+          <div
+            style="
+              flex: 1;
+              background: #0d1b2a;
+              border-radius: 6px;
+              padding: 8px;
+              display: flex;
+              flex-direction: column;
+              gap: 4px;
+              border: 1px solid #233554;
+            "
+          >
+            <div style="font-size: 9px; color: #ff6b6b; font-weight: 600">Agent 2 - Frontend</div>
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 3px">
+              <div
+                style="
+                  background: #1b2838;
+                  border-radius: 3px;
+                  padding: 4px;
+                  font-size: 8px;
+                  color: #8892b0;
+                "
+              >
+                Scaffolding React app...
+              </div>
+              <div
+                style="
+                  background: #1b2838;
+                  border-radius: 3px;
+                  padding: 4px;
+                  font-size: 8px;
+                  color: #8892b0;
+                "
+              >
+                Building components...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B: Orchestrator Top Bar + Agent Grid</h3>
+      <p>
+        Orchestrator occupies a compact top strip with status chips and a command input. Agent
+        panels fill the rest in a responsive grid. Scales to 2-4+ agents.
+      </p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div
+        style="
+          display: flex;
+          gap: 2px;
+          height: 200px;
+          padding: 8px;
+          background: #1a1a2e;
+          border-radius: 8px;
+        "
+      >
+        <!-- Orchestrator as full thread on left -->
+        <div
+          style="
+            flex: 1;
+            background: #16213e;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+          "
+        >
+          <div style="font-size: 10px; color: #ccd6f6; font-weight: 600">Orchestrator Thread</div>
+          <div
+            style="
+              background: #1a1a3e;
+              border-radius: 4px;
+              padding: 6px;
+              font-size: 8px;
+              color: #8892b0;
+            "
+          >
+            User: Build a todo app with 2 agents
+          </div>
+          <div
+            style="
+              background: #1a1a3e;
+              border-radius: 4px;
+              padding: 6px;
+              font-size: 8px;
+              color: #64ffda;
+            "
+          >
+            Orch: Decomposing into backend + frontend tasks...
+          </div>
+          <div
+            style="
+              background: #1a1a3e;
+              border-radius: 4px;
+              padding: 6px;
+              font-size: 8px;
+              color: #64ffda;
+            "
+          >
+            Orch: Spawned Agent 1 (backend) and Agent 2 (frontend)
+          </div>
+          <div style="flex: 1"></div>
+          <div
+            style="
+              background: #233554;
+              border-radius: 4px;
+              padding: 6px;
+              font-size: 9px;
+              color: #ccd6f6;
+            "
+          >
+            Type here...
+          </div>
+        </div>
+        <!-- Agent 1 -->
+        <div
+          style="
+            flex: 1;
+            background: #0d1b2a;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border: 1px solid #64ffda;
+          "
+        >
+          <div style="font-size: 9px; color: #64ffda; font-weight: 600">Agent 1 - Backend</div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 3px">
+            <div
+              style="
+                background: #1b2838;
+                border-radius: 3px;
+                padding: 4px;
+                font-size: 8px;
+                color: #8892b0;
+              "
+            >
+              Creating Express routes...
+            </div>
+          </div>
+          <div
+            style="
+              background: #233554;
+              border-radius: 3px;
+              padding: 4px;
+              font-size: 8px;
+              color: #556b8a;
+            "
+          >
+            Direct message...
+          </div>
+        </div>
+        <!-- Agent 2 -->
+        <div
+          style="
+            flex: 1;
+            background: #0d1b2a;
+            border-radius: 6px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border: 1px solid #ff6b6b;
+          "
+        >
+          <div style="font-size: 9px; color: #ff6b6b; font-weight: 600">Agent 2 - Frontend</div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 3px">
+            <div
+              style="
+                background: #1b2838;
+                border-radius: 3px;
+                padding: 4px;
+                font-size: 8px;
+                color: #8892b0;
+              "
+            >
+              Scaffolding React app...
+            </div>
+          </div>
+          <div
+            style="
+              background: #233554;
+              border-radius: 3px;
+              padding: 4px;
+              font-size: 8px;
+              color: #556b8a;
+            "
+          >
+            Direct message...
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C: Equal Threads Side-by-Side</h3>
+      <p>
+        Orchestrator is a full chat thread (left), agent panels sit next to it as equal-sized panes.
+        Each panel has its own composer for direct access (option B interaction). Extends the
+        existing split-view pattern to N panes.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 24px">
+  <p class="subtitle">
+    Consider: the orchestrator currently lives as a right-side panel. These options rethink that for
+    multi-agent mode.
+  </p>
+</div>

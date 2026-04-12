@@ -34,7 +34,8 @@ const { values: args } = parseArgs({
     port: { type: "string", default: "4100" },
     prompt: {
       type: "string",
-      default: "Create a simple TypeScript function that calculates fibonacci numbers recursively, with a test file using vitest",
+      default:
+        "Create a simple TypeScript function that calculates fibonacci numbers recursively, with a test file using vitest",
     },
     timeout: { type: "string", default: "120000" },
   },
@@ -44,8 +45,7 @@ const PORT = parseInt(args.port!, 10);
 const PROVIDER = args.provider as "codex" | "claudeAgent";
 const USER_PROMPT = args.prompt!;
 const TIMEOUT_MS = parseInt(args.timeout!, 10);
-const MODEL =
-  PROVIDER === "claudeAgent" ? "claude-sonnet-4-6" : "gpt-5-codex";
+const MODEL = PROVIDER === "claudeAgent" ? "claude-sonnet-4-6" : "gpt-5-codex";
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -139,11 +139,7 @@ function connectWs(): Promise<void> {
   });
 }
 
-function sendRequest(
-  method: string,
-  params?: unknown,
-  timeoutMs = 180_000,
-): Promise<WsMessage> {
+function sendRequest(method: string, params?: unknown, timeoutMs = 180_000): Promise<WsMessage> {
   const id = `smoke-${++messageCounter}`;
 
   const body =
@@ -221,7 +217,7 @@ const ROUTER_SYSTEM_PROMPT = [
   "",
   "Decide whether the newest user message should be answered directly by the orchestrator or converted into a concrete implementation brief for the coding agent.",
   "",
-  'Return raw JSON only in this shape:',
+  "Return raw JSON only in this shape:",
   '{"kind":"delegate","title":"Short task title","instruction":"Direct implementation brief for the coding agent","acceptanceCriteria":["Concrete check 1","Concrete check 2"],"requirementsChecklist":["Testable requirement 1","Testable requirement 2"]}',
   "or",
   '{"kind":"answer","response":"Direct answer for the user","shouldContinueRun":true}',
@@ -376,7 +372,12 @@ async function main() {
 
   if (routerDecision.kind !== "delegate") {
     log("INFO", "Router chose 'answer' — not delegating. Skipping worker flow.");
-    recordResult("LLM Routing", "pass", `Answered: ${routerDecision.response?.slice(0, 80)}`, stepStart);
+    recordResult(
+      "LLM Routing",
+      "pass",
+      `Answered: ${routerDecision.response?.slice(0, 80)}`,
+      stepStart,
+    );
     printSummary(results, startTime);
     process.exit(0);
   }
@@ -489,7 +490,10 @@ async function main() {
   stepStart = Date.now();
   const delegatedInstruction = buildDelegationInstruction(routerDecision);
   try {
-    log("INFO", `Delegated instruction (${delegatedInstruction.length} chars):\n${delegatedInstruction.slice(0, 500)}...`);
+    log(
+      "INFO",
+      `Delegated instruction (${delegatedInstruction.length} chars):\n${delegatedInstruction.slice(0, 500)}...`,
+    );
 
     await sendRequest("orchestration.dispatchCommand", {
       type: "thread.turn.start",
@@ -541,11 +545,7 @@ async function main() {
 
     while (Date.now() - monitorStart < TIMEOUT_MS && !turnCompleted) {
       try {
-        const push = await waitForPush(
-          "orchestration.domainEvent",
-          undefined,
-          5_000,
-        );
+        const push = await waitForPush("orchestration.domainEvent", undefined, 5_000);
         const event = push.data as {
           type?: string;
           payload?: Record<string, unknown>;
@@ -588,7 +588,12 @@ async function main() {
     }
 
     if (turnCompleted) {
-      recordResult("Provider Execution", "pass", `Turn completed in ${Date.now() - monitorStart}ms`, stepStart);
+      recordResult(
+        "Provider Execution",
+        "pass",
+        `Turn completed in ${Date.now() - monitorStart}ms`,
+        stepStart,
+      );
     } else {
       recordResult(
         "Provider Execution",
@@ -631,9 +636,7 @@ async function main() {
     const thread = data.threads.find((t) => t.id === threadId);
     const run = data.orchestratorRuns.find((r) => r.runId === runId);
     const task = data.orchestratorTasks.find((t) => t.taskId === rootTaskId);
-    const worker = data.orchestratorWorkers.find(
-      (w) => w.workerId === workerId,
-    );
+    const worker = data.orchestratorWorkers.find((w) => w.workerId === workerId);
 
     log("STATE", "Thread:", {
       turnState: thread?.latestTurn?.state,
@@ -649,8 +652,7 @@ async function main() {
     });
 
     // Get the last assistant message as the "agent report"
-    const assistantMessages =
-      thread?.messages.filter((m) => m.role === "assistant") ?? [];
+    const assistantMessages = thread?.messages.filter((m) => m.role === "assistant") ?? [];
     const lastAssistant = assistantMessages[assistantMessages.length - 1];
     if (lastAssistant?.text) {
       log(
@@ -663,9 +665,7 @@ async function main() {
       thread ? "thread exists" : "MISSING thread",
       run ? `run status=${run.status}` : "MISSING run",
       task ? `task status=${task.status}` : "MISSING task",
-      worker
-        ? `worker provider=${worker.modelBinding?.provider}`
-        : "MISSING worker",
+      worker ? `worker provider=${worker.modelBinding?.provider}` : "MISSING worker",
       thread?.latestTurn?.state === "completed"
         ? "turn completed"
         : `turn ${thread?.latestTurn?.state ?? "unknown"}`,
@@ -689,19 +689,15 @@ function buildDelegationInstruction(task: {
 
   if (task.requirementsChecklist && task.requirementsChecklist.length > 0) {
     sections.push(
-      [
-        "Requirements checklist:",
-        ...task.requirementsChecklist.map((item) => `- ${item}`),
-      ].join("\n"),
+      ["Requirements checklist:", ...task.requirementsChecklist.map((item) => `- ${item}`)].join(
+        "\n",
+      ),
     );
   }
 
   if (task.acceptanceCriteria && task.acceptanceCriteria.length > 0) {
     sections.push(
-      [
-        "Acceptance criteria:",
-        ...task.acceptanceCriteria.map((item) => `- ${item}`),
-      ].join("\n"),
+      ["Acceptance criteria:", ...task.acceptanceCriteria.map((item) => `- ${item}`)].join("\n"),
     );
   }
 
@@ -735,13 +731,8 @@ function printSummary(
   const nameWidth = Math.max(...results.map((r) => r.step.length));
   for (const r of results) {
     const icon = r.status === "pass" ? "+" : r.status === "fail" ? "x" : "~";
-    const dur =
-      r.durationMs < 1000
-        ? `${r.durationMs}ms`
-        : `${(r.durationMs / 1000).toFixed(1)}s`;
-    console.log(
-      `  [${icon}] ${r.step.padEnd(nameWidth)}  ${dur.padStart(8)}  ${r.detail}`,
-    );
+    const dur = r.durationMs < 1000 ? `${r.durationMs}ms` : `${(r.durationMs / 1000).toFixed(1)}s`;
+    console.log(`  [${icon}] ${r.step.padEnd(nameWidth)}  ${dur.padStart(8)}  ${r.detail}`);
   }
 
   const totalMs = Date.now() - startTime;

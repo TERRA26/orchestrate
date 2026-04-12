@@ -5,6 +5,7 @@ import { useEffect } from "react";
 
 import { EmbeddedBrowserPane } from "../components/EmbeddedBrowserPane";
 import { OrchestratorPanel } from "../components/OrchestratorPanel";
+import { usePanelStateStore } from "../components/orchestrator/panelStateStore";
 import ThreadSidebar from "../components/Sidebar";
 import { isElectron } from "../env";
 import { useDisposableThreadLifecycle } from "../hooks/useDisposableThreadLifecycle";
@@ -17,7 +18,13 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useAppSettings } from "~/appSettings";
-import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "~/components/ui/sidebar";
+import {
+  Sidebar,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "~/components/ui/sidebar";
 import { useUIFont } from "~/hooks/useUIFont";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -164,8 +171,20 @@ function ChatRouteGlobalShortcuts() {
   return null;
 }
 
+function CollapsedSidebarStrip() {
+  const { open } = useSidebar();
+  if (open) return null;
+
+  return (
+    <div className="flex h-dvh w-10 shrink-0 flex-col items-center border-r border-border/30 bg-background/80 pt-2.5 dark:border-white/[0.03]">
+      <SidebarTrigger className="size-7 text-muted-foreground/75 hover:text-foreground" />
+    </div>
+  );
+}
+
 function ChatRouteLayout() {
   useUIFont();
+  const orchestratorOpen = usePanelStateStore((state) => state.orchestratorOpen);
 
   return (
     <SidebarProvider defaultOpen>
@@ -187,7 +206,8 @@ function ChatRouteLayout() {
         <ThreadSidebar />
         <SidebarRail />
       </Sidebar>
-      <OrchestratorPanel />
+      <CollapsedSidebarStrip />
+      {orchestratorOpen && <OrchestratorPanel />}
       <Outlet />
       <EmbeddedBrowserPane currentThreadId={null} />
     </SidebarProvider>

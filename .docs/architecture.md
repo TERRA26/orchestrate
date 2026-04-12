@@ -47,12 +47,12 @@ Most of the orchestrator described below is **planned/in-progress**. The current
 
 The orchestrator picks one of four actions for every incoming message:
 
-| Action | Description |
-|-----------|-------------|
-| **answer** | Respond directly from available context — status questions, clarification, reasoning about current evidence. |
-| **inspect** | Orchestrator does direct work: reads files, runs commands, operates the browser. Short, bounded, interruptible. |
-| **delegate** | Send a bounded task to a worker with an explicit contract: objective, stop condition, read/write scope, allowed tools, evidence requirements, escalation rules. |
-| **decompose** | Break the request into a task DAG. Independent tasks may be assigned to parallel workers; dependent tasks are queued. |
+| Action        | Description                                                                                                                                                     |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **answer**    | Respond directly from available context — status questions, clarification, reasoning about current evidence.                                                    |
+| **inspect**   | Orchestrator does direct work: reads files, runs commands, operates the browser. Short, bounded, interruptible.                                                 |
+| **delegate**  | Send a bounded task to a worker with an explicit contract: objective, stop condition, read/write scope, allowed tools, evidence requirements, escalation rules. |
+| **decompose** | Break the request into a task DAG. Independent tasks may be assigned to parallel workers; dependent tasks are queued.                                           |
 
 Malformed routing output fails safe into `answer`. Capability-classified routing uses an explicit, auditable capability manifest — not prompt lore.
 

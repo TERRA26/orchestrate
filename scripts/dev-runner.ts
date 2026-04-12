@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -18,25 +19,27 @@ export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3"),
 );
 
-const MODE_ARGS = {
+const SERVER_WORKSPACE_FILTER = "--filter=t3";
+const SERVER_WORKSPACE_PACKAGE_URL = new URL("../apps/server/package.json", import.meta.url);
+
+const MODE_TEMPLATES = {
   dev: [
     "run",
     "dev",
-    "--ui=tui",
+    "--ui=stream",
     "--filter=@t3tools/contracts",
     "--filter=@t3tools/web",
-    "--filter=t3",
     "--parallel",
   ],
-  "dev:server": ["run", "dev", "--filter=t3"],
+  "dev:server": ["run", "dev"],
   "dev:web": ["run", "dev", "--filter=@t3tools/web"],
   "dev:desktop": ["run", "dev", "--filter=@t3tools/desktop", "--filter=@t3tools/web", "--parallel"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
-type DevMode = keyof typeof MODE_ARGS;
+type DevMode = keyof typeof MODE_TEMPLATES;
 type PortAvailabilityCheck<R = never> = (port: number) => Effect.Effect<boolean, never, R>;
 
-const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
+const DEV_RUNNER_MODES = Object.keys(MODE_TEMPLATES) as Array<DevMode>;
 
 class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly message: string;
@@ -68,6 +71,34 @@ const optionalUrlConfig = (name: string): Config.Config<URL | undefined> =>
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
+
+export const hasServerWorkspace = (): boolean => existsSync(SERVER_WORKSPACE_PACKAGE_URL);
+
+export function resolveTurboModeArgs(
+  mode: DevMode,
+  options: { readonly hasServerWorkspace: boolean },
+): ReadonlyArray<string> {
+  const baseArgs: Array<string> = [...MODE_TEMPLATES[mode]];
+
+  if (options.hasServerWorkspace && (mode === "dev" || mode === "dev:server")) {
+    const insertionIndex = mode === "dev" ? baseArgs.length - 1 : baseArgs.length;
+    baseArgs.splice(insertionIndex, 0, SERVER_WORKSPACE_FILTER);
+  }
+
+  return baseArgs;
+}
+
+export function getMissingServerWorkspaceErrorMessage(mode: DevMode): string | null {
+  if (mode === "dev") {
+    return "Cannot run dev because apps/server/package.json is missing in this checkout. Restore the server workspace or use `bun run dev:web` for a UI-only session.";
+  }
+
+  if (mode === "dev:server") {
+    return "Cannot run dev:server because apps/server/package.json is missing in this checkout.";
+  }
+
+  return null;
+}
 
 const OffsetConfig = Config.all({
   portOffset: optionalIntegerConfig("T3CODE_PORT_OFFSET"),
@@ -392,6 +423,17 @@ const resolveOptionalBooleanOverride = (
 
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
+    const serverWorkspaceAvailable = hasServerWorkspace();
+    const missingServerWorkspaceMessage = serverWorkspaceAvailable
+      ? null
+      : getMissingServerWorkspaceErrorMessage(input.mode);
+
+    if (missingServerWorkspaceMessage !== null) {
+      return yield* new DevRunnerError({
+        message: missingServerWorkspaceMessage,
+      });
+    }
+
     const { portOffset, devInstance } = yield* OffsetConfig.asEffect().pipe(
       Effect.mapError(
         (cause) =>
@@ -458,24 +500,24 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return;
     }
 
-    const child = yield* ChildProcess.make(
-      "turbo",
-      [...MODE_ARGS[input.mode], ...input.turboArgs],
-      {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-        env,
-        extendEnv: false,
-        // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
-        shell: process.platform === "win32",
-        // Keep turbo in the same process group so terminal signals (Ctrl+C)
-        // reach it directly. Effect defaults to detached: true on non-Windows,
-        // which would put turbo in a new group and require manual forwarding.
-        detached: false,
-        forceKillAfter: "1500 millis",
-      },
-    );
+    const turboModeArgs = resolveTurboModeArgs(input.mode, {
+      hasServerWorkspace: serverWorkspaceAvailable,
+    });
+
+    const child = yield* ChildProcess.make("turbo", [...turboModeArgs, ...input.turboArgs], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+      env,
+      extendEnv: false,
+      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+      shell: process.platform === "win32",
+      // Keep turbo in the same process group so terminal signals (Ctrl+C)
+      // reach it directly. Effect defaults to detached: true on non-Windows,
+      // which would put turbo in a new group and require manual forwarding.
+      detached: false,
+      forceKillAfter: "1500 millis",
+    });
 
     const exitCode = yield* child.exitCode;
     if (exitCode !== 0) {

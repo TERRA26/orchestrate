@@ -7,6 +7,8 @@ import { Effect } from "effect";
 import {
   createDevRunnerEnv,
   findFirstAvailableOffset,
+  getMissingServerWorkspaceErrorMessage,
+  resolveTurboModeArgs,
   resolveModePortOffsets,
   resolveOffset,
 } from "./dev-runner.ts";
@@ -195,6 +197,78 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_NO_BROWSER, undefined);
         assert.equal(env.T3CODE_HOST, undefined);
         assert.equal(env.VITE_WS_URL, undefined);
+      }),
+    );
+  });
+
+  describe("resolveTurboModeArgs", () => {
+    it.effect("omits the server filter in dev mode when the server workspace is missing", () =>
+      Effect.sync(() => {
+        const args = resolveTurboModeArgs("dev", { hasServerWorkspace: false });
+
+        assert.deepStrictEqual(args, [
+          "run",
+          "dev",
+          "--ui=stream",
+          "--filter=@t3tools/contracts",
+          "--filter=@t3tools/web",
+          "--parallel",
+        ]);
+      }),
+    );
+
+    it.effect("includes the server filter in dev mode when the server workspace exists", () =>
+      Effect.sync(() => {
+        const args = resolveTurboModeArgs("dev", { hasServerWorkspace: true });
+
+        assert.deepStrictEqual(args, [
+          "run",
+          "dev",
+          "--ui=stream",
+          "--filter=@t3tools/contracts",
+          "--filter=@t3tools/web",
+          "--filter=t3",
+          "--parallel",
+        ]);
+      }),
+    );
+
+    it.effect(
+      "includes only the server filter for dev:server when the server workspace exists",
+      () =>
+        Effect.sync(() => {
+          const args = resolveTurboModeArgs("dev:server", { hasServerWorkspace: true });
+
+          assert.deepStrictEqual(args, ["run", "dev", "--filter=t3"]);
+        }),
+    );
+  });
+
+  describe("missing server workspace behavior", () => {
+    it.effect("returns a clear error for dev mode when the server workspace is missing", () =>
+      Effect.sync(() => {
+        const error = getMissingServerWorkspaceErrorMessage("dev");
+        assert.equal(
+          error,
+          "Cannot run dev because apps/server/package.json is missing in this checkout. Restore the server workspace or use `bun run dev:web` for a UI-only session.",
+        );
+      }),
+    );
+
+    it.effect("returns a clear error for dev:server when the server workspace is missing", () =>
+      Effect.sync(() => {
+        const error = getMissingServerWorkspaceErrorMessage("dev:server");
+        assert.equal(
+          error,
+          "Cannot run dev:server because apps/server/package.json is missing in this checkout.",
+        );
+      }),
+    );
+
+    it.effect("does not block dev:web when the server workspace is missing", () =>
+      Effect.sync(() => {
+        const error = getMissingServerWorkspaceErrorMessage("dev:web");
+        assert.equal(error, null);
       }),
     );
   });

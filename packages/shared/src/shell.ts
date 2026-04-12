@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
 const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
@@ -24,7 +25,13 @@ export function resolveLoginShell(
   }
 
   if (platform === "linux") {
-    return "/bin/bash";
+    if (existsSync("/bin/bash")) {
+      return "/bin/bash";
+    }
+    if (existsSync("/usr/bin/bash")) {
+      return "/usr/bin/bash";
+    }
+    return "bash";
   }
 
   return undefined;

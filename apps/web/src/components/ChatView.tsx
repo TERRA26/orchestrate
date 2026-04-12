@@ -20,7 +20,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
-  type ServerProvider,
+  type ServerProviderStatus,
   type ThreadId,
   type TurnId,
   type EditorId,
@@ -35,10 +35,15 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import {
+  buildPromptThreadTitleFallback,
+  GENERIC_CHAT_THREAD_TITLE,
+} from "@t3tools/shared/chatThreads";
+import {
   resolveThreadWorkspaceState,
   resolveThreadBranchSourceCwd,
   resolveThreadWorkspaceCwd as resolveSharedThreadWorkspaceCwd,
 } from "@t3tools/shared/threadEnvironment";
+import { deriveTerminalCommandIdentity } from "@t3tools/shared/terminalThreads";
 import { deriveAssociatedWorktreeMetadata } from "@t3tools/shared/threadWorkspace";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GoTasklist } from "react-icons/go";
@@ -164,6 +169,7 @@ import {
   resolveAppModelSelection,
   useAppSettings,
 } from "../appSettings";
+import { resolveTerminalNewAction } from "../lib/terminalNewAction";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   type ComposerImageAttachment,
@@ -184,6 +190,7 @@ import {
 import { deriveLatestContextWindowSnapshot, deriveCumulativeCostUsd } from "../lib/contextWindow";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { collectTerminalIdsFromLayout } from "../terminalPaneLayout";
 import {
   resolveSplitViewFocusedThreadId,
   selectSplitView,
@@ -248,7 +255,7 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDER_NATIVE_COMMANDS: ProviderNativeCommandDescriptor[] = [];
 const EMPTY_PROVIDER_SKILLS: ProviderSkillDescriptor[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
-const EMPTY_PROVIDER_STATUSES: ServerProvider[] = [];
+const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 type ComposerPluginSuggestion = {
@@ -681,18 +688,26 @@ export default function ChatView({
   const storeSetTerminalPresentationMode = useTerminalStateStore(
     (s) => s.setTerminalPresentationMode,
   );
-  const storeOpenTerminalThreadPage = useTerminalStateStore((s) => s.openTerminalThreadPage);
   const storeSetTerminalWorkspaceLayout = useTerminalStateStore(
     (s) => s.setTerminalWorkspaceLayout,
   );
+  const storeOpenTerminalThreadPage = useTerminalStateStore((s) => s.openTerminalThreadPage);
   const storeSetTerminalWorkspaceTab = useTerminalStateStore((s) => s.setTerminalWorkspaceTab);
   const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
-  const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
+  const storeSetTerminalMetadata = useTerminalStateStore((s) => s.setTerminalMetadata);
+  const storeSetTerminalActivity = useTerminalStateStore((s) => s.setTerminalActivity);
+  const storeSplitTerminalLeft = useTerminalStateStore((s) => s.splitTerminalLeft);
+  const storeSplitTerminalRight = useTerminalStateStore((s) => s.splitTerminalRight);
+  const storeSplitTerminalDown = useTerminalStateStore((s) => s.splitTerminalDown);
+  const storeSplitTerminalUp = useTerminalStateStore((s) => s.splitTerminalUp);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
+  const storeNewTerminalTab = useTerminalStateStore((s) => s.newTerminalTab);
   const storeOpenNewFullWidthTerminal = useTerminalStateStore((s) => s.openNewFullWidthTerminal);
   const storeCloseWorkspaceChat = useTerminalStateStore((s) => s.closeWorkspaceChat);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
+  const storeCloseTerminalGroup = useTerminalStateStore((s) => s.closeTerminalGroup);
+  const storeResizeTerminalSplit = useTerminalStateStore((s) => s.resizeTerminalSplit);
   const storeClearTerminalState = useTerminalStateStore((s) => s.clearTerminalState);
 
   const setPrompt = useCallback(
@@ -1421,10 +1436,8 @@ export default function ChatView({
       cwd: composerSkillCwd,
       threadId,
       query: skillTriggerQuery,
-      enabled:
-        isSkillTrigger &&
-        supportsSkillDiscovery(providerComposerCapabilitiesQuery.data) &&
-        composerSkillCwd !== null,
+      // Always enabled so skills appear under `/` for discovery, not just `$`.
+      enabled: true,
     }),
   );
   const providerPluginsQuery = useQuery(
@@ -1432,9 +1445,7 @@ export default function ChatView({
       provider: selectedProvider,
       cwd: composerSkillCwd,
       threadId,
-      enabled:
-        supportsPluginDiscovery(providerComposerCapabilitiesQuery.data) &&
-        composerSkillCwd !== null,
+      enabled: true,
     }),
   );
   const workspaceEntriesQuery = useQuery(
@@ -1634,7 +1645,13 @@ export default function ChatView({
     [keybindings],
   );
   const splitTerminalShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "terminal.split"),
+    () =>
+      shortcutLabelForCommand(keybindings, "terminal.splitRight") ??
+      shortcutLabelForCommand(keybindings, "terminal.split"),
+    [keybindings],
+  );
+  const splitTerminalDownShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "terminal.splitDown"),
     [keybindings],
   );
   const newTerminalShortcutLabel = useMemo(
@@ -1700,11 +1717,12 @@ export default function ChatView({
       (group) => group.id === terminalState.activeTerminalGroupId,
     ) ??
     terminalState.terminalGroups.find((group) =>
-      group.terminalIds.includes(terminalState.activeTerminalId),
+      collectTerminalIdsFromLayout(group.layout).includes(terminalState.activeTerminalId),
     ) ??
     null;
   const hasReachedSplitLimit =
-    (activeTerminalGroup?.terminalIds.length ?? 0) >= MAX_TERMINALS_PER_GROUP;
+    (activeTerminalGroup ? collectTerminalIdsFromLayout(activeTerminalGroup.layout).length : 0) >=
+    MAX_TERMINALS_PER_GROUP;
   const terminalWorkspaceOpen = shouldRenderTerminalWorkspace({
     activeProjectExists: activeProject !== undefined,
     presentationMode: terminalState.presentationMode,
@@ -1845,24 +1863,101 @@ export default function ChatView({
     if (!activeThreadId) return;
     setTerminalPresentationMode("drawer");
   }, [activeThreadId, setTerminalPresentationMode]);
-  const splitTerminal = useCallback(() => {
+  const splitTerminalRight = useCallback(() => {
     if (!activeThreadId || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
-    storeSplitTerminal(activeThreadId, terminalId);
+    storeSplitTerminalRight(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, hasReachedSplitLimit, storeSplitTerminal]);
+  }, [activeThreadId, hasReachedSplitLimit, storeSplitTerminalRight]);
+  const splitTerminalLeft = useCallback(() => {
+    if (!activeThreadId || hasReachedSplitLimit) return;
+    const terminalId = `terminal-${randomUUID()}`;
+    storeSplitTerminalLeft(activeThreadId, terminalId);
+    setTerminalFocusRequestId((value) => value + 1);
+  }, [activeThreadId, hasReachedSplitLimit, storeSplitTerminalLeft]);
+  const splitTerminalDown = useCallback(() => {
+    if (!activeThreadId || hasReachedSplitLimit) return;
+    const terminalId = `terminal-${randomUUID()}`;
+    storeSplitTerminalDown(activeThreadId, terminalId);
+    setTerminalFocusRequestId((value) => value + 1);
+  }, [activeThreadId, hasReachedSplitLimit, storeSplitTerminalDown]);
+  const splitTerminalUp = useCallback(() => {
+    if (!activeThreadId || hasReachedSplitLimit) return;
+    const terminalId = `terminal-${randomUUID()}`;
+    storeSplitTerminalUp(activeThreadId, terminalId);
+    setTerminalFocusRequestId((value) => value + 1);
+  }, [activeThreadId, hasReachedSplitLimit, storeSplitTerminalUp]);
   const createNewTerminal = useCallback(() => {
     if (!activeThreadId) return;
     const terminalId = `terminal-${randomUUID()}`;
     storeNewTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeNewTerminal]);
+  const createNewTerminalTab = useCallback(
+    (targetTerminalId: string) => {
+      if (!activeThreadId) return;
+      const terminalId = `terminal-${randomUUID()}`;
+      storeNewTerminalTab(activeThreadId, targetTerminalId, terminalId);
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [activeThreadId, storeNewTerminalTab],
+  );
+  const createTerminalFromShortcut = useCallback(() => {
+    const action = resolveTerminalNewAction({
+      terminalOpen: terminalState.terminalOpen,
+      activeTerminalId: terminalState.activeTerminalId,
+      activeTerminalGroupId: terminalState.activeTerminalGroupId,
+      terminalGroups: terminalState.terminalGroups,
+    });
+
+    if (action.kind === "new-group") {
+      if (!terminalState.terminalOpen) {
+        setTerminalOpen(true);
+      }
+      createNewTerminal();
+      return;
+    }
+
+    createNewTerminalTab(action.targetTerminalId);
+  }, [
+    createNewTerminal,
+    createNewTerminalTab,
+    setTerminalOpen,
+    terminalState.activeTerminalGroupId,
+    terminalState.activeTerminalId,
+    terminalState.terminalGroups,
+    terminalState.terminalOpen,
+  ]);
+  const moveTerminalToNewGroup = useCallback(
+    (terminalId: string) => {
+      if (!activeThreadId) return;
+      storeNewTerminal(activeThreadId, terminalId);
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [activeThreadId, storeNewTerminal],
+  );
   const openNewFullWidthTerminal = useCallback(() => {
     if (!activeThreadId || !activeProject) return;
     const terminalId = `terminal-${randomUUID()}`;
     storeOpenNewFullWidthTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeProject, activeThreadId, storeOpenNewFullWidthTerminal]);
+  // Desktop accelerators like Cmd+T can be claimed by Electron before the page sees keydown.
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function" || !isFocusedPane) {
+      return;
+    }
+
+    const unsubscribe = onMenuAction((action) => {
+      if (action !== "new-terminal-tab") return;
+      createTerminalFromShortcut();
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [createTerminalFromShortcut, isFocusedPane]);
   const activateTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadId) return;
@@ -1982,19 +2077,53 @@ export default function ChatView({
       runtimeEnv: threadTerminalRuntimeEnv,
       height: terminalState.terminalHeight,
       terminalIds: terminalState.terminalIds,
+      terminalLabelsById: terminalState.terminalLabelsById,
+      terminalTitleOverridesById: terminalState.terminalTitleOverridesById,
+      terminalCliKindsById: terminalState.terminalCliKindsById,
+      terminalAttentionStatesById: terminalState.terminalAttentionStatesById ?? {},
+      runningTerminalIds: terminalState.runningTerminalIds,
       activeTerminalId: terminalState.activeTerminalId,
       terminalGroups: terminalState.terminalGroups,
       activeTerminalGroupId: terminalState.activeTerminalGroupId,
       focusRequestId: terminalFocusRequestId,
-      onSplitTerminal: splitTerminal,
+      onSplitTerminal: splitTerminalRight,
+      onSplitTerminalDown: splitTerminalDown,
       onNewTerminal: createNewTerminal,
+      onNewTerminalTab: createNewTerminalTab,
+      onMoveTerminalToGroup: moveTerminalToNewGroup,
       splitShortcutLabel: splitTerminalShortcutLabel ?? undefined,
+      splitDownShortcutLabel: splitTerminalDownShortcutLabel ?? undefined,
       newShortcutLabel: newTerminalShortcutLabel ?? undefined,
       closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
       workspaceCloseShortcutLabel: closeWorkspaceShortcutLabel ?? undefined,
       onActiveTerminalChange: activateTerminal,
       onCloseTerminal: closeTerminal,
+      onCloseTerminalGroup: (groupId: string) => {
+        if (!activeThreadId) return;
+        storeCloseTerminalGroup(activeThreadId, groupId);
+      },
       onHeightChange: setTerminalHeight,
+      onResizeTerminalSplit: (groupId: string, splitId: string, weights: number[]) => {
+        if (!activeThreadId) return;
+        storeResizeTerminalSplit(activeThreadId, groupId, splitId, weights);
+      },
+      onTerminalMetadataChange: (
+        terminalId: string,
+        metadata: { cliKind: "codex" | "claude" | null; label: string },
+      ) => {
+        if (!activeThreadId) return;
+        storeSetTerminalMetadata(activeThreadId, terminalId, metadata);
+      },
+      onTerminalActivityChange: (
+        terminalId: string,
+        activity: {
+          hasRunningSubprocess: boolean;
+          agentState: "running" | "attention" | "review" | null;
+        },
+      ) => {
+        if (!activeThreadId) return;
+        storeSetTerminalActivity(activeThreadId, terminalId, activity);
+      },
       onAddTerminalContext: addTerminalContextToDraft,
     }),
     [
@@ -2005,17 +2134,31 @@ export default function ChatView({
       closeTerminalShortcutLabel,
       closeWorkspaceShortcutLabel,
       createNewTerminal,
+      createNewTerminalTab,
+      moveTerminalToNewGroup,
       gitCwd,
+      activeThreadId,
       newTerminalShortcutLabel,
       setTerminalHeight,
-      splitTerminal,
+      splitTerminalRight,
+      splitTerminalDown,
       splitTerminalShortcutLabel,
+      splitTerminalDownShortcutLabel,
+      storeCloseTerminalGroup,
+      storeResizeTerminalSplit,
+      storeSetTerminalActivity,
+      storeSetTerminalMetadata,
       terminalFocusRequestId,
       terminalState.activeTerminalGroupId,
       terminalState.activeTerminalId,
+      terminalState.terminalAttentionStatesById,
+      terminalState.terminalCliKindsById,
       terminalState.terminalGroups,
       terminalState.terminalHeight,
       terminalState.terminalIds,
+      terminalState.terminalLabelsById,
+      terminalState.terminalTitleOverridesById,
+      terminalState.runningTerminalIds,
       threadId,
       threadTerminalRuntimeEnv,
     ],
@@ -2083,7 +2226,14 @@ export default function ChatView({
           };
 
       try {
+        const terminalCommandIdentity = deriveTerminalCommandIdentity(script.command);
         await api.terminal.open(openTerminalInput);
+        if (terminalCommandIdentity) {
+          storeSetTerminalMetadata(activeThreadId, targetTerminalId, {
+            cliKind: terminalCommandIdentity.cliKind,
+            label: terminalCommandIdentity.title,
+          });
+        }
         await api.terminal.write({
           threadId: activeThreadId,
           terminalId: targetTerminalId,
@@ -2105,6 +2255,7 @@ export default function ChatView({
       setThreadError,
       storeNewTerminal,
       storeSetActiveTerminal,
+      storeSetTerminalMetadata,
       setLastInvokedScriptByProjectId,
       terminalState.activeTerminalId,
       terminalState.runningTerminalIds,
@@ -2991,13 +3142,43 @@ export default function ChatView({
         return;
       }
 
-      if (command === "terminal.split") {
+      if (command === "terminal.split" || command === "terminal.splitRight") {
         event.preventDefault();
         event.stopPropagation();
         if (!terminalState.terminalOpen) {
           setTerminalOpen(true);
         }
-        splitTerminal();
+        splitTerminalRight();
+        return;
+      }
+
+      if (command === "terminal.splitLeft") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!terminalState.terminalOpen) {
+          setTerminalOpen(true);
+        }
+        splitTerminalLeft();
+        return;
+      }
+
+      if (command === "terminal.splitDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!terminalState.terminalOpen) {
+          setTerminalOpen(true);
+        }
+        splitTerminalDown();
+        return;
+      }
+
+      if (command === "terminal.splitUp") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!terminalState.terminalOpen) {
+          setTerminalOpen(true);
+        }
+        splitTerminalUp();
         return;
       }
 
@@ -3012,10 +3193,7 @@ export default function ChatView({
       if (command === "terminal.new") {
         event.preventDefault();
         event.stopPropagation();
-        if (!terminalState.terminalOpen) {
-          setTerminalOpen(true);
-        }
-        createNewTerminal();
+        createTerminalFromShortcut();
         return;
       }
 
@@ -3082,12 +3260,15 @@ export default function ChatView({
     activeThreadId,
     closeTerminal,
     closeActiveWorkspaceView,
-    createNewTerminal,
+    createTerminalFromShortcut,
     setTerminalOpen,
     openNewFullWidthTerminal,
     runProjectScript,
-    splitTerminal,
     keybindings,
+    splitTerminalDown,
+    splitTerminalLeft,
+    splitTerminalRight,
+    splitTerminalUp,
     terminalWorkspaceChatTabActive,
     terminalWorkspaceOpen,
     terminalWorkspaceTerminalTabActive,
@@ -3608,10 +3789,11 @@ export default function ChatView({
         } else if (composerTerminalContextsSnapshot.length > 0) {
           titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
         } else {
-          titleSeed = "New thread";
+          titleSeed = GENERIC_CHAT_THREAD_TITLE;
         }
       }
-      const title = truncateTitle(titleSeed);
+      // Keep the optimistic label short while the server asks Codex for a better summary.
+      const title = buildPromptThreadTitleFallback(titleSeed);
       const threadCreateModelSelection: ModelSelection = {
         provider: selectedProviderForSend,
         model:
@@ -3664,16 +3846,6 @@ export default function ChatView({
           }
           await runProjectScript(setupScript, setupScriptOptions);
         }
-      }
-
-      // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          title,
-        });
       }
 
       if (isServerThread) {
@@ -4847,6 +5019,7 @@ export default function ChatView({
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          hideHandoffControls={terminalWorkspaceTerminalTabActive}
           isGitRepo={isGitRepo}
           openInCwd={threadWorkspaceCwd}
           activeProjectScripts={activeProject?.scripts}
@@ -4909,7 +5082,9 @@ export default function ChatView({
         <TerminalWorkspaceTabs
           activeTab={terminalState.workspaceActiveTab}
           isWorking={isWorking}
+          terminalHasRunningActivity={terminalState.runningTerminalIds.length > 0}
           terminalCount={terminalState.terminalIds.length}
+          workspaceLayout={terminalState.workspaceLayout}
           onSelectTab={setTerminalWorkspaceTab}
         />
       ) : null}
@@ -5252,6 +5427,7 @@ export default function ChatView({
                             provider={selectedProvider}
                             model={selectedModelForPickerWithCustomFallback}
                             lockedProvider={lockedProvider}
+                            providers={providerStatuses}
                             modelOptionsByProvider={modelOptionsByProvider}
                             {...(composerProviderState.modelPickerIconClassName
                               ? {
@@ -5558,7 +5734,9 @@ export default function ChatView({
                 {...terminalDrawerProps}
                 presentationMode="workspace"
                 isVisible={terminalWorkspaceTerminalTabActive}
-                onTogglePresentationMode={collapseTerminalWorkspace}
+                onTogglePresentationMode={
+                  terminalState.workspaceLayout === "both" ? collapseTerminalWorkspace : undefined
+                }
               />
             </div>
           ) : null}

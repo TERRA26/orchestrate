@@ -18,11 +18,19 @@ interface GateResult {
 
 const gates: Gate[] = [
   // Blocking gates
-  { name: "Contracts typecheck", command: "cd packages/contracts && bun run typecheck", blocking: true },
+  {
+    name: "Contracts typecheck",
+    command: "cd packages/contracts && bun run typecheck",
+    blocking: true,
+  },
   { name: "Server typecheck", command: "cd apps/server && bun run typecheck", blocking: true },
   { name: "Web typecheck", command: "cd apps/web && bun run typecheck", blocking: true },
   { name: "Lint", command: "bun lint", blocking: true },
-  { name: "Contract schema tests", command: "cd packages/contracts && bun run test", blocking: true },
+  {
+    name: "Contract schema tests",
+    command: "cd packages/contracts && bun run test",
+    blocking: true,
+  },
   {
     name: "Decider tests",
     command: "cd apps/server && vitest run src/orchestration/decider.orchestrator.test.ts",
@@ -102,7 +110,9 @@ async function main(): Promise<void> {
     const tag = r.gate.blocking ? "BLOCKING" : "ADVISORY";
     const name = r.gate.name.padEnd(nameWidth);
     const duration = formatDuration(r.durationMs).padStart(8);
-    console.log(`  ${status === "PASS" ? "\u2705" : "\u274C"} ${name}  ${status}  ${duration}  (${tag})`);
+    console.log(
+      `  ${status === "PASS" ? "\u2705" : "\u274C"} ${name}  ${status}  ${duration}  (${tag})`,
+    );
   }
 
   const blockingFailures = results.filter((r) => r.gate.blocking && !r.passed);

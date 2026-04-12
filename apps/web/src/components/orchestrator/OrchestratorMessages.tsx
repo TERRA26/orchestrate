@@ -1,5 +1,11 @@
 import { useCallback, useState } from "react";
-import { CheckIcon, ExternalLinkIcon, LoaderIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  ExternalLinkIcon,
+  LoaderIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+} from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -194,11 +200,7 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
                     : "text-muted-foreground/25",
               )}
             >
-              {item.status === "passed"
-                ? "\u2713"
-                : item.status === "failed"
-                  ? "\u2717"
-                  : "\u00b7"}
+              {item.status === "passed" ? "\u2713" : item.status === "failed" ? "\u2717" : "\u00b7"}
             </span>
             <p
               className={cn(

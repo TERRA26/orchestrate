@@ -9,8 +9,24 @@ export const MAX_KEYBINDINGS_COUNT = 256;
 
 const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "sidebar.search",
+  "thread.previous",
+  "thread.next",
+  "thread.jump.1",
+  "thread.jump.2",
+  "thread.jump.3",
+  "thread.jump.4",
+  "thread.jump.5",
+  "thread.jump.6",
+  "thread.jump.7",
+  "thread.jump.8",
+  "thread.jump.9",
   "terminal.toggle",
   "terminal.split",
+  "terminal.splitRight",
+  "terminal.splitLeft",
+  "terminal.splitDown",
+  "terminal.splitUp",
   "terminal.new",
   "terminal.close",
   "terminal.workspace.newFullWidth",
@@ -25,17 +41,6 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.visible.next",
   "chat.visible.previous",
   "editor.openFavorite",
-  "thread.previous",
-  "thread.next",
-  "thread.jump.1",
-  "thread.jump.2",
-  "thread.jump.3",
-  "thread.jump.4",
-  "thread.jump.5",
-  "thread.jump.6",
-  "thread.jump.7",
-  "thread.jump.8",
-  "thread.jump.9",
 ] as const;
 
 export const THREAD_JUMP_KEYBINDING_COMMANDS = [
@@ -48,7 +53,9 @@ export const THREAD_JUMP_KEYBINDING_COMMANDS = [
   "thread.jump.7",
   "thread.jump.8",
   "thread.jump.9",
-] as const satisfies ReadonlyArray<(typeof STATIC_KEYBINDING_COMMANDS)[number]>;
+] as const;
+
+export type ThreadJumpKeybindingCommand = (typeof THREAD_JUMP_KEYBINDING_COMMANDS)[number];
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal("script."),

@@ -86,7 +86,7 @@ const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "DP Code (Dev)" : "DP Code (Alpha)";
-const APP_USER_MODEL_ID = "com.t3tools.t3code";
+const APP_USER_MODEL_ID = isDevelopment ? "com.t3tools.dpcode.dev" : "com.t3tools.dpcode";
 const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
 const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "DP Code (Dev)" : "DP Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
@@ -115,6 +115,7 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+let unreadBackgroundNotificationCount = 0;
 const browserManager = new DesktopBrowserManager();
 
 browserManager.subscribe((state) => {
@@ -542,12 +543,15 @@ function dispatchMenuAction(action: string): void {
 }
 
 function handleCheckForUpdatesMenuClick(): void {
+  const hasUpdateFeedConfig =
+    readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
   const disabledReason = getAutoUpdateDisabledReason({
     isDevelopment,
     isPackaged: app.isPackaged,
     platform: process.platform,
     appImage: process.env.APPIMAGE,
     disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+    hasUpdateFeedConfig,
   });
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
@@ -640,6 +644,12 @@ function configureApplicationMenu(): void {
       label: "View",
       submenu: [
         {
+          label: "New Terminal Tab",
+          accelerator: "CmdOrCtrl+T",
+          click: () => dispatchMenuAction("new-terminal-tab"),
+        },
+        { type: "separator" },
+        {
           label: "Toggle Sidebar",
           accelerator: "CmdOrCtrl+B",
           click: () => dispatchMenuAction("toggle-sidebar"),
@@ -698,27 +708,69 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
   return resolveResourcePath(`icon.${ext}`);
 }
 
+function resolveNotificationIconPath(): string | null {
+  if (process.platform === "darwin") {
+    return null;
+  }
+  if (process.platform === "win32") {
+    return resolveResourcePath("dpcode.png") ?? resolveIconPath("ico");
+  }
+  return resolveResourcePath("dpcode.png") ?? resolveIconPath("png");
+}
+
+// Keep the app badge aligned with desktop notifications that arrive off-focus.
+function syncUnreadNotificationBadge(): void {
+  app.setBadgeCount(unreadBackgroundNotificationCount);
+}
+
+// Count minimized, hidden, or unfocused windows as background notification targets.
+function isMainWindowForeground(window: BrowserWindow | null): boolean {
+  if (!window) {
+    return false;
+  }
+  return window.isVisible() && !window.isMinimized() && window.isFocused();
+}
+
+function incrementUnreadNotificationBadge(): void {
+  unreadBackgroundNotificationCount = Math.min(unreadBackgroundNotificationCount + 1, 99);
+  syncUnreadNotificationBadge();
+}
+
+function clearUnreadNotificationBadge(): void {
+  if (unreadBackgroundNotificationCount === 0) {
+    return;
+  }
+  unreadBackgroundNotificationCount = 0;
+  syncUnreadNotificationBadge();
+}
+
 // Show a native OS notification and refocus the app window when the alert is clicked.
 function showDesktopNotification(input: {
   title: string;
   body?: string;
   silent?: boolean;
+  threadId?: string;
 }): boolean {
   const title = typeof input.title === "string" ? input.title.trim() : "";
   const body = typeof input.body === "string" ? input.body.trim() : "";
+  const threadId = typeof input.threadId === "string" ? input.threadId.trim() : "";
   if (title.length === 0 || !Notification.isSupported()) {
     return false;
   }
 
-  const iconPath = resolveIconPath("png");
+  const iconPath = resolveNotificationIconPath();
   const notification = new Notification({
     title,
     body,
     silent: input.silent === true,
     ...(iconPath ? { icon: iconPath } : {}),
   });
+  if (!isMainWindowForeground(mainWindow)) {
+    incrementUnreadNotificationBadge();
+  }
 
   notification.on("click", () => {
+    clearUnreadNotificationBadge();
     if (!mainWindow) {
       return;
     }
@@ -729,6 +781,9 @@ function showDesktopNotification(input: {
       mainWindow.show();
     }
     mainWindow.focus();
+    if (threadId.length > 0) {
+      mainWindow.webContents.send(MENU_ACTION_CHANNEL, `notification-open-thread:${threadId}`);
+    }
   });
 
   notification.show();
@@ -775,9 +830,6 @@ function configureAppIdentity(): void {
   if (process.platform === "win32") {
     app.setAppUserModelId(APP_USER_MODEL_ID);
   }
-
-  // On macOS the dock icon comes from the .icns in the app bundle;
-  // calling dock.setIcon() with a raw PNG bypasses the OS rounded mask.
 }
 
 function clearUpdatePollTimer(): void {
@@ -804,6 +856,8 @@ function setUpdateState(patch: Partial<DesktopUpdateState>): void {
 }
 
 function shouldEnableAutoUpdates(): boolean {
+  const hasUpdateFeedConfig =
+    readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
   return (
     getAutoUpdateDisabledReason({
       isDevelopment,
@@ -811,6 +865,7 @@ function shouldEnableAutoUpdates(): boolean {
       platform: process.platform,
       appImage: process.env.APPIMAGE,
       disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+      hasUpdateFeedConfig,
     }) === null
   );
 }
@@ -1293,12 +1348,16 @@ function registerIpcHandlers(): void {
     NOTIFICATIONS_SHOW_CHANNEL,
     async (
       _event,
-      input: { title?: unknown; body?: unknown; silent?: unknown } | null | undefined,
+      input:
+        | { title?: unknown; body?: unknown; silent?: unknown; threadId?: unknown }
+        | null
+        | undefined,
     ) =>
       showDesktopNotification({
         title: typeof input?.title === "string" ? input.title : "",
         body: typeof input?.body === "string" ? input.body : "",
         silent: input?.silent === true,
+        ...(typeof input?.threadId === "string" ? { threadId: input.threadId } : {}),
       }),
   );
 
@@ -1446,6 +1505,9 @@ function createWindow(): BrowserWindow {
   window.once("ready-to-show", () => {
     window.show();
   });
+  window.on("focus", () => {
+    clearUnreadNotificationBadge();
+  });
 
   if (isDevelopment) {
     void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
@@ -1514,6 +1576,7 @@ app
     });
 
     app.on("activate", () => {
+      clearUnreadNotificationBadge();
       if (BrowserWindow.getAllWindows().length === 0) {
         mainWindow = createWindow();
       }

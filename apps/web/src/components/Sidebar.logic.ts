@@ -72,7 +72,7 @@ export function resolveThreadRowClassName(input: {
   isSelected: boolean;
 }): string {
   const baseClassName =
-    "h-8 w-full translate-x-0 cursor-pointer justify-start rounded-lg pr-4 pl-8 text-left text-[13px] select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+    "h-8 w-full translate-x-0 cursor-pointer justify-start rounded-md pr-4 pl-8 text-left text-[13px] select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
   if (input.isSelected && input.isActive) {
     return cn(
@@ -228,6 +228,40 @@ export function getVisibleThreadsForProject(input: {
     hasHiddenThreads: true,
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+// Preserve the persisted pin order while discarding ids that no longer exist locally.
+export function getPinnedThreadsForSidebar<T extends Pick<Thread, "id">>(
+  threads: readonly T[],
+  pinnedThreadIds: readonly T["id"][],
+): T[] {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  const seen = new Set<T["id"]>();
+  const pinnedThreads: T[] = [];
+
+  for (const threadId of pinnedThreadIds) {
+    if (seen.has(threadId)) continue;
+    seen.add(threadId);
+    const thread = threadById.get(threadId);
+    if (thread) {
+      pinnedThreads.push(thread);
+    }
+  }
+
+  return pinnedThreads;
+}
+
+// Hide globally pinned rows from the per-project lists so the sidebar doesn't duplicate chats.
+export function getUnpinnedThreadsForSidebar<T extends Pick<Thread, "id">>(
+  threads: readonly T[],
+  pinnedThreadIds: readonly T["id"][],
+): T[] {
+  if (pinnedThreadIds.length === 0) {
+    return [...threads];
+  }
+
+  const pinnedThreadIdSet = new Set(pinnedThreadIds);
+  return threads.filter((thread) => !pinnedThreadIdSet.has(thread.id));
 }
 
 // Match the exact rows the sidebar renders for one project, including folded previews.

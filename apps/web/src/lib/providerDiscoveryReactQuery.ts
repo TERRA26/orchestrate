@@ -10,12 +10,6 @@ import type {
 import { queryOptions } from "@tanstack/react-query";
 import { ensureNativeApi } from "~/nativeApi";
 
-const EMPTY_SKILLS_RESULT: ProviderListSkillsResult = {
-  skills: [],
-  source: "empty",
-  cached: false,
-};
-
 const EMPTY_COMMANDS_RESULT: ProviderListCommandsResult = {
   commands: [],
   source: "empty",
@@ -24,15 +18,6 @@ const EMPTY_COMMANDS_RESULT: ProviderListCommandsResult = {
 
 const EMPTY_MODELS_RESULT: ProviderListModelsResult = {
   models: [],
-  source: "empty",
-  cached: false,
-};
-
-const EMPTY_PLUGINS_RESULT: ProviderListPluginsResult = {
-  marketplaces: [],
-  marketplaceLoadErrors: [],
-  remoteSyncError: null,
-  featuredPluginIds: [],
   source: "empty",
   cached: false,
 };
@@ -59,9 +44,15 @@ export function providerComposerCapabilitiesQueryOptions(provider: ProviderKind)
       const api = ensureNativeApi();
       return api.provider.getComposerCapabilities({ provider });
     },
-    staleTime: Infinity,
+    staleTime: 10_000,
   });
 }
+
+const EMPTY_SKILLS_RESULT: ProviderListSkillsResult = {
+  skills: [],
+  source: "empty",
+  cached: false,
+};
 
 export function providerSkillsQueryOptions(input: {
   provider: ProviderKind;
@@ -72,18 +63,17 @@ export function providerSkillsQueryOptions(input: {
 }) {
   return queryOptions({
     queryKey: providerDiscoveryQueryKeys.skills(input.provider, input.cwd, input.query),
-    queryFn: async () => {
+    queryFn: async (): Promise<ProviderListSkillsResult> => {
       const api = ensureNativeApi();
-      if (!input.cwd) {
-        throw new Error("Skill discovery is unavailable.");
-      }
+      // Server-side filesystem discovery handles the cwd fallback and reads
+      // the authoritative plugin/skill catalog.
       return api.provider.listSkills({
         provider: input.provider,
-        cwd: input.cwd,
+        cwd: input.cwd ?? "/",
         ...(input.threadId ? { threadId: input.threadId } : {}),
       });
     },
-    enabled: (input.enabled ?? true) && input.cwd !== null,
+    enabled: input.enabled ?? true,
     staleTime: 30_000,
     placeholderData: (previous) => previous ?? EMPTY_SKILLS_RESULT,
   });
@@ -128,6 +118,15 @@ export function providerModelsQueryOptions(input: { provider: ProviderKind; enab
   });
 }
 
+const EMPTY_PLUGINS_RESULT: ProviderListPluginsResult = {
+  marketplaces: [],
+  marketplaceLoadErrors: [],
+  remoteSyncError: null,
+  featuredPluginIds: [],
+  source: "empty",
+  cached: false,
+};
+
 export function providerPluginsQueryOptions(input: {
   provider: ProviderKind;
   cwd: string | null;
@@ -136,7 +135,7 @@ export function providerPluginsQueryOptions(input: {
 }) {
   return queryOptions({
     queryKey: providerDiscoveryQueryKeys.plugins(input.provider, input.cwd),
-    queryFn: async () => {
+    queryFn: async (): Promise<ProviderListPluginsResult> => {
       const api = ensureNativeApi();
       return api.provider.listPlugins({
         provider: input.provider,
@@ -175,10 +174,13 @@ export function providerReadPluginQueryOptions(input: {
   });
 }
 
+// Always return true so skill discovery runs regardless of provider capabilities.
+// The query layer provides the curated seed catalog as a fallback, so the
+// composer's /-menu always has content to show.
 export function supportsSkillDiscovery(
-  capabilities: ProviderComposerCapabilities | undefined,
+  _capabilities: ProviderComposerCapabilities | undefined,
 ): boolean {
-  return capabilities?.supportsSkillDiscovery === true;
+  return true;
 }
 
 export function supportsNativeSlashCommandDiscovery(
@@ -187,8 +189,9 @@ export function supportsNativeSlashCommandDiscovery(
   return capabilities?.supportsNativeSlashCommandDiscovery === true;
 }
 
+// Always return true so plugin discovery runs. Seed catalog is the fallback.
 export function supportsPluginDiscovery(
-  capabilities: ProviderComposerCapabilities | undefined,
+  _capabilities: ProviderComposerCapabilities | undefined,
 ): boolean {
-  return capabilities?.supportsPluginDiscovery === true;
+  return true;
 }

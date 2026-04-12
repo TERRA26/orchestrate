@@ -18,6 +18,8 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPluginsRouteImport } from './routes/_chat.plugins'
 import { Route as ChatThreadIdRouteImport } from './routes/_chat.$threadId'
+import { Route as ChatWorkspaceIndexRouteImport } from './routes/_chat.workspace.index'
+import { Route as ChatWorkspaceWorkspaceIdRouteImport } from './routes/_chat.workspace.$workspaceId'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -63,6 +65,17 @@ const ChatThreadIdRoute = ChatThreadIdRouteImport.update({
   path: '/$threadId',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatWorkspaceIndexRoute = ChatWorkspaceIndexRouteImport.update({
+  id: '/workspace/',
+  path: '/workspace/',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatWorkspaceWorkspaceIdRoute =
+  ChatWorkspaceWorkspaceIdRouteImport.update({
+    id: '/workspace/$workspaceId',
+    path: '/workspace/$workspaceId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -72,6 +85,8 @@ export interface FileRoutesByFullPath {
   '/plugins': typeof ChatPluginsRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/workspace/$workspaceId': typeof ChatWorkspaceWorkspaceIdRoute
+  '/workspace/': typeof ChatWorkspaceIndexRoute
 }
 export interface FileRoutesByTo {
   '/learn-ai': typeof LearnAiRoute
@@ -81,6 +96,8 @@ export interface FileRoutesByTo {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/': typeof ChatIndexRoute
+  '/workspace/$workspaceId': typeof ChatWorkspaceWorkspaceIdRoute
+  '/workspace': typeof ChatWorkspaceIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -93,6 +110,8 @@ export interface FileRoutesById {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/_chat/': typeof ChatIndexRoute
+  '/_chat/workspace/$workspaceId': typeof ChatWorkspaceWorkspaceIdRoute
+  '/_chat/workspace/': typeof ChatWorkspaceIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -104,6 +123,8 @@ export interface FileRouteTypes {
     | '/plugins'
     | '/settings/archived'
     | '/settings/general'
+    | '/workspace/$workspaceId'
+    | '/workspace/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/learn-ai'
@@ -113,6 +134,8 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/general'
     | '/'
+    | '/workspace/$workspaceId'
+    | '/workspace'
   id:
     | '__root__'
     | '/_chat'
@@ -124,6 +147,8 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/general'
     | '/_chat/'
+    | '/_chat/workspace/$workspaceId'
+    | '/_chat/workspace/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -197,6 +222,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/workspace/': {
+      id: '/_chat/workspace/'
+      path: '/workspace'
+      fullPath: '/workspace/'
+      preLoaderRoute: typeof ChatWorkspaceIndexRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/workspace/$workspaceId': {
+      id: '/_chat/workspace/$workspaceId'
+      path: '/workspace/$workspaceId'
+      fullPath: '/workspace/$workspaceId'
+      preLoaderRoute: typeof ChatWorkspaceWorkspaceIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
   }
 }
 
@@ -205,6 +244,8 @@ interface ChatRouteChildren {
   ChatPluginsRoute: typeof ChatPluginsRoute
   ChatSettingsRoute: typeof ChatSettingsRoute
   ChatIndexRoute: typeof ChatIndexRoute
+  ChatWorkspaceWorkspaceIdRoute: typeof ChatWorkspaceWorkspaceIdRoute
+  ChatWorkspaceIndexRoute: typeof ChatWorkspaceIndexRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -212,6 +253,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatPluginsRoute: ChatPluginsRoute,
   ChatSettingsRoute: ChatSettingsRoute,
   ChatIndexRoute: ChatIndexRoute,
+  ChatWorkspaceWorkspaceIdRoute: ChatWorkspaceWorkspaceIdRoute,
+  ChatWorkspaceIndexRoute: ChatWorkspaceIndexRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

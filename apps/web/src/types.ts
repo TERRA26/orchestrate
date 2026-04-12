@@ -24,16 +24,37 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
-export const MAX_TERMINALS_PER_GROUP = 4;
+export const MAX_TERMINALS_PER_GROUP = 6;
 export type ThreadTerminalPresentationMode = "drawer" | "workspace";
 export type ThreadTerminalWorkspaceTab = "terminal" | "chat";
 export type ThreadTerminalWorkspaceLayout = "both" | "terminal-only";
 export type ThreadPrimarySurface = "chat" | "terminal";
 export type ProjectScript = ContractProjectScript;
 
+export type ThreadTerminalSplitDirection = "horizontal" | "vertical";
+export type ThreadTerminalSplitPosition = "top" | "right" | "bottom" | "left";
+
+export interface ThreadTerminalLeafNode {
+  type: "terminal";
+  paneId: string;
+  terminalIds: string[];
+  activeTerminalId: string;
+}
+
+export interface ThreadTerminalSplitNode {
+  type: "split";
+  id: string;
+  direction: ThreadTerminalSplitDirection;
+  children: ThreadTerminalLayoutNode[];
+  weights: number[];
+}
+
+export type ThreadTerminalLayoutNode = ThreadTerminalLeafNode | ThreadTerminalSplitNode;
+
 export interface ThreadTerminalGroup {
   id: string;
-  terminalIds: string[];
+  activeTerminalId: string;
+  layout: ThreadTerminalLayoutNode;
 }
 
 export interface ChatImageAttachment {
@@ -56,7 +77,6 @@ export interface ChatMessage {
   completedAt?: string | undefined;
   streaming: boolean;
   source?: OrchestrationMessageSource;
-  turnId?: TurnId | null;
 }
 
 export interface ProposedPlan {
@@ -129,8 +149,6 @@ export interface Thread extends ThreadWorkspaceState {
   error: string | null;
   createdAt: string;
   updatedAt?: string | undefined;
-  deletedAt?: string | null;
-  archivedAt?: string | null;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
   forkSourceThreadId?: ThreadId | null;

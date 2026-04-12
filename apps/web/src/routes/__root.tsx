@@ -1,4 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
+import { defaultTerminalTitleForCliKind } from "@t3tools/shared/terminalThreads";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -19,12 +20,13 @@ import { readNativeApi } from "../nativeApi";
 import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
-import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
+import { terminalActivityFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { TaskCompletionNotifications } from "../notifications/taskCompletion";
+import { useWorkspaceStore, workspaceThreadId } from "../workspaceStore";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -138,6 +140,8 @@ function EventRouter() {
   const removeOrphanedTerminalStates = useTerminalStateStore(
     (store) => store.removeOrphanedTerminalStates,
   );
+  const setWorkspaceHomeDir = useWorkspaceStore((store) => store.setHomeDir);
+  const workspacePages = useWorkspaceStore((store) => store.workspacePages);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -167,6 +171,7 @@ function EventRouter() {
       const activeThreadIds = collectActiveTerminalThreadIds({
         snapshotThreads: snapshot.threads,
         draftThreadIds,
+        retainedThreadIds: workspacePages.map((workspace) => workspaceThreadId(workspace.id)),
       });
       removeOrphanedTerminalStates(activeThreadIds);
       if (pending) {
@@ -219,20 +224,27 @@ function EventRouter() {
       domainEventFlushThrottler.maybeExecute();
     });
     const unsubTerminalEvent = api.terminal.onEvent((event) => {
-      const hasRunningSubprocess = terminalRunningSubprocessFromEvent(event);
-      if (hasRunningSubprocess === null) {
+      const terminalThreadId = ThreadId.makeUnsafe(event.threadId);
+      if (event.type === "activity") {
+        if (event.cliKind) {
+          useTerminalStateStore.getState().setTerminalMetadata(terminalThreadId, event.terminalId, {
+            cliKind: event.cliKind,
+            label: defaultTerminalTitleForCliKind(event.cliKind),
+          });
+        }
+      }
+      const activity = terminalActivityFromEvent(event);
+      if (activity === null) {
         return;
       }
-      useTerminalStateStore
-        .getState()
-        .setTerminalActivity(
-          ThreadId.makeUnsafe(event.threadId),
-          event.terminalId,
-          hasRunningSubprocess,
-        );
+      useTerminalStateStore.getState().setTerminalActivity(terminalThreadId, event.terminalId, {
+        hasRunningSubprocess: activity.hasRunningSubprocess,
+        agentState: activity.agentState,
+      });
     });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
+        setWorkspaceHomeDir(payload.homeDir);
         await syncSnapshot();
         if (disposed) {
           return;
@@ -317,7 +329,9 @@ function EventRouter() {
     queryClient,
     removeOrphanedTerminalStates,
     setProjectExpanded,
+    setWorkspaceHomeDir,
     syncServerReadModel,
+    workspacePages,
   ]);
 
   return null;

@@ -130,24 +130,21 @@ export function useComposerCommandMenuItems(input: {
           label: `/${command.name}`,
           description: command.description ?? `Run ${provider} native command`,
         }));
-      // For the Claude provider, skills use `/` prefix just like slash commands,
-      // so merge them into the same dropdown.
-      const skillItems: ComposerCommandItem[] =
-        provider === "claudeAgent"
-          ? providerSkills
-              .filter((skill) => {
-                if (!query) return true;
-                return buildSkillSearchBlob(skill).includes(query);
-              })
-              .map((skill) => ({
-                id: `skill:${skill.path}`,
-                type: "skill" as const,
-                skill,
-                label: skill.interface?.displayName ?? skill.name,
-                description: skill.interface?.shortDescription ?? skill.description ?? skill.path,
-              }))
-          : [];
-      return [...builtInItems, ...providerCommandItems, ...skillItems];
+      // Plugins are shown under `/` for both providers. Skills use `$`.
+      const pluginItems: ComposerCommandItem[] = providerPlugins
+        .filter(({ plugin }) => {
+          if (!query) return true;
+          return buildPluginSearchBlob(plugin).includes(query);
+        })
+        .map(({ plugin, mention }) => ({
+          id: `plugin:${plugin.id}`,
+          type: "plugin" as const,
+          plugin,
+          mention,
+          label: plugin.interface?.displayName ?? plugin.name,
+          description: plugin.interface?.shortDescription ?? plugin.source.path,
+        }));
+      return [...builtInItems, ...providerCommandItems, ...pluginItems];
     }
 
     if (composerTrigger.kind === "skill") {

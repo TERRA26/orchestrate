@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import {
   type ModelSelection,
+  type OrchestratorRunId,
+  type OrchestratorTaskId,
+  type OrchestratorWorkerId,
   type ProjectId,
   type ProviderKind,
   type ThreadId,
@@ -39,6 +42,9 @@ export interface OrchestratorMessage {
 }
 
 export interface ActiveOrchestratorRun {
+  runId?: OrchestratorRunId;
+  rootTaskId?: OrchestratorTaskId;
+  workerId?: OrchestratorWorkerId;
   threadId: ThreadId;
   projectId: ProjectId;
   userRequest: string;

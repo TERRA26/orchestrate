@@ -211,12 +211,12 @@ Use the right agent mode for each job:
 
 ## Model Selection Guide
 
-| Task type | Recommended model | Why |
-| --- | --- | --- |
-| Complex reasoning, architecture, planning | Claude Opus | Best multi-step reasoning and instruction following |
-| Large repo edits, multi-file refactors | Codex | Native repo understanding, fast parallel file edits |
-| Frontend, fast code edits, small fixes | Claude Sonnet | Speed and cost balance for straightforward changes |
-| Cheap research, summarization, triage | Claude Haiku | Lowest cost; sufficient for information gathering |
+| Task type                                 | Recommended model | Why                                                 |
+| ----------------------------------------- | ----------------- | --------------------------------------------------- |
+| Complex reasoning, architecture, planning | Claude Opus       | Best multi-step reasoning and instruction following |
+| Large repo edits, multi-file refactors    | Codex             | Native repo understanding, fast parallel file edits |
+| Frontend, fast code edits, small fixes    | Claude Sonnet     | Speed and cost balance for straightforward changes  |
+| Cheap research, summarization, triage     | Claude Haiku      | Lowest cost; sufficient for information gathering   |
 
 When in doubt, start with Claude Sonnet for implementation and Claude Haiku for research. Escalate to Opus for review, architecture decisions, or when a worker fails twice.
 

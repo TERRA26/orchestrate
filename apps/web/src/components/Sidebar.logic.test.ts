@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   getFallbackThreadIdAfterDelete,
+  getPinnedThreadsForSidebar,
   getNextVisibleSidebarThreadId,
   getRenderedThreadsForSidebarProject,
+  getUnpinnedThreadsForSidebar,
   getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -96,6 +98,48 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("pin helpers", () => {
+  const makeThread = (id: string): Thread =>
+    ({
+      id: id as ThreadId,
+      codexThreadId: null,
+      projectId: "project-1" as ProjectId,
+      title: id,
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_INTERACTION_MODE,
+      session: null,
+      messages: [],
+      proposedPlans: [],
+      error: null,
+      createdAt: "2026-03-09T10:00:00.000Z",
+      latestTurn: null,
+      turnDiffSummaries: [],
+      activities: [],
+      branch: null,
+      worktreePath: null,
+    }) satisfies Thread;
+
+  it("returns pinned threads in persisted pin order", () => {
+    const threads = [makeThread("thread-1"), makeThread("thread-2"), makeThread("thread-3")];
+
+    expect(
+      getPinnedThreadsForSidebar(threads, ["thread-3" as ThreadId, "thread-1" as ThreadId]),
+    ).toEqual([threads[2], threads[0]]);
+  });
+
+  it("filters pinned threads out of project lists", () => {
+    const threads = [makeThread("thread-1"), makeThread("thread-2"), makeThread("thread-3")];
+
+    expect(
+      getUnpinnedThreadsForSidebar(threads, ["thread-2" as ThreadId, "thread-3" as ThreadId]),
+    ).toEqual([threads[0]]);
   });
 });
 
@@ -226,24 +270,24 @@ describe("resolveThreadStatusPill", () => {
 describe("resolveThreadRowClassName", () => {
   it("uses the darker selected palette when a thread is both selected and active", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
-    expect(className).toContain("bg-primary/16");
-    expect(className).toContain("hover:bg-primary/20");
-    expect(className).toContain("dark:bg-primary/22");
-    expect(className).not.toContain("bg-accent/62");
+    expect(className).toContain("bg-primary/22");
+    expect(className).toContain("hover:bg-primary/26");
+    expect(className).toContain("dark:bg-primary/30");
+    expect(className).not.toContain("bg-accent/85");
   });
 
   it("uses selected hover colors for selected threads", () => {
     const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
-    expect(className).toContain("bg-primary/12");
-    expect(className).toContain("hover:bg-primary/16");
-    expect(className).toContain("dark:bg-primary/18");
+    expect(className).toContain("bg-primary/15");
+    expect(className).toContain("hover:bg-primary/19");
+    expect(className).toContain("dark:bg-primary/22");
     expect(className).not.toContain("hover:bg-accent");
   });
 
   it("keeps the accent palette for active-only threads", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
-    expect(className).toContain("bg-accent/62");
-    expect(className).toContain("hover:bg-accent/72");
+    expect(className).toContain("bg-accent/85");
+    expect(className).toContain("hover:bg-accent");
   });
 });
 

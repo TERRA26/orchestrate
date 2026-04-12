@@ -1,5 +1,5 @@
 import { type FC, type SVGProps } from "react";
-import { PiGitCommit } from "react-icons/pi";
+import { PiGitCommit, PiSquareSplitHorizontal, PiSquareSplitVertical } from "react-icons/pi";
 import { TbArrowsRightLeft, TbPlug } from "react-icons/tb";
 import {
   IconAlertCircle,
@@ -7,9 +7,9 @@ import {
   IconArrowBackUp,
   IconArrowLeft,
   IconArrowRight,
-  IconArrowsSplit2,
   IconArrowsUpDown,
   IconBolt,
+  IconBrain,
   IconBug,
   IconCheck,
   IconChevronDown,
@@ -43,6 +43,8 @@ import {
   IconLockOpen,
   IconMaximize,
   IconMinimize,
+  IconPin,
+  IconPinnedFilled,
   IconPlayerPlay,
   IconPlus,
   IconRefresh,
@@ -75,6 +77,7 @@ export const ArrowLeftIcon = adaptIcon(IconArrowLeft);
 export const ArrowRightIcon = adaptIcon(IconArrowRight);
 export const ArrowUpDownIcon = adaptIcon(IconArrowsUpDown);
 export const BotIcon = adaptIcon(IconRobot);
+export const BrainIcon = adaptIcon(IconBrain);
 export const BugIcon = adaptIcon(IconBug);
 export const CheckIcon = adaptIcon(IconCheck);
 export const ChevronDownIcon = adaptIcon(IconChevronDown);
@@ -122,6 +125,8 @@ export const Minimize2 = adaptIcon(IconMinimize);
 export const PanelLeftCloseIcon = adaptIcon(IconLayoutSidebarLeftCollapse);
 export const PanelLeftIcon = adaptIcon(IconLayoutSidebarLeftExpand);
 export const PanelRightCloseIcon = adaptIcon(IconLayoutSidebarRightCollapse);
+export const PinIcon = adaptIcon(IconPin);
+export const PinnedFilledIcon = adaptIcon(IconPinnedFilled);
 export const PlayIcon = adaptIcon(IconPlayerPlay);
 export const Plus = adaptIcon(IconPlus);
 export const PlusIcon = adaptIcon(IconPlus);
@@ -132,7 +137,12 @@ export const Rows3Icon = adaptIcon(IconLayoutDistributeHorizontal);
 export const SearchIcon = adaptIcon(IconSearch);
 export const SettingsIcon = adaptIcon(IconSettings);
 export const SquarePenIcon = adaptIcon(IconEdit);
-export const SquareSplitHorizontal = adaptIcon(IconArrowsSplit2);
+export const SquareSplitHorizontal: LucideIcon = (props) => (
+  <PiSquareSplitHorizontal className={props.className} style={props.style} />
+);
+export const SquareSplitVertical: LucideIcon = (props) => (
+  <PiSquareSplitVertical className={props.className} style={props.style} />
+);
 export const TerminalIcon = adaptIcon(IconTerminal);
 export const TerminalSquare = adaptIcon(IconTerminal2);
 export const TerminalSquareIcon = adaptIcon(IconTerminal2);

@@ -15,11 +15,11 @@ Extend the Orchestrate orchestrator to programmatically spawn, manage, and coord
 
 ## Agent Hierarchy
 
-| Level | Max (default) | Visibility | Use Case |
-|---|---|---|---|
-| Foreground agents | 2 | Full interactive panels side-by-side | Primary implementation tasks |
-| Background agents | 6 | Status chips in orchestrator rail | Research, audits, test runs |
-| Subagents | Per worker budget, depth 3 | Invisible (nested inside parent) | Worker-spawned helpers |
+| Level             | Max (default)              | Visibility                           | Use Case                     |
+| ----------------- | -------------------------- | ------------------------------------ | ---------------------------- |
+| Foreground agents | 2                          | Full interactive panels side-by-side | Primary implementation tasks |
+| Background agents | 6                          | Status chips in orchestrator rail    | Research, audits, test runs  |
+| Subagents         | Per worker budget, depth 3 | Invisible (nested inside parent)     | Worker-spawned helpers       |
 
 All limits configurable. Total workers per run: 12 (default).
 
@@ -75,6 +75,7 @@ Each thread shows model icons for active agents. Icons update in real-time.
 **Icon deduplication:** 3 Claude + 1 Codex = `[C×3][X]`
 
 **Status indicators:**
+
 - `⟳` running
 - `✓` completed/accepted
 - `✗` failed
@@ -103,6 +104,7 @@ The server classifies tool calls from the orchestrator LLM. A new classification
 ### System Prompt Injection
 
 When a thread starts:
+
 1. Read `docs/ORCHESTRATOR.md` fresh from disk
 2. Inject into system prompt after base prompt, before tool definitions
 3. Append 38 orchestration tool definitions
@@ -113,41 +115,49 @@ When a thread starts:
 ### Spawning & Lifecycle (8 tools)
 
 **spawn_agent**
+
 - Params: `role: string`, `task: string`, `model: string`, `mode: "foreground" | "background"`, `worktree: boolean`, `scope: { read?: string[], write?: string[], tools?: string[] }`
 - Returns: `{ workerId, threadId, status }`
 - Command: `orchestrator.worker.spawn`
 
 **terminate_agent**
+
 - Params: `workerId: string`, `reason: string`
 - Returns: `{ success }`
 - Command: `orchestrator.worker.terminate`
 
 **restart_agent**
+
 - Params: `workerId: string`, `model?: string`, `task?: string`
 - Returns: `{ newWorkerId, threadId }`
 - Commands: `orchestrator.worker.terminate` + `orchestrator.worker.spawn`
 
 **clone_agent**
+
 - Params: `workerId: string`, `mode: "foreground" | "background"`
 - Returns: `{ newWorkerId, threadId }`
 - Command: `orchestrator.worker.spawn` (new thread seeded with source worker's task description, acceptance criteria, and current diff as context — not conversation history)
 
 **pause_agent**
+
 - Params: `workerId: string`
 - Returns: `{ success }`
 - Command: `orchestrator.worker.pause` (new)
 
 **resume_agent**
+
 - Params: `workerId: string`, `instructions?: string`
 - Returns: `{ success }`
 - Command: `orchestrator.worker.resume` (new)
 
 **promote_to_foreground**
+
 - Params: `workerId: string`
 - Returns: `{ success, panelSlot }`
 - Command: `orchestrator.worker.promote` (new)
 
 **demote_to_background**
+
 - Params: `workerId: string`
 - Returns: `{ success }`
 - Command: `orchestrator.worker.demote` (new)
@@ -155,27 +165,32 @@ When a thread starts:
 ### Communication (5 tools)
 
 **send_to_agent**
+
 - Params: `workerId: string`, `message: string`, `priority: "normal" | "urgent"`
 - Returns: `{ delivered }`
 - Command: `orchestrator.message.send` (new)
 
 **broadcast**
+
 - Params: `message: string`, `filter?: { status?: string[], role?: string[] }`
 - Returns: `{ delivered: string[] }`
 - Command: `orchestrator.message.broadcast` (new)
 
 **transfer_context**
+
 - Params: `fromWorkerId: string`, `toWorkerId: string`, `content: { files?: string[], diff?: boolean, message?: string }`
 - Returns: `{ success }`
 - Command: `orchestrator.context.transfer` (new)
 
 **ask_agent**
+
 - Params: `workerId: string`, `question: string`, `timeout?: number`
 - Returns: `{ response: string }`
 - Synchronous: blocks until agent responds
 - Command: `orchestrator.message.send` + wait for response event
 
 **share_file**
+
 - Params: `filePath: string`, `workerIds: string[]`
 - Returns: `{ success }`
 - Command: `orchestrator.context.transfer` (per worker)
@@ -183,31 +198,37 @@ When a thread starts:
 ### Monitoring (6 tools)
 
 **get_agent_status**
+
 - Params: `workerId: string`
 - Returns: `{ status, activeTask, model, lastActivity, diffSummary }`
 - Read-only: queries read model
 
 **get_all_status**
+
 - Params: none
 - Returns: `{ agents: [...], foregroundCount, backgroundCount, completedCount }`
 - Read-only: queries read model
 
 **get_agent_diff**
+
 - Params: `workerId: string`
 - Returns: `{ filesChanged, insertions, deletions, diff }`
 - Read-only: queries git diff in worker's worktree
 
 **get_agent_logs**
+
 - Params: `workerId: string`, `lines?: number`
 - Returns: `{ output: string }`
 - Read-only: queries terminal history
 
 **get_background_results**
+
 - Params: `workerId: string`
 - Returns: `{ output, summary, artifacts }`
 - Read-only: queries completed background worker
 
 **get_spawn_tree**
+
 - Params: none
 - Returns: `{ tree: nested worker/subagent hierarchy }`
 - Read-only: queries read model
@@ -215,26 +236,31 @@ When a thread starts:
 ### Coordination (5 tools)
 
 **wait_agent**
+
 - Params: `workerId: string`, `timeout?: number`
 - Returns: `{ status, result }`
 - Blocks until worker status is "submitted" or "terminated"
 
 **wait_all**
+
 - Params: `workerIds?: string[]`, `timeout?: number`
 - Returns: `{ results: Array<{ workerId, status, result }> }`
 - Blocks until all specified workers (or all if omitted) complete
 
 **set_dependency**
+
 - Params: `workerId: string`, `dependsOn: string[]`
 - Returns: `{ success }`
 - Command: `orchestrator.dependency.set` (new)
 
 **merge_work**
+
 - Params: `workerIds: string[]`, `targetBranch: string`, `strategy: "sequential" | "octopus"`
 - Returns: `{ success, conflicts?: string[] }`
 - Command: `orchestrator.work.merge-requested` (new)
 
 **set_spawn_budget**
+
 - Params: `workerId: string`, `budget: SpawnBudget`
 - Returns: `{ success }`
 - Modifies worker's inherited spawn budget
@@ -242,26 +268,31 @@ When a thread starts:
 ### Review & Quality (5 tools)
 
 **review_agent_work**
+
 - Params: `workerId: string`
 - Returns: `{ diff, summary, checklistStatus }`
 - Read-only: pulls diff and checklist from worker's task
 
 **run_tests**
+
 - Params: `workerId: string`, `command?: string`
 - Returns: `{ passed: number, failed: number, output: string }`
 - Executes test command in worker's worktree
 
 **accept_work**
+
 - Params: `workerId: string`, `evidence?: object`
 - Returns: `{ success }`
 - Command: `orchestrator.task.accept`
 
 **reject_work**
+
 - Params: `workerId: string`, `reason: string`, `instructions: string`
 - Returns: `{ success }`
 - Command: `orchestrator.task.reject`
 
 **request_revision**
+
 - Params: `workerId: string`, `changes: string[]`
 - Returns: `{ success }`
 - Command: `orchestrator.task.reject` (with specific rework items)
@@ -269,31 +300,37 @@ When a thread starts:
 ### UI & Panel Control (6 tools)
 
 **focus_agent**
+
 - Params: `workerId: string`
 - Returns: `{ success }`
 - Ephemeral: pushed to client, not persisted
 
 **arrange_panels**
+
 - Params: `layout: "side-by-side" | "stacked" | "grid"`
 - Returns: `{ success }`
 - Ephemeral: pushed to client, not persisted
 
 **promote_panel**
+
 - Params: `workerId: string`
 - Returns: `{ success }`
 - Ephemeral: expands panel to full width
 
 **collapse_panel**
+
 - Params: `workerId: string`
 - Returns: `{ success }`
 - Ephemeral: minimizes to chip in rail
 
 **open_diff_view**
+
 - Params: `workerId: string`, `filePath?: string`
 - Returns: `{ success }`
 - Ephemeral: opens diff panel for worker
 
 **open_browser_preview**
+
 - Params: `workerId: string`, `url?: string`
 - Returns: `{ success }`
 - Ephemeral: opens browser validation for worker
@@ -301,21 +338,25 @@ When a thread starts:
 ### Workspace & Resources (4 tools)
 
 **assign_worktree**
+
 - Params: `workerId: string`, `branch?: string`
 - Returns: `{ worktreePath: string }`
 - Creates git worktree for worker isolation
 
 **set_model**
+
 - Params: `workerId: string`, `model: string`, `reason?: string`
 - Returns: `{ success }`
 - Switches worker's provider session to a different model
 
 **set_scope**
+
 - Params: `workerId: string`, `scope: { read?: string[], write?: string[], tools?: string[] }`
 - Returns: `{ success }`
 - Replaces worker's scope constraints
 
 **restrict_scope**
+
 - Params: `workerId: string`, `remove: { tools?: string[], writePaths?: string[] }`
 - Returns: `{ success }`
 - Narrows worker's scope (cannot broaden)
@@ -353,9 +394,9 @@ Pushed to client via WebSocket but not stored in event store. Panel layout is cl
 
 ```typescript
 // New fields on OrchestrationReadModel
-messages: Map<MessageId, OrchestratorMessage>
-dependencies: Map<WorkerId, Set<WorkerId>>
-workerVisibility: Map<WorkerId, "foreground" | "background">
+messages: Map<MessageId, OrchestratorMessage>;
+dependencies: Map<WorkerId, Set<WorkerId>>;
+workerVisibility: Map<WorkerId, "foreground" | "background">;
 ```
 
 ### Worker Status Extension
@@ -374,28 +415,33 @@ All commands serialized through the single-writer orchestration engine. Parallel
 New sections to add:
 
 ### Agent Tool Usage
+
 - When to use foreground vs background agents
 - Maximum 2 foreground for visual tasks, background for research/auditing
 - Subagents for worker-spawned helpers (test writing, file searching)
 
 ### Model Selection Guide
+
 - Opus: complex reasoning, architecture decisions, code review
 - Codex: large repository edits, multi-file refactors
 - Sonnet: fast implementation, frontend work, straightforward tasks
 - Haiku: cheap research, dependency audits, documentation
 
 ### Panel Management
+
 - Promote background agents when they need user attention
 - Demote foreground agents when they're waiting on dependencies
 - Auto-arrange on spawn, manual override via tool calls
 
 ### Coordination Patterns
+
 - **Parallel independent:** spawn 2+ agents with no dependencies (backend + frontend)
 - **Pipeline:** set_dependency so agent B waits for agent A (API first, then client)
 - **Research-then-build:** background research agent feeds context to foreground builder
 - **Review swarm:** multiple background agents review different aspects of a PR
 
 ### Budget Defaults
+
 ```
 max_foreground_agents: 2
 max_background_agents: 6

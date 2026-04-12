@@ -4,6 +4,8 @@ import {
   type KeybindingShortcut,
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+  type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
 
@@ -244,14 +246,8 @@ export function formatShortcutLabel(
 export function shortcutLabelForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
-  platformOrOptions?: string | { context?: Record<string, unknown> },
+  platform = navigator.platform,
 ): string | null {
-  const platform =
-    typeof platformOrOptions === "string"
-      ? platformOrOptions
-      : typeof navigator !== "undefined"
-        ? navigator.platform
-        : "";
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding || binding.command !== command) continue;
@@ -260,6 +256,27 @@ export function shortcutLabelForCommand(
   for (const binding of getFallbackBindings(keybindings)) {
     if (binding.command !== command) continue;
     return formatShortcutLabel(binding.shortcut, platform);
+  }
+  return null;
+}
+
+export function threadJumpIndexFromCommand(command: string | null): number | null {
+  if (command === null) {
+    return null;
+  }
+
+  const index = THREAD_JUMP_KEYBINDING_COMMANDS.indexOf(command as ThreadJumpKeybindingCommand);
+  return index === -1 ? null : index;
+}
+
+export function threadTraversalDirectionFromCommand(
+  command: string | null,
+): "previous" | "next" | null {
+  if (command === "thread.previous") {
+    return "previous";
+  }
+  if (command === "thread.next") {
+    return "next";
   }
   return null;
 }
@@ -354,18 +371,7 @@ export function isTerminalClearShortcut(
 
   const key = event.key.toLowerCase();
 
-  if (key === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-    return true;
-  }
-
-  return (
-    isMacPlatform(platform) &&
-    key === "k" &&
-    event.metaKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.shiftKey
-  );
+  return key === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
 }
 
 export function terminalNavigationShortcutData(

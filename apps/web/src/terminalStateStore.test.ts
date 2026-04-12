@@ -5,7 +5,7 @@ import { createJSONStorage } from "zustand/middleware";
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
-const ORIGINAL_TERMINAL_STORAGE = useTerminalStateStore.persist?.getOptions?.()?.storage;
+const ORIGINAL_TERMINAL_STORAGE = useTerminalStateStore.persist.getOptions().storage;
 
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
@@ -19,14 +19,14 @@ describe("terminalStateStore actions", () => {
         storage.delete(key);
       },
     };
-    useTerminalStateStore.persist?.setOptions?.({
+    useTerminalStateStore.persist.setOptions({
       storage: createJSONStorage(() => stateStorage),
     });
     useTerminalStateStore.setState({ terminalStateByThreadId: {} });
   });
 
   afterEach(() => {
-    useTerminalStateStore.persist?.setOptions?.({
+    useTerminalStateStore.persist.setOptions({
       storage: ORIGINAL_TERMINAL_STORAGE,
     });
   });
@@ -44,6 +44,10 @@ describe("terminalStateStore actions", () => {
       workspaceActiveTab: "terminal",
       terminalHeight: 280,
       terminalIds: ["default"],
+      terminalLabelsById: { default: "Terminal 1" },
+      terminalTitleOverridesById: {},
+      terminalCliKindsById: {},
+      terminalAttentionStatesById: {},
       runningTerminalIds: [],
       activeTerminalId: "default",
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
@@ -225,6 +229,31 @@ describe("terminalStateStore actions", () => {
     ]);
   });
 
+  it("stores terminal labels and removes them when a terminal closes", () => {
+    const store = useTerminalStateStore.getState();
+    store.newTerminal(THREAD_ID, "terminal-2");
+    store.setTerminalMetadata(THREAD_ID, "terminal-2", {
+      cliKind: "codex",
+      label: "Codex CLI",
+    });
+
+    let terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalLabelsById).toEqual({ "terminal-2": "Codex CLI" });
+    expect(terminalState.terminalCliKindsById).toEqual({ "terminal-2": "codex" });
+
+    store.closeTerminal(THREAD_ID, "terminal-2");
+
+    terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalLabelsById).toEqual({});
+    expect(terminalState.terminalCliKindsById).toEqual({});
+  });
+
   it("allows unlimited groups while keeping each group capped at four terminals", () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_ID, "terminal-2");
@@ -255,13 +284,19 @@ describe("terminalStateStore actions", () => {
   it("tracks and clears terminal subprocess activity", () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_ID, "terminal-2");
-    store.setTerminalActivity(THREAD_ID, "terminal-2", true);
+    store.setTerminalActivity(THREAD_ID, "terminal-2", {
+      hasRunningSubprocess: true,
+      agentState: null,
+    });
     expect(
       selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
         .runningTerminalIds,
     ).toEqual(["terminal-2"]);
 
-    store.setTerminalActivity(THREAD_ID, "terminal-2", false);
+    store.setTerminalActivity(THREAD_ID, "terminal-2", {
+      hasRunningSubprocess: false,
+      agentState: null,
+    });
     expect(
       selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
         .runningTerminalIds,

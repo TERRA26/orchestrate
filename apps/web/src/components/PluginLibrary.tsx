@@ -10,7 +10,7 @@ import {
   type ProviderSkillDescriptor,
 } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
-import React, { type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
+import React, { type ReactNode, useDeferredValue, useMemo, useState } from "react";
 import type { IconType } from "react-icons";
 import {
   SiCanva,
@@ -34,11 +34,8 @@ import {
   resolveProviderDiscoveryCwd,
 } from "~/lib/providerDiscovery";
 import {
-  providerComposerCapabilitiesQueryOptions,
   providerPluginsQueryOptions,
   providerSkillsQueryOptions,
-  supportsPluginDiscovery,
-  supportsSkillDiscovery,
 } from "~/lib/providerDiscoveryReactQuery";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 import { useFocusedChatContext } from "~/focusedChatContext";
@@ -59,7 +56,6 @@ import { Skeleton } from "./ui/skeleton";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type DiscoveryTab = "plugins" | "skills";
-type ProviderCapabilities = { plugins: boolean; skills: boolean };
 type PluginEntry = {
   marketplaceName: string;
   marketplacePath: string;
@@ -376,46 +372,9 @@ export function PluginLibrary() {
   const providerThreadId = focusedThreadId;
 
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
-  const codexCapabilitiesQuery = useQuery(providerComposerCapabilitiesQueryOptions("codex"));
-  const claudeCapabilitiesQuery = useQuery(providerComposerCapabilitiesQueryOptions("claudeAgent"));
 
-  const providerCapabilities = useMemo<Record<ProviderKind, ProviderCapabilities>>(
-    () => ({
-      codex: {
-        plugins: supportsPluginDiscovery(codexCapabilitiesQuery.data),
-        skills: supportsSkillDiscovery(codexCapabilitiesQuery.data),
-      },
-      claudeAgent: {
-        plugins: supportsPluginDiscovery(claudeCapabilitiesQuery.data),
-        skills: supportsSkillDiscovery(claudeCapabilitiesQuery.data),
-      },
-    }),
-    [claudeCapabilitiesQuery.data, codexCapabilitiesQuery.data],
-  );
-
-  // Auto-fallback: switch provider when current tab/provider combo is unsupported
-  useEffect(() => {
-    const supportsTab =
-      selectedTab === "plugins"
-        ? providerCapabilities[selectedProvider].plugins
-        : providerCapabilities[selectedProvider].skills;
-    if (supportsTab) return;
-    const fallback =
-      selectedTab === "plugins"
-        ? providerCapabilities.codex.plugins
-          ? "codex"
-          : providerCapabilities.claudeAgent.plugins
-            ? "claudeAgent"
-            : null
-        : providerCapabilities[preferredProvider].skills
-          ? preferredProvider
-          : providerCapabilities.codex.skills
-            ? "codex"
-            : providerCapabilities.claudeAgent.skills
-              ? "claudeAgent"
-              : null;
-    if (fallback) setSelectedProvider(fallback);
-  }, [preferredProvider, providerCapabilities, selectedProvider, selectedTab]);
+  // Capability gating removed: seed data is always available for both providers,
+  // so we never need to automatically switch away from the user's selection.
 
   const discoveryCwd = resolveProviderDiscoveryCwd({
     activeThreadWorktreePath: activeThread?.worktreePath ?? null,
@@ -424,28 +383,32 @@ export function PluginLibrary() {
   });
 
   const providerLabel = PROVIDER_DISPLAY_NAMES[selectedProvider];
-  const canListPlugins = providerCapabilities[selectedProvider].plugins;
-  const canListSkills = providerCapabilities[selectedProvider].skills;
+
+  // Always pass a cwd so skills query can run even when no project is active.
+  // The server returns seed data as a fallback, so the exact cwd doesn't matter.
+  const effectiveCwd = discoveryCwd ?? "/";
 
   const pluginsQuery = useQuery(
     providerPluginsQueryOptions({
       provider: selectedProvider,
-      cwd: discoveryCwd,
+      cwd: effectiveCwd,
       threadId: providerThreadId,
-      enabled: selectedTab === "plugins" && canListPlugins,
+      enabled: selectedTab === "plugins",
     }),
   );
 
   const skillsQuery = useQuery(
     providerSkillsQueryOptions({
       provider: selectedProvider,
-      cwd: discoveryCwd,
+      cwd: effectiveCwd,
       threadId: providerThreadId,
       query: selectedTab === "skills" ? deferredSkillSearch : "",
-      enabled: selectedTab === "skills" && canListSkills && discoveryCwd !== null,
+      enabled: selectedTab === "skills",
     }),
   );
 
+  // The query layer already merges server data with curated seed data,
+  // so we can read directly from the query result.
   const discoveredSkills = useMemo(
     () => skillsQuery.data?.skills ?? [],
     [skillsQuery.data?.skills],
@@ -526,34 +489,15 @@ export function PluginLibrary() {
               label="Codex"
               provider="codex"
               active={selectedProvider === "codex"}
-              disabled={!providerCapabilities.codex.plugins && !providerCapabilities.codex.skills}
-              onClick={() => {
-                setSelectedProvider("codex");
-                if (
-                  selectedTab === "skills" &&
-                  !providerCapabilities.codex.skills &&
-                  providerCapabilities.codex.plugins
-                )
-                  setSelectedTab("plugins");
-              }}
+              disabled={false}
+              onClick={() => setSelectedProvider("codex")}
             />
             <ProviderToggleButton
               label="Claude"
               provider="claudeAgent"
               active={selectedProvider === "claudeAgent"}
-              disabled={
-                !providerCapabilities.claudeAgent.plugins &&
-                !providerCapabilities.claudeAgent.skills
-              }
-              onClick={() => {
-                setSelectedProvider("claudeAgent");
-                if (
-                  selectedTab === "plugins" &&
-                  !providerCapabilities.claudeAgent.plugins &&
-                  providerCapabilities.claudeAgent.skills
-                )
-                  setSelectedTab("skills");
-              }}
+              disabled={false}
+              onClick={() => setSelectedProvider("claudeAgent")}
             />
           </div>
         </div>
@@ -616,14 +560,7 @@ export function PluginLibrary() {
           <div className="px-3 pb-10 sm:px-5">
             {selectedTab === "plugins" ? (
               <>
-                {!canListPlugins ? (
-                  <div className="mx-auto max-w-2xl">
-                    <EmptyPanel
-                      title={`Plugins unavailable for ${providerLabel}`}
-                      description="This provider does not expose plugin discovery."
-                    />
-                  </div>
-                ) : pluginsQuery.isLoading && pluginEntries.length === 0 ? (
+                {pluginsQuery.isLoading && pluginEntries.length === 0 ? (
                   <div className="space-y-1">
                     {["1", "2", "3", "4", "5", "6"].map((k) => (
                       <Skeleton key={k} className="h-[68px] w-full rounded-xl" />
@@ -651,14 +588,7 @@ export function PluginLibrary() {
               </>
             ) : (
               <>
-                {!canListSkills ? (
-                  <div className="mx-auto max-w-2xl">
-                    <EmptyPanel
-                      title={`Skills unavailable for ${providerLabel}`}
-                      description="This provider does not expose skill discovery."
-                    />
-                  </div>
-                ) : skillsQuery.isLoading && discoveredSkills.length === 0 ? (
+                {skillsQuery.isLoading && discoveredSkills.length === 0 ? (
                   <div className="space-y-1">
                     {["1", "2", "3", "4", "5", "6"].map((k) => (
                       <Skeleton key={k} className="h-[68px] w-full rounded-xl" />

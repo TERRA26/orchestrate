@@ -32,6 +32,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./chatThreads": {
+      "types": "./src/chatThreads.ts",
+      "import": "./src/chatThreads.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"

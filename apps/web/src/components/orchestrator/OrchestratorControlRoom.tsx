@@ -121,7 +121,10 @@ function CompactRunHeader({
   return (
     <div className="flex shrink-0 items-center gap-2 border-b border-border/10 px-3 py-1">
       <CircleIcon
-        className={cn("size-1.5 shrink-0 fill-current", getRunStatusDotColor(run?.status ?? "idle"))}
+        className={cn(
+          "size-1.5 shrink-0 fill-current",
+          getRunStatusDotColor(run?.status ?? "idle"),
+        )}
       />
       <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/50">
         {run ? run.status : "Orchestrator"}
@@ -378,7 +381,7 @@ export function OrchestratorControlRoom({
               workers.length === 1 ? "h-32" : workers.length <= 2 ? "h-28" : "h-36",
             )}
           >
-            <WorkerCanvas workers={workers} tasks={tasks} />
+            <WorkerCanvas workers={workers} />
           </div>
         )}
 

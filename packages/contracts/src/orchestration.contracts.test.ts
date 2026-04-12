@@ -130,9 +130,7 @@ it.effect("decodes OrchestratorTaskCreateCommand with full fields", () =>
       dependsOn: [],
       modelPolicy: {
         executionMode: "worker",
-        preferredModels: [
-          { provider: "codex", model: "gpt-5.2", weight: 1, reason: "fast" },
-        ],
+        preferredModels: [{ provider: "codex", model: "gpt-5.2", weight: 1, reason: "fast" }],
         requiredCapabilities: ["code-edit"],
         switchPolicy: "allow-on-retry",
         reviewMode: "same-model",

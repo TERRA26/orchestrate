@@ -11,6 +11,7 @@ This document defines the contract — what the orchestrator is, what it can do,
 The root orchestrator is a first-class tool-using actor. The default runtime policy keeps it in bounded control-plane mode.
 
 **Direct root work is allowed when:**
+
 - The work is short and interruptible
 - The scope is narrow (small file set, no destructive git)
 - No separate worktree or branch isolation is needed
@@ -18,6 +19,7 @@ The root orchestrator is a first-class tool-using actor. The default runtime pol
 - The result is needed on the critical path right now
 
 **The root must delegate when:**
+
 - The task is multi-file or open-ended
 - It needs sustained editing effort
 - It benefits from parallel execution
@@ -28,6 +30,7 @@ The root orchestrator is a first-class tool-using actor. The default runtime pol
 **The missing deeper rule:** scheduler duties win. If direct work expands past its execution budget, the root stops and converts in-progress execution into a delegated task (self-demotion).
 
 **V1 policy defaults:**
+
 - Root direct write budget: single semantic unit, small file set, no destructive git, no overlapping active ownership
 - Root direct time budget: short and interruptible
 - If budget exceeded: convert to worker
@@ -219,15 +222,19 @@ SpawnBudget {
 The orchestrator decides among four actions for every new message:
 
 ### answer
+
 Respond directly from available context. Used for status questions, clarification, reasoning about current evidence, or explaining orchestrator decisions.
 
 ### inspect
+
 The orchestrator does direct work: reads files, runs a command, checks computed styles, operates the browser. Short, bounded, interruptible. No delegation. Results inform the next routing decision.
 
 ### delegate
+
 Send a bounded task to a worker. The delegation contract includes objective, stop condition, scope, tools, evidence requirements, and escalation rules. A child worker may narrow scope but never broaden it.
 
 ### decompose
+
 Break the request into multiple tasks with dependency ordering. Creates a task DAG. Independent tasks may be assigned to parallel workers. Dependent tasks are queued.
 
 **Malformed routing output:** safe failure into `answer` with "I couldn't parse that routing decision. Could you rephrase?" Never blind delegation.
@@ -245,6 +252,7 @@ Break the request into multiple tasks with dependency ordering. Creates a task D
 - The parent remains accountable for child outputs until root acceptance.
 
 **Default V1 guardrails:**
+
 - Max delegation depth: 3
 - Max children per worker: 4
 - Max concurrent writers: 4
@@ -301,6 +309,7 @@ pending → assigned → running → submitted → accepted
 The browser is a first-class orchestrator workspace.
 
 **UI contract:**
+
 - Pinned directly under the orchestrator header, above the message transcript.
 - Collapsible like a dropdown, but anchored at the top when collapsed.
 - Shows: current URL, mode (live/automation/stale), last action, step progress.
@@ -308,6 +317,7 @@ The browser is a first-class orchestrator workspace.
 - When the orchestrator is using browser automation, the user can watch it work.
 
 **Validation contract:**
+
 - Browser validation only counts if a session was actually opened and evidence was captured.
 - Structural checks use ARIA snapshots and DOM. Valid evidence type: `dom`.
 - Interactive checks use click/type/navigate actions. Valid evidence type: `interaction`.
@@ -317,6 +327,7 @@ The browser is a first-class orchestrator workspace.
 - Browser actions are persistently logged as `Evidence` records, not transient UI.
 
 **Session contract:**
+
 - Preview sessions are durable per thread and reused across validation iterations.
 - Direct "validate in browser" requests always open a real browser run.
 - The orchestrator uses the active preview session URL when available, falling back to URL discovery only when no active session exists.
@@ -327,6 +338,7 @@ The browser is a first-class orchestrator workspace.
 ## Panel and Window Model
 
 **Worker panels:**
+
 - Top-level active workers open as equal-sized panels by default.
 - 2 workers: 50/50 split. 3-4 workers: equal grid.
 - More than 4: active set plus overflow strip.
@@ -335,6 +347,7 @@ The browser is a first-class orchestrator workspace.
 - Completed workers collapse into summary cards, not disappear.
 
 **Dual views:**
+
 - The UI shows both a worker grid and a task tree.
 - Pane layout is not the same as orchestration topology.
 - The task tree shows the full DAG with status, ownership, and evidence.
@@ -355,11 +368,13 @@ The browser is a first-class orchestrator workspace.
 ## Recovery and Observability
 
 **Server-canonical state:**
+
 - Runs, tasks, workers, browser sessions, and evidence are all server-owned.
 - The client is a projection/cache only.
 - Refreshing the UI restores: run tree, panel layout, selected preview, active statuses.
 
 **Crash-and-recover semantics:**
+
 - Completed steps are permanent and never re-executed.
 - An interrupted step is retried from scratch on resume.
 - On reconnect, the server replays run state and the client resumes from last completed step.
@@ -367,6 +382,7 @@ The browser is a first-class orchestrator workspace.
 - New task while active: confirm abandon or queue.
 
 **Observability requirements:**
+
 - Each run has a durable timeline with task IDs, worker IDs, spawn parentage, timestamps, actions, and stop reasons.
 - The system exposes why it answered, delegated, spawned children, and stopped.
 - Track: stuck runs, repeated rework loops, browser session failures, merge conflicts, evidence gaps.
@@ -426,6 +442,7 @@ orchestrator.checklist.updated
 ### New Read Model Additions
 
 Add to `OrchestrationReadModel`:
+
 ```
 runs: OrchestratorRun[]
 tasks: OrchestratorTask[]
@@ -560,14 +577,14 @@ Model selection is policy-driven, not LLM-decided.
 
 ### Recommended V1 Defaults
 
-| Role | Policy |
-|------|--------|
-| Root orchestrator | Stable reasoning model, one binding for the run |
-| Explorer/search tasks | Faster/lower-cost model |
-| Implementation tasks | Strongest code-editing model available |
-| Review tasks | Cross-provider when task is medium/high value |
-| Browser validation | Strongest browser-tool-use model |
-| Integration tasks | Strong reasoning + code comprehension model |
+| Role                  | Policy                                          |
+| --------------------- | ----------------------------------------------- |
+| Root orchestrator     | Stable reasoning model, one binding for the run |
+| Explorer/search tasks | Faster/lower-cost model                         |
+| Implementation tasks  | Strongest code-editing model available          |
+| Review tasks          | Cross-provider when task is medium/high value   |
+| Browser validation    | Strongest browser-tool-use model                |
+| Integration tasks     | Strong reasoning + code comprehension model     |
 
 ### Telemetry Per Task
 
@@ -609,12 +626,12 @@ Treat the root orchestrator as mission control. Separate conversation, task topo
 
 ### Panel Layout Rules
 
-| Workers | Layout |
-|---------|--------|
-| 1 | Centered large panel |
-| 2 | 50/50 split |
-| 3-4 | Equal grid |
-| 5+ | 4 live + overflow stack thumbnails |
+| Workers | Layout                             |
+| ------- | ---------------------------------- |
+| 1       | Centered large panel               |
+| 2       | 50/50 split                        |
+| 3-4     | Equal grid                         |
+| 5+      | 4 live + overflow stack thumbnails |
 
 - Blocked workers auto-promote visually.
 - Completed workers collapse into slim summary cards, not vanish.
@@ -623,15 +640,15 @@ Treat the root orchestrator as mission control. Separate conversation, task topo
 
 ### Panel States
 
-| State | Visual Treatment |
-|-------|-----------------|
-| active | Default, prominent |
-| waiting | Subtle pulse or dimmed border |
-| blocked | Amber/red edge glow + top-of-grid promotion |
-| reviewing | Moving header accent or scanline |
-| accepted | Desaturated with clean summary ribbon |
-| stale | Lowered contrast |
-| detached | Ghost outline |
+| State     | Visual Treatment                            |
+| --------- | ------------------------------------------- |
+| active    | Default, prominent                          |
+| waiting   | Subtle pulse or dimmed border               |
+| blocked   | Amber/red edge glow + top-of-grid promotion |
+| reviewing | Moving header accent or scanline            |
+| accepted  | Desaturated with clean summary ribbon       |
+| stale     | Lowered contrast                            |
+| detached  | Ghost outline                               |
 
 ### Collapsing
 
@@ -659,15 +676,15 @@ The transcript must support richer-than-normal markdown. Render these as first-c
 
 Different message types should look different:
 
-| Role | Treatment |
-|------|-----------|
-| User request | Clean speech bubble |
-| Orchestrator decision | Framed decision card |
-| Thinking/progress | Slim timeline row (check when done, spinner when active) |
-| Worker result | Submission card |
-| Review verdict | Verdict banner |
-| Browser validation | Evidence strip |
-| System warning | High-signal alert block |
+| Role                  | Treatment                                                |
+| --------------------- | -------------------------------------------------------- |
+| User request          | Clean speech bubble                                      |
+| Orchestrator decision | Framed decision card                                     |
+| Thinking/progress     | Slim timeline row (check when done, spinner when active) |
+| Worker result         | Submission card                                          |
+| Review verdict        | Verdict banner                                           |
+| Browser validation    | Evidence strip                                           |
+| System warning        | High-signal alert block                                  |
 
 ### Styling Details
 
@@ -708,6 +725,7 @@ Different message types should look different:
 ## What This Replaces
 
 The current system has:
+
 - Client-side run state in localStorage (`orchestratorStateStore.ts`)
 - A React effect watching `agentPhase` to trigger review (`useOrchestratorEngine.ts`)
 - A two-option router (answer/delegate) with malformed→delegate fallback

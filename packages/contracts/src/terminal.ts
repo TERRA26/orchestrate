@@ -26,7 +26,7 @@ const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
 export const TerminalThreadInput = Schema.Struct({
   threadId: TrimmedNonEmptyStringSchema,
 });
-export type TerminalThreadInput = typeof TerminalThreadInput.Type;
+export type TerminalThreadInput = Schema.Codec.Encoded<typeof TerminalThreadInput>;
 
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
@@ -73,7 +73,7 @@ export const TerminalCloseInput = Schema.Struct({
   terminalId: Schema.optional(TerminalIdSchema),
   deleteHistory: Schema.optional(Schema.Boolean),
 });
-export type TerminalCloseInput = typeof TerminalCloseInput.Type;
+export type TerminalCloseInput = Schema.Codec.Encoded<typeof TerminalCloseInput>;
 
 export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
@@ -137,6 +137,14 @@ const TerminalActivityEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("activity"),
   hasRunningSubprocess: Schema.Boolean,
+  cliKind: Schema.NullOr(Schema.Union([Schema.Literal("codex"), Schema.Literal("claude")])),
+  agentState: Schema.NullOr(
+    Schema.Union([
+      Schema.Literal("running"),
+      Schema.Literal("attention"),
+      Schema.Literal("review"),
+    ]),
+  ),
 });
 
 export const TerminalEvent = Schema.Union([

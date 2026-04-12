@@ -22,6 +22,8 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
   terminalNavigationShortcutData,
+  threadJumpIndexFromCommand,
+  threadTraversalDirectionFromCommand,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -77,12 +79,14 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
   }));
 }
 
+// Mirror the server defaults here so frontend shortcut resolution stays aligned.
 const DEFAULT_BINDINGS = compile([
   {
     shortcut: modShortcut("b"),
     command: "sidebar.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  { shortcut: modShortcut("k"), command: "sidebar.search" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
   {
     shortcut: modShortcut("d"),
@@ -90,7 +94,7 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("terminalFocus"),
   },
   {
-    shortcut: modShortcut("n"),
+    shortcut: modShortcut("t"),
     command: "terminal.new",
     whenAst: whenIdentifier("terminalFocus"),
   },
@@ -186,7 +190,7 @@ describe("split/new/close terminal shortcuts", () => {
       }),
     );
     assert.isFalse(
-      isTerminalNewShortcut(event({ key: "n", ctrlKey: true }), DEFAULT_BINDINGS, {
+      isTerminalNewShortcut(event({ key: "t", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
@@ -207,7 +211,7 @@ describe("split/new/close terminal shortcuts", () => {
       }),
     );
     assert.isTrue(
-      isTerminalNewShortcut(event({ key: "n", ctrlKey: true }), DEFAULT_BINDINGS, {
+      isTerminalNewShortcut(event({ key: "t", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: true },
       }),
@@ -380,6 +384,7 @@ describe("shortcutLabelForCommand", () => {
 
   it("returns labels for non-terminal commands", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⌘N");
+    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "terminal.new", "MacIntel"), "⌘T");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.newTerminal", "MacIntel"),
       "⇧⌘T",
@@ -388,6 +393,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.toggle", "MacIntel"),
       "⌘B",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.search", "MacIntel"),
+      "⌘K",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "browser.toggle", "MacIntel"),
@@ -500,6 +509,46 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("resolves legacy thread traversal shortcuts", () => {
+    const legacyBindings = compile([
+      {
+        shortcut: modShortcut("]", { shiftKey: true }),
+        command: "thread.next",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+      {
+        shortcut: modShortcut("[", { shiftKey: true }),
+        command: "thread.previous",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+      {
+        shortcut: modShortcut("3"),
+        command: "thread.jump.3",
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "]", metaKey: true, shiftKey: true }), legacyBindings, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.next",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "[", metaKey: true, shiftKey: true }), legacyBindings, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.previous",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "3", metaKey: true }), legacyBindings, {
+        platform: "MacIntel",
+      }),
+      "thread.jump.3",
+    );
+  });
+
   it("matches editor.openFavorite shortcut", () => {
     assert.isTrue(
       isOpenFavoriteEditorShortcut(event({ key: "o", metaKey: true }), DEFAULT_BINDINGS, {
@@ -540,6 +589,23 @@ describe("chat/editor shortcuts", () => {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
+    );
+  });
+
+  it("resolves sidebar.search regardless of terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "sidebar.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "sidebar.search",
     );
   });
 
@@ -642,6 +708,22 @@ describe("resolveShortcutCommand", () => {
   });
 });
 
+describe("legacy thread keybinding helpers", () => {
+  it("maps legacy thread traversal commands to directions", () => {
+    assert.strictEqual(threadTraversalDirectionFromCommand("thread.previous"), "previous");
+    assert.strictEqual(threadTraversalDirectionFromCommand("thread.next"), "next");
+    assert.isNull(threadTraversalDirectionFromCommand("chat.visible.next"));
+    assert.isNull(threadTraversalDirectionFromCommand(null));
+  });
+
+  it("maps legacy thread jump commands to sidebar indexes", () => {
+    assert.strictEqual(threadJumpIndexFromCommand("thread.jump.1"), 0);
+    assert.strictEqual(threadJumpIndexFromCommand("thread.jump.3"), 2);
+    assert.isNull(threadJumpIndexFromCommand("thread.next"));
+    assert.isNull(threadJumpIndexFromCommand(null));
+  });
+});
+
 describe("formatShortcutLabel", () => {
   it("formats labels for macOS", () => {
     assert.strictEqual(
@@ -669,8 +751,8 @@ describe("isTerminalClearShortcut", () => {
     assert.isTrue(isTerminalClearShortcut(event({ key: "l", ctrlKey: true }), "MacIntel"));
   });
 
-  it("matches Cmd+K on macOS", () => {
-    assert.isTrue(isTerminalClearShortcut(event({ key: "k", metaKey: true }), "MacIntel"));
+  it("does not match Cmd+K (reserved for sidebar search)", () => {
+    assert.isFalse(isTerminalClearShortcut(event({ key: "k", metaKey: true }), "MacIntel"));
   });
 
   it("ignores non-keydown events", () => {

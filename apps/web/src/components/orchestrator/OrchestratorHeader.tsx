@@ -1,10 +1,8 @@
 import {
   BrainIcon,
   CheckCircleIcon,
-  CircleIcon,
   GlobeIcon,
   LoaderIcon,
-  PauseIcon,
   SendIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -16,41 +14,6 @@ import type { OrchestratorStatus } from "./useOrchestratorEngine";
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
-
-type AgentPhase = "disconnected" | "connecting" | "ready" | "running";
-
-function AgentStatusBadge({ phase }: { phase: AgentPhase }) {
-  if (phase === "running") {
-    return (
-      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <LoaderIcon className="size-3 animate-spin" />
-        Running
-      </span>
-    );
-  }
-  if (phase === "connecting") {
-    return (
-      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <LoaderIcon className="size-3 animate-spin" />
-        Connecting
-      </span>
-    );
-  }
-  if (phase === "ready") {
-    return (
-      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <CircleIcon className="size-2.5 fill-current" />
-        Ready
-      </span>
-    );
-  }
-  return (
-    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <PauseIcon className="size-3" />
-      Idle
-    </span>
-  );
-}
 
 function OrchestratorStatusBar({
   status,
@@ -103,9 +66,6 @@ function OrchestratorStatusBar({
 // ---------------------------------------------------------------------------
 
 export interface OrchestratorHeaderProps {
-  managedThread: { title: string; activities?: ReadonlyArray<{ summary: string }> } | undefined;
-  agentPhase: string;
-  latestActivity: { summary: string } | null;
   status: OrchestratorStatus;
   statusDetail: string | null;
   threadBrowserSession: unknown;
@@ -121,9 +81,6 @@ export interface OrchestratorHeaderProps {
 // ---------------------------------------------------------------------------
 
 export function OrchestratorHeader({
-  managedThread,
-  agentPhase,
-  latestActivity,
   status,
   statusDetail,
   threadBrowserSession,
@@ -194,26 +151,6 @@ export function OrchestratorHeader({
           </Button>
         </div>
       </div>
-
-      {/* ---- Agent context bar ---- */}
-      {managedThread ? (
-        <div className="flex shrink-0 items-center justify-between border-b border-border/30 px-3 py-1.5 dark:border-white/[0.03]">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs">
-              <span className="text-muted-foreground">Agent:</span>{" "}
-              <span className="font-medium">{managedThread.title}</span>
-            </p>
-            {latestActivity ? (
-              <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                {latestActivity.summary}
-              </p>
-            ) : null}
-          </div>
-          <div className="ml-2 shrink-0">
-            <AgentStatusBadge phase={agentPhase as AgentPhase} />
-          </div>
-        </div>
-      ) : null}
 
       {/* ---- Status bar ---- */}
       <OrchestratorStatusBar status={status} detail={statusDetail} />

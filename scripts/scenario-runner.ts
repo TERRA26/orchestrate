@@ -874,7 +874,10 @@ const scenario5: Scenario = {
     steps.push(
       await runStep("Assert kind=delegate", async () => {
         if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
-          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
+          return {
+            pass: false,
+            detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}`,
+          };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -1020,7 +1023,10 @@ const scenario6: Scenario = {
     steps.push(
       await runStep("Assert kind=delegate", async () => {
         if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
-          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
+          return {
+            pass: false,
+            detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}`,
+          };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -1120,7 +1126,10 @@ const scenario7: Scenario = {
     steps.push(
       await runStep("Assert kind=delegate", async () => {
         if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
-          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
+          return {
+            pass: false,
+            detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}`,
+          };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -1282,7 +1291,10 @@ const scenario10: Scenario = {
     steps.push(
       await runStep("Assert kind=delegate", async () => {
         if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
-          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
+          return {
+            pass: false,
+            detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}`,
+          };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),
@@ -5139,7 +5151,10 @@ const scenario48: Scenario = {
     steps.push(
       await runStep("Assert kind=delegate", async () => {
         if (decision!.kind !== "delegate" && decision!.kind !== "decompose") {
-          return { pass: false, detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}` };
+          return {
+            pass: false,
+            detail: `Expected kind=delegate or decompose, got kind=${decision!.kind}`,
+          };
         }
         return { pass: true, detail: `Delegated: "${decision!.title}"` };
       }),

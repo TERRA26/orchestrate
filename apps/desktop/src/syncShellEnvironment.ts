@@ -17,7 +17,6 @@ export function syncShellEnvironment(
   try {
     const shell = resolveLoginShell(platform, env.SHELL);
     if (!shell) return;
-
     const shellEnvironment = (options.readEnvironment ?? readEnvironmentFromLoginShell)(shell, [
       "PATH",
       "SSH_AUTH_SOCK",

@@ -24,15 +24,12 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
-  ProjectReadFileInput,
-  ProjectReadFileResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig, ServerProvider } from "./server";
-import type { ServerSettingsPatch, ServerSettings } from "./settings";
+import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -55,26 +52,6 @@ import type {
 } from "./orchestration";
 import { EditorId } from "./editor";
 import type { ThreadId } from "./baseSchemas";
-import type {
-  BrowserOpenSessionInput,
-  BrowserOpenSessionResult,
-  BrowserActInput,
-  BrowserActResult,
-  BrowserCloseSessionInput,
-} from "./browser";
-import type { OrchestratorCompleteInput, OrchestratorCompleteResult } from "./ws";
-import type {
-  OrchestratorRun,
-  OrchestratorTask,
-  OrchestratorWorker,
-  OrchestratorEvidenceRecord,
-  OrchestratorCreateRunInput,
-  OrchestratorCancelRunInput,
-  OrchestratorGetRunInput,
-  OrchestratorGetTaskTreeInput,
-  OrchestratorGetWorkersInput,
-  OrchestratorGetEvidenceInput,
-} from "./orchestration";
 import type {
   ProviderComposerCapabilities,
   ProviderGetComposerCapabilitiesInput,
@@ -200,6 +177,7 @@ export interface DesktopNotificationInput {
   title: string;
   body?: string;
   silent?: boolean;
+  threadId?: ThreadId;
 }
 
 export interface DesktopBridge {
@@ -256,7 +234,6 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
-    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
@@ -293,8 +270,6 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
-    refreshProviders: () => Promise<readonly ServerProvider[]>;
-    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
   };
   provider: {
     getComposerCapabilities: (
@@ -315,7 +290,6 @@ export interface NativeApi {
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
-    complete: (input: OrchestratorCompleteInput) => Promise<OrchestratorCompleteResult>;
   };
   browser: {
     open: (input: BrowserOpenInput) => Promise<ThreadBrowserState>;
@@ -332,19 +306,5 @@ export interface NativeApi {
     selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     openDevTools: (input: BrowserTabInput) => Promise<void>;
     onState: (callback: (state: ThreadBrowserState) => void) => () => void;
-    openSession: (input: BrowserOpenSessionInput) => Promise<BrowserOpenSessionResult>;
-    act: (input: BrowserActInput) => Promise<BrowserActResult>;
-    closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
-  };
-  orchestrator: {
-    createRun: (input: OrchestratorCreateRunInput) => Promise<OrchestratorRun>;
-    cancelRun: (input: OrchestratorCancelRunInput) => Promise<{ ok: boolean }>;
-    getRun: (input: OrchestratorGetRunInput) => Promise<OrchestratorRun | null>;
-    getActiveRuns: () => Promise<readonly OrchestratorRun[]>;
-    getTaskTree: (input: OrchestratorGetTaskTreeInput) => Promise<readonly OrchestratorTask[]>;
-    getWorkers: (input: OrchestratorGetWorkersInput) => Promise<readonly OrchestratorWorker[]>;
-    getEvidence: (
-      input: OrchestratorGetEvidenceInput,
-    ) => Promise<readonly OrchestratorEvidenceRecord[]>;
   };
 }

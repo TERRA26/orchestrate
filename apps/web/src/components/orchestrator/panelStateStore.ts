@@ -1,6 +1,19 @@
 import { create } from "zustand";
 
+const ORCHESTRATOR_OPEN_STORAGE_KEY = "t3code:orchestrator-panel-open";
+
+function readOrchestratorOpen(): boolean {
+  try {
+    return localStorage.getItem(ORCHESTRATOR_OPEN_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
 interface PanelState {
+  // Orchestrator panel
+  orchestratorOpen: boolean;
+
   // Panel visibility
   visiblePanelIds: string[];
   focusedPanelId: string | null;
@@ -13,7 +26,8 @@ interface PanelState {
   browserCollapsed: boolean;
 
   // Actions
-  focus: (panelId: string) => void;
+  toggleOrchestrator: () => void;
+  focus: (panelId: string | null) => void;
   promote: (panelId: string) => void;
   demote: () => void;
   collapse: (panelId: string) => void;
@@ -28,6 +42,7 @@ interface PanelState {
 }
 
 export const usePanelStateStore = create<PanelState>((set) => ({
+  orchestratorOpen: readOrchestratorOpen(),
   visiblePanelIds: [],
   focusedPanelId: null,
   promotedPanelId: null,
@@ -35,6 +50,17 @@ export const usePanelStateStore = create<PanelState>((set) => ({
   leftRailCollapsed: false,
   inspectorCollapsed: false,
   browserCollapsed: true,
+
+  toggleOrchestrator: () =>
+    set((state) => {
+      const next = !state.orchestratorOpen;
+      try {
+        localStorage.setItem(ORCHESTRATOR_OPEN_STORAGE_KEY, String(next));
+      } catch {
+        // Ignore storage errors
+      }
+      return { orchestratorOpen: next };
+    }),
 
   focus: (panelId) => set({ focusedPanelId: panelId }),
 
