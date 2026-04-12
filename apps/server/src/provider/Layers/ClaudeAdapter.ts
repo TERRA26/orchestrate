@@ -8,6 +8,7 @@
  */
 import {
   type CanUseTool,
+  createSdkMcpServer,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -46,6 +47,7 @@ import {
   type ProviderListSkillsInput,
   type ProviderListSkillsResult,
   ORCHESTRATION_TOOL_NAMES,
+  ORCHESTRATION_TOOL_NAMES_LIST,
 } from "@t3tools/contracts";
 import {
   hasEffortLevel,
@@ -70,6 +72,8 @@ import {
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { buildOrchestratorSystemPrompt } from "../../orchestration/orchestratorSystemPrompt.ts";
+import { OrchestrationToolRouterService } from "../../orchestration/Services/OrchestrationToolRouter.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -551,6 +555,109 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/** Short descriptions for orchestration tools exposed via the MCP server. */
+const ORCHESTRATION_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  // Agent lifecycle
+  spawn_agent: "Spawn a new worker agent with a task, model, and optional worktree.",
+  terminate_agent: "Terminate a running agent and release its resources.",
+  restart_agent: "Restart a failed or stuck agent, optionally with a different model.",
+  clone_agent: "Clone an agent's context into a new agent for parallel exploration.",
+  pause_agent: "Pause a running agent, preserving its state for later resume.",
+  resume_agent: "Resume a previously paused agent.",
+  promote_to_foreground: "Move a background agent to a visible foreground panel.",
+  demote_to_background: "Move a foreground agent to background, freeing panel space.",
+  // Communication
+  send_to_agent: "Send a message or instruction to a specific agent.",
+  broadcast: "Broadcast a message to all active agents.",
+  transfer_context: "Transfer relevant context from one agent to another.",
+  ask_agent: "Ask an agent a question and wait for a structured response.",
+  share_file: "Share a file path with an agent, adding it to their read scope.",
+  // Monitoring
+  get_agent_status: "Get the current status of a specific agent.",
+  get_all_status: "Get a summary of all active agents with their states and tasks.",
+  get_agent_diff: "Get the current working diff produced by an agent.",
+  get_agent_logs: "Get recent log output from an agent's session.",
+  get_background_results: "Collect completed results from all background agents.",
+  get_spawn_tree: "Get the full agent spawn tree showing parent-child relationships.",
+  // Coordination
+  wait_agent: "Block until a specific agent completes its current task.",
+  wait_all: "Block until all specified agents complete.",
+  set_dependency: "Declare that one task depends on another, enforcing execution order.",
+  merge_work: "Merge the output of one agent's worktree into another's or into main.",
+  set_spawn_budget: "Update the spawn budget for the current orchestration run.",
+  // Review
+  review_agent_work: "Initiate a structured review of an agent's submitted work.",
+  run_tests: "Run the project test suite or a subset of tests as a quality gate.",
+  accept_work: "Accept an agent's submitted work, marking the task as complete.",
+  reject_work: "Reject an agent's submitted work with specific rework instructions.",
+  request_revision: "Request targeted revisions without full rejection.",
+  // UI / Panel management
+  focus_agent: "Bring an agent's panel into focus in the UI.",
+  arrange_panels: "Set the panel layout arrangement in the UI.",
+  promote_panel: "Expand an agent's panel to full width.",
+  collapse_panel: "Collapse an agent's panel to minimal size.",
+  open_diff_view: "Open a diff view comparing an agent's changes against the base.",
+  open_browser_preview: "Open the embedded browser preview for visual validation.",
+  // Configuration
+  assign_worktree: "Assign a dedicated git worktree to an agent for isolated writes.",
+  set_model: "Change the model used by a running agent.",
+  set_scope: "Set or update the read/write scope for an agent.",
+  restrict_scope: "Narrow an agent's existing scope without replacing it entirely.",
+};
+
+/**
+ * Build an in-process MCP server that exposes orchestration tools to the SDK.
+ *
+ * Each tool accepts arbitrary JSON input and delegates execution to the
+ * `OrchestrationToolRouter`. The handler bridges from async to Effect via
+ * `Effect.runPromiseWith`.
+ */
+function buildOrchestrationMcpServer(deps: {
+  readonly router: OrchestrationToolRouterService["Type"];
+  readonly services: Effect.Effect.Context<never>;
+  readonly threadId: string;
+}) {
+  const tools = ORCHESTRATION_TOOL_NAMES_LIST.map((toolName) => ({
+    name: toolName,
+    description: ORCHESTRATION_TOOL_DESCRIPTIONS[toolName] ?? toolName,
+    // Accept any JSON object — the router performs its own Effect Schema validation.
+    inputSchema: {} as Record<string, never>,
+    handler: async (args: Record<string, unknown>) => {
+      try {
+        const result = await Effect.runPromiseWith(deps.services)(
+          deps.router.executeTool({
+            toolName,
+            toolInput: args,
+            threadId: deps.threadId,
+            runId: null,
+          }),
+        );
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  }));
+
+  return createSdkMcpServer({
+    name: "orchestrate",
+    version: "1.0.0",
+    tools,
+  });
+}
+
 function buildPromptText(input: ProviderSendTurnInput): string {
   const rawEffort =
     input.modelSelection?.provider === "claudeAgent" ? input.modelSelection.options?.effort : null;
@@ -978,6 +1085,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* ServerConfig;
+
+    // Resolve orchestration tool router (optional — absent in non-orchestration builds).
+    const toolRouterOption = yield* Effect.serviceOption(OrchestrationToolRouterService);
+    const toolRouter = toolRouterOption._tag === "Some" ? toolRouterOption.value : undefined;
+    const adapterServices = yield* Effect.services<never>();
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -2668,6 +2780,15 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 } satisfies PermissionResult;
               }
 
+              // Orchestration tools are executed by the in-process MCP server
+              // handler; auto-allow them without user permission prompts.
+              if (ORCHESTRATION_TOOL_NAMES.has(toolName)) {
+                return {
+                  behavior: "allow",
+                  updatedInput: toolInput,
+                } satisfies PermissionResult;
+              }
+
               // Handle AskUserQuestion: surface clarifying questions to the
               // user via the user-input runtime event channel, regardless of
               // runtime mode (plan mode relies on this heavily).
@@ -2842,6 +2963,24 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(fastMode ? { fastMode: true } : {}),
         };
 
+        // -- Orchestrator-specific: system prompt + MCP tool server -------
+        const isOrchestrator = input.threadType === "orchestrator" && toolRouter !== undefined;
+        let orchestratorSystemPromptAppend: string | undefined;
+        let orchestrationMcpServer: ReturnType<typeof buildOrchestrationMcpServer> | undefined;
+
+        if (isOrchestrator) {
+          const projectRoot = input.cwd ?? serverConfig.cwd;
+          orchestratorSystemPromptAppend = yield* buildOrchestratorSystemPrompt({
+            projectRoot,
+          }).pipe(Effect.orElseSucceed(() => undefined));
+
+          orchestrationMcpServer = buildOrchestrationMcpServer({
+            router: toolRouter,
+            services: adapterServices,
+            threadId,
+          });
+        }
+
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(modelSelection?.model ? { model: modelSelection.model } : {}),
@@ -2862,6 +3001,20 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           canUseTool,
           env: process.env,
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
+          // Orchestrator threads: inject ORCHESTRATOR.md into system prompt
+          // and register orchestration tools via an in-process MCP server.
+          ...(orchestratorSystemPromptAppend
+            ? {
+                systemPrompt: {
+                  type: "preset" as const,
+                  preset: "claude_code" as const,
+                  append: orchestratorSystemPromptAppend,
+                },
+              }
+            : {}),
+          ...(orchestrationMcpServer
+            ? { mcpServers: { orchestrate: orchestrationMcpServer } }
+            : {}),
         };
 
         const queryRuntime = yield* Effect.try({
