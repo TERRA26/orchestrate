@@ -1,5 +1,0 @@
-#!/bin/sh
-# Managed claude wrapper injected by t3code terminal sessions.
-printf '\033]0;%s\007' 'Claude Code'
-export T3CODE_TERMINAL_CLI_KIND='claude'
-exec '/Users/christophe/.local/bin/claude' --settings '/Users/christophe/Documents/Orchestrate/orchestrate/.orchestrate-dev-agent-window-smoke/dev/logs/terminals/_managed-bin/claude-settings.json' "$@"
