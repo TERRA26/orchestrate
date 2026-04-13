@@ -5,8 +5,6 @@ import { OrchestratorHeader } from "./orchestrator/OrchestratorHeader";
 import { OrchestratorMessages } from "./orchestrator/OrchestratorMessages";
 import { OrchestratorComposer } from "./orchestrator/OrchestratorComposer";
 import { OrchestratorControlRoom } from "./orchestrator/OrchestratorControlRoom";
-import { MultiAgentLayout } from "./orchestrator/MultiAgentLayout";
-import { useMultiAgentLayoutStore } from "~/lib/multiAgentLayoutStore";
 
 // ---------------------------------------------------------------------------
 // Error boundary
@@ -55,13 +53,9 @@ class OrchestratorErrorBoundary extends React.Component<
 
 function OrchestratorPanelInner() {
   const engine = useOrchestratorEngine();
-  const layoutMode = useMultiAgentLayoutStore((s) => s.mode);
 
-  const orchestratorContent = (
-    <div
-      className="relative flex h-dvh flex-1 flex-col bg-background/80 text-foreground backdrop-blur-xl backdrop-saturate-150 dark:bg-background/80"
-    >
-
+  return (
+    <div className="relative flex h-dvh flex-1 flex-col bg-background/80 text-foreground backdrop-blur-xl backdrop-saturate-150 dark:bg-background/80">
       <OrchestratorHeader
         status={engine.status}
         statusDetail={engine.statusDetail}
@@ -85,11 +79,13 @@ function OrchestratorPanelInner() {
         <div className="flex min-h-0 flex-1 flex-col">
           <OrchestratorMessages
             messages={engine.messages}
+            workLogEntries={engine.workLogEntries}
             requirementsChecklist={engine.requirementsChecklist}
             threadBrowserSession={engine.threadBrowserSession}
             isThreadBrowserSessionVisible={engine.isThreadBrowserSessionVisible}
             isBusy={engine.isBusy}
             scrollRef={engine.scrollRef}
+            onOpenWorkerPanel={engine.handleOpenWorkerPanel}
           />
 
           <OrchestratorComposer
@@ -111,21 +107,6 @@ function OrchestratorPanelInner() {
       </OrchestratorControlRoom>
     </div>
   );
-
-  if (layoutMode === "rail-and-panels") {
-    return (
-      <MultiAgentLayout
-        orchestratorContent={orchestratorContent}
-        agentContent={(threadId) => (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Agent thread {threadId.slice(0, 8)}... loading
-          </div>
-        )}
-      />
-    );
-  }
-
-  return orchestratorContent;
 }
 
 // ---------------------------------------------------------------------------

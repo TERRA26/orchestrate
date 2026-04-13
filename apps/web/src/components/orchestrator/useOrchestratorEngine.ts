@@ -14,9 +14,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { newCommandId, newMessageId } from "~/lib/utils";
+import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { useSettings } from "~/hooks/useSettings";
-import { deriveEffectiveComposerModelState } from "~/composerDraftStore";
+import { deriveEffectiveComposerModelState, useComposerDraftStore } from "~/composerDraftStore";
 import {
   createEmbeddedBrowserAutomationSession,
   createEmbeddedBrowserSessionFromUrl,
@@ -43,10 +43,11 @@ import {
   derivePhase,
   deriveWorkLogEntries,
   inferCheckpointTurnCountByTurnId,
+  type WorkLogEntry,
 } from "~/session-logic";
 import {
   buildBrowserValidationUserPrompt,
-  buildRecoveredOrchestratorMessages,
+  buildThreadBackedOrchestratorMessages,
   buildDelegationInstruction,
   buildReviewUserPrompt,
   classifyReviewArtifactsReadiness,
@@ -78,9 +79,8 @@ import type { ComposerProviderState } from "../chat/composerProviderRegistry";
 import { countOrchestratorChecklistItems } from "../../orchestratorTypes";
 import type { OrchestratorChecklistItem } from "../../orchestratorTypes";
 import type { Thread } from "~/types";
-import type { ProjectId } from "@t3tools/contracts";
 import type { BrowserAction } from "@t3tools/contracts";
-import { useMultiAgentLayoutStore } from "~/lib/multiAgentLayoutStore";
+import { selectVisibleOrchestratorRun } from "./orchestratorRunSelection";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,7 +175,9 @@ export interface OrchestratorEngineResult {
   handleStartNewChat: () => Promise<void>;
   handleToggleBrowserPreview: () => void;
   handlePromptChangeFromTraits: (prompt: string) => void;
+  handleOpenWorkerPanel: (input: { workerId?: string; threadId?: string }) => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  workLogEntries: readonly WorkLogEntry[];
 
   // Server-canonical orchestrator state
   orchestratorRun: OrchestratorRun | null;
@@ -198,12 +200,13 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       params.threadId ? ThreadId.makeUnsafe(params.threadId) : null,
   });
   const routeThread = useThreadById(routeThreadId);
+  const routeDraftThread = useComposerDraftStore((store) =>
+    routeThreadId ? (store.draftThreadsByThreadId[routeThreadId] ?? null) : null,
+  );
   const [pendingCreatedThreadId, setPendingCreatedThreadId] = useState<ThreadId | null>(null);
   const firstProjectId = useStore((store) => store.projects[0]?.id ?? null);
+  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const appendOrchestratorMessage = useOrchestratorStateStore((store) => store.appendMessage);
-  const hydrateThreadMessagesIfEmpty = useOrchestratorStateStore(
-    (store) => store.hydrateThreadMessagesIfEmpty,
-  );
   const moveThreadState = useOrchestratorStateStore((store) => store.moveThreadState);
   const resetThreadConversation = useOrchestratorStateStore(
     (store) => store.resetThreadConversation,
@@ -254,82 +257,93 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     currentThreadId ? (store.threadSessionVisibilityById[currentThreadId] ?? true) : true,
   );
   const orchestratorThreadState = useOrchestratorThreadState(currentThreadId);
-  const messages = orchestratorThreadState.messages;
-  const input = orchestratorThreadState.prompt;
-  const activeRun = orchestratorThreadState.activeRun;
-  const requirementsChecklist = orchestratorThreadState.requirementsChecklist;
-  const recoveredMessages = useMemo(
+  const threadBackedMessages = useMemo(
     () =>
-      routeThreadId && routeThread
-        ? buildRecoveredOrchestratorMessages(routeThread).map((message, index) => ({
-            id: `recovered:${routeThreadId}:${index}`,
+      routeThread
+        ? buildThreadBackedOrchestratorMessages(routeThread).map((message, index) => ({
+            id: `recovered:${routeThread.id}:${index}`,
             role: message.role,
             content: message.content,
             timestamp: message.timestamp,
           }))
         : [],
-    [routeThread, routeThreadId],
+    [routeThread],
   );
-
-  useEffect(() => {
-    if (!routeThreadId || messages.length > 0 || recoveredMessages.length === 0) {
-      return;
-    }
-    hydrateThreadMessagesIfEmpty(routeThreadId, recoveredMessages);
-  }, [hydrateThreadMessagesIfEmpty, messages.length, recoveredMessages, routeThreadId]);
+  const workLogEntries = useMemo(
+    () =>
+      routeThread
+        ? deriveWorkLogEntries(routeThread.activities, routeThread.latestTurn?.turnId ?? undefined)
+        : [],
+    [routeThread],
+  );
+  const messages = routeThread ? threadBackedMessages : orchestratorThreadState.messages;
+  const input = orchestratorThreadState.prompt;
+  const activeRun = orchestratorThreadState.activeRun;
+  const requirementsChecklist = orchestratorThreadState.requirementsChecklist;
 
   // -- Server config --
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const providers = serverConfigQuery.data?.providers ?? EMPTY_PROVIDERS;
 
   // -- Server-canonical orchestrator state --
-  const activeRunsQuery = useQuery({
-    queryKey: ["orchestrator", "activeRuns"],
-    queryFn: () => {
+  const orchestratorSnapshotQuery = useQuery({
+    queryKey: ["orchestrator", "snapshot"],
+    queryFn: async () => {
       const api = readNativeApi();
-      return api?.orchestrator.getActiveRuns() ?? Promise.resolve([] as readonly OrchestratorRun[]);
+      if (!api) {
+        return {
+          orchestratorRuns: [] as readonly OrchestratorRun[],
+          orchestratorTasks: [] as readonly OrchestratorTask[],
+          orchestratorWorkers: [] as readonly OrchestratorWorker[],
+        };
+      }
+      const snapshot = await api.orchestration.getSnapshot();
+      return {
+        orchestratorRuns: snapshot.orchestratorRuns ?? [],
+        orchestratorTasks: snapshot.orchestratorTasks ?? [],
+        orchestratorWorkers: snapshot.orchestratorWorkers ?? [],
+      };
     },
     refetchInterval: 5000,
   });
+  const refetchOrchestratorSnapshot = orchestratorSnapshotQuery.refetch;
 
-  const trackedRunId = activeRun?.runId ?? null;
-  const serverRun: OrchestratorRun | null = trackedRunId
-    ? (activeRunsQuery.data?.find((run) => run.runId === trackedRunId) ?? null)
-    : (activeRunsQuery.data?.[0] ?? null);
-
-  const taskTreeQuery = useQuery({
-    queryKey: ["orchestrator", "taskTree", trackedRunId ?? serverRun?.runId ?? null],
-    queryFn: () => {
-      const api = readNativeApi();
-      const runId = trackedRunId ?? serverRun?.runId;
-      return runId
-        ? (api?.orchestrator.getTaskTree({ runId }) ??
-            Promise.resolve([] as readonly OrchestratorTask[]))
-        : ([] as readonly OrchestratorTask[]);
-    },
-    enabled: Boolean(trackedRunId ?? serverRun?.runId),
-    refetchInterval: 3000,
-  });
-
-  const workersQuery = useQuery({
-    queryKey: ["orchestrator", "workers", trackedRunId ?? serverRun?.runId ?? null],
-    queryFn: () => {
-      const api = readNativeApi();
-      const runId = trackedRunId ?? serverRun?.runId;
-      return runId
-        ? (api?.orchestrator.getWorkers({ runId }) ??
-            Promise.resolve([] as readonly OrchestratorWorker[]))
-        : ([] as readonly OrchestratorWorker[]);
-    },
-    enabled: Boolean(trackedRunId ?? serverRun?.runId),
-    refetchInterval: 3000,
-  });
+  const allOrchestratorWorkers = useMemo(
+    () => orchestratorSnapshotQuery.data?.orchestratorWorkers ?? [],
+    [orchestratorSnapshotQuery.data?.orchestratorWorkers],
+  );
+  const trackedRunId = routeThread ? null : (activeRun?.runId ?? null);
+  const serverRun: OrchestratorRun | null = selectVisibleOrchestratorRun(
+    orchestratorSnapshotQuery.data?.orchestratorRuns,
+    trackedRunId,
+  );
+  const activeOrchestratorRunId = trackedRunId ?? serverRun?.runId ?? null;
+  const orchestratorTasks = useMemo(
+    () =>
+      orchestratorSnapshotQuery.data?.orchestratorTasks.filter((task) =>
+        activeOrchestratorRunId ? task.runId === activeOrchestratorRunId : false,
+      ) ?? [],
+    [activeOrchestratorRunId, orchestratorSnapshotQuery.data?.orchestratorTasks],
+  );
+  const orchestratorWorkers = useMemo(
+    () =>
+      allOrchestratorWorkers.filter((worker) =>
+        activeOrchestratorRunId ? worker.runId === activeOrchestratorRunId : false,
+      ),
+    [activeOrchestratorRunId, allOrchestratorWorkers],
+  );
 
   // -- Model selection --
   const currentThreadModelSelection = routeThread?.modelSelection ?? null;
   const currentProject = useProjectById(
-    routeThread?.projectId ?? activeRun?.projectId ?? firstProjectId ?? null,
+    routeThread?.projectId ??
+      routeDraftThread?.projectId ??
+      activeRun?.projectId ??
+      firstProjectId ??
+      null,
   );
+  const currentThreadType =
+    routeDraftThread?.threadType ?? routeThread?.threadType ?? "orchestrator";
   const selectedProviderByThread = orchestratorThreadState.activeProvider ?? null;
   const selectedProvider = resolveSelectableProvider(
     providers,
@@ -635,8 +649,14 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       }
 
       if (outcome.kind === "cancelled") {
-        await api.orchestrator
-          .cancelRun({ runId: run.runId, reason: outcome.reason })
+        await api.orchestration
+          .dispatchCommand({
+            type: "orchestrator.run.cancel",
+            commandId: newCommandId(),
+            runId: run.runId,
+            reason: outcome.reason,
+            createdAt: new Date().toISOString(),
+          })
           .catch(() => undefined);
         return;
       }
@@ -1567,23 +1587,112 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
 
       setOrchestratorPrompt(currentThreadId, "");
 
-      await api.orchestration.dispatchCommand({
-        type: "thread.turn.start",
-        commandId: newCommandId(),
-        threadId: currentThreadId,
-        message: {
-          messageId: newMessageId(),
-          role: "user",
-          text: trimmed,
-          attachments: [],
-        },
-        modelSelection: selectedModelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        createdAt: new Date().toISOString(),
-      });
+      const createdAt = new Date().toISOString();
+      let threadIdForSend = currentThreadId;
+      try {
+        const projectId = routeDraftThread?.projectId ?? currentProject?.id ?? firstProjectId;
+        if (!projectId) {
+          addMessage(
+            currentThreadId,
+            "orchestrator",
+            "No project is available for this orchestrator chat.",
+          );
+          return;
+        }
+
+        const envMode = routeDraftThread?.envMode ?? "local";
+        const branch = routeDraftThread?.branch ?? null;
+        const worktreePath = routeDraftThread?.worktreePath ?? null;
+
+        if (!routeThread) {
+          threadIdForSend =
+            currentThreadId === ORCHESTRATOR_DRAFT_THREAD_ID ? newThreadId() : currentThreadId;
+          const title = trimmed.length > 80 ? `${trimmed.slice(0, 77).trimEnd()}...` : trimmed;
+
+          await api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            projectId,
+            title,
+            threadType: currentThreadType,
+            modelSelection: selectedModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            envMode,
+            branch,
+            worktreePath,
+            createdAt,
+          });
+
+          useComposerDraftStore.getState().setProjectDraftThreadId(projectId, threadIdForSend, {
+            createdAt,
+            entryPoint: "chat",
+            threadType: currentThreadType,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            envMode,
+            branch,
+            worktreePath,
+          });
+
+          if (threadIdForSend !== currentThreadId) {
+            moveThreadState(currentThreadId, threadIdForSend);
+            moveThreadStatus(currentThreadId, threadIdForSend);
+            setPendingCreatedThreadId(threadIdForSend);
+            await navigate({
+              to: "/$threadId",
+              params: { threadId: threadIdForSend },
+            });
+          }
+        }
+
+        addMessage(threadIdForSend, "user", trimmed);
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: trimmed,
+            attachments: [],
+          },
+          modelSelection: selectedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt,
+        });
+
+        const snapshot = await api.orchestration.getSnapshot();
+        syncServerReadModel(snapshot);
+      } catch (error) {
+        addMessage(
+          threadIdForSend,
+          "orchestrator",
+          error instanceof Error
+            ? `Failed to send message: ${error.message}`
+            : "Failed to send message.",
+        );
+      }
     },
-    [currentThreadId, selectedModel, selectedModelSelection, addMessage, setOrchestratorPrompt],
+    [
+      addMessage,
+      currentProject?.id,
+      currentThreadId,
+      currentThreadType,
+      firstProjectId,
+      moveThreadState,
+      moveThreadStatus,
+      navigate,
+      routeDraftThread,
+      routeThread,
+      selectedModel,
+      selectedModelSelection,
+      setOrchestratorPrompt,
+      syncServerReadModel,
+    ],
   );
 
   const setInput = useCallback(
@@ -1642,13 +1751,47 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     [currentThreadId, setOrchestratorPrompt],
   );
 
-  // -- Sync workers with multi-agent layout store --
-  const orchestratorWorkers = workersQuery.data ?? [];
-  const syncWithWorkers = useMultiAgentLayoutStore((s) => s.syncWithWorkers);
-
   useEffect(() => {
-    syncWithWorkers(orchestratorWorkers);
-  }, [orchestratorWorkers, syncWithWorkers]);
+    const latestWorkEntry = workLogEntries.at(-1);
+    if (!latestWorkEntry?.toolName) {
+      return;
+    }
+    if (!latestWorkEntry.workerId && !latestWorkEntry.threadId) {
+      return;
+    }
+    if (
+      latestWorkEntry.toolName !== "spawn_agent" &&
+      latestWorkEntry.toolName !== "focus_agent" &&
+      latestWorkEntry.toolName !== "promote_to_foreground" &&
+      latestWorkEntry.toolName !== "promote_panel"
+    ) {
+      return;
+    }
+    void refetchOrchestratorSnapshot();
+  }, [refetchOrchestratorSnapshot, workLogEntries]);
+
+  const handleOpenWorkerPanel = useCallback(
+    (input: { workerId?: string; threadId?: string }) => {
+      const matchedWorker =
+        (input.workerId
+          ? allOrchestratorWorkers.find((worker) => worker.workerId === input.workerId)
+          : null) ??
+        (input.threadId
+          ? allOrchestratorWorkers.find((worker) => worker.threadId === input.threadId)
+          : null) ??
+        null;
+
+      const threadId = matchedWorker?.threadId ?? input.threadId;
+      if (threadId) {
+        void refetchOrchestratorSnapshot();
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: ThreadId.makeUnsafe(threadId) },
+        });
+      }
+    },
+    [allOrchestratorWorkers, navigate, refetchOrchestratorSnapshot],
+  );
 
   return {
     currentThreadId,
@@ -1678,11 +1821,13 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     handleStartNewChat,
     handleToggleBrowserPreview,
     handlePromptChangeFromTraits,
+    handleOpenWorkerPanel,
     scrollRef,
+    workLogEntries,
 
     // Server-canonical orchestrator state
     orchestratorRun: serverRun,
-    orchestratorTasks: taskTreeQuery.data ?? [],
+    orchestratorTasks,
     orchestratorWorkers,
   };
 }
