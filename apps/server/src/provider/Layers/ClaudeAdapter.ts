@@ -6,6 +6,8 @@
  *
  * @module ClaudeAdapterLive
  */
+import * as nodePath from "node:path";
+import * as nodeFs from "node:fs";
 import {
   type CanUseTool,
   createSdkMcpServer,
@@ -437,6 +439,23 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
       ? { turnCount: turnCountValue }
       : {}),
   };
+}
+
+/**
+ * Walk up from a directory to find the repo root (where docs/ORCHESTRATOR.md lives).
+ * Falls back to the given directory if nothing is found.
+ */
+function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (let i = 0; i < 10; i++) {
+    if (nodeFs.existsSync(nodePath.join(dir, "docs", "ORCHESTRATOR.md"))) {
+      return dir;
+    }
+    const parent = nodePath.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return startDir;
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
@@ -3205,7 +3224,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         let orchestrationMcpServer: ReturnType<typeof buildOrchestrationMcpServer> | undefined;
 
         if (isOrchestrator) {
-          const projectRoot = input.cwd ?? serverConfig.cwd;
+          // The server CWD is apps/server, but ORCHESTRATOR.md lives at the repo root.
+          // Walk up from the CWD to find the repo root (where docs/ORCHESTRATOR.md exists).
+          const baseCwd = input.cwd ?? serverConfig.cwd;
+          const projectRoot = findRepoRoot(baseCwd);
           orchestratorSystemPromptAppend = yield* buildOrchestratorSystemPrompt({
             projectRoot,
           }).pipe(Effect.orElseSucceed(() => undefined));
