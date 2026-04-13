@@ -3220,6 +3220,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const toolRouterOption = yield* Effect.serviceOption(OrchestrationToolRouterService);
         const toolRouter = toolRouterOption._tag === "Some" ? toolRouterOption.value : undefined;
         const isOrchestrator = input.threadType === "orchestrator" && toolRouter !== undefined;
+        console.log(`[ClaudeAdapter] threadType=${input.threadType}, toolRouter=${toolRouterOption._tag}, isOrchestrator=${isOrchestrator}`);
         let orchestratorSystemPromptAppend: string | undefined;
         let orchestrationMcpServer: ReturnType<typeof buildOrchestrationMcpServer> | undefined;
 
