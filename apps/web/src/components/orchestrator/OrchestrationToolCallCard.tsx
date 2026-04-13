@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { ORCHESTRATION_TOOL_NAMES } from "@t3tools/contracts";
+import { useOrchestratorPaneStore } from "~/lib/orchestratorPaneStore";
 
 interface OrchestrationToolCallCardProps {
   toolName: string;
@@ -14,8 +16,28 @@ export function isOrchestrationToolCall(toolName: string): boolean {
 export function OrchestrationToolCallCard({
   toolName,
   input,
+  result,
   isLoading,
 }: OrchestrationToolCallCardProps) {
+  const { focusAgent, collapseAgent } = useOrchestratorPaneStore();
+
+  useEffect(() => {
+    if (!result || isLoading) return;
+    const res = result as Record<string, unknown>;
+
+    if (toolName === "focus_agent" && res.threadId) {
+      focusAgent(String(res.threadId));
+    }
+    if (toolName === "collapse_panel" && res.threadId) {
+      collapseAgent(String(res.threadId));
+    }
+    if (toolName === "spawn_agent" && res.threadId) {
+      const inp = input as Record<string, unknown>;
+      if (inp.mode !== "background") {
+        focusAgent(String(res.threadId));
+      }
+    }
+  }, [toolName, input, result, isLoading, focusAgent, collapseAgent]);
   const parsed = input as Record<string, unknown>;
 
   switch (toolName) {
@@ -105,6 +127,17 @@ export function OrchestrationToolCallCard({
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
           <span className="text-muted-foreground">{"\u2192"}</span>
           <span>Sent instruction to agent</span>
+        </div>
+      );
+    }
+    case "focus_agent":
+    case "promote_to_foreground":
+    case "promote_panel": {
+      return (
+        <div className="flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
+          <span className="text-sky-400">{"\u25A3"}</span>
+          <span className="font-medium">Brought agent panel to the front</span>
+          {isLoading && <span className="animate-pulse text-muted-foreground">...</span>}
         </div>
       );
     }
