@@ -27,6 +27,8 @@ import ChatView from "../components/ChatView";
 import BrowserPanel from "../components/BrowserPanel";
 import { ClaudeAI, OpenAI } from "../components/Icons";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
+import { OrchestratorPanel } from "../components/OrchestratorPanel";
+import { useOrchestratorPaneStore } from "../lib/orchestratorPaneStore";
 import {
   DiffPanelHeaderSkeleton,
   DiffPanelLoadingState,
@@ -52,6 +54,7 @@ import {
   useSplitViewStore,
 } from "../splitViewStore";
 import { useStore } from "../store";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { Button } from "../components/ui/button";
 import {
   Dialog,
@@ -1107,6 +1110,43 @@ function SingleChatSurface(props: {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Orchestrator 3-pane layout: orchestrator panel + up to 2 agent ChatViews
+// ---------------------------------------------------------------------------
+
+function OrchestratorMultiPaneSurface(props: { agentThreadIds: string[] }) {
+  const agentCount = props.agentThreadIds.length;
+  const orchestratorWidth = agentCount === 1 ? "50%" : "30%";
+  const agentWidth = agentCount === 1 ? "50%" : "35%";
+
+  return (
+    <div className="flex h-dvh w-full">
+      {/* Orchestrator pane - always present */}
+      <div
+        style={{ width: orchestratorWidth }}
+        className="h-full min-w-0 overflow-hidden border-r border-border/30"
+      >
+        <OrchestratorPanel />
+      </div>
+      {/* Agent panes */}
+      {props.agentThreadIds.map((agentThreadId, i) => (
+        <div
+          key={agentThreadId}
+          style={{ width: agentWidth }}
+          className={`h-full min-w-0 overflow-hidden ${i < agentCount - 1 ? "border-r border-border/30" : ""}`}
+        >
+          <ChatView
+            key={agentThreadId}
+            threadId={agentThreadId as ThreadIdType}
+            paneScopeId={`orchestrator-agent:${agentThreadId}`}
+            surfaceMode="split"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ChatThreadRouteView() {
   const threadsHydrated = useStore((store) => store.threadsHydrated);
   const threadId = Route.useParams({
@@ -1116,18 +1156,45 @@ function ChatThreadRouteView() {
   const threadProjectId = useStore(
     (store) => store.threads.find((thread) => thread.id === threadId)?.projectId ?? null,
   );
+  const threadType = useStore(
+    (store) => store.threads.find((thread) => thread.id === threadId)?.threadType ?? null,
+  );
   const threadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
   const draftThreadState = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
+  const terminalEntryPoint = useTerminalStateStore(
+    (store) => selectThreadTerminalState(store.terminalStateByThreadId, threadId).entryPoint,
+  );
   const draftThreadExists = draftThreadState !== null;
   const routeThreadExists = threadExists || draftThreadExists;
+  const resolvedThreadType = draftThreadState?.threadType ?? threadType ?? "orchestrator";
+  const showOrchestratorSurface =
+    routeThreadExists && terminalEntryPoint !== "terminal" && resolvedThreadType === "orchestrator";
   const splitView = useSplitViewStore(selectSplitView(search.splitViewId ?? null));
   const activeProjectId = resolveSingleProjectId({
     threadProjectId,
     draftProjectId: draftThreadState?.projectId ?? null,
   });
   const navigate = useNavigate();
+
+  // Orchestrator pane store: track orchestrator thread and focused agent panes
+  const { orchestratorThreadId, focusedAgentThreadIds, setOrchestratorThread } =
+    useOrchestratorPaneStore();
+
+  useEffect(() => {
+    if (showOrchestratorSurface) {
+      setOrchestratorThread(threadId);
+    }
+    return () => {
+      if (showOrchestratorSurface) {
+        setOrchestratorThread(null);
+      }
+    };
+  }, [threadId, showOrchestratorSurface, setOrchestratorThread]);
+
+  const isOrchestratorThread = orchestratorThreadId === threadId;
+  const hasOrchestratorAgentPanes = isOrchestratorThread && focusedAgentThreadIds.length > 0;
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -1161,6 +1228,13 @@ function ChatThreadRouteView() {
 
   if (!routeThreadExists) {
     return null;
+  }
+
+  if (showOrchestratorSurface) {
+    if (hasOrchestratorAgentPanes) {
+      return <OrchestratorMultiPaneSurface agentThreadIds={focusedAgentThreadIds} />;
+    }
+    return <OrchestratorPanel />;
   }
 
   return <SingleChatSurface threadId={threadId} search={search} projectId={activeProjectId} />;
