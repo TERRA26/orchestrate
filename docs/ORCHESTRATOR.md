@@ -45,10 +45,10 @@ Classify every user message into one of four actions:
 ### Direct control requests
 
 - If the user says `open an agent window`, `start an agent`, `open a visible worker`, or equivalent UI-control language, do NOT ask a clarifying question first.
-- Immediately call `spawn_agent` in `foreground` mode.
+- Immediately call `orchestrate_spawn_agent` in `foreground` mode.
 - If the user did not supply a concrete task, create a standby worker whose only job is to confirm readiness and wait for follow-up instructions without modifying files.
 - After spawning, report which worker/thread was opened and keep that worker visible in the foreground panel.
-- If the user says `focus that agent`, `bring it to the front`, or `show that worker`, call `focus_agent` (or `promote_to_foreground`) for that worker instead of saying you cannot control the UI.
+- If the user says `focus that agent`, `bring it to the front`, or `show that worker`, call `orchestrate_focus_agent` (or `orchestrate_promote_to_foreground`) for that worker instead of saying you cannot control the UI.
 
 ## Task Design
 
@@ -187,7 +187,7 @@ This orchestrator runs within the Orchestrate app:
 ## Constraints
 
 - Do NOT write code directly — always delegate to a worker
-- Do NOT use Claude Code's built-in hidden Agent/Subagent tool. Use the visible orchestration tools (`spawn_agent`, `send_to_agent`, `promote_to_foreground`, etc.) so worker activity appears in the Orchestrate UI.
+- Do NOT use Claude Code's built-in hidden Agent/Subagent tool. Use the visible orchestration tools (`orchestrate_spawn_agent`, `orchestrate_send_to_agent`, `orchestrate_promote_to_foreground`, etc.) so worker activity appears in the Orchestrate UI.
 - Do NOT skip the review step — every submission must be verified
 - Do NOT spawn more workers than the budget allows
 - Do NOT accept work without evidence that acceptance criteria are met
@@ -225,7 +225,7 @@ Use the right agent mode for each job:
 When the user asks to open an agent window with no task, use this pattern immediately:
 
 ```
-spawn_agent(
+orchestrate_spawn_agent(
   task: "Stand by for follow-up instructions",
   objective: "Confirm that the agent window is open and wait for the next instruction. Do not modify files until a concrete task is assigned.",
   mode: "foreground"
@@ -252,16 +252,16 @@ When in doubt, start with Claude Sonnet for implementation and Claude Haiku for 
 Two agents work simultaneously on unrelated modules:
 
 ```
-spawn_agent(task: "backend-api", model: "codex", mode: "foreground")
-spawn_agent(task: "frontend-ui", model: "sonnet", mode: "foreground")
-wait_all(agent_ids: [backend_id, frontend_id])
-review_agent_work(agent_id: backend_id)
-review_agent_work(agent_id: frontend_id)
-run_tests()
-accept_work(agent_id: backend_id)
-accept_work(agent_id: frontend_id)
-merge_work(source_agent_id: backend_id, target: "main")
-merge_work(source_agent_id: frontend_id, target: "main")
+orchestrate_spawn_agent(task: "backend-api", model: "codex", mode: "foreground")
+orchestrate_spawn_agent(task: "frontend-ui", model: "sonnet", mode: "foreground")
+orchestrate_wait_all(agent_ids: [backend_id, frontend_id])
+orchestrate_review_agent_work(agent_id: backend_id)
+orchestrate_review_agent_work(agent_id: frontend_id)
+orchestrate_run_tests()
+orchestrate_accept_work(agent_id: backend_id)
+orchestrate_accept_work(agent_id: frontend_id)
+orchestrate_merge_work(source_agent_id: backend_id, target: "main")
+orchestrate_merge_work(source_agent_id: frontend_id, target: "main")
 ```
 
 ### Pattern 2: Pipeline (API first, then client)
@@ -269,18 +269,18 @@ merge_work(source_agent_id: frontend_id, target: "main")
 Sequential work where the second task depends on the first:
 
 ```
-spawn_agent(task: "build-api-endpoint", model: "codex", mode: "foreground")
-wait_agent(agent_id: api_agent_id)
-review_agent_work(agent_id: api_agent_id)
-accept_work(agent_id: api_agent_id)
-merge_work(source_agent_id: api_agent_id, target: "main")
-spawn_agent(task: "build-client-integration", model: "sonnet", mode: "foreground")
-transfer_context(from_agent_id: api_agent_id, to_agent_id: client_agent_id)
-wait_agent(agent_id: client_agent_id)
-review_agent_work(agent_id: client_agent_id)
-run_tests()
-accept_work(agent_id: client_agent_id)
-merge_work(source_agent_id: client_agent_id, target: "main")
+orchestrate_spawn_agent(task: "build-api-endpoint", model: "codex", mode: "foreground")
+orchestrate_wait_agent(agent_id: api_agent_id)
+orchestrate_review_agent_work(agent_id: api_agent_id)
+orchestrate_accept_work(agent_id: api_agent_id)
+orchestrate_merge_work(source_agent_id: api_agent_id, target: "main")
+orchestrate_spawn_agent(task: "build-client-integration", model: "sonnet", mode: "foreground")
+orchestrate_transfer_context(from_agent_id: api_agent_id, to_agent_id: client_agent_id)
+orchestrate_wait_agent(agent_id: client_agent_id)
+orchestrate_review_agent_work(agent_id: client_agent_id)
+orchestrate_run_tests()
+orchestrate_accept_work(agent_id: client_agent_id)
+orchestrate_merge_work(source_agent_id: client_agent_id, target: "main")
 ```
 
 ### Pattern 3: Research-then-build (background research, foreground implementation)
@@ -288,18 +288,18 @@ merge_work(source_agent_id: client_agent_id, target: "main")
 Background agents gather context, then a foreground agent implements:
 
 ```
-spawn_agent(task: "research-existing-patterns", model: "haiku", mode: "background")
-spawn_agent(task: "audit-dependencies", model: "haiku", mode: "background")
-wait_all(agent_ids: [research_id, audit_id])
-get_background_results()
-spawn_agent(task: "implement-feature", model: "opus", mode: "foreground")
-transfer_context(from_agent_id: research_id, to_agent_id: impl_id)
-transfer_context(from_agent_id: audit_id, to_agent_id: impl_id)
-wait_agent(agent_id: impl_id)
-review_agent_work(agent_id: impl_id)
-run_tests()
-accept_work(agent_id: impl_id)
-merge_work(source_agent_id: impl_id, target: "main")
+orchestrate_spawn_agent(task: "research-existing-patterns", model: "haiku", mode: "background")
+orchestrate_spawn_agent(task: "audit-dependencies", model: "haiku", mode: "background")
+orchestrate_wait_all(agent_ids: [research_id, audit_id])
+orchestrate_get_background_results()
+orchestrate_spawn_agent(task: "implement-feature", model: "opus", mode: "foreground")
+orchestrate_transfer_context(from_agent_id: research_id, to_agent_id: impl_id)
+orchestrate_transfer_context(from_agent_id: audit_id, to_agent_id: impl_id)
+orchestrate_wait_agent(agent_id: impl_id)
+orchestrate_review_agent_work(agent_id: impl_id)
+orchestrate_run_tests()
+orchestrate_accept_work(agent_id: impl_id)
+orchestrate_merge_work(source_agent_id: impl_id, target: "main")
 ```
 
 ## Budget Defaults
@@ -312,4 +312,4 @@ max_total_workers: 12
 max_concurrent_writers: 4
 ```
 
-These defaults balance throughput with resource safety. Adjust via `set_spawn_budget` when justified (e.g., a large decomposed task with many independent modules). Always report to the user if budget is exhausted before all tasks complete.
+These defaults balance throughput with resource safety. Adjust via `orchestrate_set_spawn_budget` when justified (e.g., a large decomposed task with many independent modules). Always report to the user if budget is exhausted before all tasks complete.

@@ -579,52 +579,52 @@ const CLAUDE_SETTING_SOURCES = [
 /** Short descriptions for orchestration tools exposed via the MCP server. */
 const ORCHESTRATION_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   // Agent lifecycle
-  spawn_agent:
+  orchestrate_spawn_agent:
     "Spawn a new worker agent with a simple task/objective and optional foreground/background mode. Run/task context is inferred automatically.",
-  terminate_agent: "Terminate a running agent and release its resources.",
-  restart_agent: "Restart a failed or stuck agent, optionally with a different model.",
-  clone_agent: "Clone an agent's context into a new agent for parallel exploration.",
-  pause_agent: "Pause a running agent, preserving its state for later resume.",
-  resume_agent: "Resume a previously paused agent.",
-  promote_to_foreground: "Move a background agent to a visible foreground panel.",
-  demote_to_background: "Move a foreground agent to background, freeing panel space.",
+  orchestrate_terminate_agent: "Terminate a running agent and release its resources.",
+  orchestrate_restart_agent: "Restart a failed or stuck agent, optionally with a different model.",
+  orchestrate_clone_agent: "Clone an agent's context into a new agent for parallel exploration.",
+  orchestrate_pause_agent: "Pause a running agent, preserving its state for later resume.",
+  orchestrate_resume_agent: "Resume a previously paused agent.",
+  orchestrate_promote_to_foreground: "Move a background agent to a visible foreground panel.",
+  orchestrate_demote_to_background: "Move a foreground agent to background, freeing panel space.",
   // Communication
-  send_to_agent: "Send a message or instruction to a specific agent.",
-  broadcast: "Broadcast a message to all active agents.",
-  transfer_context: "Transfer relevant context from one agent to another.",
-  ask_agent: "Ask an agent a question and wait for a structured response.",
-  share_file: "Share a file path with an agent, adding it to their read scope.",
+  orchestrate_send_to_agent: "Send a message or instruction to a specific agent.",
+  orchestrate_broadcast: "Broadcast a message to all active agents.",
+  orchestrate_transfer_context: "Transfer relevant context from one agent to another.",
+  orchestrate_ask_agent: "Ask an agent a question and wait for a structured response.",
+  orchestrate_share_file: "Share a file path with an agent, adding it to their read scope.",
   // Monitoring
-  get_agent_status: "Get the current status of a specific agent.",
-  get_all_status: "Get a summary of all active agents with their states and tasks.",
-  get_agent_diff: "Get the current working diff produced by an agent.",
-  get_agent_logs: "Get recent log output from an agent's session.",
-  get_background_results: "Collect completed results from all background agents.",
-  get_spawn_tree: "Get the full agent spawn tree showing parent-child relationships.",
+  orchestrate_get_agent_status: "Get the current status of a specific agent.",
+  orchestrate_get_all_status: "Get a summary of all active agents with their states and tasks.",
+  orchestrate_get_agent_diff: "Get the current working diff produced by an agent.",
+  orchestrate_get_agent_logs: "Get recent log output from an agent's session.",
+  orchestrate_get_background_results: "Collect completed results from all background agents.",
+  orchestrate_get_spawn_tree: "Get the full agent spawn tree showing parent-child relationships.",
   // Coordination
-  wait_agent: "Block until a specific agent completes its current task.",
-  wait_all: "Block until all specified agents complete.",
-  set_dependency: "Declare that one task depends on another, enforcing execution order.",
-  merge_work: "Merge the output of one agent's worktree into another's or into main.",
-  set_spawn_budget: "Update the spawn budget for the current orchestration run.",
+  orchestrate_wait_agent: "Block until a specific agent completes its current task.",
+  orchestrate_wait_all: "Block until all specified agents complete.",
+  orchestrate_set_dependency: "Declare that one task depends on another, enforcing execution order.",
+  orchestrate_merge_work: "Merge the output of one agent's worktree into another's or into main.",
+  orchestrate_set_spawn_budget: "Update the spawn budget for the current orchestration run.",
   // Review
-  review_agent_work: "Initiate a structured review of an agent's submitted work.",
-  run_tests: "Run the project test suite or a subset of tests as a quality gate.",
-  accept_work: "Accept an agent's submitted work, marking the task as complete.",
-  reject_work: "Reject an agent's submitted work with specific rework instructions.",
-  request_revision: "Request targeted revisions without full rejection.",
+  orchestrate_review_agent_work: "Initiate a structured review of an agent's submitted work.",
+  orchestrate_run_tests: "Run the project test suite or a subset of tests as a quality gate.",
+  orchestrate_accept_work: "Accept an agent's submitted work, marking the task as complete.",
+  orchestrate_reject_work: "Reject an agent's submitted work with specific rework instructions.",
+  orchestrate_request_revision: "Request targeted revisions without full rejection.",
   // UI / Panel management
-  focus_agent: "Bring an agent's panel into focus in the UI.",
-  arrange_panels: "Set the panel layout arrangement in the UI.",
-  promote_panel: "Expand an agent's panel to full width.",
-  collapse_panel: "Collapse an agent's panel to minimal size.",
-  open_diff_view: "Open a diff view comparing an agent's changes against the base.",
-  open_browser_preview: "Open the embedded browser preview for visual validation.",
+  orchestrate_focus_agent: "Bring an agent's panel into focus in the UI.",
+  orchestrate_arrange_panels: "Set the panel layout arrangement in the UI.",
+  orchestrate_promote_panel: "Expand an agent's panel to full width.",
+  orchestrate_collapse_panel: "Collapse an agent's panel to minimal size.",
+  orchestrate_open_diff_view: "Open a diff view comparing an agent's changes against the base.",
+  orchestrate_open_browser_preview: "Open the embedded browser preview for visual validation.",
   // Configuration
-  assign_worktree: "Assign a dedicated git worktree to an agent for isolated writes.",
-  set_model: "Change the model used by a running agent.",
-  set_scope: "Set or update the read/write scope for an agent.",
-  restrict_scope: "Narrow an agent's existing scope without replacing it entirely.",
+  orchestrate_assign_worktree: "Assign a dedicated git worktree to an agent for isolated writes.",
+  orchestrate_set_model: "Change the model used by a running agent.",
+  orchestrate_set_scope: "Set or update the read/write scope for an agent.",
+  orchestrate_restrict_scope: "Narrow an agent's existing scope without replacing it entirely.",
 };
 
 // ---------------------------------------------------------------------------
@@ -644,7 +644,7 @@ const ORCHESTRATION_TOOL_INPUT_SCHEMAS: Readonly<
   Record<OrchestrationToolName, Record<string, z.ZodType>>
 > = {
   // Agent lifecycle
-  spawn_agent: {
+  orchestrate_spawn_agent: {
     task: z.string().optional().describe("Short task label."),
     objective: z.string().optional().describe("Detailed instructions for the worker."),
     acceptance_criteria: z
@@ -659,105 +659,105 @@ const ORCHESTRATION_TOOL_INPUT_SCHEMAS: Readonly<
     worktree: z.string().optional().describe("Git worktree path for isolated writes."),
     branch: z.string().optional().describe("Git branch name."),
   },
-  terminate_agent: {
+  orchestrate_terminate_agent: {
     agent_id: zAgentId,
     reason: z.string().optional().describe("Reason for termination."),
   },
-  restart_agent: {
+  orchestrate_restart_agent: {
     agent_id: zAgentId,
     reason: z.string().optional().describe("Reason for restart."),
     model: z.string().optional().describe("New model override."),
   },
-  clone_agent: {
+  orchestrate_clone_agent: {
     source_agent_id: zAgentId.describe("Agent to clone from."),
     task_id: zTaskId.optional().describe("New task for the clone."),
     target_branch: z.string().optional().describe("Target branch for the clone."),
     target_worktree_path: z.string().optional().describe("Target worktree path."),
   },
-  pause_agent: {
+  orchestrate_pause_agent: {
     agent_id: zAgentId,
     reason: z.string().optional().describe("Reason for pausing."),
   },
-  resume_agent: {
+  orchestrate_resume_agent: {
     agent_id: zAgentId,
   },
-  promote_to_foreground: {
+  orchestrate_promote_to_foreground: {
     agent_id: zAgentId,
   },
-  demote_to_background: {
+  orchestrate_demote_to_background: {
     agent_id: zAgentId,
   },
   // Communication
-  send_to_agent: {
+  orchestrate_send_to_agent: {
     agent_id: zAgentId.describe("Target agent."),
     message: z.string().describe("Message content."),
     metadata: z.record(z.string()).optional().describe("Optional key-value metadata."),
   },
-  broadcast: {
+  orchestrate_broadcast: {
     message: z.string().describe("Broadcast content."),
     filter_mode: z.string().optional().describe('"foreground", "background", or "all".'),
     exclude_agent_ids: z.array(z.string()).optional().describe("Agent IDs to exclude."),
   },
-  transfer_context: {
+  orchestrate_transfer_context: {
     from_agent_id: zAgentId.describe("Source agent."),
     to_agent_id: zAgentId.describe("Destination agent."),
     context_keys: z.array(z.string()).optional().describe("Specific context keys to transfer."),
     include_history: z.boolean().optional().describe("Include conversation history."),
   },
-  ask_agent: {
+  orchestrate_ask_agent: {
     agent_id: zAgentId.describe("Agent to query."),
     question: z.string().describe("Question to ask."),
     timeout_ms: z.number().optional().describe("Max wait time in ms."),
   },
-  share_file: {
+  orchestrate_share_file: {
     agent_id: zAgentId.describe("Target agent."),
     file_path: z.string().describe("Absolute file path to share."),
     description: z.string().optional().describe("File description."),
   },
   // Monitoring
-  get_agent_status: {
+  orchestrate_get_agent_status: {
     agent_id: zAgentId,
   },
-  get_all_status: {
+  orchestrate_get_all_status: {
     run_id: zRunId.optional().describe("Filter by run ID."),
   },
-  get_agent_diff: {
+  orchestrate_get_agent_diff: {
     agent_id: zAgentId,
     base: z.string().optional().describe("Base ref for diff comparison."),
   },
-  get_agent_logs: {
+  orchestrate_get_agent_logs: {
     agent_id: zAgentId,
     tail: z.number().optional().describe("Number of recent lines."),
     since: z.string().optional().describe("ISO timestamp to filter from."),
   },
-  get_background_results: {
+  orchestrate_get_background_results: {
     run_id: zRunId.optional().describe("Filter by run ID."),
     agent_ids: z.array(z.string()).optional().describe("Filter by agent IDs."),
     include_pending: z.boolean().optional().describe("Include in-progress agents."),
   },
-  get_spawn_tree: {
+  orchestrate_get_spawn_tree: {
     run_id: zRunId.describe("Run ID to get the spawn tree for."),
   },
   // Coordination
-  wait_agent: {
+  orchestrate_wait_agent: {
     agent_id: zAgentId,
     timeout_ms: z.number().optional().describe("Max wait time in ms."),
   },
-  wait_all: {
+  orchestrate_wait_all: {
     agent_ids: z.array(z.string()).describe("Agent IDs to wait for."),
     timeout_ms: z.number().optional().describe("Max wait time in ms."),
   },
-  set_dependency: {
+  orchestrate_set_dependency: {
     from_agent_id: zAgentId.describe("Dependent agent."),
     to_agent_id: zAgentId.describe("Prerequisite agent."),
     description: z.string().optional().describe("Dependency description."),
   },
-  merge_work: {
+  orchestrate_merge_work: {
     source_agent_id: zAgentId.describe("Agent whose work to merge."),
     target_branch: z.string().optional().describe('Target branch or "main".'),
     strategy: z.string().optional().describe('"merge", "rebase", or "squash".'),
   },
-  set_spawn_budget: {
+  orchestrate_set_spawn_budget: {
     run_id: zRunId.optional().describe("Run ID to update."),
     max_depth: z.number().optional().describe("Max spawn depth."),
     max_children: z.number().optional().describe("Max children per worker."),
@@ -765,29 +765,29 @@ const ORCHESTRATION_TOOL_INPUT_SCHEMAS: Readonly<
     max_total_workers: z.number().optional().describe("Max total workers."),
   },
   // Review
-  review_agent_work: {
+  orchestrate_review_agent_work: {
     agent_id: zAgentId,
     task_id: zTaskId.optional().describe("Specific task to review."),
     include_checklist: z.boolean().optional().describe("Include acceptance checklist."),
     include_diff: z.boolean().optional().describe("Include the code diff."),
   },
-  run_tests: {
+  orchestrate_run_tests: {
     agent_id: zAgentId.optional().describe("Agent context for test run."),
     command: z.string().optional().describe("Custom test command."),
     file_pattern: z.string().optional().describe("Test file pattern filter."),
     timeout_ms: z.number().optional().describe("Max test run time in ms."),
   },
-  accept_work: {
+  orchestrate_accept_work: {
     agent_id: zAgentId,
     task_id: zTaskId.optional().describe("Task to accept."),
     notes: z.string().optional().describe("Acceptance notes."),
   },
-  reject_work: {
+  orchestrate_reject_work: {
     agent_id: zAgentId,
     task_id: zTaskId.optional().describe("Task to reject."),
     reason: z.string().describe("Rejection reason."),
   },
-  request_revision: {
+  orchestrate_request_revision: {
     agent_id: zAgentId,
     task_id: zTaskId.optional().describe("Task to request revision for."),
     instructions: z.string().describe("Revision instructions."),
@@ -797,55 +797,55 @@ const ORCHESTRATION_TOOL_INPUT_SCHEMAS: Readonly<
       .describe("Specific checklist items to revise."),
   },
   // UI / Panel management
-  focus_agent: {
+  orchestrate_focus_agent: {
     agent_id: zAgentId.optional().describe("Agent to focus."),
     thread_id: z.string().optional().describe("Thread ID to focus."),
     worker_id: z.string().optional().describe("Worker ID to focus."),
   },
-  arrange_panels: {
+  orchestrate_arrange_panels: {
     layout: z.string().describe('"horizontal", "vertical", "grid", or "stack".'),
     agent_ids: z.array(z.string()).optional().describe("Specific agents to arrange."),
   },
-  promote_panel: {
+  orchestrate_promote_panel: {
     agent_id: zAgentId.optional().describe("Agent whose panel to expand."),
     thread_id: z.string().optional().describe("Thread ID to promote."),
     worker_id: z.string().optional().describe("Worker ID to promote."),
     size: z.string().optional().describe('"normal", "large", or "maximized".'),
   },
-  collapse_panel: {
+  orchestrate_collapse_panel: {
     agent_id: zAgentId.optional().describe("Agent whose panel to collapse."),
     thread_id: z.string().optional().describe("Thread ID to collapse."),
     worker_id: z.string().optional().describe("Worker ID to collapse."),
   },
-  open_diff_view: {
+  orchestrate_open_diff_view: {
     agent_id: zAgentId,
     file_path: z.string().optional().describe("Specific file to diff."),
     base: z.string().optional().describe("Base ref for comparison."),
   },
-  open_browser_preview: {
+  orchestrate_open_browser_preview: {
     agent_id: zAgentId.optional().describe("Agent context."),
     url: z.string().optional().describe("Preview URL to open."),
   },
   // Configuration
-  assign_worktree: {
+  orchestrate_assign_worktree: {
     agent_id: zAgentId,
     branch: z.string().optional().describe("Branch name (auto-generated if omitted)."),
     base_branch: z.string().optional().describe("Base branch."),
     worktree_path: z.string().optional().describe("Specific worktree path."),
   },
-  set_model: {
+  orchestrate_set_model: {
     agent_id: zAgentId,
     provider: z.string().describe("Provider name."),
     model: z.string().describe("Model identifier."),
     reason: z.string().optional().describe("Reason for model change."),
   },
-  set_scope: {
+  orchestrate_set_scope: {
     agent_id: zAgentId,
     read_scope: z.array(z.string()).optional().describe("Allowed read paths."),
     write_scope: z.array(z.string()).optional().describe("Allowed write paths."),
     allowed_tools: z.array(z.string()).optional().describe("Allowed tool names."),
   },
-  restrict_scope: {
+  orchestrate_restrict_scope: {
     agent_id: zAgentId,
     deny_paths: z.array(z.string()).optional().describe("Paths to remove from scope."),
     deny_tools: z.array(z.string()).optional().describe("Tools to deny."),
@@ -3038,7 +3038,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 return {
                   behavior: "deny",
                   message:
-                    "Orchestrator threads must use the visible orchestration tools instead of Claude Code's built-in agent/subagent tool. Use spawn_agent, send_to_agent, promote_to_foreground, or related orchestrator tools.",
+                    "Orchestrator threads must use the visible orchestration tools instead of Claude Code's built-in agent/subagent tool. Use orchestrate_spawn_agent, orchestrate_send_to_agent, orchestrate_promote_to_foreground, or related orchestrator tools.",
                 } satisfies PermissionResult;
               }
 

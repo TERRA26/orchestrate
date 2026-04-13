@@ -34,7 +34,7 @@ interface ToolDefinition {
 const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
   // -- Agent lifecycle (8) --------------------------------------------------
   {
-    name: "spawn_agent",
+    name: "orchestrate_spawn_agent",
     description:
       "Spawn a new worker agent. Usually call this with a simple task/objective and optional mode; the server infers or creates run/task context automatically.",
     parameters: [
@@ -90,7 +90,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "terminate_agent",
+    name: "orchestrate_terminate_agent",
     description: "Terminate a running agent and release its resources.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to terminate." },
@@ -98,7 +98,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "restart_agent",
+    name: "orchestrate_restart_agent",
     description: "Restart a failed or stuck agent, optionally with a different model.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to restart." },
@@ -106,7 +106,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "clone_agent",
+    name: "orchestrate_clone_agent",
     description: "Clone an agent's context into a new agent for parallel exploration.",
     parameters: [
       {
@@ -119,28 +119,28 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "pause_agent",
+    name: "orchestrate_pause_agent",
     description: "Pause a running agent, preserving its state for later resume.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to pause." },
     ],
   },
   {
-    name: "resume_agent",
+    name: "orchestrate_resume_agent",
     description: "Resume a previously paused agent.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to resume." },
     ],
   },
   {
-    name: "promote_to_foreground",
+    name: "orchestrate_promote_to_foreground",
     description: "Move a background agent to a visible foreground panel.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to promote." },
     ],
   },
   {
-    name: "demote_to_background",
+    name: "orchestrate_demote_to_background",
     description: "Move a foreground agent to background, freeing panel space.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to demote." },
@@ -149,7 +149,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
 
   // -- Communication (5) ----------------------------------------------------
   {
-    name: "send_to_agent",
+    name: "orchestrate_send_to_agent",
     description: "Send a message or instruction to a specific agent.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Target agent." },
@@ -157,7 +157,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "broadcast",
+    name: "orchestrate_broadcast",
     description: "Broadcast a message to all active agents.",
     parameters: [
       { name: "message", type: "string", required: true, description: "Broadcast content." },
@@ -170,7 +170,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "transfer_context",
+    name: "orchestrate_transfer_context",
     description:
       "Transfer relevant context (files, conversation excerpt) from one agent to another.",
     parameters: [
@@ -185,7 +185,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "ask_agent",
+    name: "orchestrate_ask_agent",
     description: "Ask an agent a question and wait for a structured response.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to query." },
@@ -199,7 +199,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "share_file",
+    name: "orchestrate_share_file",
     description: "Share a file path with an agent, adding it to their read scope.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Target agent." },
@@ -214,26 +214,26 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
 
   // -- Observation (6) ------------------------------------------------------
   {
-    name: "get_agent_status",
+    name: "orchestrate_get_agent_status",
     description: "Get the current status of a specific agent (state, task, progress).",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to query." },
     ],
   },
   {
-    name: "get_all_status",
+    name: "orchestrate_get_all_status",
     description: "Get a summary of all active agents with their states and tasks.",
     parameters: [],
   },
   {
-    name: "get_agent_diff",
+    name: "orchestrate_get_agent_diff",
     description: "Get the current working diff produced by an agent.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to query." },
     ],
   },
   {
-    name: "get_agent_logs",
+    name: "orchestrate_get_agent_logs",
     description: "Get recent log output from an agent's session.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to query." },
@@ -246,7 +246,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "get_background_results",
+    name: "orchestrate_get_background_results",
     description: "Collect completed results from all background agents.",
     parameters: [
       {
@@ -258,14 +258,14 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "get_spawn_tree",
+    name: "orchestrate_get_spawn_tree",
     description: "Get the full agent spawn tree showing parent-child relationships.",
     parameters: [],
   },
 
   // -- Coordination (5) -----------------------------------------------------
   {
-    name: "wait_agent",
+    name: "orchestrate_wait_agent",
     description: "Block until a specific agent completes its current task.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to wait for." },
@@ -278,7 +278,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "wait_all",
+    name: "orchestrate_wait_all",
     description: "Block until all specified agents complete.",
     parameters: [
       { name: "agent_ids", type: "string[]", required: true, description: "Agents to wait for." },
@@ -291,7 +291,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "set_dependency",
+    name: "orchestrate_set_dependency",
     description: "Declare that one task depends on another, enforcing execution order.",
     parameters: [
       { name: "task_id", type: "string", required: true, description: "Dependent task." },
@@ -299,7 +299,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "merge_work",
+    name: "orchestrate_merge_work",
     description: "Merge the output of one agent's worktree into another's or into main.",
     parameters: [
       {
@@ -317,7 +317,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "set_spawn_budget",
+    name: "orchestrate_set_spawn_budget",
     description: "Update the spawn budget for the current orchestration run.",
     parameters: [
       {
@@ -338,7 +338,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
 
   // -- Review (5) -----------------------------------------------------------
   {
-    name: "review_agent_work",
+    name: "orchestrate_review_agent_work",
     description:
       "Initiate a structured review of an agent's submitted work against acceptance criteria.",
     parameters: [
@@ -357,7 +357,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "run_tests",
+    name: "orchestrate_run_tests",
     description: "Run the project test suite or a subset of tests as a quality gate.",
     parameters: [
       { name: "filter", type: "string", required: false, description: "Test name filter pattern." },
@@ -370,7 +370,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "accept_work",
+    name: "orchestrate_accept_work",
     description: "Accept an agent's submitted work, marking the task as complete.",
     parameters: [
       {
@@ -388,7 +388,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "reject_work",
+    name: "orchestrate_reject_work",
     description: "Reject an agent's submitted work with specific rework instructions.",
     parameters: [
       {
@@ -412,7 +412,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "request_revision",
+    name: "orchestrate_request_revision",
     description: "Request targeted revisions without full rejection.",
     parameters: [
       {
@@ -432,14 +432,14 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
 
   // -- UI / Panel management (6) --------------------------------------------
   {
-    name: "focus_agent",
+    name: "orchestrate_focus_agent",
     description: "Bring an agent's panel into focus in the UI.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to focus." },
     ],
   },
   {
-    name: "arrange_panels",
+    name: "orchestrate_arrange_panels",
     description: "Set the panel layout arrangement in the UI.",
     parameters: [
       {
@@ -451,7 +451,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "promote_panel",
+    name: "orchestrate_promote_panel",
     description: "Expand an agent's panel to full width.",
     parameters: [
       {
@@ -463,7 +463,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "collapse_panel",
+    name: "orchestrate_collapse_panel",
     description: "Collapse an agent's panel to minimal size.",
     parameters: [
       {
@@ -475,7 +475,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "open_diff_view",
+    name: "orchestrate_open_diff_view",
     description: "Open a diff view comparing an agent's changes against the base.",
     parameters: [
       {
@@ -487,7 +487,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "open_browser_preview",
+    name: "orchestrate_open_browser_preview",
     description: "Open the embedded browser preview for visual validation.",
     parameters: [
       { name: "url", type: "string", required: true, description: "Preview URL to open." },
@@ -496,7 +496,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
 
   // -- Configuration (3) ----------------------------------------------------
   {
-    name: "assign_worktree",
+    name: "orchestrate_assign_worktree",
     description: "Assign a dedicated git worktree to an agent for isolated writes.",
     parameters: [
       {
@@ -514,7 +514,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "set_model",
+    name: "orchestrate_set_model",
     description: "Change the model used by a running agent.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to reconfigure." },
@@ -522,7 +522,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "set_scope",
+    name: "orchestrate_set_scope",
     description: "Set or update the read/write scope for an agent.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to configure." },
@@ -536,7 +536,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
     ],
   },
   {
-    name: "restrict_scope",
+    name: "orchestrate_restrict_scope",
     description: "Narrow an agent's existing scope without replacing it entirely.",
     parameters: [
       { name: "agent_id", type: "string", required: true, description: "Agent to restrict." },

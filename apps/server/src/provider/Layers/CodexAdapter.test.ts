@@ -265,14 +265,14 @@ validationLayer("CodexAdapterLive validation", (it) => {
         const toolResult = yield* Effect.promise(() =>
           manager.latestToolCallHandler!({
             threadId: "thread-orchestrator",
-            toolName: "spawn_agent",
+            toolName: "orchestrate_spawn_agent",
             toolInput: { task: "Open an agent window" },
           }),
         );
         assert.deepStrictEqual(toolResult, { ok: true });
       }).pipe(
         Effect.provideService(OrchestrationToolRouterService, {
-          isOrchestrationTool: (toolName) => toolName === "spawn_agent",
+          isOrchestrationTool: (toolName) => toolName === "orchestrate_spawn_agent",
           executeTool: () => Effect.succeed({ ok: true }),
         }),
         Effect.provide(layer),

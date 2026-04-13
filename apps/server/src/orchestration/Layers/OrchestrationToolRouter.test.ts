@@ -86,7 +86,7 @@ function makeEngine(readModel: OrchestrationReadModel, commands: OrchestrationCo
 }
 
 describe("OrchestrationToolRouter", () => {
-  it("spawns a foreground agent from the simple documented spawn_agent shape", async () => {
+  it("spawns a foreground agent from the simple documented orchestrate_spawn_agent shape", async () => {
     const commands: OrchestrationCommand[] = [];
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), commands)),
@@ -96,7 +96,7 @@ describe("OrchestrationToolRouter", () => {
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
         return yield* router.executeTool({
-          toolName: "spawn_agent",
+          toolName: "orchestrate_spawn_agent",
           threadId: THREAD_ID,
           runId: null,
           toolInput: {
@@ -141,7 +141,7 @@ describe("OrchestrationToolRouter", () => {
     });
   });
 
-  it("creates a standby foreground worker when spawn_agent has no explicit task", async () => {
+  it("creates a standby foreground worker when orchestrate_spawn_agent has no explicit task", async () => {
     const commands: OrchestrationCommand[] = [];
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), commands)),
@@ -151,7 +151,7 @@ describe("OrchestrationToolRouter", () => {
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
         yield* router.executeTool({
-          toolName: "spawn_agent",
+          toolName: "orchestrate_spawn_agent",
           threadId: THREAD_ID,
           runId: null,
           toolInput: {
@@ -176,7 +176,7 @@ describe("OrchestrationToolRouter", () => {
     });
   });
 
-  it("focus_agent promotes the requested agent into the foreground", async () => {
+  it("orchestrate_focus_agent promotes the requested agent into the foreground", async () => {
     const commands: OrchestrationCommand[] = [];
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), commands)),
@@ -186,7 +186,7 @@ describe("OrchestrationToolRouter", () => {
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
         return yield* router.executeTool({
-          toolName: "focus_agent",
+          toolName: "orchestrate_focus_agent",
           threadId: THREAD_ID,
           runId: null,
           toolInput: {

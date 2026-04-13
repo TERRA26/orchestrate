@@ -41,8 +41,8 @@ export interface OrchestrationToolRouterShape {
  * ```ts
  * const program = Effect.gen(function* () {
  *   const router = yield* OrchestrationToolRouterService
- *   if (router.isOrchestrationTool("spawn_agent")) {
- *     const result = yield* router.executeTool({ toolName: "spawn_agent", toolInput, threadId, runId })
+ *   if (router.isOrchestrationTool("orchestrate_spawn_agent")) {
+ *     const result = yield* router.executeTool({ toolName: "orchestrate_spawn_agent", toolInput, threadId, runId })
  *   }
  * })
  * ```

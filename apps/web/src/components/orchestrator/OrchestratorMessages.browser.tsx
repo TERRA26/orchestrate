@@ -33,9 +33,9 @@ const BASE_WORK_LOG: WorkLogEntry[] = [
   {
     id: "work-tool",
     createdAt: "2026-04-12T10:00:02.000Z",
-    label: "spawn_agent",
+    label: "orchestrate_spawn_agent",
     toolTitle: "Spawn agent",
-    toolName: "spawn_agent",
+    toolName: "orchestrate_spawn_agent",
     threadId: "thread-worker-1",
     workerId: "worker-1",
     changedFiles: ["apps/web/src/routes/index.tsx", "apps/web/src/styles.css"],

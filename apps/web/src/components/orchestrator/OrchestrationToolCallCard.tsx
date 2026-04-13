@@ -25,13 +25,13 @@ export function OrchestrationToolCallCard({
     if (!result || isLoading) return;
     const res = result as Record<string, unknown>;
 
-    if (toolName === "focus_agent" && res.threadId) {
+    if (toolName === "orchestrate_focus_agent" && res.threadId) {
       focusAgent(String(res.threadId));
     }
-    if (toolName === "collapse_panel" && res.threadId) {
+    if (toolName === "orchestrate_collapse_panel" && res.threadId) {
       collapseAgent(String(res.threadId));
     }
-    if (toolName === "spawn_agent" && res.threadId) {
+    if (toolName === "orchestrate_spawn_agent" && res.threadId) {
       const inp = input as Record<string, unknown>;
       if (inp.mode !== "background") {
         focusAgent(String(res.threadId));
@@ -41,7 +41,7 @@ export function OrchestrationToolCallCard({
   const parsed = input as Record<string, unknown>;
 
   switch (toolName) {
-    case "spawn_agent": {
+    case "orchestrate_spawn_agent": {
       const role = String(parsed.role ?? "agent");
       const model = String(parsed.model ?? "unknown");
       const mode = String(parsed.mode ?? "foreground");
@@ -60,7 +60,7 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "terminate_agent": {
+    case "orchestrate_terminate_agent": {
       return (
         <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
           <span className="text-destructive">x</span>
@@ -69,7 +69,7 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "accept_work": {
+    case "orchestrate_accept_work": {
       return (
         <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
           <span className="text-emerald-400">{"\u2713"}</span>
@@ -77,7 +77,7 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "reject_work": {
+    case "orchestrate_reject_work": {
       return (
         <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
           <span className="text-amber-400">{"\u21BB"}</span>
@@ -86,8 +86,8 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "wait_all":
-    case "wait_agent": {
+    case "orchestrate_wait_all":
+    case "orchestrate_wait_agent": {
       if (isLoading) {
         return (
           <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
@@ -103,8 +103,8 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "get_all_status":
-    case "get_agent_status": {
+    case "orchestrate_get_all_status":
+    case "orchestrate_get_agent_status": {
       return (
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
           <span className="text-muted-foreground">{"\uD83D\uDCCA"}</span>
@@ -112,7 +112,7 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "review_agent_work": {
+    case "orchestrate_review_agent_work": {
       return (
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
           <span className="text-muted-foreground">{"\uD83D\uDD0D"}</span>
@@ -121,8 +121,8 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "send_to_agent":
-    case "broadcast": {
+    case "orchestrate_send_to_agent":
+    case "orchestrate_broadcast": {
       return (
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
           <span className="text-muted-foreground">{"\u2192"}</span>
@@ -130,9 +130,9 @@ export function OrchestrationToolCallCard({
         </div>
       );
     }
-    case "focus_agent":
-    case "promote_to_foreground":
-    case "promote_panel": {
+    case "orchestrate_focus_agent":
+    case "orchestrate_promote_to_foreground":
+    case "orchestrate_promote_panel": {
       return (
         <div className="flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
           <span className="text-sky-400">{"\u25A3"}</span>

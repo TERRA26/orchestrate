@@ -1760,10 +1760,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       return;
     }
     if (
-      latestWorkEntry.toolName !== "spawn_agent" &&
-      latestWorkEntry.toolName !== "focus_agent" &&
-      latestWorkEntry.toolName !== "promote_to_foreground" &&
-      latestWorkEntry.toolName !== "promote_panel"
+      latestWorkEntry.toolName !== "orchestrate_spawn_agent" &&
+      latestWorkEntry.toolName !== "orchestrate_focus_agent" &&
+      latestWorkEntry.toolName !== "orchestrate_promote_to_foreground" &&
+      latestWorkEntry.toolName !== "orchestrate_promote_panel"
     ) {
       return;
     }

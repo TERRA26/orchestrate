@@ -882,11 +882,11 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
 
       // --- UI actions that can be expressed through existing domain commands ---
       switch (toolName) {
-        case "focus_agent":
+        case "orchestrate_focus_agent":
           return yield* handleFocusAgent(readModel, engine.dispatch, toolInput);
-        case "promote_panel":
+        case "orchestrate_promote_panel":
           return yield* handlePromotePanel(readModel, engine.dispatch, toolInput);
-        case "collapse_panel":
+        case "orchestrate_collapse_panel":
           return yield* handleCollapsePanel(readModel, engine.dispatch, toolInput);
         default:
           break;
@@ -900,11 +900,11 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
       // --- Read-only tools: query the read model ---
       if (READ_ONLY_TOOLS.has(toolName)) {
         switch (toolName) {
-          case "get_agent_status":
+          case "orchestrate_get_agent_status":
             return yield* handleGetAgentStatus(readModel, toolInput);
-          case "get_all_status":
+          case "orchestrate_get_all_status":
             return yield* handleGetAllStatus(readModel, toolInput);
-          case "get_spawn_tree":
+          case "orchestrate_get_spawn_tree":
             return yield* handleGetSpawnTree(readModel, toolInput);
           default:
             return { error: `Not implemented: ${toolName}` };
@@ -913,23 +913,23 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
 
       // --- Command tools: dispatch to the engine ---
       switch (toolName) {
-        case "spawn_agent":
+        case "orchestrate_spawn_agent":
           return yield* handleSpawnAgent(readModel, engine.dispatch, input.threadId, toolInput);
-        case "terminate_agent":
+        case "orchestrate_terminate_agent":
           return yield* handleTerminateAgent(engine.dispatch, toolInput);
-        case "pause_agent":
+        case "orchestrate_pause_agent":
           return yield* handlePauseAgent(engine.dispatch, toolInput);
-        case "resume_agent":
+        case "orchestrate_resume_agent":
           return yield* handleResumeAgent(engine.dispatch, toolInput);
-        case "promote_to_foreground":
+        case "orchestrate_promote_to_foreground":
           return yield* handlePromoteToForeground(engine.dispatch, toolInput);
-        case "demote_to_background":
+        case "orchestrate_demote_to_background":
           return yield* handleDemoteToBackground(engine.dispatch, toolInput);
-        case "send_to_agent":
+        case "orchestrate_send_to_agent":
           return yield* handleSendToAgent(engine.dispatch, readModel, toolInput);
-        case "accept_work":
+        case "orchestrate_accept_work":
           return yield* handleAcceptWork(engine.dispatch, readModel, toolInput);
-        case "reject_work":
+        case "orchestrate_reject_work":
           return yield* handleRejectWork(engine.dispatch, readModel, toolInput);
         default:
           return { error: `Not implemented: ${toolName}` };
