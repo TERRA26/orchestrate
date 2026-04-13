@@ -10,6 +10,7 @@ import {
   ProviderModelOptions,
   RuntimeMode,
   ThreadId,
+  ThreadType,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
@@ -38,13 +39,14 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 4;
+const COMPOSER_DRAFT_STORAGE_VERSION = 5;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 const DraftThreadEntryPointSchema = Schema.Literals(["chat", "terminal"]);
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 const TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX = "::terminal";
+const AGENT_DRAFT_THREAD_MAPPING_SUFFIX = "::agent";
 
 const composerDebouncedStorage = createDebouncedStorage(
   typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
@@ -142,6 +144,7 @@ const PersistedDraftThreadState = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   entryPoint: DraftThreadEntryPointSchema.pipe(Schema.withDecodingDefault(() => "chat")),
+  threadType: Schema.optionalKey(ThreadType),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
@@ -152,7 +155,7 @@ type PersistedDraftThreadState = typeof PersistedDraftThreadState.Type;
 const PersistedComposerDraftStoreState = Schema.Struct({
   draftsByThreadId: Schema.Record(ThreadId, PersistedComposerThreadDraftState),
   draftThreadsByThreadId: Schema.Record(ThreadId, PersistedDraftThreadState),
-  projectDraftThreadIdByProjectId: Schema.Record(ProjectId, ThreadId),
+  projectDraftThreadIdByProjectId: Schema.Record(Schema.String, ThreadId),
   stickyModelSelectionByProvider: Schema.optionalKey(
     Schema.Record(ProviderKind, Schema.optionalKey(ModelSelection)),
   ),
@@ -183,6 +186,7 @@ export interface DraftThreadState {
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
   entryPoint: ThreadPrimarySurface;
+  threadType?: "orchestrator" | "agent";
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
@@ -202,6 +206,7 @@ interface ComposerDraftStoreState {
   getDraftThreadByProjectId: (
     projectId: ProjectId,
     entryPoint?: ThreadPrimarySurface,
+    threadType?: "orchestrator" | "agent",
   ) => ProjectDraftThread | null;
   getDraftThread: (threadId: ThreadId) => DraftThreadState | null;
   setProjectDraftThreadId: (
@@ -215,6 +220,7 @@ interface ComposerDraftStoreState {
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       entryPoint?: ThreadPrimarySurface;
+      threadType?: "orchestrator" | "agent";
       isTemporary?: boolean;
     },
   ) => void;
@@ -229,10 +235,15 @@ interface ComposerDraftStoreState {
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       entryPoint?: ThreadPrimarySurface;
+      threadType?: "orchestrator" | "agent";
       isTemporary?: boolean;
     },
   ) => void;
-  clearProjectDraftThreadId: (projectId: ProjectId, entryPoint?: ThreadPrimarySurface) => void;
+  clearProjectDraftThreadId: (
+    projectId: ProjectId,
+    entryPoint?: ThreadPrimarySurface,
+    threadType?: "orchestrator" | "agent",
+  ) => void;
   clearProjectDraftThreads: (projectId: ProjectId) => void;
   clearProjectDraftThreadById: (projectId: ProjectId, threadId: ThreadId) => void;
   clearDraftThread: (threadId: ThreadId) => void;
@@ -323,22 +334,30 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE = Object.freeze<PersistedComposerDraftSt
 function projectDraftThreadMappingKey(
   projectId: ProjectId,
   entryPoint: ThreadPrimarySurface = "chat",
+  threadType: "orchestrator" | "agent" = "orchestrator",
 ): string {
-  return entryPoint === "terminal"
-    ? `${projectId}${TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX}`
-    : projectId;
+  let key = projectId;
+  if (entryPoint === "terminal") {
+    key += TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX;
+  }
+  if (threadType === "agent") {
+    key += AGENT_DRAFT_THREAD_MAPPING_SUFFIX;
+  }
+  return key;
 }
 
 function projectDraftThreadEntryPointFromKey(key: string): ThreadPrimarySurface {
-  return key.endsWith(TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX) ? "terminal" : "chat";
+  return key.includes(TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX) ? "terminal" : "chat";
+}
+
+function projectDraftThreadTypeFromKey(key: string): "orchestrator" | "agent" {
+  return key.endsWith(AGENT_DRAFT_THREAD_MAPPING_SUFFIX) ? "agent" : "orchestrator";
 }
 
 function projectIdFromDraftThreadMappingKey(key: string): ProjectId {
-  return (
-    key.endsWith(TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX)
-      ? key.slice(0, -TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX.length)
-      : key
-  ) as ProjectId;
+  return key
+    .replace(TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX, "")
+    .replace(AGENT_DRAFT_THREAD_MAPPING_SUFFIX, "") as ProjectId;
 }
 
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
@@ -829,6 +848,13 @@ function normalizeDraftThreadEntryPoint(value: unknown, fallback: ThreadPrimaryS
   return value === "terminal" || value === "chat" ? value : fallback;
 }
 
+function normalizeDraftThreadType(
+  value: unknown,
+  fallback: "orchestrator" | "agent" = "orchestrator",
+) {
+  return value === "agent" || value === "orchestrator" ? value : fallback;
+}
+
 function normalizePersistedDraftThreads(
   rawDraftThreadsByThreadId: unknown,
   rawProjectDraftThreadIdByProjectId: unknown,
@@ -874,6 +900,7 @@ function normalizePersistedDraftThreads(
             ? candidateDraftThread.interactionMode
             : DEFAULT_INTERACTION_MODE,
         entryPoint: normalizeDraftThreadEntryPoint(candidateDraftThread.entryPoint),
+        threadType: normalizeDraftThreadType(candidateDraftThread.threadType),
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
@@ -892,6 +919,7 @@ function normalizePersistedDraftThreads(
     )) {
       const projectId = projectIdFromDraftThreadMappingKey(mappingKey);
       const entryPoint = projectDraftThreadEntryPointFromKey(mappingKey);
+      const threadType = projectDraftThreadTypeFromKey(mappingKey);
       if (
         typeof projectId === "string" &&
         projectId.length > 0 &&
@@ -906,6 +934,7 @@ function normalizePersistedDraftThreads(
             runtimeMode: DEFAULT_RUNTIME_MODE,
             interactionMode: DEFAULT_INTERACTION_MODE,
             entryPoint,
+            threadType,
             branch: null,
             worktreePath: null,
             envMode: "local",
@@ -919,6 +948,11 @@ function normalizePersistedDraftThreads(
           draftThreadsByThreadId[threadId as ThreadId] = {
             ...draftThreadsByThreadId[threadId as ThreadId]!,
             entryPoint,
+          };
+        } else if (draftThreadsByThreadId[threadId as ThreadId]?.threadType !== threadType) {
+          draftThreadsByThreadId[threadId as ThreadId] = {
+            ...draftThreadsByThreadId[threadId as ThreadId]!,
+            threadType,
           };
         }
       }
@@ -1358,13 +1392,13 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
       projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
-      getDraftThreadByProjectId: (projectId, entryPoint = "chat") => {
+      getDraftThreadByProjectId: (projectId, entryPoint = "chat", threadType = "orchestrator") => {
         if (projectId.length === 0) {
           return null;
         }
         const threadId =
           get().projectDraftThreadIdByProjectId[
-            projectDraftThreadMappingKey(projectId, entryPoint)
+            projectDraftThreadMappingKey(projectId, entryPoint, threadType)
           ];
         if (!threadId) {
           return null;
@@ -1373,7 +1407,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (
           !draftThread ||
           draftThread.projectId !== projectId ||
-          normalizeDraftThreadEntryPoint(draftThread.entryPoint) !== entryPoint
+          normalizeDraftThreadEntryPoint(draftThread.entryPoint) !== entryPoint ||
+          normalizeDraftThreadType(draftThread.threadType) !== threadType
         ) {
           return null;
         }
@@ -1398,7 +1433,11 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options?.entryPoint,
             existingThread?.entryPoint ?? "chat",
           );
-          const mappingKey = projectDraftThreadMappingKey(projectId, entryPoint);
+          const threadType = normalizeDraftThreadType(
+            options?.threadType,
+            existingThread?.threadType ?? "orchestrator",
+          );
+          const mappingKey = projectDraftThreadMappingKey(projectId, entryPoint, threadType);
           const previousThreadIdForProject = state.projectDraftThreadIdByProjectId[mappingKey];
           const nextWorktreePath =
             options?.worktreePath === undefined
@@ -1420,6 +1459,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
               existingThread?.interactionMode ??
               DEFAULT_INTERACTION_MODE,
             entryPoint,
+            threadType,
             branch:
               options?.branch === undefined
                 ? (existingThread?.branch ?? null)
@@ -1438,6 +1478,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             existingThread.runtimeMode === nextDraftThread.runtimeMode &&
             existingThread.interactionMode === nextDraftThread.interactionMode &&
             existingThread.entryPoint === nextDraftThread.entryPoint &&
+            (existingThread.threadType ?? "orchestrator") ===
+              (nextDraftThread.threadType ?? "orchestrator") &&
             existingThread.branch === nextDraftThread.branch &&
             existingThread.worktreePath === nextDraftThread.worktreePath &&
             existingThread.envMode === nextDraftThread.envMode &&
@@ -1447,8 +1489,15 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           const nextProjectDraftThreadIdByProjectId: Record<string, ThreadId> = {
             ...state.projectDraftThreadIdByProjectId,
-            [mappingKey]: threadId,
           };
+          for (const [existingMappingKey, mappedThreadId] of Object.entries(
+            nextProjectDraftThreadIdByProjectId,
+          )) {
+            if (mappedThreadId === threadId && existingMappingKey !== mappingKey) {
+              delete nextProjectDraftThreadIdByProjectId[existingMappingKey];
+            }
+          }
+          nextProjectDraftThreadIdByProjectId[mappingKey] = threadId;
           const nextDraftThreadsByThreadId: Record<ThreadId, DraftThreadState> = {
             ...state.draftThreadsByThreadId,
             [threadId]: nextDraftThread,
@@ -1493,6 +1542,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options.entryPoint,
             existing.entryPoint,
           );
+          const nextThreadType = normalizeDraftThreadType(
+            options.threadType,
+            existing.threadType ?? "orchestrator",
+          );
           const nextIsTemporary =
             options.isTemporary === true
               ? true
@@ -1508,6 +1561,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             runtimeMode: options.runtimeMode ?? existing.runtimeMode,
             interactionMode: options.interactionMode ?? existing.interactionMode,
             entryPoint: nextEntryPoint,
+            threadType: nextThreadType,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
             envMode:
@@ -1520,6 +1574,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nextDraftThread.runtimeMode === existing.runtimeMode &&
             nextDraftThread.interactionMode === existing.interactionMode &&
             nextDraftThread.entryPoint === existing.entryPoint &&
+            (nextDraftThread.threadType ?? "orchestrator") ===
+              (existing.threadType ?? "orchestrator") &&
             nextDraftThread.branch === existing.branch &&
             nextDraftThread.worktreePath === existing.worktreePath &&
             nextDraftThread.envMode === existing.envMode &&
@@ -1538,7 +1594,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             }
           }
           nextProjectDraftThreadIdByProjectId[
-            projectDraftThreadMappingKey(nextProjectId, nextEntryPoint)
+            projectDraftThreadMappingKey(nextProjectId, nextEntryPoint, nextThreadType)
           ] = threadId;
           return {
             draftThreadsByThreadId: {
@@ -1549,12 +1605,12 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           };
         });
       },
-      clearProjectDraftThreadId: (projectId, entryPoint = "chat") => {
+      clearProjectDraftThreadId: (projectId, entryPoint = "chat", threadType = "orchestrator") => {
         if (projectId.length === 0) {
           return;
         }
         set((state) => {
-          const mappingKey = projectDraftThreadMappingKey(projectId, entryPoint);
+          const mappingKey = projectDraftThreadMappingKey(projectId, entryPoint, threadType);
           const threadId = state.projectDraftThreadIdByProjectId[mappingKey];
           if (threadId === undefined) {
             return state;

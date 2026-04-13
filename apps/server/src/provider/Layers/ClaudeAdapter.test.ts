@@ -21,6 +21,7 @@ import { Effect, Fiber, Layer, Random, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { OrchestrationToolRouterService } from "../../orchestration/Services/OrchestrationToolRouter.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapterLive, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -2962,6 +2963,113 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect("denies Claude's built-in agent tool for orchestrator threads", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+        threadType: "orchestrator",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionResult = yield* Effect.promise(() =>
+        canUseTool(
+          "Agent",
+          {
+            task: "Build a blank website and run it on a local server",
+          },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-agent-hidden-1",
+          },
+        ),
+      );
+
+      assert.deepEqual(permissionResult, {
+        behavior: "deny",
+        message:
+          "Orchestrator threads must use the visible orchestration tools instead of Claude Code's built-in agent/subagent tool. Use spawn_agent, send_to_agent, promote_to_foreground, or related orchestrator tools.",
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "resolves the orchestration tool router lazily when an orchestrator session starts",
+    () => {
+      // Create a temp directory with docs/ORCHESTRATOR.md so the system prompt builder succeeds.
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), "claude-orch-test-"));
+      mkdirSync(path.join(tmpDir, "docs"), { recursive: true });
+      writeFileSync(
+        path.join(tmpDir, "docs", "ORCHESTRATOR.md"),
+        "# Orchestrator Instructions\n\nYou are the Orchestrate orchestrator.\n",
+      );
+
+      const harness = makeHarness({ cwd: tmpDir });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+          threadType: "orchestrator",
+        });
+
+        yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.systemPrompt?.type, "preset");
+        assert.equal(createInput?.options.systemPrompt?.preset, "claude_code");
+        // The system prompt should contain the ORCHESTRATOR.md content and the identity prelude.
+        assert.equal(
+          createInput?.options.systemPrompt?.append?.includes(
+            "Orchestrate Orchestrator control-plane agent",
+          ) ?? false,
+          true,
+        );
+        assert.equal(
+          createInput?.options.systemPrompt?.append?.includes(
+            "You are the Orchestrate orchestrator",
+          ) ?? false,
+          true,
+        );
+        assert.equal(createInput?.options.mcpServers?.orchestrate !== undefined, true);
+        assert.equal(createInput?.options.env?.ENABLE_TOOL_SEARCH, "false");
+      }).pipe(
+        Effect.provideService(OrchestrationToolRouterService, {
+          isOrchestrationTool: () => false,
+          executeTool: () => Effect.succeed({ ok: true }),
+        }),
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            try {
+              rmSync(tmpDir, { recursive: true });
+            } catch {
+              /* best effort cleanup */
+            }
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("writes provider-native observability records when enabled", () => {
     const nativeEvents: Array<{

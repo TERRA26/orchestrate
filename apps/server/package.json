@@ -34,7 +34,8 @@
     "open": "^10.1.0",
     "playwright": "^1.58.2",
     "tree-kill": "^1.2.2",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",

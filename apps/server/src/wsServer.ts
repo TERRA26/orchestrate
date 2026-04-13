@@ -870,8 +870,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
     switch (request.body._tag) {
-      case ORCHESTRATION_WS_METHODS.getSnapshot:
-        return yield* projectionReadModelQuery.getSnapshot();
+      case ORCHESTRATION_WS_METHODS.getSnapshot: {
+        const projectionSnapshot = yield* projectionReadModelQuery.getSnapshot();
+        // Merge orchestrator data from the in-memory read model into the projection snapshot.
+        // The projection snapshot has threads/projects from SQLite, but orchestrator runs/tasks/workers
+        // live in the in-memory engine read model.
+        const engineReadModel = yield* orchestrationEngine.getReadModel();
+        return {
+          ...projectionSnapshot,
+          orchestratorRuns: engineReadModel.orchestratorRuns ?? [],
+          orchestratorTasks: engineReadModel.orchestratorTasks ?? [],
+          orchestratorWorkers: engineReadModel.orchestratorWorkers ?? [],
+          orchestratorMessages: engineReadModel.orchestratorMessages ?? [],
+          orchestratorDependencies: engineReadModel.orchestratorDependencies ?? [],
+        };
+      }
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand: {
         const { command } = request.body;

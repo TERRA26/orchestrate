@@ -711,12 +711,14 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
         threadId: asThreadId("thread-1"),
+        threadType: "orchestrator",
         runtimeMode: "full-access",
       });
       yield* provider.sendTurn({
         threadId: session.threadId,
         input: "hello",
         attachments: [],
+        threadType: "orchestrator",
       });
 
       const runningRuntime = yield* runtimeRepository.getByThreadId({
@@ -735,12 +737,14 @@ routing.layer("ProviderServiceLive routing", (it) => {
             activeTurnId: string | null;
             lastError: string | null;
             lastRuntimeEvent: string | null;
+            threadType?: string | null;
           };
           assert.equal(runtimePayload.cwd, process.cwd());
           assert.equal(runtimePayload.model, null);
           assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
           assert.equal(runtimePayload.lastError, null);
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+          assert.equal(runtimePayload.threadType, "orchestrator");
         }
       }
     }),
@@ -778,6 +782,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           provider: "claudeAgent",
           threadId: asThreadId("thread-claude-start"),
           cwd: "/tmp/project-claude-start",
+          threadType: "orchestrator",
           runtimeMode: "full-access",
         });
       }).pipe(Effect.provide(firstProviderLayer));
@@ -812,6 +817,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           provider: "claudeAgent",
           threadId: initial.threadId,
           cwd: "/tmp/project-claude-start",
+          threadType: "orchestrator",
           runtimeMode: "full-access",
         });
       }).pipe(Effect.provide(secondProviderLayer));
@@ -825,11 +831,13 @@ routing.layer("ProviderServiceLive routing", (it) => {
           cwd?: string;
           resumeCursor?: unknown;
           threadId?: string;
+          threadType?: string;
         };
         assert.equal(startPayload.provider, "claudeAgent");
         assert.equal(startPayload.cwd, "/tmp/project-claude-start");
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
+        assert.equal(startPayload.threadType, "orchestrator");
       }
 
       fs.rmSync(tempDir, { recursive: true, force: true });

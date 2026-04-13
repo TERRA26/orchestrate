@@ -1329,6 +1329,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* Effect.service(ServerConfig);
+    const adapterServices = yield* Effect.services<never>();
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -1355,28 +1356,6 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         }),
     );
 
-    // Register orchestration tool call handler when the router service is
-    // available. This allows the Codex app-server to emit function calls for
-    // the 38 orchestration tools and have them executed server-side.
-    const toolRouter = yield* Effect.serviceOption(OrchestrationToolRouterService);
-    if (toolRouter._tag === "Some") {
-      const router = toolRouter.value;
-      const adapterServices = yield* Effect.services<never>();
-      manager.setToolCallHandler(async ({ threadId, toolName, toolInput }) => {
-        if (!router.isOrchestrationTool(toolName)) {
-          throw new Error(`Unknown orchestration tool: ${toolName}`);
-        }
-        return Effect.runPromiseWith(adapterServices)(
-          router.executeTool({
-            toolName,
-            toolInput,
-            threadId,
-            runId: null,
-          }),
-        );
-      });
-    }
-
     const startSession: CodexAdapterShape["startSession"] = (input) => {
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return Effect.fail(
@@ -1388,31 +1367,57 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         );
       }
 
-      const managerInput: CodexAppServerStartSessionInput = {
-        threadId: input.threadId,
-        provider: "codex",
-        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
-        ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-        ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
-        runtimeMode: input.runtimeMode,
-        ...(input.modelSelection?.provider === "codex"
-          ? { model: input.modelSelection.model }
-          : {}),
-        ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
-          ? { serviceTier: "fast" }
-          : {}),
-      };
+      return Effect.gen(function* () {
+        // Resolve the orchestration tool router lazily. The live server graph
+        // composes ProviderService and orchestration runtime services together,
+        // so the router may only be available by the time a session starts.
+        const toolRouter = yield* Effect.serviceOption(OrchestrationToolRouterService);
+        if (toolRouter._tag === "Some") {
+          const router = toolRouter.value;
+          manager.setToolCallHandler(async ({ threadId, toolName, toolInput }) => {
+            if (!router.isOrchestrationTool(toolName)) {
+              throw new Error(`Unknown orchestration tool: ${toolName}`);
+            }
+            return Effect.runPromiseWith(adapterServices)(
+              router.executeTool({
+                toolName,
+                toolInput,
+                threadId,
+                runId: null,
+              }),
+            );
+          });
+        }
 
-      return Effect.tryPromise({
-        try: () => manager.startSession(managerInput),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId: input.threadId,
-            detail: toMessage(cause, "Failed to start Codex adapter session."),
-            cause,
-          }),
-      }).pipe(Effect.map((session) => session));
+        const managerInput: CodexAppServerStartSessionInput = {
+          threadId: input.threadId,
+          provider: "codex",
+          ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+          ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+          ...(input.providerOptions !== undefined
+            ? { providerOptions: input.providerOptions }
+            : {}),
+          runtimeMode: input.runtimeMode,
+          ...(input.modelSelection?.provider === "codex"
+            ? { model: input.modelSelection.model }
+            : {}),
+          ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
+            ? { serviceTier: "fast" }
+            : {}),
+          ...(input.threadType !== undefined ? { threadType: input.threadType } : {}),
+        };
+
+        return yield* Effect.tryPromise({
+          try: () => manager.startSession(managerInput),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: toMessage(cause, "Failed to start Codex adapter session."),
+              cause,
+            }),
+        }).pipe(Effect.map((session) => session));
+      });
     };
 
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>

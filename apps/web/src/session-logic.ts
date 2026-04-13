@@ -39,6 +39,9 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   changedFiles?: ReadonlyArray<string>;
+  toolName?: string;
+  workerId?: string;
+  threadId?: string;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
@@ -492,6 +495,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const command = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
+  const toolName = extractToolName(payload);
+  const threadId = extractAssociatedThreadId(payload);
+  const workerId = extractAssociatedWorkerId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -512,6 +518,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
+  }
+  if (toolName) {
+    entry.toolName = toolName;
+  }
+  if (threadId) {
+    entry.threadId = threadId;
+  }
+  if (workerId) {
+    entry.workerId = workerId;
   }
   if (itemType) {
     entry.itemType = itemType;
@@ -579,12 +594,18 @@ function mergeDerivedWorkLogEntries(
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
+  const toolName = next.toolName ?? previous.toolName;
+  const workerId = next.workerId ?? previous.workerId;
+  const threadId = next.threadId ?? previous.threadId;
   return {
     ...previous,
     ...next,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(workerId ? { workerId } : {}),
+    ...(threadId ? { threadId } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
@@ -777,6 +798,78 @@ function extractChangedFiles(payload: Record<string, unknown> | null): string[] 
   const seen = new Set<string>();
   collectChangedFiles(asRecord(payload?.data), changedFiles, seen, 0);
   return changedFiles;
+}
+
+function findFirstStringByKeys(
+  value: unknown,
+  keys: ReadonlyArray<string>,
+  depth: number,
+): string | null {
+  if (depth > 4) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const nested = findFirstStringByKeys(entry, keys, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+    return null;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const direct = asTrimmedString(record[key]);
+    if (direct) {
+      return direct;
+    }
+  }
+
+  for (const nestedKey of ["item", "result", "input", "data", "event", "payload", "call", "tool"]) {
+    if (!(nestedKey in record)) {
+      continue;
+    }
+    const nested = findFirstStringByKeys(record[nestedKey], keys, depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function normalizeDiscoveredToolName(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value
+    .trim()
+    .replace(/[-\s]+/g, "_")
+    .toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractToolName(payload: Record<string, unknown> | null): string | null {
+  return normalizeDiscoveredToolName(
+    findFirstStringByKeys(asRecord(payload?.data), ["toolName", "tool_name", "name", "kind"], 0),
+  );
+}
+
+function extractAssociatedThreadId(payload: Record<string, unknown> | null): string | null {
+  return findFirstStringByKeys(asRecord(payload?.data), ["threadId", "thread_id"], 0);
+}
+
+function extractAssociatedWorkerId(payload: Record<string, unknown> | null): string | null {
+  return findFirstStringByKeys(
+    asRecord(payload?.data),
+    ["workerId", "worker_id", "agentId", "agent_id", "targetAgentId", "target_agent_id"],
+    0,
+  );
 }
 
 function compareActivitiesByOrder(

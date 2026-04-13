@@ -205,30 +205,47 @@ export function OrchestratorComposer({
   // ── Keyboard navigation ────────────────────────────────────────────────
   const handleCommandKey = useCallback(
     (key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab", event: KeyboardEvent): boolean => {
-      if (!composerMenuOpen) return false;
-      event.preventDefault();
-
-      if (key === "ArrowDown") {
-        const idx = composerMenuItems.findIndex((i) => i.id === activeMenuItemId);
-        const next = (idx + 1) % composerMenuItems.length;
-        setActiveMenuItemId(composerMenuItems[next]?.id ?? null);
-        return true;
+      if (composerMenuOpen) {
+        event.preventDefault();
+        if (key === "ArrowDown") {
+          const idx = composerMenuItems.findIndex((i) => i.id === activeMenuItemId);
+          const next = (idx + 1) % composerMenuItems.length;
+          setActiveMenuItemId(composerMenuItems[next]?.id ?? null);
+          return true;
+        }
+        if (key === "ArrowUp") {
+          const idx = composerMenuItems.findIndex((i) => i.id === activeMenuItemId);
+          const next = (idx - 1 + composerMenuItems.length) % composerMenuItems.length;
+          setActiveMenuItemId(composerMenuItems[next]?.id ?? null);
+          return true;
+        }
+        if (key === "Enter" || key === "Tab") {
+          const active =
+            composerMenuItems.find((i) => i.id === activeMenuItemId) ?? composerMenuItems[0];
+          if (active) handleSelectMenuItem(active);
+          return true;
+        }
       }
-      if (key === "ArrowUp") {
-        const idx = composerMenuItems.findIndex((i) => i.id === activeMenuItemId);
-        const next = (idx - 1 + composerMenuItems.length) % composerMenuItems.length;
-        setActiveMenuItemId(composerMenuItems[next]?.id ?? null);
-        return true;
-      }
-      if (key === "Enter" || key === "Tab") {
-        const active =
-          composerMenuItems.find((i) => i.id === activeMenuItemId) ?? composerMenuItems[0];
-        if (active) handleSelectMenuItem(active);
+      if (key === "Enter" && !event.shiftKey) {
+        const trimmed = input.trim();
+        if (!trimmed || !canSend || isBusy) {
+          return true;
+        }
+        void onSend(trimmed);
         return true;
       }
       return false;
     },
-    [composerMenuOpen, composerMenuItems, activeMenuItemId, handleSelectMenuItem],
+    [
+      activeMenuItemId,
+      canSend,
+      composerMenuItems,
+      composerMenuOpen,
+      handleSelectMenuItem,
+      input,
+      isBusy,
+      onSend,
+    ],
   );
 
   // ── Editor change handler ──────────────────────────────────────────────

@@ -16,6 +16,7 @@ import {
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
+import { buildOrchestratorSystemPrompt } from "./orchestration/orchestratorSystemPrompt";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
@@ -605,6 +606,41 @@ describe("sendTurn", () => {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
           developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("uses the shared ORCHESTRATOR.md system prompt for orchestrator Codex turns", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.session.cwd = process.cwd();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "who are you?",
+      threadType: "orchestrator",
+    });
+
+    const expectedInstructions = await Effect.runPromise(
+      buildOrchestratorSystemPrompt({ projectRoot: path.resolve(process.cwd(), "..", "..") }),
+    );
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "who are you?",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: expectedInstructions,
         },
       },
     });

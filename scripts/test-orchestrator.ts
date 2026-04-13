@@ -210,7 +210,9 @@ async function main() {
         createdAt: new Date().toISOString(),
       },
     });
-    pass(`Created agent thread: ${agentThreadId.slice(0, 8)}... (child of ${orchestratorThreadId.slice(0, 8)}...)`);
+    pass(
+      `Created agent thread: ${agentThreadId.slice(0, 8)}... (child of ${orchestratorThreadId.slice(0, 8)}...)`,
+    );
   } catch (e: any) {
     fail("Create agent thread", e.message ?? JSON.stringify(e));
   }
@@ -232,7 +234,9 @@ async function main() {
       if (agentThread.parentThreadId === orchestratorThreadId) {
         pass(`parentThreadId correctly points to orchestrator thread`);
       } else {
-        fail(`parentThreadId is "${agentThread.parentThreadId}", expected "${orchestratorThreadId}"`);
+        fail(
+          `parentThreadId is "${agentThread.parentThreadId}", expected "${orchestratorThreadId}"`,
+        );
       }
     }
   } catch (e: any) {
@@ -280,7 +284,9 @@ async function main() {
   // Check for turn-related events
   const turnEvents = domainEvents.filter((e) => {
     const t = e.data?.type ?? "";
-    return t.includes("turn") || t.includes("message") || t.includes("session") || t.includes("activity");
+    return (
+      t.includes("turn") || t.includes("message") || t.includes("session") || t.includes("activity")
+    );
   });
   if (turnEvents.length > 0) {
     pass(`Got ${turnEvents.length} turn/session events`);
@@ -295,7 +301,9 @@ async function main() {
     // Show first few activity details
     for (const a of activities.slice(0, 5)) {
       const payload = a.data?.payload;
-      info(`  Activity: ${payload?.activity?.kind ?? "unknown"} - ${JSON.stringify(payload?.activity?.data)?.slice(0, 100)}`);
+      info(
+        `  Activity: ${payload?.activity?.kind ?? "unknown"} - ${JSON.stringify(payload?.activity?.data)?.slice(0, 100)}`,
+      );
     }
   } else {
     fail("No activity events — provider session may not have started");
@@ -321,6 +329,201 @@ async function main() {
     }
   } catch (e: any) {
     fail("Final snapshot", e.message ?? JSON.stringify(e));
+  }
+
+  // ── Test 10: Spawn a worker via orchestration commands (simulates spawn_agent) ──
+  console.log("\n── Test 10: Spawn Worker via Orchestration Commands ──");
+  const workerThreadId = crypto.randomUUID();
+  const workerId = crypto.randomUUID();
+  const runId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  try {
+    // 10a: Create orchestration run
+    await request("orchestration.dispatchCommand", {
+      command: {
+        type: "orchestrator.run.create",
+        commandId: crypto.randomUUID(),
+        runId,
+        projectId,
+        userRequest: "Test worker spawn",
+        goals: ["Verify worker thread creation"],
+        spawnBudget: {
+          maxDepth: 3,
+          maxChildren: 5,
+          maxConcurrentWriters: 2,
+          maxTotalWorkers: 10,
+          allowedTools: [],
+          writeScope: [],
+        },
+        createdAt: new Date().toISOString(),
+      },
+    });
+    pass("Created orchestration run");
+
+    // 10b: Create orchestration task
+    await request("orchestration.dispatchCommand", {
+      command: {
+        type: "orchestrator.task.create",
+        commandId: crypto.randomUUID(),
+        taskId,
+        runId,
+        title: "Test worker task",
+        objective: "Verify the spawn_agent flow",
+        acceptanceCriteria: ["Worker thread appears in snapshot"],
+        maxIterations: 3,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    pass("Created orchestration task");
+
+    // 10c: Create worker thread (as spawn_agent would)
+    await request("orchestration.dispatchCommand", {
+      command: {
+        type: "thread.create",
+        commandId: crypto.randomUUID(),
+        threadId: workerThreadId,
+        projectId,
+        title: "Test Worker Agent",
+        modelSelection: { provider: "codex", model: "o4-mini" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        threadType: "agent",
+        parentThreadId: orchestratorThreadId,
+        branch: null,
+        worktreePath: null,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    pass("Created worker thread");
+
+    // 10d: Spawn the worker
+    await request("orchestration.dispatchCommand", {
+      command: {
+        type: "orchestrator.worker.spawn",
+        commandId: crypto.randomUUID(),
+        workerId,
+        runId,
+        taskId,
+        threadId: workerThreadId,
+        spawnBudget: {
+          maxDepth: 3,
+          maxChildren: 5,
+          maxConcurrentWriters: 2,
+          maxTotalWorkers: 10,
+          allowedTools: [],
+          writeScope: [],
+        },
+        workspace: {
+          mode: "local",
+          cwd: process.cwd(),
+          terminalIds: [],
+        },
+        createdAt: new Date().toISOString(),
+      },
+    });
+    pass("Dispatched orchestrator.worker.spawn");
+  } catch (e: any) {
+    fail("Spawn worker commands", e.message ?? JSON.stringify(e));
+  }
+
+  // ── Test 11: Verify worker in snapshot ──
+  console.log("\n── Test 11: Verify Worker Thread and Run in Snapshot ──");
+  try {
+    snapshot = await request("orchestration.getSnapshot");
+
+    // Check worker thread
+    const workerThread = snapshot.threads?.find((t: any) => t.id === workerThreadId);
+    if (!workerThread) {
+      fail("Worker thread not found in snapshot");
+    } else {
+      pass("Worker thread found in snapshot");
+      if (workerThread.threadType === "agent") {
+        pass('Worker threadType is "agent"');
+      } else {
+        fail(`Worker threadType is "${workerThread.threadType}", expected "agent"`);
+      }
+      if (workerThread.parentThreadId === orchestratorThreadId) {
+        pass("Worker parentThreadId points to orchestrator");
+      } else {
+        fail(
+          `Worker parentThreadId is "${workerThread.parentThreadId}", expected "${orchestratorThreadId}"`,
+        );
+      }
+    }
+
+    // Check orchestrator workers
+    const workers = snapshot.orchestratorWorkers ?? [];
+    const spawnedWorker = workers.find((w: any) => w.workerId === workerId);
+    if (spawnedWorker) {
+      pass(`Worker ${workerId.slice(0, 8)}... found in orchestratorWorkers`);
+      if (spawnedWorker.threadId === workerThreadId) {
+        pass("Worker threadId matches the created thread");
+      } else {
+        fail(`Worker threadId mismatch: ${spawnedWorker.threadId} vs ${workerThreadId}`);
+      }
+      info(`Worker status: ${spawnedWorker.status}`);
+    } else {
+      fail("Worker not found in orchestratorWorkers");
+      info(
+        `Available workers: ${workers.map((w: any) => w.workerId?.slice(0, 8)).join(", ") || "none"}`,
+      );
+    }
+
+    // Check orchestrator runs
+    const runs = snapshot.orchestratorRuns ?? [];
+    const createdRun = runs.find((r: any) => r.runId === runId);
+    if (createdRun) {
+      pass(`Run ${runId.slice(0, 8)}... found in orchestratorRuns`);
+      info(`Run status: ${createdRun.status}`);
+    } else {
+      fail("Run not found in orchestratorRuns");
+    }
+
+    // Check orchestrator tasks
+    const tasks = snapshot.orchestratorTasks ?? [];
+    const createdTask = tasks.find((t: any) => t.taskId === taskId);
+    if (createdTask) {
+      pass(`Task ${taskId.slice(0, 8)}... found in orchestratorTasks`);
+      info(`Task status: ${createdTask.status}`);
+    } else {
+      fail("Task not found in orchestratorTasks");
+    }
+  } catch (e: any) {
+    fail("Verify worker in snapshot", e.message ?? JSON.stringify(e));
+  }
+
+  // ── Test 12: Verify orchestrator system prompt effect ──
+  console.log("\n── Test 12: Check Orchestrator Thread Messages ──");
+  try {
+    snapshot = await request("orchestration.getSnapshot");
+    const thread = snapshot.threads?.find((t: any) => t.id === orchestratorThreadId);
+    if (thread && thread.messages?.length > 1) {
+      const assistantMessages = thread.messages.filter((m: any) => m.role === "assistant");
+      if (assistantMessages.length > 0) {
+        const firstAssistant = assistantMessages[0];
+        const text = String(firstAssistant.text ?? firstAssistant.content ?? "").toLowerCase();
+        // The orchestrator system prompt tells it to identify as the Orchestrator.
+        // If the response mentions orchestrator/coordinator/meta-agent, the prompt was injected.
+        const hasOrchestratorIdentity =
+          text.includes("orchestrat") ||
+          text.includes("coordinator") ||
+          text.includes("meta-agent") ||
+          text.includes("worker") ||
+          text.includes("delegate");
+        if (hasOrchestratorIdentity) {
+          pass("Assistant response suggests orchestrator identity (system prompt likely injected)");
+        } else {
+          info("Assistant response does not clearly show orchestrator identity");
+          info(`First 200 chars: ${text.slice(0, 200)}`);
+        }
+      } else {
+        info("No assistant messages yet (turn may still be in progress)");
+      }
+    } else {
+      info("Orchestrator thread has no messages or only 1 (turn may not have completed)");
+    }
+  } catch (e: any) {
+    fail("Check orchestrator messages", e.message ?? JSON.stringify(e));
   }
 
   // ── Summary ──

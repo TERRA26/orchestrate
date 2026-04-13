@@ -322,6 +322,7 @@ describe("orchestrator projector", () => {
     expect(worker.runId).toBe("run-1");
     expect(worker.threadId).toBe("thread-1");
     expect(worker.status).toBe("running");
+    expect(worker.visibility).toBe("foreground");
     expect(worker.activeTaskId).toBe("task-1");
     expect(worker.modelBinding?.provider).toBe("codex");
     expect(worker.modelBinding?.model).toBe("gpt-5-codex");

@@ -4,8 +4,6 @@ import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { EmbeddedBrowserPane } from "../components/EmbeddedBrowserPane";
-import { OrchestratorPanel } from "../components/OrchestratorPanel";
-// panelStateStore import removed — orchestrator is always the main view
 import ThreadSidebar from "../components/Sidebar";
 import { isElectron } from "../env";
 import { useDisposableThreadLifecycle } from "../hooks/useDisposableThreadLifecycle";
@@ -205,7 +203,7 @@ function ChatRouteLayout() {
         <SidebarRail />
       </Sidebar>
       <CollapsedSidebarStrip />
-      <OrchestratorPanel />
+      <Outlet />
       <EmbeddedBrowserPane currentThreadId={null} />
     </SidebarProvider>
   );

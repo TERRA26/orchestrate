@@ -27,7 +27,9 @@ export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
-  threadType: Schema.optional(ThreadType).pipe(Schema.withDecodingDefault(() => "orchestrator" as const)),
+  threadType: Schema.optional(ThreadType).pipe(
+    Schema.withDecodingDefault(() => "orchestrator" as const),
+  ),
   parentThreadId: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

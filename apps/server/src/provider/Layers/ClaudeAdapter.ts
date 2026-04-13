@@ -48,7 +48,9 @@ import {
   type ProviderListSkillsResult,
   ORCHESTRATION_TOOL_NAMES,
   ORCHESTRATION_TOOL_NAMES_LIST,
+  type OrchestrationToolName,
 } from "@t3tools/contracts";
+import { z } from "zod";
 import {
   hasEffortLevel,
   applyClaudePromptEffortPrefix,
@@ -606,6 +608,231 @@ const ORCHESTRATION_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   restrict_scope: "Narrow an agent's existing scope without replacing it entirely.",
 };
 
+// ---------------------------------------------------------------------------
+// Zod input schemas for MCP tool definitions.
+//
+// The Claude Agent SDK uses zodToJsonSchema to convert these into JSON Schema
+// that is sent to the LLM in the tool definitions. Actual runtime validation
+// is handled downstream by OrchestrationToolRouter using Effect Schema, so
+// these Zod schemas are intentionally permissive (`.passthrough()` on objects).
+// ---------------------------------------------------------------------------
+
+const zAgentId = z.string().describe("Agent/worker ID.");
+const zRunId = z.string().describe("Orchestration run ID.");
+const zTaskId = z.string().describe("Task ID.");
+
+const ORCHESTRATION_TOOL_INPUT_SCHEMAS: Readonly<
+  Record<OrchestrationToolName, Record<string, z.ZodType>>
+> = {
+  // Agent lifecycle
+  spawn_agent: {
+    task: z.string().optional().describe("Short task label."),
+    objective: z.string().optional().describe("Detailed instructions for the worker."),
+    acceptance_criteria: z
+      .array(z.string())
+      .optional()
+      .describe("Acceptance criteria for the task."),
+    task_id: z.string().optional().describe("Existing task ID to continue."),
+    run_id: z.string().optional().describe("Existing run ID to continue."),
+    model: z.string().optional().describe("Model override (e.g. 'claude-sonnet-4-20250514')."),
+    provider: z.string().optional().describe("Provider override ('codex' or 'claudeAgent')."),
+    mode: z.string().optional().describe('Panel visibility: "foreground" or "background".'),
+    worktree: z.string().optional().describe("Git worktree path for isolated writes."),
+    branch: z.string().optional().describe("Git branch name."),
+  },
+  terminate_agent: {
+    agent_id: zAgentId,
+    reason: z.string().optional().describe("Reason for termination."),
+  },
+  restart_agent: {
+    agent_id: zAgentId,
+    reason: z.string().optional().describe("Reason for restart."),
+    model: z.string().optional().describe("New model override."),
+  },
+  clone_agent: {
+    source_agent_id: zAgentId.describe("Agent to clone from."),
+    task_id: zTaskId.optional().describe("New task for the clone."),
+    target_branch: z.string().optional().describe("Target branch for the clone."),
+    target_worktree_path: z.string().optional().describe("Target worktree path."),
+  },
+  pause_agent: {
+    agent_id: zAgentId,
+    reason: z.string().optional().describe("Reason for pausing."),
+  },
+  resume_agent: {
+    agent_id: zAgentId,
+  },
+  promote_to_foreground: {
+    agent_id: zAgentId,
+  },
+  demote_to_background: {
+    agent_id: zAgentId,
+  },
+  // Communication
+  send_to_agent: {
+    agent_id: zAgentId.describe("Target agent."),
+    message: z.string().describe("Message content."),
+    metadata: z.record(z.string()).optional().describe("Optional key-value metadata."),
+  },
+  broadcast: {
+    message: z.string().describe("Broadcast content."),
+    filter_mode: z.string().optional().describe('"foreground", "background", or "all".'),
+    exclude_agent_ids: z.array(z.string()).optional().describe("Agent IDs to exclude."),
+  },
+  transfer_context: {
+    from_agent_id: zAgentId.describe("Source agent."),
+    to_agent_id: zAgentId.describe("Destination agent."),
+    context_keys: z.array(z.string()).optional().describe("Specific context keys to transfer."),
+    include_history: z.boolean().optional().describe("Include conversation history."),
+  },
+  ask_agent: {
+    agent_id: zAgentId.describe("Agent to query."),
+    question: z.string().describe("Question to ask."),
+    timeout_ms: z.number().optional().describe("Max wait time in ms."),
+  },
+  share_file: {
+    agent_id: zAgentId.describe("Target agent."),
+    file_path: z.string().describe("Absolute file path to share."),
+    description: z.string().optional().describe("File description."),
+  },
+  // Monitoring
+  get_agent_status: {
+    agent_id: zAgentId,
+  },
+  get_all_status: {
+    run_id: zRunId.optional().describe("Filter by run ID."),
+  },
+  get_agent_diff: {
+    agent_id: zAgentId,
+    base: z.string().optional().describe("Base ref for diff comparison."),
+  },
+  get_agent_logs: {
+    agent_id: zAgentId,
+    tail: z.number().optional().describe("Number of recent lines."),
+    since: z.string().optional().describe("ISO timestamp to filter from."),
+  },
+  get_background_results: {
+    run_id: zRunId.optional().describe("Filter by run ID."),
+    agent_ids: z.array(z.string()).optional().describe("Filter by agent IDs."),
+    include_pending: z.boolean().optional().describe("Include in-progress agents."),
+  },
+  get_spawn_tree: {
+    run_id: zRunId.describe("Run ID to get the spawn tree for."),
+  },
+  // Coordination
+  wait_agent: {
+    agent_id: zAgentId,
+    timeout_ms: z.number().optional().describe("Max wait time in ms."),
+  },
+  wait_all: {
+    agent_ids: z.array(z.string()).describe("Agent IDs to wait for."),
+    timeout_ms: z.number().optional().describe("Max wait time in ms."),
+  },
+  set_dependency: {
+    from_agent_id: zAgentId.describe("Dependent agent."),
+    to_agent_id: zAgentId.describe("Prerequisite agent."),
+    description: z.string().optional().describe("Dependency description."),
+  },
+  merge_work: {
+    source_agent_id: zAgentId.describe("Agent whose work to merge."),
+    target_branch: z.string().optional().describe('Target branch or "main".'),
+    strategy: z.string().optional().describe('"merge", "rebase", or "squash".'),
+  },
+  set_spawn_budget: {
+    run_id: zRunId.optional().describe("Run ID to update."),
+    max_depth: z.number().optional().describe("Max spawn depth."),
+    max_children: z.number().optional().describe("Max children per worker."),
+    max_concurrent_writers: z.number().optional().describe("Max concurrent writers."),
+    max_total_workers: z.number().optional().describe("Max total workers."),
+  },
+  // Review
+  review_agent_work: {
+    agent_id: zAgentId,
+    task_id: zTaskId.optional().describe("Specific task to review."),
+    include_checklist: z.boolean().optional().describe("Include acceptance checklist."),
+    include_diff: z.boolean().optional().describe("Include the code diff."),
+  },
+  run_tests: {
+    agent_id: zAgentId.optional().describe("Agent context for test run."),
+    command: z.string().optional().describe("Custom test command."),
+    file_pattern: z.string().optional().describe("Test file pattern filter."),
+    timeout_ms: z.number().optional().describe("Max test run time in ms."),
+  },
+  accept_work: {
+    agent_id: zAgentId,
+    task_id: zTaskId.optional().describe("Task to accept."),
+    notes: z.string().optional().describe("Acceptance notes."),
+  },
+  reject_work: {
+    agent_id: zAgentId,
+    task_id: zTaskId.optional().describe("Task to reject."),
+    reason: z.string().describe("Rejection reason."),
+  },
+  request_revision: {
+    agent_id: zAgentId,
+    task_id: zTaskId.optional().describe("Task to request revision for."),
+    instructions: z.string().describe("Revision instructions."),
+    checklist_item_ids: z
+      .array(z.string())
+      .optional()
+      .describe("Specific checklist items to revise."),
+  },
+  // UI / Panel management
+  focus_agent: {
+    agent_id: zAgentId.optional().describe("Agent to focus."),
+    thread_id: z.string().optional().describe("Thread ID to focus."),
+    worker_id: z.string().optional().describe("Worker ID to focus."),
+  },
+  arrange_panels: {
+    layout: z.string().describe('"horizontal", "vertical", "grid", or "stack".'),
+    agent_ids: z.array(z.string()).optional().describe("Specific agents to arrange."),
+  },
+  promote_panel: {
+    agent_id: zAgentId.optional().describe("Agent whose panel to expand."),
+    thread_id: z.string().optional().describe("Thread ID to promote."),
+    worker_id: z.string().optional().describe("Worker ID to promote."),
+    size: z.string().optional().describe('"normal", "large", or "maximized".'),
+  },
+  collapse_panel: {
+    agent_id: zAgentId.optional().describe("Agent whose panel to collapse."),
+    thread_id: z.string().optional().describe("Thread ID to collapse."),
+    worker_id: z.string().optional().describe("Worker ID to collapse."),
+  },
+  open_diff_view: {
+    agent_id: zAgentId,
+    file_path: z.string().optional().describe("Specific file to diff."),
+    base: z.string().optional().describe("Base ref for comparison."),
+  },
+  open_browser_preview: {
+    agent_id: zAgentId.optional().describe("Agent context."),
+    url: z.string().optional().describe("Preview URL to open."),
+  },
+  // Configuration
+  assign_worktree: {
+    agent_id: zAgentId,
+    branch: z.string().optional().describe("Branch name (auto-generated if omitted)."),
+    base_branch: z.string().optional().describe("Base branch."),
+    worktree_path: z.string().optional().describe("Specific worktree path."),
+  },
+  set_model: {
+    agent_id: zAgentId,
+    provider: z.string().describe("Provider name."),
+    model: z.string().describe("Model identifier."),
+    reason: z.string().optional().describe("Reason for model change."),
+  },
+  set_scope: {
+    agent_id: zAgentId,
+    read_scope: z.array(z.string()).optional().describe("Allowed read paths."),
+    write_scope: z.array(z.string()).optional().describe("Allowed write paths."),
+    allowed_tools: z.array(z.string()).optional().describe("Allowed tool names."),
+  },
+  restrict_scope: {
+    agent_id: zAgentId,
+    deny_paths: z.array(z.string()).optional().describe("Paths to remove from scope."),
+    deny_tools: z.array(z.string()).optional().describe("Tools to deny."),
+  },
+} as const;
+
 /**
  * Build an in-process MCP server that exposes orchestration tools to the SDK.
  *
@@ -618,47 +845,38 @@ function buildOrchestrationMcpServer(deps: {
   readonly services: Effect.Effect.Context<never>;
   readonly threadId: string;
 }) {
-  // The SDK's createSdkMcpServer calls safeParseAsync on inputSchema internally.
-  // Rather than depending on Zod, we create a minimal passthrough object that
-  // satisfies the SDK's validation contract. Actual validation is handled
-  // downstream by OrchestrationToolRouter using Effect Schema.
-  const passthroughSchema = {
-    safeParseAsync: async (data: unknown) => ({ success: true, data }),
-    safeParse: (data: unknown) => ({ success: true, data }),
-  };
-
   const tools = ORCHESTRATION_TOOL_NAMES_LIST.map((toolName) => ({
     name: toolName,
     description: ORCHESTRATION_TOOL_DESCRIPTIONS[toolName] ?? toolName,
-    inputSchema: passthroughSchema,
+    inputSchema: (ORCHESTRATION_TOOL_INPUT_SCHEMAS[toolName] ?? {}) as Record<string, z.ZodType>,
     handler: async (args: Record<string, unknown>) => {
-        try {
-          const result = await Effect.runPromiseWith(deps.services)(
-            deps.router.executeTool({
-              toolName,
-              toolInput: args,
-              threadId: deps.threadId,
-              runId: null,
-            }),
-          );
-          return {
-            content: [{ type: "text" as const, text: JSON.stringify(result) }],
-          };
-        } catch (err) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify({
-                  error: err instanceof Error ? err.message : String(err),
-                }),
-              },
-            ],
-            isError: true,
-          };
-        }
-      },
-    }));
+      try {
+        const result = await Effect.runPromiseWith(deps.services)(
+          deps.router.executeTool({
+            toolName,
+            toolInput: args,
+            threadId: deps.threadId,
+            runId: null,
+          }),
+        );
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  }));
 
   return createSdkMcpServer({
     name: "orchestrate",

@@ -284,6 +284,7 @@ export function useComposerSlashCommands(input: {
           threadId: nextThreadId,
           projectId: activeProject.id,
           title: nextThreadTitle,
+          threadType: activeThread.threadType ?? "orchestrator",
           modelSelection: selectedModelSelection,
           runtimeMode,
           interactionMode: "default",

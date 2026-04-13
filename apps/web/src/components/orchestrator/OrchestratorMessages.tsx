@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   CheckIcon,
   ExternalLinkIcon,
@@ -10,6 +10,8 @@ import {
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
+import type { WorkLogEntry } from "~/session-logic";
+import { WorkEntryRow } from "../chat/WorkEntryRow";
 
 import {
   countOrchestratorChecklistItems,
@@ -217,6 +219,41 @@ function RequirementsChecklistCard({ items }: { items: ReadonlyArray<Orchestrato
   );
 }
 
+function ChangedFilesSummaryCard({ filePaths }: { filePaths: ReadonlyArray<string> }) {
+  if (filePaths.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-border/30 bg-background/35 px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/55">
+          Files changed
+        </p>
+        <span className="text-[10px] text-muted-foreground/45">
+          {filePaths.length} {filePaths.length === 1 ? "file" : "files"}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {filePaths.slice(0, 12).map((filePath) => (
+          <span
+            key={filePath}
+            className="rounded-md border border-border/45 bg-background/75 px-2 py-1 font-mono text-[10px] text-foreground/75"
+            title={filePath}
+          >
+            {filePath}
+          </span>
+        ))}
+        {filePaths.length > 12 ? (
+          <span className="px-1 text-[10px] text-muted-foreground/55">
+            +{filePaths.length - 12} more
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Transcript entry (control room mode)
 // ---------------------------------------------------------------------------
@@ -280,12 +317,14 @@ function TranscriptEntry({ message }: { message: OrchestratorMessage }) {
 
 export interface OrchestratorMessagesProps {
   messages: ReadonlyArray<OrchestratorMessage>;
+  workLogEntries?: ReadonlyArray<WorkLogEntry>;
   requirementsChecklist: ReadonlyArray<OrchestratorChecklistItem>;
   threadBrowserSession: EmbeddedBrowserSession | null;
   isThreadBrowserSessionVisible: boolean;
   suppressInlineBrowserPreview?: boolean;
   isBusy: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  onOpenWorkerPanel?: (input: { workerId?: string; threadId?: string }) => void;
   /** When true, renders the decision-aware transcript instead of the default bubbles. */
   controlRoomMode?: boolean;
 }
@@ -296,15 +335,18 @@ export interface OrchestratorMessagesProps {
 
 export function OrchestratorMessages({
   messages,
+  workLogEntries = [],
   requirementsChecklist,
   threadBrowserSession,
   isThreadBrowserSessionVisible,
   suppressInlineBrowserPreview = false,
   isBusy,
   scrollRef,
+  onOpenWorkerPanel,
   controlRoomMode = false,
 }: OrchestratorMessagesProps) {
-  const hasContent = messages.length > 0 || requirementsChecklist.length > 0;
+  const hasContent =
+    messages.length > 0 || workLogEntries.length > 0 || requirementsChecklist.length > 0;
 
   // Find the index of the last "thinking" message — only that one should spin (and only if busy)
   const lastThinkingIndex = (() => {
@@ -313,6 +355,40 @@ export function OrchestratorMessages({
     }
     return -1;
   })();
+  const lastThinkingMessageId = lastThinkingIndex >= 0 ? messages[lastThinkingIndex]?.id : null;
+  const timelineEntries = useMemo(
+    () =>
+      [
+        ...messages.map((message) => ({
+          id: `message:${message.id}`,
+          createdAt: message.timestamp,
+          kind: "message" as const,
+          message,
+        })),
+        ...workLogEntries.map((workEntry) => ({
+          id: `work:${workEntry.id}`,
+          createdAt: workEntry.createdAt,
+          kind: "work" as const,
+          workEntry,
+        })),
+      ].toSorted((left, right) => {
+        const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
+        if (createdAtComparison !== 0) {
+          return createdAtComparison;
+        }
+        return left.id.localeCompare(right.id);
+      }),
+    [messages, workLogEntries],
+  );
+  const changedFiles = useMemo(() => {
+    const collected = new Set<string>();
+    for (const entry of workLogEntries) {
+      for (const filePath of entry.changedFiles ?? []) {
+        collected.add(filePath);
+      }
+    }
+    return [...collected];
+  }, [workLogEntries]);
 
   // Control room mode: dense transcript with decision cards
   if (controlRoomMode) {
@@ -351,13 +427,25 @@ export function OrchestratorMessages({
             <CompactBrowserPreview session={threadBrowserSession} />
           ) : null}
           {hasContent ? (
-            messages.map((message, index) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                isActiveThinking={isBusy && index === lastThinkingIndex}
-              />
-            ))
+            <>
+              {timelineEntries.map((entry) =>
+                entry.kind === "message" ? (
+                  <MessageBubble
+                    key={entry.id}
+                    message={entry.message}
+                    isActiveThinking={isBusy && entry.message.id === lastThinkingMessageId}
+                  />
+                ) : (
+                  <div key={entry.id} className="pb-2">
+                    <WorkEntryRow
+                      workEntry={entry.workEntry}
+                      onOpenWorkerPanel={onOpenWorkerPanel}
+                    />
+                  </div>
+                ),
+              )}
+              <ChangedFilesSummaryCard filePaths={changedFiles} />
+            </>
           ) : (
             <div className="flex min-h-[40vh] items-center justify-center">
               <p className="text-sm text-muted-foreground/60">Describe what you want built.</p>

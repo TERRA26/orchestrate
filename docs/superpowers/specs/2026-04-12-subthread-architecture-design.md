@@ -14,10 +14,10 @@ Replace the custom multi-agent layout (rail + panels) with a subthread model tha
 ## Adaptive Layout
 
 | Agents focused | Orchestrator | Agent 1 | Agent 2 |
-|---|---|---|---|
-| 0 | 100% | — | — |
-| 1 | 50% | 50% | — |
-| 2 | 30% | 35% | 35% |
+| -------------- | ------------ | ------- | ------- |
+| 0              | 100%         | —       | —       |
+| 1              | 50%          | 50%     | —       |
+| 2              | 30%          | 35%     | 35%     |
 
 Layout transitions are driven by `focus_agent` and `collapse_panel` tool calls from the orchestrator. The client manages pane sizing.
 

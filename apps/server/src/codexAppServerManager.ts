@@ -1,6 +1,8 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 
 import {
@@ -43,7 +45,8 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
-import { renderOrchestratorToolDefinitions } from "./orchestration/orchestratorSystemPrompt";
+import { buildOrchestratorSystemPrompt } from "./orchestration/orchestratorSystemPrompt";
+import { ServerConfig } from "./config.ts";
 
 type PendingRequestKey = string;
 
@@ -179,6 +182,7 @@ export interface CodexAppServerStartSessionInput {
   readonly resumeCursor?: unknown;
   readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
   readonly runtimeMode: RuntimeMode;
+  readonly threadType?: "orchestrator" | "agent";
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -461,33 +465,22 @@ export function buildCodexInitializeParams() {
   } as const;
 }
 
-// Lazily cached orchestrator developer instructions (computed once on first use).
-let _cachedOrchestratorInstructions: string | undefined;
-
-function getOrchestratorDeveloperInstructions(): string {
-  if (_cachedOrchestratorInstructions === undefined) {
-    const toolBlock = renderOrchestratorToolDefinitions();
-    _cachedOrchestratorInstructions = `<collaboration_mode># Collaboration Mode: Orchestrator
-
-You are the orchestrator meta-agent. Your role is to decompose user tasks, spawn
-worker agents, monitor their progress, and coordinate merging of results.
-
-You MUST use the orchestration tools listed below to manage the agent pool. Emit
-tool calls by name with the documented parameters. The runtime will intercept
-these calls, execute them, and return structured results.
-
-Do NOT attempt to perform coding work directly. Delegate all implementation to
-spawned worker agents.
-
-${toolBlock}
-</collaboration_mode>`;
+function resolveOrchestratorPromptProjectRoot(startDir: string): string {
+  let current = path.resolve(startDir);
+  while (true) {
+    if (existsSync(path.join(current, "docs", "ORCHESTRATOR.md"))) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return path.resolve(startDir);
+    }
+    current = parent;
   }
-  return _cachedOrchestratorInstructions;
 }
 
-function buildCodexCollaborationMode(input: {
+function buildNonOrchestratorCodexCollaborationMode(input: {
   readonly interactionMode?: "default" | "plan";
-  readonly threadType?: "orchestrator" | "agent";
   readonly model?: string;
   readonly effort?: string;
 }):
@@ -500,20 +493,6 @@ function buildCodexCollaborationMode(input: {
       };
     }
   | undefined {
-  // Orchestrator threads always get orchestrator instructions, regardless of
-  // the interaction mode being set or not.
-  if (input.threadType === "orchestrator") {
-    const model = normalizeCodexModelSlug(input.model) ?? "gpt-5.3-codex";
-    return {
-      mode: input.interactionMode ?? "default",
-      settings: {
-        model,
-        reasoning_effort: input.effort ?? "medium",
-        developer_instructions: getOrchestratorDeveloperInstructions(),
-      },
-    };
-  }
-
   if (input.interactionMode === undefined) {
     return undefined;
   }
@@ -625,6 +604,50 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   constructor(services?: ServiceMap.ServiceMap<never>) {
     super();
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+  }
+
+  private async buildCodexCollaborationMode(input: {
+    readonly cwd?: string;
+    readonly interactionMode?: "default" | "plan";
+    readonly threadType?: "orchestrator" | "agent";
+    readonly model?: string;
+    readonly effort?: string;
+  }): Promise<
+    | {
+        mode: "default" | "plan";
+        settings: {
+          model: string;
+          reasoning_effort: string;
+          developer_instructions: string;
+        };
+      }
+    | undefined
+  > {
+    if (input.threadType !== "orchestrator") {
+      return buildNonOrchestratorCodexCollaborationMode(input);
+    }
+
+    const configuredProjectRoot = await this.runPromise(
+      Effect.serviceOption(ServerConfig).pipe(
+        Effect.map((option) => (option._tag === "Some" ? option.value.cwd : undefined)),
+        Effect.orElseSucceed(() => undefined),
+      ),
+    );
+    const projectRoot = resolveOrchestratorPromptProjectRoot(
+      configuredProjectRoot ?? input.cwd ?? process.cwd(),
+    );
+    const developerInstructions = await this.runPromise(
+      buildOrchestratorSystemPrompt({ projectRoot }),
+    );
+    const model = normalizeCodexModelSlug(input.model) ?? "gpt-5.3-codex";
+    return {
+      mode: input.interactionMode ?? "default",
+      settings: {
+        model,
+        reasoning_effort: input.effort ?? "medium",
+        developer_instructions: developerInstructions,
+      },
+    };
   }
 
   /**
@@ -938,7 +961,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (input.effort) {
       turnStartParams.effort = input.effort;
     }
-    const collaborationMode = buildCodexCollaborationMode({
+    const collaborationMode = await this.buildCodexCollaborationMode({
+      ...(context.session.cwd !== undefined ? { cwd: context.session.cwd } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.threadType !== undefined ? { threadType: input.threadType } : {}),
       ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),

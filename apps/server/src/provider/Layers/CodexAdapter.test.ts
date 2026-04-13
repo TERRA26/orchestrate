@@ -22,6 +22,7 @@ import {
   type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
 import { ServerConfig } from "../../config.ts";
+import { OrchestrationToolRouterService } from "../../orchestration/Services/OrchestrationToolRouter.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -33,6 +34,13 @@ const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
 
 class FakeCodexManager extends CodexAppServerManager {
+  public latestToolCallHandler:
+    | ((input: {
+        readonly threadId: string;
+        readonly toolName: string;
+        readonly toolInput: unknown;
+      }) => Promise<unknown>)
+    | undefined;
   public startSessionImpl = vi.fn(
     async (input: CodexAppServerStartSessionInput): Promise<ProviderSession> => {
       const now = new Date().toISOString();
@@ -144,6 +152,19 @@ class FakeCodexManager extends CodexAppServerManager {
     return false;
   }
 
+  override setToolCallHandler(
+    handler:
+      | ((input: {
+          readonly threadId: string;
+          readonly toolName: string;
+          readonly toolInput: unknown;
+        }) => Promise<unknown>)
+      | undefined,
+  ): void {
+    this.latestToolCallHandler = handler;
+    super.setToolCallHandler(handler);
+  }
+
   override stopAll(): void {
     this.stopAllImpl();
   }
@@ -217,6 +238,46 @@ validationLayer("CodexAdapterLive validation", (it) => {
         runtimeMode: "full-access",
       });
     }),
+  );
+
+  it.effect(
+    "registers the orchestration tool handler lazily when an orchestrator session starts",
+    () => {
+      const manager = new FakeCodexManager();
+      const layer = makeCodexAdapterLive({ manager }).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      return Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+
+        yield* adapter.startSession({
+          provider: "codex",
+          threadId: asThreadId("thread-orchestrator"),
+          runtimeMode: "full-access",
+          threadType: "orchestrator",
+        });
+
+        assert.equal(manager.startSessionImpl.mock.calls[0]?.[0]?.threadType, "orchestrator");
+        assert.equal(typeof manager.latestToolCallHandler, "function");
+        const toolResult = yield* Effect.promise(() =>
+          manager.latestToolCallHandler!({
+            threadId: "thread-orchestrator",
+            toolName: "spawn_agent",
+            toolInput: { task: "Open an agent window" },
+          }),
+        );
+        assert.deepStrictEqual(toolResult, { ok: true });
+      }).pipe(
+        Effect.provideService(OrchestrationToolRouterService, {
+          isOrchestrationTool: (toolName) => toolName === "spawn_agent",
+          executeTool: () => Effect.succeed({ ok: true }),
+        }),
+        Effect.provide(layer),
+      );
+    },
   );
 });
 

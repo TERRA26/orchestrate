@@ -29,10 +29,15 @@ import {
 import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
 import { TextGeneration, type TextGenerationShape } from "../../git/Services/TextGeneration.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
+import { OrchestrationToolRouterLive } from "./OrchestrationToolRouter.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { ProviderCommandReactorLive } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
+import {
+  OrchestrationToolRouterService,
+  type OrchestrationToolRouterShape,
+} from "../Services/OrchestrationToolRouter.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
@@ -96,6 +101,8 @@ describe("ProviderCommandReactor", () => {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly threadType?: "orchestrator" | "agent";
+    readonly orchestrationToolRouter?: OrchestrationToolRouterShape;
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -230,6 +237,11 @@ describe("ProviderCommandReactor", () => {
     );
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(
+        input?.orchestrationToolRouter
+          ? Layer.succeed(OrchestrationToolRouterService, input.orchestrationToolRouter)
+          : OrchestrationToolRouterLive.pipe(Layer.provideMerge(orchestrationLayer)),
+      ),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
@@ -272,6 +284,7 @@ describe("ProviderCommandReactor", () => {
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
+        ...(input?.threadType !== undefined ? { threadType: input.threadType } : {}),
         branch: null,
         worktreePath: null,
         createdAt: now,
@@ -328,12 +341,105 @@ describe("ProviderCommandReactor", () => {
         model: "gpt-5-codex",
       },
       runtimeMode: "approval-required",
+      threadType: "orchestrator",
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      input: "hello reactor",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      threadType: "orchestrator",
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("forwards orchestrator identity questions to the provider", async () => {
+    const harness = await createHarness({
+      threadModelSelection: {
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+      },
+      threadType: "orchestrator",
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-orchestrator-identity"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-who-are-you"),
+          role: "user",
+          text: "who are you?",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      input: "who are you?",
+      threadType: "orchestrator",
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.messages.filter((message) => message.role === "assistant")).toHaveLength(0);
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "tool.completed"),
+    ).toHaveLength(0);
+  });
+
+  it("forwards agent-window requests to the provider instead of intercepting them", async () => {
+    const harness = await createHarness({
+      threadModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      threadType: "orchestrator",
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-open-agent-window"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-open-agent-window"),
+          role: "user",
+          text: "open an agent window",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      input: "open an agent window",
+      threadType: "orchestrator",
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.messages.filter((message) => message.role === "assistant")).toHaveLength(0);
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "tool.completed"),
+    ).toHaveLength(0);
   });
 
   it("renames a generic first-turn thread title using text generation", async () => {
@@ -497,6 +603,38 @@ describe("ProviderCommandReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       input: "pivot now",
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      threadType: "orchestrator",
+    });
+  });
+
+  it("forwards agent thread type through session start and turn send", async () => {
+    const harness = await createHarness({ threadType: "agent" });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-agent-thread"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-agent-thread"),
+          role: "user",
+          text: "work directly on this task",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadType: "agent",
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadType: "agent",
     });
   });
 

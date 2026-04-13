@@ -14,6 +14,7 @@ import {
   ModelSelection,
   NonNegativeInt,
   ThreadId,
+  ThreadType,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -95,6 +96,7 @@ function toRuntimePayloadFromSession(
   extra?: {
     readonly modelSelection?: unknown;
     readonly providerOptions?: unknown;
+    readonly threadType?: unknown;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
@@ -106,6 +108,7 @@ function toRuntimePayloadFromSession(
     lastError: session.lastError ?? null,
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
     ...(extra?.providerOptions !== undefined ? { providerOptions: extra.providerOptions } : {}),
+    ...(extra?.threadType !== undefined ? { threadType: extra.threadType } : {}),
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
     ...(extra?.lastRuntimeEventAt !== undefined
       ? { lastRuntimeEventAt: extra.lastRuntimeEventAt }
@@ -146,6 +149,16 @@ function readPersistedCwd(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function readPersistedThreadType(
+  runtimePayload: ProviderRuntimeBinding["runtimePayload"],
+): "orchestrator" | "agent" | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const rawThreadType = "threadType" in runtimePayload ? runtimePayload.threadType : undefined;
+  return Schema.is(ThreadType)(rawThreadType) ? rawThreadType : undefined;
+}
+
 const makeProviderService = (options?: ProviderServiceLiveOptions) =>
   Effect.gen(function* () {
     const analytics = yield* Effect.service(AnalyticsService);
@@ -177,6 +190,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       extra?: {
         readonly modelSelection?: unknown;
         readonly providerOptions?: unknown;
+        readonly threadType?: unknown;
         readonly lastRuntimeEvent?: string;
         readonly lastRuntimeEventAt?: string;
       },
@@ -243,6 +257,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
         const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
         const persistedProviderOptions = readPersistedProviderOptions(input.binding.runtimePayload);
+        const persistedThreadType = readPersistedThreadType(input.binding.runtimePayload);
 
         const resumed = yield* adapter.startSession({
           threadId: input.binding.threadId,
@@ -250,6 +265,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(persistedProviderOptions ? { providerOptions: persistedProviderOptions } : {}),
+          ...(persistedThreadType ? { threadType: persistedThreadType } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
         });
@@ -333,6 +349,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* upsertSessionBinding(session, threadId, {
           modelSelection: input.modelSelection,
           providerOptions: input.providerOptions,
+          threadType: input.threadType,
         });
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
@@ -482,6 +499,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
           runtimePayload: {
             ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+            ...(input.threadType !== undefined ? { threadType: input.threadType } : {}),
             activeTurnId: turn.turnId,
             lastRuntimeEvent: "provider.sendTurn",
             lastRuntimeEventAt: new Date().toISOString(),
@@ -537,6 +555,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
           runtimePayload: {
             ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+            ...(input.threadType !== undefined ? { threadType: input.threadType } : {}),
             activeTurnId: turn.turnId,
             lastRuntimeEvent: "provider.steerTurn",
             lastRuntimeEventAt: new Date().toISOString(),

@@ -857,6 +857,34 @@ export function buildRecoveredOrchestratorMessages(
   return recovered;
 }
 
+export function buildThreadBackedOrchestratorMessages(
+  thread: Thread | undefined,
+): RecoveredOrchestratorMessage[] {
+  if (!thread) {
+    return [];
+  }
+
+  const recoveredMessages = buildRecoveredOrchestratorMessages(thread);
+  if (recoveredMessages.length > 0) {
+    return recoveredMessages;
+  }
+
+  return thread.messages.flatMap((message) => {
+    const content = toNonEmptyString(message.text);
+    if (!content || message.role === "system") {
+      return [];
+    }
+
+    return [
+      {
+        role: message.role === "user" ? "user" : "orchestrator",
+        content,
+        timestamp: message.createdAt,
+      } satisfies RecoveredOrchestratorMessage,
+    ];
+  });
+}
+
 function formatReviewFileSnapshot(snapshot: ReviewFileSnapshot): string {
   const metadata = [
     `Path: ${snapshot.path}`,

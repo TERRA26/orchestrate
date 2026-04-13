@@ -15,9 +15,11 @@
 ## File Map
 
 ### Contracts
+
 - **Modify:** `packages/contracts/src/orchestration.ts` — Add `threadType` field to ThreadCreateCommand and OrchestrationThread
 
 ### Server
+
 - **Modify:** `apps/server/src/provider/Layers/ClaudeAdapter.ts` — Inject orchestrator system prompt and tools, intercept orchestration tool calls
 - **Modify:** `apps/server/src/codexAppServerManager.ts` — Add orchestrator developer instructions, pass threadType through
 - **Modify:** `apps/server/src/provider/Layers/CodexAdapter.ts` — Intercept orchestration tool calls from Codex events
@@ -25,6 +27,7 @@
 - **Modify:** `apps/server/src/orchestration/projector.ts` — Project threadType onto thread read model
 
 ### Web
+
 - **Modify:** `apps/web/src/components/orchestrator/useOrchestratorEngine.ts` — Replace send function, remove client-side routing
 - **Modify:** `apps/web/src/components/OrchestratorPanel.tsx` — Render real agent messages via ChatView
 - **Modify:** `apps/web/src/components/Sidebar.tsx` — Add "New Orchestrator" and "New Agent" buttons
@@ -35,6 +38,7 @@
 ## Task 1: Contracts — Add threadType to Thread Schema
 
 **Files:**
+
 - Modify: `packages/contracts/src/orchestration.ts`
 
 - [ ] **Step 1: Add ThreadType schema**
@@ -82,6 +86,7 @@ git commit -m "feat(contracts): add threadType field to thread creation and read
 ## Task 2: Server — Store and Project threadType
 
 **Files:**
+
 - Modify: `apps/server/src/orchestration/decider.ts`
 - Modify: `apps/server/src/orchestration/projector.ts`
 
@@ -117,10 +122,12 @@ git commit -m "feat(server): store and project threadType through event sourcing
 ## Task 3: Server — Claude Adapter Orchestrator Integration
 
 **Files:**
+
 - Modify: `apps/server/src/provider/Layers/ClaudeAdapter.ts`
 - Modify: `apps/server/src/orchestration/orchestratorSystemPrompt.ts`
 
 This is the most complex task. The Claude adapter uses the Claude Agent SDK. We need to:
+
 1. Detect when a session is for an orchestrator thread
 2. Inject ORCHESTRATOR.md content into the system prompt
 3. Register orchestration tools alongside normal tools
@@ -129,6 +136,7 @@ This is the most complex task. The Claude adapter uses the Claude Agent SDK. We 
 - [ ] **Step 1: Read ClaudeAdapter thoroughly**
 
 Read the full ClaudeAdapter.ts to understand:
+
 - How `createQuery()` builds the SDK query options
 - How tools are registered (the `canUseTool` callback or tools array)
 - How tool calls are processed in the response stream
@@ -151,6 +159,7 @@ import { buildOrchestratorSystemPrompt } from "../../orchestration/orchestratorS
 ```
 
 In the query creation flow, if `threadType === "orchestrator"`:
+
 - Call `buildOrchestratorSystemPrompt({ projectRoot })` to get the orchestrator instructions
 - Prepend this to the system prompt / instructions
 
@@ -161,7 +170,11 @@ The Claude SDK likely has a way to register custom tools. For orchestrator threa
 Create a function that converts the orchestration tool definitions into the Claude SDK tool format:
 
 ```typescript
-function buildOrchestrationToolDefinitions(): Array<{ name: string; description: string; input_schema: object }> {
+function buildOrchestrationToolDefinitions(): Array<{
+  name: string;
+  description: string;
+  input_schema: object;
+}> {
   // Convert each tool from TOOL_DEFINITIONS in orchestratorSystemPrompt.ts
   // into Claude API tool format with JSON Schema input definitions
 }
@@ -177,12 +190,14 @@ import { ORCHESTRATION_TOOL_NAMES } from "@t3tools/contracts";
 // In the tool call processing loop:
 if (ORCHESTRATION_TOOL_NAMES.has(toolCall.name)) {
   // Route to OrchestrationToolRouter instead of normal tool execution
-  const result = yield* orchestrationToolRouter.executeTool({
-    toolName: toolCall.name,
-    toolInput: toolCall.input,
-    threadId: context.threadId,
-    runId: null, // Will be set from context if available
-  });
+  const result =
+    yield *
+    orchestrationToolRouter.executeTool({
+      toolName: toolCall.name,
+      toolInput: toolCall.input,
+      threadId: context.threadId,
+      runId: null, // Will be set from context if available
+    });
   // Return result as tool_result to the LLM
   return { type: "tool_result", tool_use_id: toolCall.id, content: JSON.stringify(result) };
 }
@@ -214,6 +229,7 @@ git commit -m "feat(server): inject orchestrator prompt and intercept tool calls
 ## Task 4: Server — Codex Adapter Orchestrator Integration
 
 **Files:**
+
 - Modify: `apps/server/src/codexAppServerManager.ts`
 - Modify: `apps/server/src/provider/Layers/CodexAdapter.ts`
 
@@ -224,6 +240,7 @@ Understand how developer_instructions are set per interaction mode. Find the sec
 - [ ] **Step 2: Add orchestrator developer instructions**
 
 Create a new constant `CODEX_ORCHESTRATOR_DEVELOPER_INSTRUCTIONS` in `codexAppServerManager.ts`. This should include:
+
 - The content of ORCHESTRATOR.md (read from disk at startup or inline)
 - Tool definitions formatted as function descriptions that Codex can understand
 - Instructions for the LLM to emit function calls with orchestration tool names
@@ -275,14 +292,16 @@ import { ORCHESTRATION_TOOL_NAMES } from "@t3tools/contracts";
 const toolName = extractToolName(event);
 if (ORCHESTRATION_TOOL_NAMES.has(toolName)) {
   const input = extractToolInput(event);
-  const result = yield* orchestrationToolRouter.executeTool({
-    toolName,
-    toolInput: input,
-    threadId: context.threadId,
-    runId: null,
-  });
+  const result =
+    yield *
+    orchestrationToolRouter.executeTool({
+      toolName,
+      toolInput: input,
+      threadId: context.threadId,
+      runId: null,
+    });
   // Send result back to Codex app-server via JSON-RPC
-  yield* sendToolResult(context, event.id, result);
+  yield * sendToolResult(context, event.id, result);
   return; // Don't process as normal tool call
 }
 ```
@@ -303,6 +322,7 @@ git commit -m "feat(server): inject orchestrator instructions and intercept tool
 ## Task 5: Web — Simplify the Send Function
 
 **Files:**
+
 - Modify: `apps/web/src/components/orchestrator/useOrchestratorEngine.ts`
 
 This is the core change — replacing the giant client-side routing logic with a simple turn dispatch.
@@ -310,6 +330,7 @@ This is the core change — replacing the giant client-side routing logic with a
 - [ ] **Step 1: Read the current send function**
 
 Read the full `send` function (starts around line 1891, ~300 lines). Understand everything it does:
+
 - Client-side LLM routing call
 - JSON parsing of router decision
 - Manual progress messages
@@ -374,6 +395,7 @@ const send = useCallback(
 - [ ] **Step 3: Remove dead code**
 
 Remove these functions and their usages (they are no longer called):
+
 - `callOrchestratorLLM` (if it exists as a separate function)
 - `createServerRun`
 - `spawnServerWorker` (if only used by the old send flow)
@@ -387,6 +409,7 @@ Remove these functions and their usages (they are no longer called):
 - Any imports that are now unused
 
 Do NOT remove:
+
 - `addMessage` — still used for error messages
 - `setOrchestratorPrompt` — still used to clear input
 - `newCommandId`, `newMessageId` — still used
@@ -400,10 +423,11 @@ Do NOT remove:
 The hook currently returns properties like `status`, `statusDetail`, `isBusy` that were driven by the client-side state machine. These should now be derived from the thread's actual state (turn running = busy, idle = idle). Check what `OrchestratorPanelInner` and other consumers use and ensure they still work.
 
 If consumers rely on `engine.status`, derive it from the thread's session status:
+
 ```typescript
 const status = useMemo(() => {
   // Derive from thread session state instead of manual status tracking
-  const thread = threads.find(t => t.id === currentThreadId);
+  const thread = threads.find((t) => t.id === currentThreadId);
   if (!thread?.session) return "idle";
   if (thread.session.status === "running") return "thinking";
   return "idle";
@@ -426,6 +450,7 @@ git commit -m "feat(web): replace client-side orchestrator routing with real age
 ## Task 6: Web — Render Real Agent Messages in Orchestrator
 
 **Files:**
+
 - Modify: `apps/web/src/components/OrchestratorPanel.tsx`
 - Modify: `apps/web/src/components/orchestrator/OrchestratorMessages.tsx` (if needed)
 
@@ -434,6 +459,7 @@ The orchestrator panel needs to render real agent messages (thinking, tool calls
 - [ ] **Step 1: Read how ChatView renders messages**
 
 Read `apps/web/src/components/ChatView.tsx` to understand how regular agent threads render:
+
 - Message items (user messages, assistant messages)
 - Tool call blocks (file edits, terminal commands)
 - Thinking/reasoning blocks
@@ -452,7 +478,11 @@ The key integration: the orchestrator thread's messages come from `api.orchestra
 When a tool call is an orchestration tool (spawn_agent, accept_work, etc.), render a custom card instead of the generic tool call block:
 
 ```tsx
-function OrchestrationToolCallCard({ toolName, input, result }: {
+function OrchestrationToolCallCard({
+  toolName,
+  input,
+  result,
+}: {
   toolName: string;
   input: unknown;
   result: unknown;
@@ -491,6 +521,7 @@ git commit -m "feat(web): render real agent messages with custom orchestration t
 ## Task 7: Web — Sidebar Thread Type Buttons
 
 **Files:**
+
 - Modify: `apps/web/src/components/Sidebar.tsx`
 - Modify: `apps/web/src/hooks/useHandleNewThread.ts`
 

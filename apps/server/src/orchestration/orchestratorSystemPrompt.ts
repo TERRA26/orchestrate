@@ -35,13 +35,39 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
   // -- Agent lifecycle (8) --------------------------------------------------
   {
     name: "spawn_agent",
-    description: "Spawn a new worker agent. Assigns it a task, model, and optional worktree.",
+    description:
+      "Spawn a new worker agent. Usually call this with a simple task/objective and optional mode; the server infers or creates run/task context automatically.",
     parameters: [
+      {
+        name: "task",
+        type: "string",
+        required: false,
+        description:
+          "Short task label. Use this for most calls, including 'open an agent window' or a concrete implementation task.",
+      },
+      {
+        name: "objective",
+        type: "string",
+        required: false,
+        description: "Detailed instructions for the worker. If omitted, the task label is used.",
+      },
+      {
+        name: "acceptance_criteria",
+        type: "string[]",
+        required: false,
+        description: "Optional acceptance criteria for the new task.",
+      },
       {
         name: "task_id",
         type: "string",
-        required: true,
-        description: "Task to assign to the new agent.",
+        required: false,
+        description: "Existing task ID only when continuing a known orchestration task.",
+      },
+      {
+        name: "run_id",
+        type: "string",
+        required: false,
+        description: "Existing run ID only when continuing a known orchestration run.",
       },
       {
         name: "model",
@@ -53,7 +79,7 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
         name: "mode",
         type: '"foreground" | "background"',
         required: false,
-        description: 'Panel visibility mode. Default "background".',
+        description: 'Panel visibility mode. Default "foreground".',
       },
       {
         name: "worktree",
@@ -558,6 +584,15 @@ function renderAllToolDefinitions(): string {
   return `## Available Tools (${TOOL_DEFINITIONS.length} total)\n\n${rendered.join("\n\n")}`;
 }
 
+const ORCHESTRATOR_IDENTITY_PRELUDE = [
+  "## Hard Identity Rules",
+  "",
+  "- You are the Orchestrate Orchestrator control-plane agent.",
+  "- Do not introduce yourself as Claude, Codex, GPT, or a generic assistant.",
+  "- If the user asks who you are, answer as the Orchestrator for this workspace.",
+  "- The provider may be Claude or Codex, but your role and user-facing identity are always the Orchestrator.",
+].join("\n");
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -599,6 +634,8 @@ export function buildOrchestratorSystemPrompt({
 
     const toolBlock = renderAllToolDefinitions();
 
-    return [orchestratorMd.trimEnd(), "", toolBlock, ""].join("\n");
+    return [ORCHESTRATOR_IDENTITY_PRELUDE, "", orchestratorMd.trimEnd(), "", toolBlock, ""].join(
+      "\n",
+    );
   });
 }

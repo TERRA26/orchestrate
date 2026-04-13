@@ -16,6 +16,7 @@ Replace the client-side orchestrator routing logic with a real agent thread. The
 ### Deleted (client-side orchestrator brain)
 
 All of these in `useOrchestratorEngine.ts`:
+
 - `callOrchestratorLLM()` — no more client-side LLM calls
 - `ORCHESTRATOR_ROUTER_SYSTEM_PROMPT` — replaced by real system prompt injection
 - `parseOrchestratorRouterDecision()` — LLM acts directly via tool calls
@@ -106,10 +107,9 @@ The chat transcript shows the full flow: the LLM's reasoning, each tool call wit
 The `thread.create` command gets a new optional field:
 
 ```typescript
-threadType: Schema.optionalWith(
-  Schema.Literal("orchestrator", "agent"),
-  { default: () => "orchestrator" as const },
-)
+threadType: Schema.optionalWith(Schema.Literal("orchestrator", "agent"), {
+  default: () => "orchestrator" as const,
+});
 ```
 
 Default is `"orchestrator"`. The sidebar "New Agent Thread" button passes `threadType: "agent"`.
@@ -133,24 +133,27 @@ Thread entries in the sidebar show a small indicator for thread type (e.g., a ti
 The `send` function in `useOrchestratorEngine.ts` becomes trivial:
 
 ```typescript
-const send = useCallback(async (text: string) => {
-  const trimmed = text.trim();
-  if (!trimmed || !selectedModel) return;
-  
-  const api = readNativeApi();
-  if (!api) return;
-  
-  await api.orchestration.dispatchCommand({
-    type: "thread.turn.start",
-    commandId: newCommandId(),
-    threadId: currentThreadId,
-    message: { messageId: newMessageId(), role: "user", text: trimmed, attachments: [] },
-    modelSelection: selectedModelSelection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    createdAt: new Date().toISOString(),
-  });
-}, [currentThreadId, selectedModel, selectedModelSelection]);
+const send = useCallback(
+  async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || !selectedModel) return;
+
+    const api = readNativeApi();
+    if (!api) return;
+
+    await api.orchestration.dispatchCommand({
+      type: "thread.turn.start",
+      commandId: newCommandId(),
+      threadId: currentThreadId,
+      message: { messageId: newMessageId(), role: "user", text: trimmed, attachments: [] },
+      modelSelection: selectedModelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: new Date().toISOString(),
+    });
+  },
+  [currentThreadId, selectedModel, selectedModelSelection],
+);
 ```
 
 That's it. The provider session handles everything. The LLM reasons, calls tools, spawns agents — all streamed to the chat transcript via domain events.
@@ -159,15 +162,15 @@ That's it. The provider session handles everything. The LLM reasons, calls tools
 
 Minimal differences between orchestrator and agent threads:
 
-| Element | Orchestrator Thread | Agent Thread |
-|---|---|---|
-| Header badge | "Orchestrator" with grid icon | "Agent" with terminal icon |
-| Composer placeholder | "Ask the orchestrator..." | "Message..." |
-| `spawn_agent` tool calls | Render as "Agent Spawned" card with role/model | N/A (tool not available) |
-| `accept_work` / `reject_work` | Render as review decision cards | N/A |
-| Background color | Same | Same |
-| Message bubbles | Same | Same |
-| Tool call rendering | Same (but orchestration tools get custom icons) | Same |
+| Element                       | Orchestrator Thread                             | Agent Thread               |
+| ----------------------------- | ----------------------------------------------- | -------------------------- |
+| Header badge                  | "Orchestrator" with grid icon                   | "Agent" with terminal icon |
+| Composer placeholder          | "Ask the orchestrator..."                       | "Message..."               |
+| `spawn_agent` tool calls      | Render as "Agent Spawned" card with role/model  | N/A (tool not available)   |
+| `accept_work` / `reject_work` | Render as review decision cards                 | N/A                        |
+| Background color              | Same                                            | Same                       |
+| Message bubbles               | Same                                            | Same                       |
+| Tool call rendering           | Same (but orchestration tools get custom icons) | Same                       |
 
 ## End-to-End Example
 
@@ -178,18 +181,18 @@ User: "Using Claude and Codex, build a YouTube clone and run it on a web server"
 
 [LLM thinking streams to chat...]
 
-Orchestrator: "I'll decompose this into two parallel tasks — a backend API 
-and a React frontend. Codex is well-suited for the API layer, and Claude 
+Orchestrator: "I'll decompose this into two parallel tasks — a backend API
+and a React frontend. Codex is well-suited for the API layer, and Claude
 Sonnet will handle the frontend quickly."
 
-[tool_use: spawn_agent({ role: "backend", task: "Build an Express API with 
-video metadata endpoints, SQLite storage...", model: "codex", mode: "foreground", 
+[tool_use: spawn_agent({ role: "backend", task: "Build an Express API with
+video metadata endpoints, SQLite storage...", model: "codex", mode: "foreground",
 worktree: true })]
 
 [tool_result: { workerId: "w1", threadId: "t1", status: "spawned" }]
 
-[tool_use: spawn_agent({ role: "frontend", task: "Build a React YouTube clone 
-UI with Tailwind CSS...", model: "claude-sonnet", mode: "foreground", 
+[tool_use: spawn_agent({ role: "frontend", task: "Build a React YouTube clone
+UI with Tailwind CSS...", model: "claude-sonnet", mode: "foreground",
 worktree: true })]
 
 [tool_result: { workerId: "w2", threadId: "t2", status: "spawned" }]
@@ -203,7 +206,7 @@ Orchestrator: "Both agents are running. I'll monitor their progress."
 
 ... agents work in their panels ...
 
-[tool_result: { results: [{ workerId: "w1", status: "submitted" }, 
+[tool_result: { results: [{ workerId: "w1", status: "submitted" },
 { workerId: "w2", status: "submitted" }] }]
 
 Orchestrator: "Both agents have submitted. Let me review their work."
@@ -213,12 +216,12 @@ Orchestrator: "Both agents have submitted. Let me review their work."
 
 ... review results ...
 
-Orchestrator: "Backend looks good — 5 endpoints, tests passing. Frontend 
-has a minor issue with the video grid layout. Accepting backend, requesting 
+Orchestrator: "Backend looks good — 5 endpoints, tests passing. Frontend
+has a minor issue with the video grid layout. Accepting backend, requesting
 a revision on frontend."
 
 [tool_use: accept_work({ workerId: "w1" })]
-[tool_use: request_revision({ workerId: "w2", changes: ["Fix video grid 
+[tool_use: request_revision({ workerId: "w2", changes: ["Fix video grid
 to use CSS grid instead of flexbox for proper 3-column layout"] })]
 ```
 

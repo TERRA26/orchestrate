@@ -28,8 +28,10 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
+import { useOrchestratorStateStore } from "../orchestratorStateStore";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
@@ -953,6 +955,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
       threads: [],
       threadsHydrated: false,
     });
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {},
+    });
+    useOrchestratorStateStore.setState({
+      threadsById: {},
+    });
   });
 
   afterEach(() => {
@@ -1735,6 +1743,170 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("switches new agent and terminal drafts to their matching surfaces", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-thread-mode-test" as MessageId,
+        targetText: "thread mode test",
+      }),
+    });
+
+    try {
+      const newAgentThreadButton = page.getByTestId("new-agent-thread-button");
+      await expect.element(newAgentThreadButton).toBeInTheDocument();
+
+      await newAgentThreadButton.click();
+
+      const agentThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should change to a new agent draft thread UUID.",
+      );
+      const agentThreadId = agentThreadPath.slice(1) as ThreadId;
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useComposerDraftStore.getState().draftThreadsByThreadId[agentThreadId],
+          ).toMatchObject({
+            threadType: "agent",
+            entryPoint: "chat",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await expect
+        .element(page.getByRole("button", { name: "New orchestrator chat" }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(page.getByText("Send a message to start the conversation."))
+        .toBeInTheDocument();
+
+      const newTerminalThreadButton = page.getByRole("button", {
+        name: /Create new terminal thread in /,
+      });
+      await expect.element(newTerminalThreadButton).toBeInTheDocument();
+
+      await newTerminalThreadButton.click();
+
+      const terminalThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path) && path !== agentThreadPath,
+        "Route should change to a new terminal-first draft thread UUID.",
+      );
+      const terminalThreadId = terminalThreadPath.slice(1) as ThreadId;
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useComposerDraftStore.getState().draftThreadsByThreadId[terminalThreadId],
+          ).toMatchObject({
+            entryPoint: "terminal",
+          });
+          expect(
+            selectThreadTerminalState(
+              useTerminalStateStore.getState().terminalStateByThreadId,
+              terminalThreadId,
+            ).entryPoint,
+          ).toBe("terminal");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await expect
+        .element(page.getByRole("button", { name: "New orchestrator chat" }))
+        .not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits orchestrator drafts with Enter", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-orchestrator-enter-test" as MessageId,
+        targetText: "orchestrator enter test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const orchestratorThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should change to a new orchestrator draft thread UUID.",
+      );
+      const orchestratorThreadId = orchestratorThreadPath.slice(1) as ThreadId;
+
+      await expect
+        .element(page.getByRole("button", { name: "New orchestrator chat" }))
+        .toBeInTheDocument();
+
+      useOrchestratorStateStore
+        .getState()
+        .setPrompt(orchestratorThreadId, "Build a polished YouTube clone");
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const createRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              typeof request.command === "object" &&
+              request.command !== null &&
+              "type" in request.command &&
+              "threadId" in request.command &&
+              request.command.type === "thread.create" &&
+              request.command.threadId === orchestratorThreadId,
+          );
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              typeof request.command === "object" &&
+              request.command !== null &&
+              "type" in request.command &&
+              "threadId" in request.command &&
+              request.command.type === "thread.turn.start" &&
+              request.command.threadId === orchestratorThreadId,
+          );
+
+          expect(createRequest).toBeTruthy();
+          expect(createRequest?.command).toMatchObject({
+            type: "thread.create",
+            threadType: "orchestrator",
+          });
+          expect(turnStartRequest).toBeTruthy();
+          expect(turnStartRequest?.command).toMatchObject({
+            type: "thread.turn.start",
+            message: {
+              role: "user",
+              text: "Build a polished YouTube clone",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

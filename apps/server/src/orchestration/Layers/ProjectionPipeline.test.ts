@@ -1893,6 +1893,220 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 
+  it.effect("persists spawned worker rows with the worker thread id from the event", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = new Date().toISOString();
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-worker-project"),
+        projectId: ProjectId.makeUnsafe("project-worker"),
+        title: "Worker Project",
+        workspaceRoot: "/tmp/project-worker",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.run.create",
+        commandId: CommandId.makeUnsafe("cmd-worker-run"),
+        runId: "run-worker" as any,
+        projectId: ProjectId.makeUnsafe("project-worker"),
+        userRequest: "Open an agent window",
+        goals: ["Spawn one worker"],
+        spawnBudget: {
+          maxDepth: 3,
+          maxChildren: 5,
+          maxConcurrentWriters: 2,
+          maxTotalWorkers: 10,
+          allowedTools: [],
+          writeScope: [],
+        },
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.task.create",
+        commandId: CommandId.makeUnsafe("cmd-worker-task"),
+        taskId: "task-worker" as any,
+        runId: "run-worker" as any,
+        title: "Spawn worker",
+        objective: "Spawn a visible worker thread",
+        acceptanceCriteria: ["Worker exists"],
+        maxIterations: 3,
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.worker.spawn",
+        commandId: CommandId.makeUnsafe("cmd-worker-spawn"),
+        workerId: "worker-live" as any,
+        runId: "run-worker" as any,
+        taskId: "task-worker" as any,
+        threadId: ThreadId.makeUnsafe("worker-thread-live"),
+        spawnBudget: {
+          maxDepth: 3,
+          maxChildren: 5,
+          maxConcurrentWriters: 2,
+          maxTotalWorkers: 10,
+          allowedTools: [],
+          writeScope: [],
+        },
+        workspace: {
+          mode: "local",
+          cwd: "/tmp/project-worker",
+          terminalIds: [],
+        },
+        createdAt,
+      });
+
+      const workerRows = yield* sql<{
+        readonly workerId: string;
+        readonly threadId: string;
+        readonly activeTaskId: string | null;
+        readonly status: string;
+        readonly visibility: string;
+      }>`
+        SELECT
+          worker_id AS "workerId",
+          thread_id AS "threadId",
+          active_task_id AS "activeTaskId",
+          status,
+          visibility
+        FROM orchestrator_workers
+        WHERE worker_id = 'worker-live'
+      `;
+
+      assert.deepEqual(workerRows, [
+        {
+          workerId: "worker-live",
+          threadId: "worker-thread-live",
+          activeTaskId: "task-worker",
+          status: "running",
+          visibility: "foreground",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("persists worker visibility changes from promote and demote events", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = new Date().toISOString();
+      const demotedAt = new Date(Date.parse(createdAt) + 1_000).toISOString();
+      const promotedAt = new Date(Date.parse(createdAt) + 2_000).toISOString();
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-worker-visibility-project"),
+        projectId: ProjectId.makeUnsafe("project-worker-visibility"),
+        title: "Worker Visibility Project",
+        workspaceRoot: "/tmp/project-worker-visibility",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.run.create",
+        commandId: CommandId.makeUnsafe("cmd-worker-visibility-run"),
+        runId: "run-worker-visibility" as any,
+        projectId: ProjectId.makeUnsafe("project-worker-visibility"),
+        userRequest: "Open a visible worker",
+        goals: ["Persist worker visibility"],
+        spawnBudget: {
+          maxDepth: 3,
+          maxChildren: 5,
+          maxConcurrentWriters: 2,
+          maxTotalWorkers: 10,
+          allowedTools: [],
+          writeScope: [],
+        },
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.task.create",
+        commandId: CommandId.makeUnsafe("cmd-worker-visibility-task"),
+        taskId: "task-worker-visibility" as any,
+        runId: "run-worker-visibility" as any,
+        title: "Visibility task",
+        objective: "Toggle worker visibility",
+        acceptanceCriteria: ["Visibility persists"],
+        maxIterations: 3,
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.worker.spawn",
+        commandId: CommandId.makeUnsafe("cmd-worker-visibility-spawn"),
+        workerId: "worker-visibility" as any,
+        runId: "run-worker-visibility" as any,
+        taskId: "task-worker-visibility" as any,
+        threadId: ThreadId.makeUnsafe("worker-thread-visibility"),
+        spawnBudget: {
+          maxDepth: 3,
+          maxChildren: 5,
+          maxConcurrentWriters: 2,
+          maxTotalWorkers: 10,
+          allowedTools: [],
+          writeScope: [],
+        },
+        workspace: {
+          mode: "local",
+          cwd: "/tmp/project-worker-visibility",
+          terminalIds: [],
+        },
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.worker.demote",
+        commandId: CommandId.makeUnsafe("cmd-worker-visibility-demote"),
+        workerId: "worker-visibility" as any,
+        visibility: "background",
+        createdAt: demotedAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.worker.promote",
+        commandId: CommandId.makeUnsafe("cmd-worker-visibility-promote"),
+        workerId: "worker-visibility" as any,
+        visibility: "foreground",
+        createdAt: promotedAt,
+      });
+
+      const workerRows = yield* sql<{
+        readonly workerId: string;
+        readonly visibility: string;
+        readonly updatedAt: string;
+      }>`
+        SELECT
+          worker_id AS "workerId",
+          visibility,
+          updated_at AS "updatedAt"
+        FROM orchestrator_workers
+        WHERE worker_id = 'worker-visibility'
+      `;
+
+      assert.deepEqual(workerRows, [
+        {
+          workerId: "worker-visibility",
+          visibility: "foreground",
+          updatedAt: promotedAt,
+        },
+      ]);
+    }),
+  );
+
   it.effect("projects persist updated scripts from project.meta.update", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngineService;

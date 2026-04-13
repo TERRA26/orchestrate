@@ -33,6 +33,7 @@ export function useHandleNewThread() {
   const handleNewThread = useCallback(
     (projectId: ProjectId, options?: NewThreadOptions): Promise<void> => {
       const entryPoint = options?.entryPoint ?? "chat";
+      const threadType = options?.threadType ?? "orchestrator";
       const wantsTemporaryThread = options?.temporary === true;
       const activateThreadEntryPoint = (threadId: ThreadId) => {
         if (entryPoint === "terminal") {
@@ -49,7 +50,11 @@ export function useHandleNewThread() {
         setDraftThreadContext,
         setProjectDraftThreadId,
       } = useComposerDraftStore.getState();
-      const storedDraftThreadCandidate = getDraftThreadByProjectId(projectId, entryPoint);
+      const storedDraftThreadCandidate = getDraftThreadByProjectId(
+        projectId,
+        entryPoint,
+        threadType,
+      );
       const latestActiveDraftThreadCandidate: DraftThreadState | null = focusedThreadId
         ? getDraftThread(focusedThreadId)
         : null;
@@ -67,6 +72,7 @@ export function useHandleNewThread() {
         entryPoint,
         projectId,
         routeThreadId: focusedThreadId,
+        threadType,
       });
       const projectDefaultModelSelection =
         projects.find((project) => project.id === projectId)?.defaultModelSelection ?? null;
@@ -112,7 +118,7 @@ export function useHandleNewThread() {
           modelSelection: creationState.modelSelection,
           runtimeMode: creationState.runtimeMode,
           interactionMode: creationState.interactionMode,
-          threadType: options?.threadType ?? "orchestrator",
+          threadType,
           envMode: creationState.envMode,
           branch: creationState.branch,
           worktreePath: creationState.worktreePath,
@@ -130,7 +136,7 @@ export function useHandleNewThread() {
             setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
             resolvedStoredDraftThread = getDraftThread(bootstrapPlan.threadId);
           }
-          setProjectDraftThreadId(projectId, bootstrapPlan.threadId, { entryPoint });
+          setProjectDraftThreadId(projectId, bootstrapPlan.threadId, { entryPoint, threadType });
           activateThreadEntryPoint(bootstrapPlan.threadId);
           if (focusedThreadId === bootstrapPlan.threadId) {
             if (entryPoint === "terminal") {
@@ -154,7 +160,7 @@ export function useHandleNewThread() {
         })();
       }
 
-      clearProjectDraftThreadId(projectId, entryPoint);
+      clearProjectDraftThreadId(projectId, entryPoint, threadType);
 
       if (bootstrapPlan.kind === "route") {
         if (wantsTemporaryThread) {
@@ -166,7 +172,7 @@ export function useHandleNewThread() {
           setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
           resolvedActiveDraftThread = getDraftThread(bootstrapPlan.threadId);
         }
-        setProjectDraftThreadId(projectId, bootstrapPlan.threadId, { entryPoint });
+        setProjectDraftThreadId(projectId, bootstrapPlan.threadId, { entryPoint, threadType });
         activateThreadEntryPoint(bootstrapPlan.threadId);
         if (entryPoint === "terminal") {
           return createTerminalThread(

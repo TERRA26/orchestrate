@@ -116,6 +116,7 @@ export function createActiveDraftThreadSnapshot(
     runtimeMode: activeDraftThread.runtimeMode,
     interactionMode: activeDraftThread.interactionMode,
     entryPoint: activeDraftThread.entryPoint,
+    ...(activeDraftThread.threadType ? { threadType: activeDraftThread.threadType } : {}),
     branch: activeDraftThread.branch,
     worktreePath: activeDraftThread.worktreePath,
     envMode: activeDraftThread.envMode,
@@ -130,6 +131,7 @@ export function resolveThreadBootstrapPlan(input: {
   projectId: ProjectId;
   routeThreadId: ThreadId | null;
   storedDraftThread: ({ threadId: ThreadId } & DraftThreadState) | null;
+  threadType?: "orchestrator" | "agent";
 }): ThreadBootstrapPlan {
   if (input.storedDraftThread) {
     return {
@@ -144,6 +146,7 @@ export function resolveThreadBootstrapPlan(input: {
       entryPoint: input.entryPoint,
       projectId: input.projectId,
       routeThreadId: input.routeThreadId,
+      threadType: input.threadType ?? "orchestrator",
     })
   ) {
     return {
@@ -168,6 +171,7 @@ export function createFreshDraftThreadSeed(input: {
     envMode: input.options?.envMode ?? "local",
     runtimeMode: DEFAULT_RUNTIME_MODE,
     entryPoint: input.entryPoint,
+    ...(input.options?.threadType ? { threadType: input.options.threadType } : {}),
     ...(input.options?.temporary ? { isTemporary: true } : {}),
   };
 }
@@ -177,7 +181,8 @@ export function hasDraftContextOverrides(options?: NewThreadOptions): boolean {
   return (
     options?.branch !== undefined ||
     options?.worktreePath !== undefined ||
-    options?.envMode !== undefined
+    options?.envMode !== undefined ||
+    options?.threadType !== undefined
   );
 }
 
@@ -189,6 +194,7 @@ export function buildDraftThreadContextPatch(
   branch?: string | null;
   entryPoint: ThreadPrimarySurface;
   envMode?: DraftThreadEnvMode;
+  threadType?: "orchestrator" | "agent";
   worktreePath?: string | null;
 } | null {
   if (!hasDraftContextOverrides(options)) {
@@ -198,6 +204,7 @@ export function buildDraftThreadContextPatch(
     ...(options?.branch !== undefined ? { branch: options.branch ?? null } : {}),
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath ?? null } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
+    ...(options?.threadType !== undefined ? { threadType: options.threadType } : {}),
     entryPoint,
   };
 }
@@ -208,6 +215,7 @@ export function shouldReuseActiveDraftThread(input: {
   entryPoint: ThreadPrimarySurface;
   projectId: ProjectId;
   routeThreadId: ThreadId | null;
+  threadType: "orchestrator" | "agent";
 }): input is {
   draftThread: DraftThreadState;
   entryPoint: ThreadPrimarySurface;
@@ -218,7 +226,8 @@ export function shouldReuseActiveDraftThread(input: {
     input.draftThread &&
     input.routeThreadId &&
     input.draftThread.projectId === input.projectId &&
-    input.draftThread.entryPoint === input.entryPoint,
+    input.draftThread.entryPoint === input.entryPoint &&
+    (input.draftThread.threadType ?? "orchestrator") === input.threadType,
   );
 }
 

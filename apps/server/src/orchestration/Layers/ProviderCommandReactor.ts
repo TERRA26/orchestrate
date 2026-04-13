@@ -324,6 +324,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         modelSelection: desiredModelSelection,
+        threadType: thread.threadType ?? "orchestrator",
         ...(options?.providerOptions !== undefined
           ? { providerOptions: options.providerOptions }
           : {}),
@@ -526,6 +527,7 @@ const make = Effect.gen(function* () {
         ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
         ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        threadType: thread.threadType ?? "orchestrator",
       });
     } else {
       yield* providerService.sendTurn({
@@ -536,6 +538,7 @@ const make = Effect.gen(function* () {
         ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
         ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        threadType: thread.threadType ?? "orchestrator",
       });
     }
     if (handoffBootstrapText && thread.handoff !== null) {

@@ -15,15 +15,18 @@
 ## File Map
 
 ### Contracts
+
 - **Modify:** `packages/contracts/src/orchestration.ts` — Add `parentThreadId` to ThreadCreateCommand, OrchestrationThread, and thread.created payload
 
 ### Server
+
 - **Modify:** `apps/server/src/orchestration/decider.ts` — Pass parentThreadId through thread.created event
 - **Modify:** `apps/server/src/orchestration/projector.ts` — Project parentThreadId onto thread read model
 - **Modify:** `apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts` — Update spawn_agent to create real thread + start turn
 - **Modify:** `apps/server/src/wsServer.ts` — Add UI directive push channel for focus/collapse
 
 ### Web
+
 - **Modify:** `apps/web/src/splitViewStore.ts` — Extend to 3-pane with adaptive ratios
 - **Modify:** `apps/web/src/components/Sidebar.tsx` — Nest child threads under parents
 - **Modify:** `apps/web/src/routes/_chat.$threadId.tsx` — Render 3-pane layout
@@ -40,6 +43,7 @@
 ## Task 1: Contracts — Add parentThreadId
 
 **Files:**
+
 - Modify: `packages/contracts/src/orchestration.ts`
 
 - [ ] **Step 1: Add parentThreadId to ThreadCreateCommand**
@@ -80,6 +84,7 @@ git commit -m "feat(contracts): add parentThreadId for subthread relationships"
 ## Task 2: Server — Decider + Projector for parentThreadId
 
 **Files:**
+
 - Modify: `apps/server/src/orchestration/decider.ts`
 - Modify: `apps/server/src/orchestration/projector.ts`
 
@@ -115,6 +120,7 @@ git commit -m "feat(server): pass parentThreadId through event sourcing"
 ## Task 3: Server — spawn_agent Creates Real Thread + Starts Turn
 
 **Files:**
+
 - Modify: `apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts`
 
 This is the critical task. The current `handleSpawnAgent` function dispatches `orchestrator.worker.spawn` but doesn't create an actual thread or start a provider session. We need it to:
@@ -133,24 +139,25 @@ In `handleSpawnAgent`, BEFORE the `orchestrator.worker.spawn` dispatch, add a `t
 
 ```typescript
 // Create the agent's thread as a child of the orchestrator thread
-yield* dispatch({
-  type: "thread.create",
-  commandId: crypto.randomUUID(),
-  threadId: workerThreadId,
-  projectId: resolvedProjectId, // from the orchestrator thread's project
-  title: input.task?.slice(0, 50) ?? input.role ?? "Agent",
-  modelSelection: {
-    provider: resolvedProvider,
-    model: resolvedModel,
-  },
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  threadType: "agent",
-  parentThreadId: orchestratorThreadId, // the threadId passed to executeTool
-  branch: input.branch ?? null,
-  worktreePath: input.worktreePath ?? null,
-  createdAt: new Date().toISOString(),
-});
+yield *
+  dispatch({
+    type: "thread.create",
+    commandId: crypto.randomUUID(),
+    threadId: workerThreadId,
+    projectId: resolvedProjectId, // from the orchestrator thread's project
+    title: input.task?.slice(0, 50) ?? input.role ?? "Agent",
+    modelSelection: {
+      provider: resolvedProvider,
+      model: resolvedModel,
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    threadType: "agent",
+    parentThreadId: orchestratorThreadId, // the threadId passed to executeTool
+    branch: input.branch ?? null,
+    worktreePath: input.worktreePath ?? null,
+    createdAt: new Date().toISOString(),
+  });
 ```
 
 - [ ] **Step 3: Add thread.turn.start dispatch after worker spawn**
@@ -160,24 +167,25 @@ After `orchestrator.worker.spawn`, send the task as the first message to the new
 ```typescript
 // Send the task as the first turn on the agent thread
 const taskMessage = input.task ?? input.objective ?? "Begin working on the assigned task.";
-yield* dispatch({
-  type: "thread.turn.start",
-  commandId: crypto.randomUUID(),
-  threadId: workerThreadId,
-  message: {
-    messageId: crypto.randomUUID(),
-    role: "user",
-    text: taskMessage,
-    attachments: [],
-  },
-  modelSelection: {
-    provider: resolvedProvider,
-    model: resolvedModel,
-  },
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  createdAt: new Date().toISOString(),
-});
+yield *
+  dispatch({
+    type: "thread.turn.start",
+    commandId: crypto.randomUUID(),
+    threadId: workerThreadId,
+    message: {
+      messageId: crypto.randomUUID(),
+      role: "user",
+      text: taskMessage,
+      attachments: [],
+    },
+    modelSelection: {
+      provider: resolvedProvider,
+      model: resolvedModel,
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdAt: new Date().toISOString(),
+  });
 ```
 
 - [ ] **Step 4: Verify dispatch function supports these command types**
@@ -200,6 +208,7 @@ git commit -m "feat(server): spawn_agent creates real thread with parentThreadId
 ## Task 4: Server — UI Directive Push Channel
 
 **Files:**
+
 - Modify: `apps/server/src/wsServer.ts`
 - Modify: `apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts`
 
@@ -271,6 +280,7 @@ git commit -m "feat(server): add UI directive results for focus_agent and collap
 ## Task 5: Web — Orchestrator Pane Store
 
 **Files:**
+
 - Create: `apps/web/src/lib/orchestratorPaneStore.ts`
 
 A simple Zustand store that tracks which agent threads the orchestrator has focused. Separate from the existing splitViewStore (which handles user-initiated splits). This store is driven by the orchestrator's tool call results.
@@ -332,13 +342,15 @@ git commit -m "feat(web): add orchestrator pane store for tracking focused agent
 ## Task 6: Web — 3-Pane Layout in Thread Route
 
 **Files:**
+
 - Modify: `apps/web/src/routes/_chat.$threadId.tsx`
 
 The thread route currently renders either a single thread or a 2-pane split. We need to add a 3-pane mode when the orchestrator has focused agents.
 
-- [ ] **Step 1: Read the full _chat.$threadId.tsx**
+- [ ] **Step 1: Read the full \_chat.$threadId.tsx**
 
 Read the entire file to understand:
+
 - How it decides between single thread and split view
 - How panes are rendered (ChatView components)
 - How the ratio/divider works
@@ -398,6 +410,7 @@ git commit -m "feat(web): add 3-pane adaptive layout for orchestrator + agent th
 ## Task 7: Web — Sidebar Thread Nesting
 
 **Files:**
+
 - Modify: `apps/web/src/components/Sidebar.tsx`
 
 - [ ] **Step 1: Read how threads are grouped and rendered**
@@ -433,7 +446,7 @@ Modify `renderThreadRow` to accept an optional `children` parameter. After rende
 function renderThreadRow(thread: Thread, orderedProjectThreadIds: readonly ThreadId[]) {
   const children = childThreadsByParent.get(thread.id) ?? [];
   const hasChildren = children.length > 0;
-  
+
   return (
     <React.Fragment key={thread.id}>
       {/* Existing thread row rendering */}
@@ -441,7 +454,7 @@ function renderThreadRow(thread: Thread, orderedProjectThreadIds: readonly Threa
         {hasChildren && <ChevronIcon />}
         <SidebarMenuSubButton /* ...existing props */ />
       </SidebarMenuSubItem>
-      
+
       {/* Nested children */}
       {hasChildren && (
         <div className="ml-4">
@@ -479,6 +492,7 @@ git commit -m "feat(web): nest child agent threads under parent orchestrator in 
 ## Task 8: Web — Wire Tool Call Results to Pane Store
 
 **Files:**
+
 - Modify: `apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx`
 
 When the orchestrator's `spawn_agent` or `focus_agent` tool calls complete, their results contain thread IDs and directives. The `OrchestrationToolCallCard` component renders these tool calls — it also needs to update the pane store when it sees focus/collapse directives.
@@ -499,7 +513,7 @@ const { focusAgent, collapseAgent, setOrchestratorThread } = useOrchestratorPane
 useEffect(() => {
   if (!result || isLoading) return;
   const res = result as Record<string, unknown>;
-  
+
   if (toolName === "focus_agent" && res.threadId) {
     focusAgent(String(res.threadId));
   }
@@ -536,6 +550,7 @@ git commit -m "feat(web): wire orchestration tool call results to pane store"
 ## Task 9: Cleanup — Delete Unused Custom Layout Components
 
 **Files:**
+
 - Delete: `apps/web/src/components/orchestrator/MultiAgentLayout.tsx`
 - Delete: `apps/web/src/components/orchestrator/OrchestratorRail.tsx`
 - Delete: `apps/web/src/components/orchestrator/AgentPanel.tsx`
@@ -558,6 +573,7 @@ rm apps/web/src/lib/multiAgentLayoutStore.ts
 - [ ] **Step 2: Remove imports from OrchestratorPanel.tsx**
 
 Open `apps/web/src/components/OrchestratorPanel.tsx`. Remove:
+
 ```typescript
 import { MultiAgentLayout } from "./orchestrator/MultiAgentLayout";
 import { useMultiAgentLayoutStore } from "~/lib/multiAgentLayoutStore";
