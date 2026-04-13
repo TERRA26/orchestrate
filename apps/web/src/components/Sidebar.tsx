@@ -18,7 +18,15 @@ import { FiGitBranch } from "react-icons/fi";
 import { TbFolderPlus, TbCursorText } from "react-icons/tb";
 import { IoFilter } from "react-icons/io5";
 import { LuMessageCircleDashed } from "react-icons/lu";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import {
   DndContext,
   type DragCancelEvent,
@@ -1859,7 +1867,11 @@ export default function Sidebar() {
     );
   }
 
-  function renderThreadRow(thread: Thread, orderedProjectThreadIds: readonly ThreadId[]) {
+  function renderThreadRow(
+    thread: Thread,
+    orderedProjectThreadIds: readonly ThreadId[],
+    childThreadsByParent?: Map<string, Thread[]>,
+  ) {
     const threadTerminalState = selectThreadTerminalState(terminalStateByThreadId, thread.id);
     const threadEntryPoint = threadTerminalState.entryPoint;
     const isActive = !activeSplitView && routeThreadId === thread.id;
@@ -1888,203 +1900,263 @@ export default function Sidebar() {
       ? "text-foreground/54 dark:text-foreground/64"
       : "text-muted-foreground/34";
 
+    const childThreads = childThreadsByParent?.get(thread.id) ?? [];
+
     return (
-      <SidebarMenuSubItem key={thread.id} className="group/thread-row w-full" data-thread-item>
-        <ThreadPinToggleButton
-          pinned={isPinned}
-          presentation="overlay"
-          toneClassName={secondaryMetaClass}
-          onToggle={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            togglePinnedThread(thread.id);
-          }}
-        />
-        {threadStatus && (
-          <span
-            className={cn(
-              "pointer-events-none absolute left-3 top-1/2 z-10 h-1.5 w-1.5 -translate-y-1/2 rounded-full transition-opacity",
-              threadStatus.dotClass,
-              threadStatus.pulse ? "animate-pulse" : "",
-              isPinned
-                ? "opacity-0"
-                : "opacity-100 group-hover/thread-row:opacity-0 group-focus-within/thread-row:opacity-0",
-            )}
+      <Fragment key={thread.id}>
+        <SidebarMenuSubItem className="group/thread-row w-full" data-thread-item>
+          <ThreadPinToggleButton
+            pinned={isPinned}
+            presentation="overlay"
+            toneClassName={secondaryMetaClass}
+            onToggle={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              togglePinnedThread(thread.id);
+            }}
           />
-        )}
-        <SidebarMenuSubButton
-          render={<div role="button" tabIndex={0} />}
-          data-thread-entry-point={threadEntryPoint}
-          size="sm"
-          isActive={isActive}
-          className={resolveThreadRowClassName({
-            isActive,
-            isSelected,
-          })}
-          onClick={(event) => handleThreadClick(event, thread.id, orderedProjectThreadIds)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            activateThread(thread.id);
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            if (selectedThreadIds.size > 0 && selectedThreadIds.has(thread.id)) {
-              void handleMultiSelectContextMenu({
-                x: event.clientX,
-                y: event.clientY,
-              });
-            } else {
-              if (selectedThreadIds.size > 0) {
-                clearSelection();
-              }
-              void handleThreadContextMenu(thread.id, {
-                x: event.clientX,
-                y: event.clientY,
-              });
-            }
-          }}
-        >
-          {threadEntryPoint === "terminal" ? (
-            <TerminalIcon aria-hidden="true" className="size-3.5 shrink-0 text-teal-600/85" />
-          ) : handoffBadgeLabel && thread.handoff ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex shrink-0 items-center">
-                    <HandoffProviderGlyph
-                      sourceProvider={thread.handoff.sourceProvider}
-                      targetProvider={thread.modelSelection.provider}
-                    />
-                  </span>
-                }
-              />
-              <TooltipPopup side="top">{handoffBadgeLabel}</TooltipPopup>
-            </Tooltip>
-          ) : (
-            <ProviderGlyph
-              provider={thread.modelSelection.provider}
-              className="size-3.5 shrink-0"
+          {threadStatus && (
+            <span
+              className={cn(
+                "pointer-events-none absolute left-3 top-1/2 z-10 h-1.5 w-1.5 -translate-y-1/2 rounded-full transition-opacity",
+                threadStatus.dotClass,
+                threadStatus.pulse ? "animate-pulse" : "",
+                isPinned
+                  ? "opacity-0"
+                  : "opacity-100 group-hover/thread-row:opacity-0 group-focus-within/thread-row:opacity-0",
+              )}
             />
           )}
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-            {prStatus && (
+          <SidebarMenuSubButton
+            render={<div role="button" tabIndex={0} />}
+            data-thread-entry-point={threadEntryPoint}
+            size="sm"
+            isActive={isActive}
+            className={resolveThreadRowClassName({
+              isActive,
+              isSelected,
+            })}
+            onClick={(event) => handleThreadClick(event, thread.id, orderedProjectThreadIds)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              activateThread(thread.id);
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              if (selectedThreadIds.size > 0 && selectedThreadIds.has(thread.id)) {
+                void handleMultiSelectContextMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              } else {
+                if (selectedThreadIds.size > 0) {
+                  clearSelection();
+                }
+                void handleThreadContextMenu(thread.id, {
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }
+            }}
+          >
+            {threadEntryPoint === "terminal" ? (
+              <TerminalIcon aria-hidden="true" className="size-3.5 shrink-0 text-teal-600/85" />
+            ) : handoffBadgeLabel && thread.handoff ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <button
-                      type="button"
-                      aria-label={prStatus.tooltip}
-                      className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
-                      onClick={(event) => {
-                        openPrLink(event, prStatus.url);
-                      }}
-                    >
-                      <GitPullRequestIcon className="size-3" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-              </Tooltip>
-            )}
-            {renamingThreadId === thread.id ? (
-              <input
-                ref={(el) => {
-                  if (el && renamingInputRef.current !== el) {
-                    renamingInputRef.current = el;
-                    el.focus();
-                    el.select();
-                  }
-                }}
-                className="min-w-0 flex-1 truncate rounded-md border border-ring bg-transparent px-1.5 py-0.5 text-[13px] outline-none"
-                value={renamingTitle}
-                onChange={(e) => setRenamingTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  e.stopPropagation();
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    renamingCommittedRef.current = true;
-                    void commitRename(thread.id, renamingTitle, thread.title);
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    renamingCommittedRef.current = true;
-                    cancelRename();
-                  }
-                }}
-                onBlur={() => {
-                  if (!renamingCommittedRef.current) {
-                    void commitRename(thread.id, renamingTitle, thread.title);
-                  }
-                }}
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : (
-              <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-foreground/86">
-                {thread.title}
-              </span>
-            )}
-            {!isDisposableThread && handoffBadgeLabel ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="inline-flex shrink-0 items-center text-muted-foreground/55">
-                      <FiGitBranch className="size-3" />
+                    <span className="inline-flex shrink-0 items-center">
+                      <HandoffProviderGlyph
+                        sourceProvider={thread.handoff.sourceProvider}
+                        targetProvider={thread.modelSelection.provider}
+                      />
                     </span>
                   }
                 />
                 <TooltipPopup side="top">{handoffBadgeLabel}</TooltipPopup>
               </Tooltip>
-            ) : null}
-          </div>
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            {terminalCount > 1 ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span
-                      className={`inline-flex items-center gap-0.5 ${
-                        terminalStatus ? terminalStatus.colorClass : "text-muted-foreground/55"
-                      }`}
-                    >
-                      <span className="text-[10px] leading-none">{terminalCount}</span>
-                      <TerminalIcon
-                        className={`size-3 ${terminalStatus?.pulse ? "animate-pulse" : ""}`}
-                      />
-                    </span>
-                  }
+            ) : (
+              <ProviderGlyph
+                provider={thread.modelSelection.provider}
+                className="size-3.5 shrink-0"
+              />
+            )}
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+              {prStatus && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={prStatus.tooltip}
+                        className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                        onClick={(event) => {
+                          openPrLink(event, prStatus.url);
+                        }}
+                      >
+                        <GitPullRequestIcon className="size-3" />
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+                </Tooltip>
+              )}
+              {renamingThreadId === thread.id ? (
+                <input
+                  ref={(el) => {
+                    if (el && renamingInputRef.current !== el) {
+                      renamingInputRef.current = el;
+                      el.focus();
+                      el.select();
+                    }
+                  }}
+                  className="min-w-0 flex-1 truncate rounded-md border border-ring bg-transparent px-1.5 py-0.5 text-[13px] outline-none"
+                  value={renamingTitle}
+                  onChange={(e) => setRenamingTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      renamingCommittedRef.current = true;
+                      void commitRename(thread.id, renamingTitle, thread.title);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      renamingCommittedRef.current = true;
+                      cancelRename();
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!renamingCommittedRef.current) {
+                      void commitRename(thread.id, renamingTitle, thread.title);
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
                 />
-                <TooltipPopup side="top">
-                  {terminalCount} terminal{terminalCount === 1 ? "" : "s"} open
-                </TooltipPopup>
-              </Tooltip>
-            ) : terminalStatus ? (
-              <span
-                role="img"
-                aria-label={terminalStatus.label}
-                title={terminalStatus.label}
-                className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-              >
-                <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-foreground/86">
+                  {thread.title}
+                </span>
+              )}
+              {!isDisposableThread && handoffBadgeLabel ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0 items-center text-muted-foreground/55">
+                        <FiGitBranch className="size-3" />
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">{handoffBadgeLabel}</TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {terminalCount > 1 ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className={`inline-flex items-center gap-0.5 ${
+                          terminalStatus ? terminalStatus.colorClass : "text-muted-foreground/55"
+                        }`}
+                      >
+                        <span className="text-[10px] leading-none">{terminalCount}</span>
+                        <TerminalIcon
+                          className={`size-3 ${terminalStatus?.pulse ? "animate-pulse" : ""}`}
+                        />
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {terminalCount} terminal{terminalCount === 1 ? "" : "s"} open
+                  </TooltipPopup>
+                </Tooltip>
+              ) : terminalStatus ? (
+                <span
+                  role="img"
+                  aria-label={terminalStatus.label}
+                  title={terminalStatus.label}
+                  className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+                >
+                  <TerminalIcon
+                    className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+                  />
+                </span>
+              ) : null}
+              {isDisposableThread ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0 items-center text-muted-foreground/55">
+                        <LuMessageCircleDashed className="size-3" />
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">Disposable chat</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              <span className={`shrink-0 text-[12px] ${secondaryMetaClass}`}>
+                {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
               </span>
-            ) : null}
-            {isDisposableThread ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="inline-flex shrink-0 items-center text-muted-foreground/55">
-                      <LuMessageCircleDashed className="size-3" />
+            </div>
+          </SidebarMenuSubButton>
+        </SidebarMenuSubItem>
+        {childThreads.length > 0 && (
+          <div className="ml-4 border-l border-border/20 pl-1">
+            {childThreads.map((child) => {
+              const childStatus = resolveThreadStatusPill({
+                thread: child,
+                hasPendingApprovals: derivePendingApprovals(child.activities).length > 0,
+                hasPendingUserInput: derivePendingUserInputs(child.activities).length > 0,
+              });
+              const isChildActive = !activeSplitView && routeThreadId === child.id;
+              return (
+                <SidebarMenuSubItem key={child.id} className="w-full">
+                  <SidebarMenuSubButton
+                    render={<div role="button" tabIndex={0} />}
+                    size="sm"
+                    isActive={isChildActive}
+                    className={resolveThreadRowClassName({
+                      isActive: isChildActive,
+                      isSelected: false,
+                    })}
+                    onClick={() => activateThread(child.id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      activateThread(child.id);
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      void handleThreadContextMenu(child.id, {
+                        x: event.clientX,
+                        y: event.clientY,
+                      });
+                    }}
+                  >
+                    {childStatus && (
+                      <span
+                        className={cn(
+                          "inline-flex size-1.5 shrink-0 rounded-full",
+                          childStatus.dotClass,
+                          childStatus.pulse ? "animate-pulse" : "",
+                        )}
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-xs leading-5 text-foreground/78">
+                      {child.title}
                     </span>
-                  }
-                />
-                <TooltipPopup side="top">Disposable chat</TooltipPopup>
-              </Tooltip>
-            ) : null}
-            <span className={`shrink-0 text-[12px] ${secondaryMetaClass}`}>
-              {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
-            </span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground/38">
+                      {formatRelativeTime(child.updatedAt ?? child.createdAt)}
+                    </span>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              );
+            })}
           </div>
-        </SidebarMenuSubButton>
-      </SidebarMenuSubItem>
+        )}
+      </Fragment>
     );
   }
 
@@ -2097,6 +2169,21 @@ export default function Sidebar() {
       appSettings.sidebarThreadSortOrder,
     );
     const projectThreads = getUnpinnedThreadsForSidebar(allProjectThreads, pinnedThreadIds);
+
+    // Separate child threads (those with parentThreadId) from top-level threads
+    const childThreadsByParent = new Map<string, Thread[]>();
+    const topLevelProjectThreads: Thread[] = [];
+    for (const thread of projectThreads) {
+      const parentId = thread.parentThreadId;
+      if (parentId) {
+        const children = childThreadsByParent.get(parentId) ?? [];
+        children.push(thread);
+        childThreadsByParent.set(parentId, children);
+      } else {
+        topLevelProjectThreads.push(thread);
+      }
+    }
+
     const projectSplitViews = splitViews.filter(
       (splitView) =>
         splitView.ownerProjectId === project.id && !pinnedThreadIdSet.has(splitView.sourceThreadId),
@@ -2115,7 +2202,7 @@ export default function Sidebar() {
     const replacedThreadIds = new Set(
       projectSplitViews.map((splitView) => splitView.sourceThreadId),
     );
-    const orderedEntries: SidebarProjectEntry[] = projectThreads.map((thread) => {
+    const orderedEntries: SidebarProjectEntry[] = topLevelProjectThreads.map((thread) => {
       const splitView = splitViewBySourceThreadId.get(thread.id);
       if (!splitView) {
         return {
@@ -2158,7 +2245,7 @@ export default function Sidebar() {
     const pinnedCollapsedEntry = !project.expanded && activeEntry ? activeEntry : null;
     const visibleEntries = pinnedCollapsedEntry ? [pinnedCollapsedEntry] : renderedEntries;
     const shouldShowThreadPanel = project.expanded;
-    const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
+    const orderedProjectThreadIds = topLevelProjectThreads.map((thread) => thread.id);
     const renderSplitRow = (splitView: SplitView) => {
       const leftPreview = resolveSplitPreview(splitView.leftThreadId);
       const rightPreview = resolveSplitPreview(splitView.rightThreadId);
@@ -2417,7 +2504,7 @@ export default function Sidebar() {
           >
             {visibleEntries.map((entry) =>
               entry.kind === "thread"
-                ? renderThreadRow(entry.thread, orderedProjectThreadIds)
+                ? renderThreadRow(entry.thread, orderedProjectThreadIds, childThreadsByParent)
                 : renderSplitRow(entry.splitView),
             )}
 

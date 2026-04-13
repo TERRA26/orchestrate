@@ -140,6 +140,8 @@ export interface Thread extends ThreadWorkspaceState {
   codexThreadId: string | null;
   projectId: ProjectId;
   title: string;
+  threadType?: "orchestrator" | "agent";
+  parentThreadId?: ThreadId | null;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;

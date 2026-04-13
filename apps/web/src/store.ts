@@ -263,6 +263,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
+        threadType: thread.threadType,
+        parentThreadId: thread.parentThreadId ?? null,
         modelSelection: {
           ...thread.modelSelection,
           model: resolveModelSlugForProvider(
