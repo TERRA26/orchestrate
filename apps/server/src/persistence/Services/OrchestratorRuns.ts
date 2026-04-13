@@ -19,6 +19,7 @@ import {
   OrchestratorTaskStatus,
   OrchestratorWorkerId,
   OrchestratorWorkerStatus,
+  OrchestratorWorkerVisibility,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -82,6 +83,7 @@ export const OrchestratorWorkerRow = Schema.Struct({
   runId: OrchestratorRunId,
   threadId: ThreadId,
   status: OrchestratorWorkerStatus,
+  visibility: OrchestratorWorkerVisibility,
   activeTaskId: Schema.NullOr(Schema.String),
   parentWorkerId: Schema.NullOr(Schema.String),
   spawnBudgetJson: Schema.String,

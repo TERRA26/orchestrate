@@ -424,6 +424,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
             title: event.payload.title,
+            threadType: event.payload.threadType ?? "orchestrator",
+            parentThreadId: event.payload.parentThreadId ?? null,
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
@@ -1383,8 +1385,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* orchestratorRunsRepository.upsertWorker({
             workerId: event.payload.workerId,
             runId: event.payload.runId,
-            threadId: "" as any, // Thread linked externally
+            threadId: event.payload.threadId,
             status: "running",
+            visibility: "foreground",
             activeTaskId: event.payload.taskId,
             parentWorkerId: null,
             spawnBudgetJson: JSON.stringify(event.payload.spawnBudget),
@@ -1412,6 +1415,34 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             terminatedAt: event.payload.terminatedAt,
             terminationReason: event.payload.reason,
             updatedAt: event.payload.terminatedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.worker.promoted": {
+          const workers = yield* orchestratorRunsRepository.getWorkersByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingWorker = workers.find((w) => w.workerId === event.payload.workerId);
+          if (!existingWorker) return;
+          yield* orchestratorRunsRepository.upsertWorker({
+            ...existingWorker,
+            visibility: "foreground",
+            updatedAt: event.payload.promotedAt,
+          });
+          return;
+        }
+
+        case "orchestrator.worker.demoted": {
+          const workers = yield* orchestratorRunsRepository.getWorkersByRunId({
+            runId: event.aggregateId as any,
+          });
+          const existingWorker = workers.find((w) => w.workerId === event.payload.workerId);
+          if (!existingWorker) return;
+          yield* orchestratorRunsRepository.upsertWorker({
+            ...existingWorker,
+            visibility: "background",
+            updatedAt: event.payload.demotedAt,
           });
           return;
         }

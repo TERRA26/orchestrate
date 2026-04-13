@@ -183,6 +183,7 @@ layer("OrchestratorRunsRepository", (it) => {
         runId: OrchestratorRunId.makeUnsafe("run-worker-rt"),
         threadId: ThreadId.makeUnsafe("thread-worker-rt-1"),
         status: "idle" as const,
+        visibility: "foreground" as const,
         activeTaskId: null,
         parentWorkerId: null,
         spawnBudgetJson: JSON.stringify({ maxSubWorkers: 2 }),
@@ -206,6 +207,7 @@ layer("OrchestratorRunsRepository", (it) => {
       assert.strictEqual(persisted.runId, worker.runId);
       assert.strictEqual(persisted.threadId, worker.threadId);
       assert.strictEqual(persisted.status, "idle");
+      assert.strictEqual(persisted.visibility, "foreground");
       assert.strictEqual(persisted.activeTaskId, null);
       assert.strictEqual(persisted.parentWorkerId, null);
       assert.strictEqual(persisted.spawnBudgetJson, worker.spawnBudgetJson);

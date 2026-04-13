@@ -201,13 +201,13 @@ const makeOrchestratorRunsRepository = Effect.gen(function* () {
     execute: (row) =>
       sql`
         INSERT INTO orchestrator_workers (
-          worker_id, run_id, thread_id, status,
+          worker_id, run_id, thread_id, status, visibility,
           active_task_id, parent_worker_id,
           spawn_budget_json, workspace_json, model_binding_json,
           created_at, updated_at, terminated_at, termination_reason
         )
         VALUES (
-          ${row.workerId}, ${row.runId}, ${row.threadId}, ${row.status},
+          ${row.workerId}, ${row.runId}, ${row.threadId}, ${row.status}, ${row.visibility},
           ${row.activeTaskId}, ${row.parentWorkerId},
           ${row.spawnBudgetJson}, ${row.workspaceJson}, ${row.modelBindingJson},
           ${row.createdAt}, ${row.updatedAt}, ${row.terminatedAt}, ${row.terminationReason}
@@ -217,6 +217,7 @@ const makeOrchestratorRunsRepository = Effect.gen(function* () {
           run_id = excluded.run_id,
           thread_id = excluded.thread_id,
           status = excluded.status,
+          visibility = excluded.visibility,
           active_task_id = excluded.active_task_id,
           parent_worker_id = excluded.parent_worker_id,
           spawn_budget_json = excluded.spawn_budget_json,
@@ -239,6 +240,7 @@ const makeOrchestratorRunsRepository = Effect.gen(function* () {
           run_id AS "runId",
           thread_id AS "threadId",
           status,
+          visibility,
           active_task_id AS "activeTaskId",
           parent_worker_id AS "parentWorkerId",
           spawn_budget_json AS "spawnBudgetJson",

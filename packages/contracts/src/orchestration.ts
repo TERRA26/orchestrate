@@ -26,6 +26,7 @@ export const ORCHESTRATION_WS_METHODS = {
 
 export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
+  uiDirective: "orchestration.uiDirective",
 } as const;
 
 export const ProviderKind = Schema.Literals(["codex", "claudeAgent"]);
@@ -323,7 +324,7 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
-export const ThreadType = Schema.Literal("orchestrator", "agent");
+export const ThreadType = Schema.Literals(["orchestrator", "agent"]);
 export type ThreadType = typeof ThreadType.Type;
 
 export const OrchestrationThread = Schema.Struct({
