@@ -171,6 +171,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           threadType: command.threadType ?? "orchestrator",
+          parentThreadId: command.parentThreadId ?? null,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,

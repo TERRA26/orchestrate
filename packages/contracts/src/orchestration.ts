@@ -330,7 +330,12 @@ export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
-  threadType: Schema.optional(ThreadType).pipe(Schema.withDecodingDefault(() => "orchestrator" as const)),
+  threadType: Schema.optional(ThreadType).pipe(
+    Schema.withDecodingDefault(() => "orchestrator" as const),
+  ),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -425,7 +430,10 @@ const ThreadCreateCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
-  threadType: Schema.optional(ThreadType).pipe(Schema.withDecodingDefault(() => "orchestrator" as const)),
+  threadType: Schema.optional(ThreadType).pipe(
+    Schema.withDecodingDefault(() => "orchestrator" as const),
+  ),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   envMode: Schema.optional(ThreadEnvironmentMode).pipe(Schema.withDecodingDefault(() => "local")),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -919,7 +927,12 @@ export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
-  threadType: Schema.optional(ThreadType).pipe(Schema.withDecodingDefault(() => "orchestrator" as const)),
+  threadType: Schema.optional(ThreadType).pipe(
+    Schema.withDecodingDefault(() => "orchestrator" as const),
+  ),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
