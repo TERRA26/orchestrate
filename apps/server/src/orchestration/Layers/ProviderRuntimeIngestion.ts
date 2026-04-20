@@ -12,9 +12,9 @@ import {
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker } from "@orchestrate/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -39,7 +39,8 @@ const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
-const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+const STRICT_PROVIDER_LIFECYCLE_GUARD =
+  process.env.ORCHESTRATE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -73,6 +74,105 @@ function sameId(left: string | null | undefined, right: string | null | undefine
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+// Gap 3: split truncated sidebar detail from full model-visible tool output.
+const TOOL_SUMMARY_LIMIT = 180;
+const TOOL_OUTPUT_LIMIT = 24_576;
+
+function extractToolOutputText(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+  const record = data as Record<string, unknown>;
+  const result = record.result;
+  if (result === undefined) {
+    return undefined;
+  }
+  if (typeof result === "string") {
+    return result;
+  }
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const resultRecord = result as Record<string, unknown>;
+  if (Array.isArray(resultRecord.content)) {
+    return resultRecord.content
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry === "object") {
+          const candidate = entry as { text?: unknown };
+          if (typeof candidate.text === "string") return candidate.text;
+        }
+        return "";
+      })
+      .join("");
+  }
+  if (typeof resultRecord.text === "string") {
+    return resultRecord.text;
+  }
+  return undefined;
+}
+
+function extractToolExitCode(data: unknown): number | undefined {
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+  const record = data as Record<string, unknown>;
+  if (typeof record.exitCode === "number") return record.exitCode;
+  const result = record.result;
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if (typeof r.exitCode === "number") return r.exitCode;
+    if (typeof r.exit_code === "number") return r.exit_code;
+  }
+  return undefined;
+}
+
+type ToolLifecyclePayloadInput = {
+  readonly itemType: string;
+  readonly status?: string;
+  readonly detail?: string;
+  readonly data?: unknown;
+};
+
+function buildToolLifecyclePayload(
+  eventPayload: ToolLifecyclePayloadInput,
+  options: { includeData?: boolean } = {},
+): Record<string, unknown> {
+  const summary =
+    eventPayload.detail !== undefined
+      ? truncateDetail(eventPayload.detail, TOOL_SUMMARY_LIMIT)
+      : undefined;
+  const rawOutput = extractToolOutputText(eventPayload.data);
+  const truncated = rawOutput !== undefined && rawOutput.length > TOOL_OUTPUT_LIMIT;
+  const output =
+    rawOutput === undefined
+      ? undefined
+      : truncated
+        ? rawOutput.slice(0, TOOL_OUTPUT_LIMIT)
+        : rawOutput;
+  const exitCode = extractToolExitCode(eventPayload.data);
+
+  const result: Record<string, unknown> = { itemType: eventPayload.itemType };
+  if (eventPayload.status !== undefined) {
+    result.status = eventPayload.status;
+  }
+  if (summary !== undefined) {
+    result.summary = summary;
+    result.detail = summary;
+  }
+  if (output !== undefined) {
+    result.output = output;
+    result.truncated = truncated;
+  }
+  if (exitCode !== undefined) {
+    result.exitCode = exitCode;
+  }
+  if (options.includeData && eventPayload.data !== undefined) {
+    result.data = eventPayload.data;
+  }
+  return result;
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -472,12 +572,7 @@ function runtimeEventToActivities(
           tone: "tool",
           kind: "tool.updated",
           summary: event.payload.title ?? "Tool updated",
-          payload: {
-            itemType: event.payload.itemType,
-            ...(event.payload.status ? { status: event.payload.status } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
-          },
+          payload: buildToolLifecyclePayload(event.payload, { includeData: true }),
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },
@@ -495,10 +590,7 @@ function runtimeEventToActivities(
           tone: "tool",
           kind: "tool.completed",
           summary: event.payload.title ?? "Tool",
-          payload: {
-            itemType: event.payload.itemType,
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-          },
+          payload: buildToolLifecyclePayload(event.payload),
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },
@@ -516,10 +608,7 @@ function runtimeEventToActivities(
           tone: "tool",
           kind: "tool.started",
           summary: `${event.payload.title ?? "Tool"} started`,
-          payload: {
-            itemType: event.payload.itemType,
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-          },
+          payload: buildToolLifecyclePayload(event.payload),
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },

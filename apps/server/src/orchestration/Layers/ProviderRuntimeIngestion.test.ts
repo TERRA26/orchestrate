@@ -7,7 +7,7 @@ import type {
   ProviderKind,
   ProviderRuntimeEvent,
   ProviderSession,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -18,7 +18,7 @@ import {
   ProviderItemId,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -179,7 +179,7 @@ describe("ProviderRuntimeIngestion", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
+    await Effect.runPromise(ingestion.start.pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
 
     const createdAt = new Date().toISOString();
@@ -2275,6 +2275,105 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resolvedPayload?.answers).toEqual({
       sandbox_mode: "workspace-write",
     });
+  });
+
+  it("preserves full tool output on tool.completed activity (Gap 3)", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const longOutput = `Tests  6 passed\n${"x".repeat(5000)}\nEND_MARKER`;
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-gap3-tool-completed"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-gap3"),
+      itemId: asItemId("tool-call-gap3"),
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Run tests",
+        detail: "Bash: bun run test",
+        data: {
+          toolName: "Bash",
+          input: { command: "bun run test" },
+          result: {
+            content: [{ type: "text", text: longOutput }],
+          },
+          exitCode: 0,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-gap3-tool-completed",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (a: ProviderRuntimeTestActivity) => a.id === "evt-gap3-tool-completed",
+    );
+    expect(activity?.kind).toBe("tool.completed");
+
+    const payload = activity?.payload as Record<string, unknown> | undefined;
+    expect(payload?.itemType).toBe("command_execution");
+
+    const summary = payload?.summary as string | undefined;
+    expect(typeof summary).toBe("string");
+    expect(summary!.length).toBeLessThanOrEqual(183);
+
+    const output = payload?.output as string | undefined;
+    expect(typeof output).toBe("string");
+    expect(output!.length).toBeGreaterThan(1000);
+    expect(output).toContain("Tests  6 passed");
+    expect(output).toContain("END_MARKER");
+
+    expect(payload?.exitCode).toBe(0);
+    expect(payload?.truncated).toBe(false);
+  });
+
+  it("truncates tool output above 24KB and flags it (Gap 3)", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const oversized = "A".repeat(30_000);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-gap3-oversize-completed"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-gap3-over"),
+      itemId: asItemId("tool-call-over"),
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Run tests",
+        detail: "Bash: oversize",
+        data: {
+          toolName: "Bash",
+          input: { command: "cat big.log" },
+          result: { content: [{ type: "text", text: oversized }] },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-gap3-oversize-completed",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (a: ProviderRuntimeTestActivity) => a.id === "evt-gap3-oversize-completed",
+    );
+    const payload = activity?.payload as Record<string, unknown> | undefined;
+    const output = payload?.output as string;
+
+    expect(output.length).toBe(24_576);
+    expect(payload?.truncated).toBe(true);
   });
 
   it("continues processing runtime events after a single event handler failure", async () => {
