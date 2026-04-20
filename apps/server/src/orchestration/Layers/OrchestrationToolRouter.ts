@@ -827,7 +827,12 @@ function handleSendToAgent(
       createdAt: now() as any,
     }).pipe(Effect.mapError((e) => new Error(`Dispatch failed: ${e.message}`)));
 
-    return { delivered: true, messageId };
+    // Gap 2: the orchestrator should observe queue-semantics here, not
+    // optimistic delivery. Actual delivery is confirmed by a separate
+    // orchestrator.message.delivered event when the target worker consumes
+    // the message at its next turn boundary (subscriber wiring tracked as
+    // a follow-up for full bridge semantics).
+    return { queued: true, messageId };
   });
 }
 
