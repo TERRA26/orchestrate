@@ -9,7 +9,7 @@ import {
   type UserInputQuestion,
   type ThreadId,
   type TurnId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { deriveReadableToolTitle, normalizeCompactToolLabel } from "./lib/toolCallLabel";
 
 import type {
@@ -545,7 +545,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (readableTitle) {
     entry.toolTitle = readableTitle;
   }
-  const collapseKey = deriveToolLifecycleCollapseKey(entry);
+  const collapseKey = deriveToolLifecycleCollapseKey(entry, payload);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
   }
@@ -624,9 +624,18 @@ function mergeChangedFiles(
   return [...new Set(merged)];
 }
 
-function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
+function deriveToolLifecycleCollapseKey(
+  entry: DerivedWorkLogEntry,
+  payload: Record<string, unknown> | null,
+): string | undefined {
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
+  }
+  // Gap 4: prefer stable provider toolCallId so partial/complete events for
+  // the same tool call collapse even when detail mutates between them.
+  const itemId = typeof payload?.itemId === "string" ? payload.itemId.trim() : "";
+  if (itemId.length > 0) {
+    return `tool-call:${itemId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -690,7 +699,20 @@ function extractToolCommand(payload: Record<string, unknown> | null): string | n
 }
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
-  return asTrimmedString(payload?.title);
+  const direct = asTrimmedString(payload?.title);
+  if (direct) return direct;
+  // For orchestration MCP tool calls, surface the human-readable task description.
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const itemInput = asRecord(item?.input);
+  const candidates = [
+    asTrimmedString(itemInput?.task),
+    asTrimmedString(itemInput?.objective),
+    asTrimmedString(itemInput?.message),
+    asTrimmedString(itemInput?.reason),
+    asTrimmedString(data?.task),
+  ];
+  return candidates.find((c) => c !== null) ?? null;
 }
 
 function stripTrailingExitCode(value: string): {

@@ -138,7 +138,7 @@ type ToolLifecyclePayloadInput = {
 
 function buildToolLifecyclePayload(
   eventPayload: ToolLifecyclePayloadInput,
-  options: { includeData?: boolean } = {},
+  options: { includeData?: boolean; itemId?: string } = {},
 ): Record<string, unknown> {
   const summary =
     eventPayload.detail !== undefined
@@ -155,6 +155,10 @@ function buildToolLifecyclePayload(
   const exitCode = extractToolExitCode(eventPayload.data);
 
   const result: Record<string, unknown> = { itemType: eventPayload.itemType };
+  // Gap 4: stable identity for UI collapse. Web prefers this over content-hash.
+  if (options.itemId !== undefined) {
+    result.itemId = options.itemId;
+  }
   if (eventPayload.status !== undefined) {
     result.status = eventPayload.status;
   }
@@ -572,7 +576,10 @@ function runtimeEventToActivities(
           tone: "tool",
           kind: "tool.updated",
           summary: event.payload.title ?? "Tool updated",
-          payload: buildToolLifecyclePayload(event.payload, { includeData: true }),
+          payload: buildToolLifecyclePayload(event.payload, {
+            includeData: true,
+            itemId: event.itemId,
+          }),
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },
@@ -590,7 +597,7 @@ function runtimeEventToActivities(
           tone: "tool",
           kind: "tool.completed",
           summary: event.payload.title ?? "Tool",
-          payload: buildToolLifecyclePayload(event.payload),
+          payload: buildToolLifecyclePayload(event.payload, { itemId: event.itemId }),
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },
@@ -608,7 +615,7 @@ function runtimeEventToActivities(
           tone: "tool",
           kind: "tool.started",
           summary: `${event.payload.title ?? "Tool"} started`,
-          payload: buildToolLifecyclePayload(event.payload),
+          payload: buildToolLifecyclePayload(event.payload, { itemId: event.itemId }),
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },
