@@ -4,7 +4,12 @@ import {
   type OrchestrationCommand,
   type OrchestrationReadModel,
   type OrchestrationThread,
-} from "@t3tools/contracts";
+  type OrchestratorRunId,
+  type OrchestratorWorkerId,
+  type OrchestrationEvent,
+  EventId,
+  CommandId,
+} from "@orchestrate/contracts";
 import { describe, expect, it } from "vitest";
 import { Effect, Layer, Stream } from "effect";
 
@@ -139,6 +144,116 @@ describe("OrchestrationToolRouter", () => {
         selectedBy: "orchestrator-tool",
       },
     });
+  });
+
+  it("orchestrate_wait_agent resolves immediately when worker already terminal (Gap 7)", async () => {
+    const workerId = "worker-done";
+    const readModel = makeReadModel({
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: THREAD_ID,
+          status: "terminated",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, [])),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_wait_agent",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId, timeoutMs: 500 },
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result).toMatchObject({
+      agentId: workerId,
+      status: "terminated",
+      timedOut: false,
+    });
+  });
+
+  it("orchestrate_wait_agent reports unknown agent without blocking (Gap 7)", async () => {
+    const readModel = makeReadModel({ orchestratorWorkers: [] });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, [])),
+    );
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_wait_agent",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: "worker-missing", timeoutMs: 200 },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as { error?: string };
+    expect(typeof result.error).toBe("string");
+    expect(result.error).toMatch(/Unknown agent/);
+  });
+
+  it("orchestrate_wait_all resolves when all requested workers are already terminal (Gap 7)", async () => {
+    const ids = ["w-a", "w-b"];
+    const workers = ids.map(
+      (id) =>
+        ({
+          workerId: id as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: THREAD_ID,
+          status: "submitted",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        }) as any,
+    );
+    const readModel = makeReadModel({ orchestratorWorkers: workers });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, [])),
+    );
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_wait_all",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentIds: ids, timeoutMs: 500 },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as { results: Array<{ agentId: string; status: string }>; timedOut: boolean };
+    expect(result.timedOut).toBe(false);
+    expect(result.results.map((r) => r.agentId).sort()).toEqual(ids.sort());
+    for (const r of result.results) expect(r.status).toBe("submitted");
   });
 
   it("creates a standby foreground worker when orchestrate_spawn_agent has no explicit task", async () => {

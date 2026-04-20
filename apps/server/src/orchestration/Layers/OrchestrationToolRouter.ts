@@ -7,7 +7,7 @@
  * 3. **Command tools** — dispatch domain commands to the orchestration engine.
  *
  * Input validation uses `Schema.decodeUnknown` against the per-tool schemas
- * from `@t3tools/contracts`.
+ * from `@orchestrate/contracts`.
  *
  * @module OrchestrationToolRouterLive
  */
@@ -20,9 +20,9 @@ import {
   type OrchestratorTaskId,
   type OrchestratorWorkerModelBinding,
   type OrchestratorWorkerId,
-} from "@t3tools/contracts";
-import * as ToolSchemas from "@t3tools/contracts";
-import { Effect, Layer, Schema } from "effect";
+} from "@orchestrate/contracts";
+import * as ToolSchemas from "@orchestrate/contracts";
+import { Effect, Layer, Option, Schema, Stream } from "effect";
 import crypto from "node:crypto";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -37,7 +37,7 @@ import {
 
 /** Decode tool input against its schema, mapping decode errors to plain Error. */
 function decodeInput<A, I>(schema: Schema.Schema<A, I>, input: unknown): Effect.Effect<A, Error> {
-  return Schema.decodeUnknown(schema)(input).pipe(
+  return Schema.decodeUnknownEffect(schema)(input).pipe(
     Effect.mapError((e) => new Error(`Invalid tool input: ${e.message}`)),
   );
 }
@@ -511,9 +511,14 @@ function handleSpawnAgent(
       model,
     });
 
-    // Resolve provider/model for the worker thread, falling back to the
-    // orchestrator thread's model selection when not explicitly provided.
-    const resolvedProvider = normalizeProvider(provider) ?? callingThread.modelSelection.provider;
+    // Resolve provider/model for the worker thread. Explicit provider wins;
+    // otherwise infer from the model name so a Claude model never lands on
+    // Codex (or vice versa). Fall back to the orchestrator thread's selection
+    // only when neither an explicit nor an inferable provider is available.
+    const resolvedProvider =
+      normalizeProvider(provider) ??
+      inferProviderFromModel(model) ??
+      callingThread.modelSelection.provider;
     const resolvedModel = model?.trim() || callingThread.modelSelection.model;
 
     // Create a real thread for the worker so the provider runtime can attach.
@@ -598,10 +603,13 @@ function handleSpawnAgent(
 
 function handleTerminateAgent(
   dispatch: OrchestrationEngineService["Type"]["dispatch"],
+  readModel: any,
   input: unknown,
 ): Effect.Effect<unknown, Error> {
   return Effect.gen(function* () {
     const decoded = yield* decodeInput(ToolSchemas.TerminateAgentInput, input);
+
+    // 1. Mark the worker terminated in the orchestrator read model.
     yield* dispatch({
       type: "orchestrator.worker.terminate" as const,
       commandId: uuid() as any,
@@ -610,7 +618,28 @@ function handleTerminateAgent(
       createdAt: now() as any,
     }).pipe(Effect.mapError((e) => new Error(`Dispatch failed: ${e.message}`)));
 
-    return { agentId: decoded.agentId, terminated: true };
+    // 2. Stop the underlying provider session so the child Codex/Claude
+    //    process is actually killed and resources are released. Without this
+    //    the worker row disappears from the UI but the process keeps running.
+    const worker = (readModel.orchestratorWorkers ?? []).find(
+      (w: any) => w.workerId === decoded.agentId,
+    );
+    const workerThreadId = worker?.threadId;
+    if (workerThreadId) {
+      yield* dispatch({
+        type: "thread.session.stop" as const,
+        commandId: uuid() as any,
+        threadId: workerThreadId as any,
+        reason: decoded.reason ?? "Terminated by orchestrator",
+        createdAt: now() as any,
+      }).pipe(Effect.catch(() => Effect.void));
+    }
+
+    return {
+      agentId: decoded.agentId,
+      terminated: true,
+      ...(workerThreadId ? { sessionStopped: true, threadId: workerThreadId } : {}),
+    };
   });
 }
 
@@ -861,6 +890,135 @@ function handleRejectWork(
 }
 
 // ---------------------------------------------------------------------------
+// Gap 7: server-side wait_agent / wait_all blocking coordination
+// ---------------------------------------------------------------------------
+
+const TERMINAL_WORKER_STATUSES: ReadonlySet<string> = new Set([
+  "submitted",
+  "terminated",
+  "stuck",
+]);
+
+const DEFAULT_WAIT_TIMEOUT_MS = 15 * 60 * 1000;
+
+function findWorkerStatus(
+  readModel: OrchestrationReadModel,
+  workerId: string,
+): string | undefined {
+  return readModel.orchestratorWorkers?.find(
+    (w) => (w.workerId as unknown as string) === workerId,
+  )?.status;
+}
+
+function handleWaitAgent(
+  engine: OrchestrationEngineService["Type"],
+  input: unknown,
+): Effect.Effect<unknown, Error> {
+  return Effect.gen(function* () {
+    const decoded = yield* decodeInput(ToolSchemas.WaitAgentInput, input);
+    const agentId = decoded.agentId as unknown as string;
+    const timeoutMs = decoded.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+
+    const initialModel = yield* engine.getReadModel();
+    const initialStatus = findWorkerStatus(initialModel, agentId);
+    if (initialStatus === undefined) {
+      return { error: `Unknown agent: ${decoded.agentId}` };
+    }
+    if (TERMINAL_WORKER_STATUSES.has(initialStatus)) {
+      return { agentId: decoded.agentId, status: initialStatus, timedOut: false };
+    }
+
+    // Subscribe to domain events; on each tick, check if the worker's
+    // status in the read model has reached a terminal state. This replaces
+    // orchestrator-driven polling via get_agent_status.
+    const streamed = yield* engine.streamDomainEvents.pipe(
+      Stream.mapEffect(() =>
+        engine.getReadModel().pipe(Effect.map((model) => findWorkerStatus(model, agentId))),
+      ),
+      Stream.filter(
+        (status): status is string =>
+          status !== undefined && TERMINAL_WORKER_STATUSES.has(status),
+      ),
+      Stream.take(1),
+      Stream.runHead,
+      Effect.timeoutOption(timeoutMs),
+      Effect.map((outer) => Option.flatten(outer)),
+    );
+
+    if (Option.isNone(streamed)) {
+      const lastState = yield* engine.getReadModel();
+      const lastStatus = findWorkerStatus(lastState, agentId);
+      return {
+        agentId: decoded.agentId,
+        status: lastStatus ?? "unknown",
+        timedOut: true,
+      };
+    }
+    return {
+      agentId: decoded.agentId,
+      status: Option.getOrElse(streamed, () => "unknown"),
+      timedOut: false,
+    };
+  });
+}
+
+function handleWaitAll(
+  engine: OrchestrationEngineService["Type"],
+  input: unknown,
+): Effect.Effect<unknown, Error> {
+  return Effect.gen(function* () {
+    const decoded = yield* decodeInput(ToolSchemas.WaitAllInput, input);
+    const ids = decoded.agentIds.map((id) => id as unknown as string);
+    const timeoutMs = decoded.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+
+    const allTerminal = (model: OrchestrationReadModel): boolean =>
+      ids.every((id) => {
+        const status = findWorkerStatus(model, id);
+        return status !== undefined && TERMINAL_WORKER_STATUSES.has(status);
+      });
+
+    const snapshot = yield* engine.getReadModel();
+    if (allTerminal(snapshot)) {
+      return {
+        results: ids.map((id) => ({
+          agentId: id,
+          status: findWorkerStatus(snapshot, id) ?? "unknown",
+        })),
+        timedOut: false,
+      };
+    }
+
+    const streamed = yield* engine.streamDomainEvents.pipe(
+      Stream.mapEffect(() => engine.getReadModel()),
+      Stream.filter(allTerminal),
+      Stream.take(1),
+      Stream.runHead,
+      Effect.timeoutOption(timeoutMs),
+      Effect.map((outer) => Option.flatten(outer)),
+    );
+
+    if (Option.isNone(streamed)) {
+      const lastState = yield* engine.getReadModel();
+      return {
+        results: ids.map((id) => ({
+          agentId: id,
+          status: findWorkerStatus(lastState, id) ?? "unknown",
+        })),
+        timedOut: true,
+      };
+    }
+    const finalModel = Option.getOrElse(streamed, () => snapshot);
+    return {
+      results: ids.map((id) => ({
+        agentId: id,
+        status: findWorkerStatus(finalModel, id) ?? "unknown",
+      })),
+      timedOut: false,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Router implementation
 // ---------------------------------------------------------------------------
 
@@ -916,7 +1074,7 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
         case "orchestrate_spawn_agent":
           return yield* handleSpawnAgent(readModel, engine.dispatch, input.threadId, toolInput);
         case "orchestrate_terminate_agent":
-          return yield* handleTerminateAgent(engine.dispatch, toolInput);
+          return yield* handleTerminateAgent(engine.dispatch, readModel, toolInput);
         case "orchestrate_pause_agent":
           return yield* handlePauseAgent(engine.dispatch, toolInput);
         case "orchestrate_resume_agent":
@@ -931,6 +1089,10 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
           return yield* handleAcceptWork(engine.dispatch, readModel, toolInput);
         case "orchestrate_reject_work":
           return yield* handleRejectWork(engine.dispatch, readModel, toolInput);
+        case "orchestrate_wait_agent":
+          return yield* handleWaitAgent(engine, toolInput);
+        case "orchestrate_wait_all":
+          return yield* handleWaitAll(engine, toolInput);
         default:
           return { error: `Not implemented: ${toolName}` };
       }
