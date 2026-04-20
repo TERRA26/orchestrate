@@ -9,7 +9,7 @@ import type {
   OrchestratorWorker,
   OrchestratorWorkerId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -41,7 +41,7 @@ import {
   OrchestratorWorkerSpawnedPayload,
   OrchestratorWorkerTerminatedPayload,
   OrchestratorWorkMergeRequestedPayload,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
@@ -902,6 +902,9 @@ export function projectEvent(
             status: "submitted",
             updatedAt: payload.submittedAt,
             submittedAt: payload.submittedAt,
+            // Gap 5+6: persist worker's self-report so accept can read it.
+            ...(payload.hasChanges !== undefined ? { hasChanges: payload.hasChanges } : {}),
+            ...(payload.diffStats !== undefined ? { diffStats: payload.diffStats } : {}),
           }),
         })),
       );

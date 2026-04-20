@@ -11,7 +11,7 @@ import {
   type SpawnBudget,
   type OrchestratorWorkspace,
   type OrchestratorWorkerModelBinding,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -360,6 +360,98 @@ describe("orchestrator decider — task lifecycle", () => {
     expect(acceptEvents).toHaveLength(1);
     expect(acceptEvents[0]!.type).toBe("orchestrator.task.accepted");
     expect((acceptEvents[0]!.payload as { taskId: string }).taskId).toBe(taskId);
+  });
+
+  it("rejects accept when submitted task has hasChanges=false and accept lacks allowNoOp (Gap 5+6)", async () => {
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      createTaskCommand,
+      {
+        type: "orchestrator.task.assign",
+        commandId: cmd("cmd-noop-assign"),
+        taskId,
+        assigneeKind: "worker",
+        assigneeId: workerId as unknown as string,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.worker.spawn",
+        commandId: cmd("cmd-noop-spawn"),
+        workerId,
+        runId,
+        taskId,
+        threadId,
+        spawnBudget,
+        workspace,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.submit",
+        commandId: cmd("cmd-noop-submit"),
+        taskId,
+        workerId,
+        summary: "Read-only inspection, no writes",
+        hasChanges: false,
+        createdAt: later,
+      },
+    ]);
+
+    const detail = await decideFailure(model, {
+      type: "orchestrator.task.accept",
+      commandId: cmd("cmd-noop-accept"),
+      taskId,
+      summary: "ok",
+      createdAt: evenLater,
+    });
+
+    expect(detail).toContain("noChangesRequireExplicitOverride");
+  });
+
+  it("allows accept on no-change submission when allowNoOp=true (Gap 5+6)", async () => {
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      createTaskCommand,
+      {
+        type: "orchestrator.task.assign",
+        commandId: cmd("cmd-noop2-assign"),
+        taskId,
+        assigneeKind: "worker",
+        assigneeId: workerId as unknown as string,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.worker.spawn",
+        commandId: cmd("cmd-noop2-spawn"),
+        workerId,
+        runId,
+        taskId,
+        threadId,
+        spawnBudget,
+        workspace,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.submit",
+        commandId: cmd("cmd-noop2-submit"),
+        taskId,
+        workerId,
+        summary: "Read-only inspection, no writes",
+        hasChanges: false,
+        createdAt: later,
+      },
+    ]);
+
+    const acceptEvents = await decide(model, {
+      type: "orchestrator.task.accept",
+      commandId: cmd("cmd-noop2-accept"),
+      taskId,
+      summary: "acknowledged no-op",
+      allowNoOp: true,
+      createdAt: evenLater,
+    });
+
+    expect(acceptEvents).toHaveLength(1);
+    expect(acceptEvents[0]!.type).toBe("orchestrator.task.accepted");
   });
 
   it("reject increments iteration and sets needs-rework status", async () => {

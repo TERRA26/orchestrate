@@ -1635,6 +1635,14 @@ export const OrchestratorDecision = Schema.Struct({
 });
 export type OrchestratorDecision = typeof OrchestratorDecision.Type;
 
+// Gap 5+6: diffStats carried on submit so orchestrator can gate acceptance.
+export const OrchestratorTaskDiffStats = Schema.Struct({
+  adds: Schema.Int,
+  dels: Schema.Int,
+  filesChanged: Schema.Int,
+});
+export type OrchestratorTaskDiffStats = typeof OrchestratorTaskDiffStats.Type;
+
 // Task (uses suspend for ModelPolicy forward reference)
 export const OrchestratorTask = Schema.Struct({
   taskId: OrchestratorTaskId,
@@ -1663,6 +1671,9 @@ export const OrchestratorTask = Schema.Struct({
   updatedAt: IsoDateTime,
   submittedAt: Schema.optional(IsoDateTime),
   acceptedAt: Schema.optional(IsoDateTime),
+  // Gap 5+6: worker's last-submit change report; used by accept invariant.
+  hasChanges: Schema.optional(Schema.Boolean),
+  diffStats: Schema.optional(OrchestratorTaskDiffStats),
 });
 export type OrchestratorTask = typeof OrchestratorTask.Type;
 
@@ -1898,6 +1909,12 @@ export const OrchestratorTaskSubmitCommand = Schema.Struct({
   taskId: OrchestratorTaskId,
   workerId: OrchestratorWorkerId,
   summary: Schema.optional(Schema.String),
+  // Gap 5+6: worker reports whether its last turn produced changes. When
+  // explicit `false`, accept must carry allowNoOp or be rejected. Optional
+  // to preserve back-compat with older commands; absence is treated as
+  // "unknown — assume true" so the invariant only fires on explicit no-ops.
+  hasChanges: Schema.optional(Schema.Boolean),
+  diffStats: Schema.optional(OrchestratorTaskDiffStats),
   createdAt: IsoDateTime,
 });
 
@@ -1906,6 +1923,8 @@ export const OrchestratorTaskAcceptCommand = Schema.Struct({
   commandId: CommandId,
   taskId: OrchestratorTaskId,
   summary: Schema.optional(Schema.String),
+  // Gap 5+6: explicit opt-in to accept a submission with no diff.
+  allowNoOp: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 
@@ -2149,6 +2168,10 @@ export const OrchestratorTaskSubmittedPayload = Schema.Struct({
   taskId: OrchestratorTaskId,
   workerId: OrchestratorWorkerId,
   summary: Schema.optional(Schema.String),
+  // Gap 5+6: carry the worker's self-reported change status into the event
+  // so projector persists it on the task and accept can read it.
+  hasChanges: Schema.optional(Schema.Boolean),
+  diffStats: Schema.optional(OrchestratorTaskDiffStats),
   submittedAt: IsoDateTime,
 });
 

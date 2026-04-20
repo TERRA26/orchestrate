@@ -2,11 +2,11 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   deriveAssociatedWorktreeMetadata,
   deriveAssociatedWorktreeMetadataPatch,
-} from "@t3tools/shared/threadWorkspace";
+} from "@orchestrate/shared/threadWorkspace";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -1149,18 +1149,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           taskId: command.taskId,
           workerId: command.workerId,
           summary: command.summary,
+          // Gap 5+6: persist worker's self-reported change status so the
+          // accept invariant can read it from the task's projected state.
+          ...(command.hasChanges !== undefined ? { hasChanges: command.hasChanges } : {}),
+          ...(command.diffStats !== undefined ? { diffStats: command.diffStats } : {}),
           submittedAt: command.createdAt,
         },
       };
     }
 
     case "orchestrator.task.accept": {
-      yield* requireOrchestratorTaskStatus({
+      const acceptingTask = yield* requireOrchestratorTaskStatus({
         readModel,
         command,
         taskId: command.taskId,
         expectedStatus: "submitted",
       });
+      // Gap 5+6: a submission that reported zero changes requires explicit
+      // operator acknowledgement. This prevents silently accepting no-op
+      // workers (e.g., the 2048 placeholder case where a worker exits
+      // without writing any files).
+      if (acceptingTask.hasChanges === false && command.allowNoOp !== true) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `noChangesRequireExplicitOverride: task '${command.taskId}' was submitted with no changes; accept requires allowNoOp=true to acknowledge a no-op submission.`,
+        });
+      }
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",
