@@ -146,6 +146,82 @@ describe("OrchestrationToolRouter", () => {
     });
   });
 
+  it("orchestrate_get_agent_logs returns activities tail for the worker's thread (Gap 10)", async () => {
+    const workerId = "worker-logs";
+    const activities = [
+      {
+        id: EventId.makeUnsafe("act-1"),
+        createdAt: "2026-04-12T12:00:01.000Z",
+        tone: "info" as const,
+        kind: "turn.plan.updated",
+        summary: "Plan refined",
+        payload: {},
+        turnId: null,
+      },
+      {
+        id: EventId.makeUnsafe("act-2"),
+        createdAt: "2026-04-12T12:00:02.000Z",
+        tone: "tool" as const,
+        kind: "tool.completed",
+        summary: "Ran bash command",
+        payload: {},
+        turnId: null,
+      },
+      {
+        id: EventId.makeUnsafe("act-3"),
+        createdAt: "2026-04-12T12:00:03.000Z",
+        tone: "error" as const,
+        kind: "runtime.error",
+        summary: "Command failed",
+        payload: {},
+        turnId: null,
+      },
+    ];
+    const thread = { ...makeThread(), activities };
+    const readModel = makeReadModel({
+      threads: [thread],
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: THREAD_ID,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, [])),
+    );
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_get_agent_logs",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId, tail: 2 },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as { agentId: string; entries: Array<{ level: string; message: string }> };
+
+    expect(result.agentId).toBe(workerId);
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[1].level).toBe("error");
+    expect(result.entries[1].message).toBe("Command failed");
+  });
+
   it("orchestrate_wait_agent resolves immediately when worker already terminal (Gap 7)", async () => {
     const workerId = "worker-done";
     const readModel = makeReadModel({

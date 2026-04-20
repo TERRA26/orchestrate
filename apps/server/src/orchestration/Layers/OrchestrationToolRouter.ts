@@ -890,6 +890,50 @@ function handleRejectWork(
 }
 
 // ---------------------------------------------------------------------------
+// Gap 10: orchestrate_get_agent_logs — project thread activities as log entries
+// ---------------------------------------------------------------------------
+
+function handleGetAgentLogs(
+  readModel: OrchestrationReadModel,
+  input: unknown,
+): Effect.Effect<unknown, Error> {
+  return Effect.gen(function* () {
+    const decoded = yield* decodeInput(ToolSchemas.GetAgentLogsInput, input);
+    const agentId = decoded.agentId as unknown as string;
+    const worker = (readModel.orchestratorWorkers ?? []).find(
+      (w) => (w.workerId as unknown as string) === agentId,
+    );
+    if (!worker) {
+      return { agentId: decoded.agentId, entries: [] };
+    }
+    const thread = readModel.threads.find(
+      (t) => (t.id as unknown as string) === (worker.threadId as unknown as string),
+    );
+    if (!thread) {
+      return { agentId: decoded.agentId, entries: [] };
+    }
+    const activities = thread.activities ?? [];
+    const sinceMs = decoded.since ? Date.parse(decoded.since) : Number.NEGATIVE_INFINITY;
+    const filtered = Number.isFinite(sinceMs)
+      ? activities.filter((a) => Date.parse(a.createdAt) >= sinceMs)
+      : activities;
+    const tail = decoded.tail ?? filtered.length;
+    const windowed = tail > 0 ? filtered.slice(Math.max(0, filtered.length - tail)) : filtered;
+    const entries = windowed.map((a) => ({
+      timestamp: a.createdAt,
+      level:
+        a.tone === "error"
+          ? ("error" as const)
+          : a.tone === "approval"
+            ? ("warn" as const)
+            : ("info" as const),
+      message: a.summary,
+    }));
+    return { agentId: decoded.agentId, entries };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Gap 7: server-side wait_agent / wait_all blocking coordination
 // ---------------------------------------------------------------------------
 
@@ -1064,6 +1108,8 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
             return yield* handleGetAllStatus(readModel, toolInput);
           case "orchestrate_get_spawn_tree":
             return yield* handleGetSpawnTree(readModel, toolInput);
+          case "orchestrate_get_agent_logs":
+            return yield* handleGetAgentLogs(readModel, toolInput);
           default:
             return { error: `Not implemented: ${toolName}` };
         }
