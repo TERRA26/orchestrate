@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import {
   CheckIcon,
   ExternalLinkIcon,
@@ -26,6 +26,46 @@ import { DELEGATION_MARKER } from "~/components/OrchestratorPanel.logic";
 // Sub-components
 // ---------------------------------------------------------------------------
 
+const HIDDEN_WORK_ENTRY_LABELS = new Set(["turn", "rate limits updated", "item", "tool call"]);
+
+export function shouldHideWorkEntry(workEntry: WorkLogEntry): boolean {
+  // Hide only truly empty/generic entries. If the entry carries real content
+  // (tool name, command, changed files, or non-trivial detail), surface it —
+  // otherwise the orchestrator panel becomes a black box where users can't
+  // see tool calls like orchestrate_spawn_agent / orchestrate_get_all_status.
+  const hasRealContent =
+    (typeof workEntry.toolName === "string" && workEntry.toolName.trim().length > 0) ||
+    (typeof workEntry.command === "string" && workEntry.command.trim().length > 0) ||
+    (workEntry.changedFiles && workEntry.changedFiles.length > 0) ||
+    (typeof workEntry.detail === "string" && workEntry.detail.trim().length > 0);
+  if (hasRealContent) {
+    return false;
+  }
+  const candidates = [workEntry.toolTitle, workEntry.label]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim().toLowerCase());
+  return candidates.some((candidate) => HIDDEN_WORK_ENTRY_LABELS.has(candidate));
+}
+
+function StepIndicator({ label, active }: { label: string; active: boolean }) {
+  return (
+    <div className="pb-2" data-step-indicator={active ? "active" : "done"}>
+      <div className={cn("orch-think-row", active ? "orch-think-live" : "")}>
+        {active ? (
+          <span className="orch-think-spin">
+            <LoaderIcon className="size-3 animate-spin" />
+          </span>
+        ) : (
+          <span className="orch-think-check">
+            <CheckIcon className="size-2.5" />
+          </span>
+        )}
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
   isActiveThinking,
@@ -35,11 +75,11 @@ function MessageBubble({
 }) {
   if (message.role === "user") {
     return (
-      <div className="pb-4" data-message-role="user">
+      <div className="pb-3" data-message-role="user">
         <div className="flex w-full justify-end">
-          <div className="group flex max-w-[80%] flex-col items-end gap-1">
-            <div className="w-max max-w-full min-w-0 self-end rounded-xl border border-border/70 bg-secondary px-[14px] py-1.5">
-              <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
+          <div className="group flex max-w-[82%] flex-col items-end gap-1">
+            <div className="w-max max-w-full min-w-0 self-end rounded-lg border border-border/50 bg-secondary/60 px-2.5 py-1.5">
+              <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-[12px] leading-relaxed text-foreground @[380px]/pane:text-[12.5px] @[520px]/pane:text-[13px]">
                 {message.content}
               </div>
             </div>
@@ -50,14 +90,18 @@ function MessageBubble({
   }
   if (message.role === "thinking") {
     return (
-      <div className="pb-3">
-        <div className="flex items-start gap-2 text-muted-foreground/70">
+      <div className="pb-2" data-message-role="thinking">
+        <div className={cn("orch-think-row", isActiveThinking ? "orch-think-live" : "")}>
           {isActiveThinking ? (
-            <LoaderIcon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+            <span className="orch-think-spin">
+              <LoaderIcon className="size-3 animate-spin" />
+            </span>
           ) : (
-            <CheckIcon className="mt-0.5 size-3.5 shrink-0" />
+            <span className="orch-think-check">
+              <CheckIcon className="size-2.5" />
+            </span>
           )}
-          <span className="text-xs leading-relaxed">{message.content}</span>
+          <span>{message.content}</span>
         </div>
       </div>
     );
@@ -69,27 +113,29 @@ function MessageBubble({
     : message.content;
 
   if (isDelegation) {
-    // Delegated instruction — muted white bubble to distinguish from orchestrator's own responses
     return (
-      <div className="pb-4" data-message-role="delegation">
-        <div className="rounded-lg border border-border/15 bg-foreground/[0.06] px-4 py-3">
-          <p className="mb-1.5 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/40">
-            Delegated to agent
+      <div className="pb-3" data-message-role="delegation">
+        <div className="border-l-2 border-amber-500/40 bg-amber-500/[0.03] py-2 pl-3 pr-1">
+          <p className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-[0.22em] text-amber-400/70">
+            Delegated
           </p>
-          <div className="chat-markdown prose prose-sm max-w-none text-sm leading-relaxed text-foreground/85">
-            <ChatMarkdown text={displayContent} cwd={undefined} />
-          </div>
+          <ChatMarkdown text={displayContent} cwd={undefined} />
         </div>
       </div>
     );
   }
 
-  // orchestrator or agent-result — rendered like assistant messages
+  // orchestrator or agent-result — flat transcript block with orch-tag header
+  const tagLabel = message.role === "agent-result" ? "AGENT" : "ORCHESTRATOR";
   return (
-    <div className="pb-4" data-message-role="assistant">
-      <div className="chat-markdown prose prose-sm max-w-none text-sm leading-relaxed text-foreground">
-        <ChatMarkdown text={displayContent} cwd={undefined} />
+    <div className="pb-3" data-message-role="assistant">
+      <div className="flex items-center gap-2 pb-1">
+        <span className="orch-tag">
+          <span className="orch-tag-dot" />
+          {tagLabel}
+        </span>
       </div>
+      <ChatMarkdown text={displayContent} cwd={undefined} />
     </div>
   );
 }
@@ -263,7 +309,10 @@ function TranscriptEntry({ message }: { message: OrchestratorMessage }) {
     case "user":
       return (
         <div className="flex justify-end px-3 py-1.5">
-          <div className="max-w-[80%] rounded-lg border border-border/20 bg-secondary/50 px-3 py-1.5 text-[12px] text-foreground/90">
+          <div
+            className="max-w-[80%] bg-card px-2.5 py-1.5 text-[13px] leading-snug text-foreground/92 border border-border/40"
+            style={{ borderRadius: "9px 9px 3px 9px" }}
+          >
             {message.content}
           </div>
         </div>
@@ -415,7 +464,7 @@ export function OrchestratorMessages({
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-2.5 py-2.5 @[380px]/pane:px-4 @[380px]/pane:py-3.5 @[520px]/pane:px-5 @[520px]/pane:py-4"
       >
         <div className="mx-auto w-full max-w-3xl">
           {requirementsChecklist.length > 0 ? (
@@ -428,22 +477,50 @@ export function OrchestratorMessages({
           ) : null}
           {hasContent ? (
             <>
-              {timelineEntries.map((entry) =>
-                entry.kind === "message" ? (
-                  <MessageBubble
-                    key={entry.id}
-                    message={entry.message}
-                    isActiveThinking={isBusy && entry.message.id === lastThinkingMessageId}
-                  />
-                ) : (
-                  <div key={entry.id} className="pb-2">
-                    <WorkEntryRow
-                      workEntry={entry.workEntry}
-                      onOpenWorkerPanel={onOpenWorkerPanel}
+              {timelineEntries.map((entry, index) => {
+                if (entry.kind === "work" && shouldHideWorkEntry(entry.workEntry)) {
+                  return null;
+                }
+
+                const node =
+                  entry.kind === "message" ? (
+                    <MessageBubble
+                      key={entry.id}
+                      message={entry.message}
+                      isActiveThinking={isBusy && entry.message.id === lastThinkingMessageId}
                     />
-                  </div>
-                ),
-              )}
+                  ) : (
+                    <div key={entry.id} className="pb-2">
+                      <WorkEntryRow
+                        workEntry={entry.workEntry}
+                        onOpenWorkerPanel={onOpenWorkerPanel}
+                      />
+                    </div>
+                  );
+
+                // Show an active "Understanding request…" step after a user
+                // message only while nothing else follows; hide it once the
+                // orchestrator starts emitting a response.
+                if (entry.kind === "message" && entry.message.role === "user") {
+                  const hasFollowUp = timelineEntries
+                    .slice(index + 1)
+                    .some(
+                      (later) =>
+                        (later.kind === "work" && !shouldHideWorkEntry(later.workEntry)) ||
+                        (later.kind === "message" && later.message.role !== "user"),
+                    );
+                  if (!hasFollowUp) {
+                    return (
+                      <Fragment key={entry.id}>
+                        {node}
+                        <StepIndicator label="Understanding request…" active={isBusy} />
+                      </Fragment>
+                    );
+                  }
+                }
+
+                return node;
+              })}
               <ChangedFilesSummaryCard filePaths={changedFiles} />
             </>
           ) : (
