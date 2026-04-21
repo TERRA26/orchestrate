@@ -306,6 +306,12 @@ function handleGetAgentStatus(
     if (!worker) {
       return { error: `Worker not found: ${decoded.agentId}` };
     }
+    // Gap H: surface the worker's structured submit report from the active task
+    // so the orchestrator can read "what the worker did" in a single call
+    // without falling back to disk inspection.
+    const activeTask = worker.activeTaskId
+      ? (readModel.orchestratorTasks ?? []).find((t) => t.taskId === worker.activeTaskId)
+      : undefined;
     return {
       agentId: worker.workerId,
       status: worker.status,
@@ -313,6 +319,18 @@ function handleGetAgentStatus(
       activeTaskId: worker.activeTaskId ?? null,
       threadId: worker.threadId,
       updatedAt: worker.updatedAt,
+      ...(activeTask?.submitSummary !== undefined
+        ? { submitSummary: activeTask.submitSummary }
+        : {}),
+      ...(activeTask?.filesWritten !== undefined
+        ? { filesWritten: activeTask.filesWritten }
+        : {}),
+      ...(activeTask?.testsRun !== undefined ? { testsRun: activeTask.testsRun } : {}),
+      ...(activeTask?.submitNotes !== undefined
+        ? { submitNotes: activeTask.submitNotes }
+        : {}),
+      ...(activeTask?.hasChanges !== undefined ? { hasChanges: activeTask.hasChanges } : {}),
+      ...(activeTask?.diffStats !== undefined ? { diffStats: activeTask.diffStats } : {}),
     };
   });
 }
@@ -573,7 +591,23 @@ function handleSpawnAgent(
 
     // Kick off the first turn on the newly-created worker thread so the
     // provider runtime picks it up immediately.
-    const taskMessage = normalizedObjective || "Begin working on the assigned task.";
+    //
+    // Gap J: include a submit-protocol reminder so every worker knows how to
+    // fill out the structured report the orchestrator will read back. Workers
+    // that omit this get rejected with a resubmit instruction; better to
+    // prompt them up front.
+    const submitProtocolReminder = [
+      "",
+      "When you finish, submit your work with:",
+      "- summary: one-sentence account of what you did",
+      "- filesWritten: every file you created or modified (absolute repo-relative paths)",
+      "- testsRun: array of { name, passed } for each test file/suite you ran",
+      "- notes: anything surprising, deferred cleanup, or unresolved questions",
+      "- hasChanges: true if you wrote files, false if the task was inspection-only",
+      "The orchestrator reads these fields from your submission to decide accept/reject.",
+    ].join("\n");
+    const taskMessage =
+      (normalizedObjective || "Begin working on the assigned task.") + submitProtocolReminder;
     yield* dispatch({
       type: "thread.turn.start" as const,
       commandId: uuid() as any,
@@ -822,6 +856,15 @@ function handleSendToAgent(
     );
     if (!targetWorker) {
       return { error: `Unknown agent: ${decoded.targetAgentId}` };
+    }
+
+    // Gap K: if the target worker is terminated there is no live thread to
+    // deliver to. Dispatch would fail silently inside Effect.ignore and the
+    // caller would get a misleading `{ queued: true }`. Tell the truth.
+    if (targetWorker.status === "terminated") {
+      return {
+        error: `Agent ${decoded.targetAgentId} is terminated; spawn a new agent instead of messaging this one.`,
+      };
     }
 
     const fromWorker = readModel.orchestratorWorkers.find((w) => w.status !== "terminated");

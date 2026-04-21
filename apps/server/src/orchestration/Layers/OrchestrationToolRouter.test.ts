@@ -146,6 +146,156 @@ describe("OrchestrationToolRouter", () => {
     });
   });
 
+  it("orchestrate_get_agent_status surfaces submitSummary / filesWritten / testsRun (Gap H)", async () => {
+    const workerId = "worker-reporting";
+    const taskId = "task-reporting";
+    const threadId = ThreadId.makeUnsafe("thread-reporting");
+    const readModel = makeReadModel({
+      threads: [makeThread(), { ...makeThread(), id: threadId }],
+      orchestratorTasks: [
+        {
+          taskId,
+          runId: "run-1",
+          title: "Build endpoint",
+          objective: "Build the endpoint",
+          status: "submitted",
+          ownerKind: "worker",
+          acceptanceCriteria: [],
+          checklist: [],
+          iteration: 1,
+          maxIterations: 3,
+          createdAt: NOW,
+          updatedAt: NOW,
+          submittedAt: NOW,
+          submitSummary: "Built POST /api/todos with in-memory store",
+          filesWritten: ["server/src/app.ts", "server/src/app.test.ts"],
+          testsRun: [{ name: "POST then GET roundtrip", passed: true }],
+          submitNotes: "CORS pinned to :5173",
+        } as any,
+      ],
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId,
+          status: "submitted",
+          visibility: "foreground",
+          activeTaskId: taskId,
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, [])),
+    );
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_get_agent_status",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as {
+      agentId: string;
+      submitSummary?: string;
+      filesWritten?: string[];
+      testsRun?: Array<{ name: string; passed: boolean }>;
+      submitNotes?: string;
+    };
+    expect(result.agentId).toBe(workerId);
+    expect(result.submitSummary).toBe("Built POST /api/todos with in-memory store");
+    expect(result.filesWritten).toEqual(["server/src/app.ts", "server/src/app.test.ts"]);
+    expect(result.testsRun).toEqual([{ name: "POST then GET roundtrip", passed: true }]);
+    expect(result.submitNotes).toBe("CORS pinned to :5173");
+  });
+
+  it("orchestrate_send_to_agent rejects when target worker is terminated (Gap K)", async () => {
+    const workerId = "worker-gone";
+    const readModel = makeReadModel({
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: THREAD_ID,
+          status: "terminated",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const commands: OrchestrationCommand[] = [];
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, commands)),
+    );
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_send_to_agent",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { targetAgentId: workerId, message: "one more thing" },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as { error?: string };
+    expect(result.error).toBeDefined();
+    expect(result.error).toMatch(/terminated/);
+    // No commands dispatched.
+    expect(commands).toHaveLength(0);
+  });
+
+  it("orchestrate_spawn_agent task message carries submit-report protocol reminder (Gap J)", async () => {
+    const commands: OrchestrationCommand[] = [];
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(makeReadModel(), commands)),
+    );
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        yield* router.executeTool({
+          toolName: "orchestrate_spawn_agent",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: {
+            task: "Build a button component",
+            objective: "Create src/Button.tsx matching the arcade theme.",
+            mode: "foreground",
+          },
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+    const turnStart = commands.find((c) => c.type === "thread.turn.start") as any;
+    expect(turnStart).toBeDefined();
+    const text: string = turnStart.message.text ?? "";
+    expect(text).toContain("Create src/Button.tsx");
+    // Protocol reminder — must tell the worker how to submit a structured report.
+    expect(text.toLowerCase()).toContain("filesWritten".toLowerCase());
+    expect(text.toLowerCase()).toContain("testsRun".toLowerCase());
+  });
+
   it("orchestrate_send_to_agent dispatches thread.turn.start on target worker's thread (Gap A)", async () => {
     const commands: OrchestrationCommand[] = [];
     const targetWorkerId = "worker-target";
