@@ -1643,6 +1643,15 @@ export const OrchestratorTaskDiffStats = Schema.Struct({
 });
 export type OrchestratorTaskDiffStats = typeof OrchestratorTaskDiffStats.Type;
 
+// Gap C+F: structured submit report so the orchestrator can read what the
+// worker did without guessing from disk. Declared above OrchestratorTask
+// because Schema.Struct resolves eagerly (no forward-reference via suspend).
+export const OrchestratorTaskTestResult = Schema.Struct({
+  name: Schema.String,
+  passed: Schema.Boolean,
+});
+export type OrchestratorTaskTestResult = typeof OrchestratorTaskTestResult.Type;
+
 // Task (uses suspend for ModelPolicy forward reference)
 export const OrchestratorTask = Schema.Struct({
   taskId: OrchestratorTaskId,
@@ -1674,6 +1683,11 @@ export const OrchestratorTask = Schema.Struct({
   // Gap 5+6: worker's last-submit change report; used by accept invariant.
   hasChanges: Schema.optional(Schema.Boolean),
   diffStats: Schema.optional(OrchestratorTaskDiffStats),
+  // Gap C+F: worker's structured submit report — what the worker says it did.
+  submitSummary: Schema.optional(Schema.String),
+  filesWritten: Schema.optional(Schema.Array(Schema.String)),
+  testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
+  submitNotes: Schema.optional(Schema.String),
 });
 export type OrchestratorTask = typeof OrchestratorTask.Type;
 
@@ -1915,6 +1929,10 @@ export const OrchestratorTaskSubmitCommand = Schema.Struct({
   // "unknown — assume true" so the invariant only fires on explicit no-ops.
   hasChanges: Schema.optional(Schema.Boolean),
   diffStats: Schema.optional(OrchestratorTaskDiffStats),
+  // Gap C+F: structured submit report.
+  filesWritten: Schema.optional(Schema.Array(Schema.String)),
+  testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
+  notes: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
 });
 
@@ -2172,6 +2190,10 @@ export const OrchestratorTaskSubmittedPayload = Schema.Struct({
   // so projector persists it on the task and accept can read it.
   hasChanges: Schema.optional(Schema.Boolean),
   diffStats: Schema.optional(OrchestratorTaskDiffStats),
+  // Gap C+F: structured submit report.
+  filesWritten: Schema.optional(Schema.Array(Schema.String)),
+  testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
+  notes: Schema.optional(Schema.String),
   submittedAt: IsoDateTime,
 });
 

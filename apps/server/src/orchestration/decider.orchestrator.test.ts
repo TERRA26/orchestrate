@@ -362,6 +362,62 @@ describe("orchestrator decider — task lifecycle", () => {
     expect((acceptEvents[0]!.payload as { taskId: string }).taskId).toBe(taskId);
   });
 
+  it("persists worker submit report (summary + filesWritten + testsRun) on the task (Gap C+F)", async () => {
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      createTaskCommand,
+      {
+        type: "orchestrator.task.assign",
+        commandId: cmd("cmd-rep-assign"),
+        taskId,
+        assigneeKind: "worker",
+        assigneeId: workerId as unknown as string,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.worker.spawn",
+        commandId: cmd("cmd-rep-spawn"),
+        workerId,
+        runId,
+        taskId,
+        threadId,
+        spawnBudget,
+        workspace,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.submit",
+        commandId: cmd("cmd-rep-submit"),
+        taskId,
+        workerId,
+        summary: "Implemented /api/todos POST/GET/DELETE",
+        hasChanges: true,
+        diffStats: { adds: 120, dels: 5, filesChanged: 3 },
+        filesWritten: ["server/src/app.ts", "server/src/app.test.ts", "server/src/main.ts"],
+        testsRun: [
+          { name: "POST then GET roundtrip", passed: true },
+          { name: "POST returns 400 on empty", passed: true },
+        ],
+        notes: "CORS set to 5173; in-memory Map store.",
+        createdAt: later,
+      } as any,
+    ]);
+
+    const task = model.orchestratorTasks.find((t) => t.taskId === taskId);
+    expect(task).toBeDefined();
+    expect(task?.submitSummary).toBe("Implemented /api/todos POST/GET/DELETE");
+    expect(task?.filesWritten).toEqual([
+      "server/src/app.ts",
+      "server/src/app.test.ts",
+      "server/src/main.ts",
+    ]);
+    expect(task?.testsRun).toEqual([
+      { name: "POST then GET roundtrip", passed: true },
+      { name: "POST returns 400 on empty", passed: true },
+    ]);
+    expect(task?.submitNotes).toBe("CORS set to 5173; in-memory Map store.");
+  });
+
   it("rejects accept when submitted task has hasChanges=false and accept lacks allowNoOp (Gap 5+6)", async () => {
     const model = await applyCommands(modelWithProject(), [
       createRunCommand,

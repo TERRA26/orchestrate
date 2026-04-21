@@ -905,6 +905,11 @@ export function projectEvent(
             // Gap 5+6: persist worker's self-report so accept can read it.
             ...(payload.hasChanges !== undefined ? { hasChanges: payload.hasChanges } : {}),
             ...(payload.diffStats !== undefined ? { diffStats: payload.diffStats } : {}),
+            // Gap C+F: persist the structured submit report.
+            ...(payload.summary !== undefined ? { submitSummary: payload.summary } : {}),
+            ...(payload.filesWritten !== undefined ? { filesWritten: payload.filesWritten } : {}),
+            ...(payload.testsRun !== undefined ? { testsRun: payload.testsRun } : {}),
+            ...(payload.notes !== undefined ? { submitNotes: payload.notes } : {}),
           }),
         })),
       );

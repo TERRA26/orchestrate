@@ -1153,6 +1153,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           // accept invariant can read it from the task's projected state.
           ...(command.hasChanges !== undefined ? { hasChanges: command.hasChanges } : {}),
           ...(command.diffStats !== undefined ? { diffStats: command.diffStats } : {}),
+          // Gap C+F: pass the structured submit report through so the
+          // orchestrator knows exactly what the worker did.
+          ...(command.filesWritten !== undefined ? { filesWritten: command.filesWritten } : {}),
+          ...(command.testsRun !== undefined ? { testsRun: command.testsRun } : {}),
+          ...(command.notes !== undefined ? { notes: command.notes } : {}),
           submittedAt: command.createdAt,
         },
       };
