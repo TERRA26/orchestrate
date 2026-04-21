@@ -146,6 +146,134 @@ describe("OrchestrationToolRouter", () => {
     });
   });
 
+  it("orchestrate_send_to_agent dispatches thread.turn.start on target worker's thread (Gap A)", async () => {
+    const commands: OrchestrationCommand[] = [];
+    const targetWorkerId = "worker-target";
+    const targetThreadId = ThreadId.makeUnsafe("thread-target");
+    const readModel = makeReadModel({
+      threads: [
+        makeThread(),
+        {
+          ...makeThread(),
+          id: targetThreadId,
+          title: "Target worker thread",
+        },
+      ],
+      orchestratorWorkers: [
+        {
+          workerId: targetWorkerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: targetThreadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, commands)),
+    );
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        yield* router.executeTool({
+          toolName: "orchestrate_send_to_agent",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: {
+            targetAgentId: targetWorkerId,
+            message: "Use port 5175 instead of 5173.",
+          },
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+    const types = commands.map((c) => c.type);
+    expect(types).toContain("orchestrator.message.send");
+    expect(types).toContain("thread.turn.start");
+    const turnStart = commands.find((c) => c.type === "thread.turn.start") as any;
+    expect(turnStart.threadId).toBe(targetThreadId);
+    expect(turnStart.message.text).toContain("Use port 5175");
+  });
+
+  it("orchestrate_get_agent_diff returns aggregated file stats for worker's latest checkpoint (Gap B)", async () => {
+    const workerId = "worker-with-diff";
+    const threadId = ThreadId.makeUnsafe("thread-with-diff");
+    const readModel = makeReadModel({
+      threads: [
+        makeThread(),
+        {
+          ...makeThread(),
+          id: threadId,
+          checkpoints: [
+            {
+              turnId: { __brand: "TurnId" } as any,
+              checkpointTurnCount: 1,
+              checkpointRef: "ckpt-1" as any,
+              status: "ready" as const,
+              files: [
+                { path: "server/app.ts", kind: "M", additions: 40, deletions: 2 },
+                { path: "server/main.ts", kind: "A", additions: 8, deletions: 0 },
+              ],
+              assistantMessageId: null,
+              completedAt: NOW,
+            },
+          ],
+        },
+      ],
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId,
+          status: "submitted",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, [])),
+    );
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_get_agent_diff",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as { agentId: string; diff: string; filesChanged: number; additions: number; deletions: number };
+    expect(result.agentId).toBe(workerId);
+    expect(result.filesChanged).toBe(2);
+    expect(result.additions).toBe(48);
+    expect(result.deletions).toBe(2);
+    expect(result.diff).toContain("server/app.ts");
+    expect(result.diff).toContain("+40");
+    expect(result.diff).toContain("-2");
+  });
+
   it("orchestrate_get_agent_logs returns activities tail for the worker's thread (Gap 10)", async () => {
     const workerId = "worker-logs";
     const activities = [

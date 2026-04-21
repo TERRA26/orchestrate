@@ -811,11 +811,24 @@ function handleSendToAgent(
   return Effect.gen(function* () {
     const decoded = yield* decodeInput(ToolSchemas.SendToAgentInput, input);
     const messageId = uuid();
+    const targetAgentId = decoded.targetAgentId as unknown as string;
 
-    // Find source worker (first non-terminated worker as the sender, or use a synthetic ID)
+    // Resolve the target worker's thread so we can hand the message to the
+    // existing turn pipeline. Without this the message used to live only in
+    // orchestratorMessages[] and the worker never saw it — the orchestrator
+    // was forced to spawn a fresh worker for every follow-up.
+    const targetWorker = (readModel.orchestratorWorkers ?? []).find(
+      (w) => (w.workerId as unknown as string) === targetAgentId,
+    );
+    if (!targetWorker) {
+      return { error: `Unknown agent: ${decoded.targetAgentId}` };
+    }
+
     const fromWorker = readModel.orchestratorWorkers.find((w) => w.status !== "terminated");
     const fromWorkerId = fromWorker?.workerId ?? ("orchestrator" as any);
 
+    // 1) Record the message on the orchestrator message bus (projector writes
+    //    it to orchestratorMessages[] for audit + replay).
     yield* dispatch({
       type: "orchestrator.message.send" as const,
       commandId: uuid() as any,
@@ -827,12 +840,31 @@ function handleSendToAgent(
       createdAt: now() as any,
     }).pipe(Effect.mapError((e) => new Error(`Dispatch failed: ${e.message}`)));
 
-    // Gap 2: the orchestrator should observe queue-semantics here, not
-    // optimistic delivery. Actual delivery is confirmed by a separate
-    // orchestrator.message.delivered event when the target worker consumes
-    // the message at its next turn boundary (subscriber wiring tracked as
-    // a follow-up for full bridge semantics).
-    return { queued: true, messageId };
+    // 2) Gap A: bridge the message into the worker's turn queue by starting a
+    //    new turn on the target thread. The decider queues if the thread is
+    //    mid-turn (dispatchMode="queue", default). Delivery = when the turn
+    //    actually begins; the orchestrator observes via thread.turn-started.
+    yield* dispatch({
+      type: "thread.turn.start" as const,
+      commandId: uuid() as any,
+      threadId: targetWorker.threadId,
+      message: {
+        messageId: uuid() as any,
+        role: "user" as const,
+        text: decoded.message,
+        attachments: [],
+      },
+      dispatchMode: "queue" as const,
+      assistantDeliveryMode: "buffered" as const,
+      createdAt: now() as any,
+    } as any).pipe(
+      // Non-fatal: if the dispatch is rejected (e.g., thread already has a
+      // queued turn), leave the message.send durable and let the caller
+      // decide what to do based on the returned { queued: true, messageId }.
+      Effect.ignore,
+    );
+
+    return { queued: true, messageId, deliveredVia: "thread.turn.start" };
   });
 }
 
@@ -891,6 +923,46 @@ function handleRejectWork(
     }).pipe(Effect.mapError((e) => new Error(`Dispatch failed: ${e.message}`)));
 
     return { rejected: true, taskId };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Gap B: orchestrate_get_agent_diff — aggregate the worker's latest checkpoint
+// ---------------------------------------------------------------------------
+
+function handleGetAgentDiff(
+  readModel: OrchestrationReadModel,
+  input: unknown,
+): Effect.Effect<unknown, Error> {
+  return Effect.gen(function* () {
+    const decoded = yield* decodeInput(ToolSchemas.GetAgentDiffInput, input);
+    const agentId = decoded.agentId as unknown as string;
+    const worker = (readModel.orchestratorWorkers ?? []).find(
+      (w) => (w.workerId as unknown as string) === agentId,
+    );
+    if (!worker) {
+      return { agentId: decoded.agentId, diff: "", filesChanged: 0, additions: 0, deletions: 0 };
+    }
+    const thread = readModel.threads.find(
+      (t) => (t.id as unknown as string) === (worker.threadId as unknown as string),
+    );
+    if (!thread || !thread.checkpoints || thread.checkpoints.length === 0) {
+      return { agentId: decoded.agentId, diff: "", filesChanged: 0, additions: 0, deletions: 0 };
+    }
+    const latest = thread.checkpoints[thread.checkpoints.length - 1];
+    const files = latest?.files ?? [];
+    const additions = files.reduce((sum, f) => sum + (f.additions ?? 0), 0);
+    const deletions = files.reduce((sum, f) => sum + (f.deletions ?? 0), 0);
+    const diff = files
+      .map((f) => `${f.kind ?? "M"}  ${f.path}  +${f.additions ?? 0} -${f.deletions ?? 0}`)
+      .join("\n");
+    return {
+      agentId: decoded.agentId,
+      diff,
+      filesChanged: files.length,
+      additions,
+      deletions,
+    };
   });
 }
 
@@ -1115,6 +1187,8 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
             return yield* handleGetSpawnTree(readModel, toolInput);
           case "orchestrate_get_agent_logs":
             return yield* handleGetAgentLogs(readModel, toolInput);
+          case "orchestrate_get_agent_diff":
+            return yield* handleGetAgentDiff(readModel, toolInput);
           default:
             return { error: `Not implemented: ${toolName}` };
         }
