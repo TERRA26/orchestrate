@@ -304,6 +304,61 @@ function ChangedFilesSummaryCard({ filePaths }: { filePaths: ReadonlyArray<strin
 // Transcript entry (control room mode)
 // ---------------------------------------------------------------------------
 
+// Gap G: compact one-line row for orchestrator activities in control-room
+// mode. Surfaces spawns, sends, waits, reviews, and generic tool calls as a
+// dense strip so the user can follow what the orchestrator is doing without
+// the heavy work-log cards swamping the transcript.
+function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
+  const toolName = workEntry.toolName?.replace(/^mcp__orchestrate__/, "");
+  const isOrchTool = toolName?.startsWith("orchestrate_") ?? false;
+
+  const label = (() => {
+    if (isOrchTool && toolName) {
+      // Human-friendly verb form
+      const verb = toolName.replace(/^orchestrate_/, "").replace(/_/g, " ");
+      const target = workEntry.workerId
+        ? ` @${workEntry.workerId.slice(-8)}`
+        : workEntry.threadId
+          ? ` @${workEntry.threadId.slice(-8)}`
+          : "";
+      return `→ ${verb}${target}`;
+    }
+    if (workEntry.tone === "thinking" || workEntry.itemType === undefined) {
+      return workEntry.label ?? workEntry.toolTitle ?? "thinking";
+    }
+    if (workEntry.command) {
+      return `$ ${workEntry.command}`;
+    }
+    if (workEntry.toolName) {
+      return `· ${workEntry.toolName}`;
+    }
+    return workEntry.label ?? workEntry.toolTitle ?? "activity";
+  })();
+
+  const preview = workEntry.detail?.trim() ?? "";
+  const toneClass =
+    workEntry.tone === "error"
+      ? "text-rose-300/80"
+      : isOrchTool
+        ? "text-amber-400/80"
+        : workEntry.tone === "tool"
+          ? "text-muted-foreground/65"
+          : "text-muted-foreground/50";
+
+  return (
+    <div className="flex items-start gap-1.5 px-3 py-0.5" data-activity-row={toolName ?? "x"}>
+      <span className={cn("shrink-0 font-mono text-[10px] leading-[1.5]", toneClass)}>
+        {label}
+      </span>
+      {preview && preview !== workEntry.label ? (
+        <span className="min-w-0 flex-1 truncate font-mono text-[10px] leading-[1.5] text-muted-foreground/35">
+          {preview}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function TranscriptEntry({ message }: { message: OrchestratorMessage }) {
   switch (message.role) {
     case "user":
@@ -439,7 +494,10 @@ export function OrchestratorMessages({
     return [...collected];
   }, [workLogEntries]);
 
-  // Control room mode: dense transcript with decision cards
+  // Control room mode: dense transcript — messages + compact activity rows
+  // interleaved by timestamp so the user can follow orchestrator actions
+  // (spawn_agent, send_to_agent, wait_all, tool calls, thinking) without
+  // the heavy work-log cards.
   if (controlRoomMode) {
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -448,7 +506,15 @@ export function OrchestratorMessages({
           className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain py-2"
         >
           {hasContent ? (
-            messages.map((message) => <TranscriptEntry key={message.id} message={message} />)
+            timelineEntries.map((entry) => {
+              if (entry.kind === "message") {
+                return <TranscriptEntry key={entry.id} message={entry.message} />;
+              }
+              if (shouldHideWorkEntry(entry.workEntry)) {
+                return null;
+              }
+              return <CompactActivityRow key={entry.id} workEntry={entry.workEntry} />;
+            })
           ) : (
             <div className="flex min-h-[20vh] items-center justify-center">
               <p className="text-[11px] text-muted-foreground/40">No transcript entries yet</p>
