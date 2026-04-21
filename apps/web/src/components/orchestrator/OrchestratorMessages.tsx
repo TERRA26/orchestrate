@@ -308,14 +308,59 @@ function ChangedFilesSummaryCard({ filePaths }: { filePaths: ReadonlyArray<strin
 // mode. Surfaces spawns, sends, waits, reviews, and generic tool calls as a
 // dense strip so the user can follow what the orchestrator is doing without
 // the heavy work-log cards swamping the transcript.
+
+function extractToolArgsPreview(detail: string | undefined): string {
+  if (!detail) return "";
+  // Detail often arrives truncated (summary is capped at 180 chars server-side)
+  // so the JSON may end mid-string. Do a best-effort parse first; fall back to
+  // regex on key-name + first-quoted-value pairs that tolerate truncation.
+  const colonIdx = detail.indexOf(":");
+  const argsText = colonIdx >= 0 ? detail.slice(colonIdx + 1).trim() : detail;
+  if (!argsText.startsWith("{")) return argsText.slice(0, 120).replace(/\s+/g, " ").trim();
+  const preferredKeys = [
+    "task",
+    "message",
+    "command",
+    "instruction",
+    "reason",
+    "title",
+    "objective",
+    "query",
+  ];
+  try {
+    const parsed = JSON.parse(argsText) as Record<string, unknown>;
+    for (const key of preferredKeys) {
+      const value = parsed[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value.replace(/\s+/g, " ").trim().slice(0, 140);
+      }
+    }
+    const wid =
+      (typeof parsed.workerId === "string" && parsed.workerId) ||
+      (typeof parsed.agentId === "string" && parsed.agentId) ||
+      "";
+    if (wid) return String(wid).slice(-8);
+  } catch {
+    // fall through to regex
+  }
+  for (const key of preferredKeys) {
+    const match = argsText.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`, ""));
+    if (match && match[1]) {
+      return match[1].replace(/\\n/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+    }
+  }
+  const widMatch = argsText.match(/"(?:workerId|agentId)"\s*:\s*"([^"]*)/);
+  if (widMatch && widMatch[1]) return widMatch[1].slice(-8);
+  return argsText.slice(0, 120).replace(/\s+/g, " ").trim();
+}
+
 function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
-  const toolName = workEntry.toolName?.replace(/^mcp__orchestrate__/, "");
-  const isOrchTool = toolName?.startsWith("orchestrate_") ?? false;
+  const rawToolName = workEntry.toolName?.replace(/^mcp__orchestrate__/, "");
+  const isOrchTool = rawToolName?.startsWith("orchestrate_") ?? false;
 
   const label = (() => {
-    if (isOrchTool && toolName) {
-      // Human-friendly verb form
-      const verb = toolName.replace(/^orchestrate_/, "").replace(/_/g, " ");
+    if (isOrchTool && rawToolName) {
+      const verb = rawToolName.replace(/^orchestrate_/, "").replace(/_/g, " ");
       const target = workEntry.workerId
         ? ` @${workEntry.workerId.slice(-8)}`
         : workEntry.threadId
@@ -323,34 +368,53 @@ function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
           : "";
       return `→ ${verb}${target}`;
     }
-    if (workEntry.tone === "thinking" || workEntry.itemType === undefined) {
-      return workEntry.label ?? workEntry.toolTitle ?? "thinking";
-    }
     if (workEntry.command) {
-      return `$ ${workEntry.command}`;
+      return `$ ${workEntry.command.split(" ").slice(0, 4).join(" ")}`;
     }
-    if (workEntry.toolName) {
-      return `· ${workEntry.toolName}`;
+    if (rawToolName) {
+      return `· ${rawToolName.toLowerCase()}`;
     }
     return workEntry.label ?? workEntry.toolTitle ?? "activity";
   })();
 
-  const preview = workEntry.detail?.trim() ?? "";
+  const preview = (() => {
+    if (workEntry.command) {
+      // Already in the label; show any extra arg detail if helpful
+      return "";
+    }
+    const extracted = extractToolArgsPreview(workEntry.detail);
+    // Suppress preview when it's just the worker id already shown in the
+    // label (e.g. `→ wait agent @abcd1234 | abcd1234`).
+    const trimmedWorker = workEntry.workerId?.slice(-8);
+    if (trimmedWorker && extracted === trimmedWorker) {
+      return "";
+    }
+    return extracted;
+  })();
+
   const toneClass =
     workEntry.tone === "error"
       ? "text-rose-300/80"
       : isOrchTool
-        ? "text-amber-400/80"
+        ? "text-amber-400/85"
         : workEntry.tone === "tool"
           ? "text-muted-foreground/65"
           : "text-muted-foreground/50";
 
   return (
-    <div className="flex items-start gap-1.5 px-3 py-0.5" data-activity-row={toolName ?? "x"}>
-      <span className={cn("shrink-0 font-mono text-[10px] leading-[1.5]", toneClass)}>
+    <div
+      className="flex items-baseline gap-2 px-3 py-0.5"
+      data-activity-row={rawToolName ?? "x"}
+    >
+      <span
+        className={cn(
+          "shrink-0 font-mono text-[10px] leading-[1.5] whitespace-nowrap",
+          toneClass,
+        )}
+      >
         {label}
       </span>
-      {preview && preview !== workEntry.label ? (
+      {preview ? (
         <span className="min-w-0 flex-1 truncate font-mono text-[10px] leading-[1.5] text-muted-foreground/35">
           {preview}
         </span>
