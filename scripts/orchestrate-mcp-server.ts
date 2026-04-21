@@ -596,6 +596,86 @@ async function executeOrchestrationTool(
     });
   }
 
+  if (toolName === "orchestrate_send_to_agent") {
+    // Gap L0: mirror of handleSendToAgent from the server-side router,
+    // expressed over the MCP WebSocket dispatch path so the Codex
+    // orchestrator can actually send follow-ups instead of spawning a
+    // fresh worker for every 1-char fix.
+    const targetWorkerId = String(args.workerId ?? args.agent_id ?? args.agentId ?? "");
+    const message = String(args.message ?? "");
+    if (!targetWorkerId) {
+      return JSON.stringify({ error: "workerId is required" });
+    }
+    if (!message) {
+      return JSON.stringify({ error: "message is required" });
+    }
+    const targetWorker = await findWorker(targetWorkerId);
+    if (!targetWorker) {
+      return JSON.stringify({ error: `Unknown agent: ${targetWorkerId}` });
+    }
+    if (targetWorker.status === "terminated") {
+      return JSON.stringify({
+        error: `Agent ${targetWorkerId} is terminated; spawn a new agent instead of messaging this one.`,
+      });
+    }
+    const messageId = crypto.randomUUID();
+    const fromWorker = (snapshot.orchestratorWorkers ?? []).find(
+      (w: any) => w.status !== "terminated" && w.workerId !== targetWorkerId,
+    );
+    const fromWorkerId = fromWorker?.workerId ?? "orchestrator";
+    try {
+      // 1) Audit trail on the orchestrator's message bus.
+      try {
+        await wsRequest("orchestration.dispatchCommand", {
+          command: {
+            type: "orchestrator.message.send",
+            commandId: crypto.randomUUID(),
+            messageId,
+            fromWorkerId,
+            toWorkerId: targetWorkerId,
+            content: message,
+            createdAt: new Date().toISOString(),
+          },
+        });
+      } catch {
+        // Non-fatal: fall through and still try to dispatch the turn so
+        // the worker sees the message even if the audit record failed.
+      }
+      // 2) Inject the message into the worker's turn queue by starting a
+      //    new user turn on its thread. The decider handles the "thread
+      //    mid-turn" case via thread.turn-queued.
+      await wsRequest("orchestration.dispatchCommand", {
+        command: {
+          type: "thread.turn.start",
+          commandId: crypto.randomUUID(),
+          threadId: targetWorker.threadId,
+          message: {
+            messageId: crypto.randomUUID(),
+            role: "user",
+            text: message,
+            attachments: [],
+          },
+          dispatchMode: "queue",
+          assistantDeliveryMode: "buffered",
+          createdAt: new Date().toISOString(),
+        },
+      });
+      return JSON.stringify({
+        queued: true,
+        messageId,
+        workerId: targetWorkerId,
+        deliveredVia: "thread.turn.start",
+      });
+    } catch (error) {
+      return JSON.stringify({
+        queued: false,
+        messageId,
+        workerId: targetWorkerId,
+        dispatchError: serializeWsError(error),
+      });
+    }
+  }
+
   if (toolName === "orchestrate_get_agent_logs") {
     // Gap I: expose the activity tail to the Codex orchestrator via MCP.
     const workerId = String(args.workerId ?? args.agent_id ?? args.agentId ?? "");
@@ -616,12 +696,7 @@ async function executeOrchestrationTool(
     const windowed = filtered.slice(-tail);
     const entries = windowed.map((a: any) => ({
       timestamp: a.createdAt,
-      level:
-        a.tone === "error"
-          ? "error"
-          : a.tone === "approval"
-            ? "warn"
-            : "info",
+      level: a.tone === "error" ? "error" : a.tone === "approval" ? "warn" : "info",
       message: a.summary,
     }));
     return JSON.stringify({ workerId, agentId: workerId, entries });
@@ -848,6 +923,9 @@ async function executeOrchestrationTool(
     }
     try {
       // reject also needs the task in "submitted" status per invariants.
+      // Gap L1: do NOT pass a synthetic summary — leaving submitSummary
+      // missing preserves the fact that the worker never produced a real
+      // report, rather than overwriting it with a filler string.
       try {
         await wsRequest("orchestration.dispatchCommand", {
           command: {
@@ -855,7 +933,6 @@ async function executeOrchestrationTool(
             commandId: crypto.randomUUID(),
             taskId,
             workerId,
-            summary: "Auto-submitted prior to reject",
             createdAt: new Date().toISOString(),
           },
         });

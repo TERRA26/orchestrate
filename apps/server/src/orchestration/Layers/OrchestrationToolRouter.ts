@@ -322,13 +322,9 @@ function handleGetAgentStatus(
       ...(activeTask?.submitSummary !== undefined
         ? { submitSummary: activeTask.submitSummary }
         : {}),
-      ...(activeTask?.filesWritten !== undefined
-        ? { filesWritten: activeTask.filesWritten }
-        : {}),
+      ...(activeTask?.filesWritten !== undefined ? { filesWritten: activeTask.filesWritten } : {}),
       ...(activeTask?.testsRun !== undefined ? { testsRun: activeTask.testsRun } : {}),
-      ...(activeTask?.submitNotes !== undefined
-        ? { submitNotes: activeTask.submitNotes }
-        : {}),
+      ...(activeTask?.submitNotes !== undefined ? { submitNotes: activeTask.submitNotes } : {}),
       ...(activeTask?.hasChanges !== undefined ? { hasChanges: activeTask.hasChanges } : {}),
       ...(activeTask?.diffStats !== undefined ? { diffStats: activeTask.diffStats } : {}),
     };
@@ -592,22 +588,31 @@ function handleSpawnAgent(
     // Kick off the first turn on the newly-created worker thread so the
     // provider runtime picks it up immediately.
     //
-    // Gap J: include a submit-protocol reminder so every worker knows how to
-    // fill out the structured report the orchestrator will read back. Workers
-    // that omit this get rejected with a resubmit instruction; better to
-    // prompt them up front.
-    const submitProtocolReminder = [
+    // Gap L2: workers have no orchestrator.task.submit tool on their MCP
+    // surface — the submit happens server-side via accept_work / reject_work
+    // auto-submit. So the reminder asks workers to emit a REPORT block in
+    // their FINAL assistant message. The orchestrator's review flow reads
+    // this block (via get_agent_logs) plus get_agent_diff to accept/reject.
+    const reportProtocolReminder = [
       "",
-      "When you finish, submit your work with:",
-      "- summary: one-sentence account of what you did",
-      "- filesWritten: every file you created or modified (absolute repo-relative paths)",
-      "- testsRun: array of { name, passed } for each test file/suite you ran",
-      "- notes: anything surprising, deferred cleanup, or unresolved questions",
-      "- hasChanges: true if you wrote files, false if the task was inspection-only",
-      "The orchestrator reads these fields from your submission to decide accept/reject.",
+      "When you finish, end your last message with a REPORT block in this format:",
+      "",
+      "## REPORT",
+      "summary: one-sentence account of what you did",
+      "filesWritten:",
+      "  - absolute/repo-relative/path/to/file1",
+      "  - absolute/repo-relative/path/to/file2",
+      "testsRun:",
+      "  - name: test suite or file name",
+      "    passed: true",
+      "notes: anything surprising, deferred cleanup, unresolved questions",
+      "hasChanges: true if you wrote files, false if inspection-only",
+      "",
+      "The orchestrator reads this REPORT to decide accept vs reject. Omit it and",
+      "you will be rejected with a resubmit instruction.",
     ].join("\n");
     const taskMessage =
-      (normalizedObjective || "Begin working on the assigned task.") + submitProtocolReminder;
+      (normalizedObjective || "Begin working on the assigned task.") + reportProtocolReminder;
     yield* dispatch({
       type: "thread.turn.start" as const,
       commandId: uuid() as any,
@@ -1057,21 +1062,13 @@ function handleGetAgentLogs(
 // Gap 7: server-side wait_agent / wait_all blocking coordination
 // ---------------------------------------------------------------------------
 
-const TERMINAL_WORKER_STATUSES: ReadonlySet<string> = new Set([
-  "submitted",
-  "terminated",
-  "stuck",
-]);
+const TERMINAL_WORKER_STATUSES: ReadonlySet<string> = new Set(["submitted", "terminated", "stuck"]);
 
 const DEFAULT_WAIT_TIMEOUT_MS = 15 * 60 * 1000;
 
-function findWorkerStatus(
-  readModel: OrchestrationReadModel,
-  workerId: string,
-): string | undefined {
-  return readModel.orchestratorWorkers?.find(
-    (w) => (w.workerId as unknown as string) === workerId,
-  )?.status;
+function findWorkerStatus(readModel: OrchestrationReadModel, workerId: string): string | undefined {
+  return readModel.orchestratorWorkers?.find((w) => (w.workerId as unknown as string) === workerId)
+    ?.status;
 }
 
 function handleWaitAgent(
@@ -1100,8 +1097,7 @@ function handleWaitAgent(
         engine.getReadModel().pipe(Effect.map((model) => findWorkerStatus(model, agentId))),
       ),
       Stream.filter(
-        (status): status is string =>
-          status !== undefined && TERMINAL_WORKER_STATUSES.has(status),
+        (status): status is string => status !== undefined && TERMINAL_WORKER_STATUSES.has(status),
       ),
       Stream.take(1),
       Stream.runHead,

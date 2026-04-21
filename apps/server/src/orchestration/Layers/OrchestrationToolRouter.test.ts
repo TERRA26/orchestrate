@@ -195,9 +195,7 @@ describe("OrchestrationToolRouter", () => {
         } as any,
       ],
     });
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, [])),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
     const result = (await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
@@ -247,9 +245,7 @@ describe("OrchestrationToolRouter", () => {
       ],
     });
     const commands: OrchestrationCommand[] = [];
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, commands)),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, commands)));
     const result = (await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
@@ -267,7 +263,7 @@ describe("OrchestrationToolRouter", () => {
     expect(commands).toHaveLength(0);
   });
 
-  it("orchestrate_spawn_agent task message carries submit-report protocol reminder (Gap J)", async () => {
+  it("orchestrate_spawn_agent task message carries REPORT-block protocol (Gap J/L2)", async () => {
     const commands: OrchestrationCommand[] = [];
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), commands)),
@@ -291,9 +287,14 @@ describe("OrchestrationToolRouter", () => {
     expect(turnStart).toBeDefined();
     const text: string = turnStart.message.text ?? "";
     expect(text).toContain("Create src/Button.tsx");
-    // Protocol reminder — must tell the worker how to submit a structured report.
-    expect(text.toLowerCase()).toContain("filesWritten".toLowerCase());
-    expect(text.toLowerCase()).toContain("testsRun".toLowerCase());
+    // Gap L2: workers emit a REPORT block in their final message (they
+    // have no orchestrator.task.submit tool). Reminder must ask for this
+    // format, not for a tool call.
+    expect(text).toContain("## REPORT");
+    expect(text.toLowerCase()).toContain("fileswritten:");
+    expect(text.toLowerCase()).toContain("testsrun:");
+    // Must NOT instruct workers to call a tool they don't have.
+    expect(text).not.toContain("orchestrator.task.submit");
   });
 
   it("orchestrate_send_to_agent dispatches thread.turn.start on target worker's thread (Gap A)", async () => {
@@ -330,9 +331,7 @@ describe("OrchestrationToolRouter", () => {
         } as any,
       ],
     });
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, commands)),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, commands)));
     await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
@@ -401,9 +400,7 @@ describe("OrchestrationToolRouter", () => {
         } as any,
       ],
     });
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, [])),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
     const result = (await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
@@ -414,7 +411,13 @@ describe("OrchestrationToolRouter", () => {
           toolInput: { agentId: workerId },
         });
       }).pipe(Effect.provide(layer)),
-    )) as { agentId: string; diff: string; filesChanged: number; additions: number; deletions: number };
+    )) as {
+      agentId: string;
+      diff: string;
+      filesChanged: number;
+      additions: number;
+      deletions: number;
+    };
     expect(result.agentId).toBe(workerId);
     expect(result.filesChanged).toBe(2);
     expect(result.additions).toBe(48);
@@ -479,9 +482,7 @@ describe("OrchestrationToolRouter", () => {
         } as any,
       ],
     });
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, [])),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
     const result = (await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
@@ -524,9 +525,7 @@ describe("OrchestrationToolRouter", () => {
         } as any,
       ],
     });
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, [])),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -549,9 +548,7 @@ describe("OrchestrationToolRouter", () => {
 
   it("orchestrate_wait_agent reports unknown agent without blocking (Gap 7)", async () => {
     const readModel = makeReadModel({ orchestratorWorkers: [] });
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, [])),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
     const result = (await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
@@ -591,9 +588,7 @@ describe("OrchestrationToolRouter", () => {
         }) as any,
     );
     const readModel = makeReadModel({ orchestratorWorkers: workers });
-    const layer = OrchestrationToolRouterLive.pipe(
-      Layer.provide(makeEngine(readModel, [])),
-    );
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
     const result = (await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
