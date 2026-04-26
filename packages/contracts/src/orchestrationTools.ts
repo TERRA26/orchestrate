@@ -252,7 +252,7 @@ export const GetSpawnTreeInput = Schema.Struct({
 export const GetSpawnTreeOutput = Schema.Struct({
   root: Schema.suspend((): typeof SpawnTreeNode => SpawnTreeNode),
 });
-const SpawnTreeNode: Schema.Schema.AnyNoContext = Schema.Struct({
+const SpawnTreeNode: Schema.Schema<any> = Schema.Struct({
   agentId: AgentId,
   workerId: WorkerId,
   status: AgentStatusLiteral,
@@ -551,6 +551,10 @@ export const ORCHESTRATION_TOOL_NAMES_LIST = [
   "orchestrate_collapse_panel",
   "orchestrate_open_diff_view",
   "orchestrate_open_browser_preview",
+  "orchestrate_browser_open_session",
+  "orchestrate_browser_act",
+  "orchestrate_browser_close_session",
+  "orchestrate_browser_list_annotations",
   // Workspace
   "orchestrate_assign_worktree",
   "orchestrate_set_model",
@@ -569,6 +573,10 @@ export const UI_DIRECTIVE_TOOLS: ReadonlySet<string> = new Set([
   "orchestrate_collapse_panel",
   "orchestrate_open_diff_view",
   "orchestrate_open_browser_preview",
+  "orchestrate_browser_open_session",
+  "orchestrate_browser_act",
+  "orchestrate_browser_close_session",
+  "orchestrate_browser_list_annotations",
 ] as const);
 
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([

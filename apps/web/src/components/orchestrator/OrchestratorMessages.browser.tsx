@@ -61,7 +61,7 @@ async function mountTranscript(props?: {
       isThreadBrowserSessionVisible={false}
       isBusy={false}
       scrollRef={createRef<HTMLDivElement>()}
-      onOpenWorkerPanel={props?.onOpenWorkerPanel}
+      {...(props?.onOpenWorkerPanel ? { onOpenWorkerPanel: props.onOpenWorkerPanel } : {})}
     />,
     { container: host },
   );

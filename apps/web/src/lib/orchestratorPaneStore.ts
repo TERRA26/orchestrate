@@ -3,16 +3,20 @@ import { create } from "zustand";
 interface OrchestratorPaneStore {
   orchestratorThreadId: string | null;
   focusedAgentThreadIds: string[];
+  focusedBrowserThreadId: string | null;
 
   setOrchestratorThread: (threadId: string | null) => void;
   focusAgent: (threadId: string) => void;
   collapseAgent: (threadId: string) => void;
+  focusBrowser: (threadId: string) => void;
+  collapseBrowser: (threadId: string) => void;
   clearAll: () => void;
 }
 
 export const useOrchestratorPaneStore = create<OrchestratorPaneStore>((set) => ({
   orchestratorThreadId: null,
   focusedAgentThreadIds: [],
+  focusedBrowserThreadId: null,
 
   // Switching orchestrators must reset focused agent panes — focused agents
   // belong to a single orchestrator and should not leak across switches.
@@ -20,7 +24,11 @@ export const useOrchestratorPaneStore = create<OrchestratorPaneStore>((set) => (
     set((state) =>
       threadId === state.orchestratorThreadId
         ? state
-        : { orchestratorThreadId: threadId, focusedAgentThreadIds: [] },
+        : {
+            orchestratorThreadId: threadId,
+            focusedAgentThreadIds: [],
+            focusedBrowserThreadId: null,
+          },
     ),
 
   focusAgent: (threadId) =>
@@ -35,5 +43,14 @@ export const useOrchestratorPaneStore = create<OrchestratorPaneStore>((set) => (
       focusedAgentThreadIds: state.focusedAgentThreadIds.filter((id) => id !== threadId),
     })),
 
-  clearAll: () => set({ orchestratorThreadId: null, focusedAgentThreadIds: [] }),
+  focusBrowser: (threadId) => set({ focusedBrowserThreadId: threadId }),
+
+  collapseBrowser: (threadId) =>
+    set((state) => ({
+      focusedBrowserThreadId:
+        state.focusedBrowserThreadId === threadId ? null : state.focusedBrowserThreadId,
+    })),
+
+  clearAll: () =>
+    set({ orchestratorThreadId: null, focusedAgentThreadIds: [], focusedBrowserThreadId: null }),
 }));

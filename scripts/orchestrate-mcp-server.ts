@@ -325,11 +325,102 @@ const TOOLS = [
       required: ["workerId"],
     },
   },
+  {
+    name: "orchestrate_open_browser_preview",
+    description:
+      "Open the built-in browser preview as a visible side panel for the orchestrator thread",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        url: {
+          type: "string",
+          description: "Optional preview URL to open, for example http://localhost:5733/",
+        },
+        threadId: {
+          type: "string",
+          description:
+            "Optional thread id whose browser panel should open. Defaults to the current orchestrator thread.",
+        },
+      },
+    },
+  },
+  {
+    name: "orchestrate_browser_open_session",
+    description:
+      "Open an automated browser session and return a screenshot-backed observation with URL, title, text summary, ARIA snapshot, and interactive targets.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        url: { type: "string", description: "URL to open, for example https://example.com" },
+        viewportWidth: { type: "number", description: "Optional viewport width in pixels" },
+        viewportHeight: { type: "number", description: "Optional viewport height in pixels" },
+        includeScreenshot: {
+          type: "boolean",
+          description:
+            "Include screenshot data URLs in the response. Defaults to false to keep tool output compact.",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "orchestrate_browser_act",
+    description:
+      "Act in an existing automated browser session, then return a fresh screenshot-backed observation. Supports navigate, click, type, press, scroll, wait, resize, waitFor, and evaluate actions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sessionId: { type: "string", description: "Browser automation session id" },
+        action: {
+          type: "object" as const,
+          description:
+            "Browser action object. Supported shapes: {kind:'navigate', url}, {kind:'click', targetId}, {kind:'type', targetId, text, clearFirst?}, {kind:'press', key}, {kind:'scroll', direction:'up'|'down', amount}, {kind:'wait', ms}, {kind:'resize', width, height}, {kind:'waitFor', text?, textGone?, timeout?}, {kind:'evaluate', expression}. For scroll, use direction+amount; deltaY/y aliases are normalized.",
+        },
+        includeScreenshot: {
+          type: "boolean",
+          description:
+            "Include screenshot data URLs in the response. Defaults to false to keep tool output compact.",
+        },
+      },
+      required: ["sessionId", "action"],
+    },
+  },
+  {
+    name: "orchestrate_browser_close_session",
+    description: "Close an automated browser session",
+    inputSchema: {
+      type: "object" as const,
+      properties: { sessionId: { type: "string" } },
+      required: ["sessionId"],
+    },
+  },
+  {
+    name: "orchestrate_browser_list_annotations",
+    description:
+      "List user-created browser annotations/comments for this orchestrator thread. Use these as high-priority visual feedback before acting in the browser.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: {
+          type: "string",
+          description:
+            "Optional thread id. Defaults to the current orchestrator thread when available.",
+        },
+        sessionId: {
+          type: "string",
+          description: "Optional automated browser session id to filter annotations.",
+        },
+      },
+    },
+  },
 ];
 
 // The MCP server connects back to our orchestration WebSocket server to execute tools
 const ORCH_WS_PORT = process.env.ORCHESTRATE_WS_PORT ?? "3773";
-const ORCH_WS_URL = `ws://localhost:${ORCH_WS_PORT}`;
+const ORCH_WS_URLS =
+  process.env.ORCHESTRATE_WS_PORT !== undefined
+    ? [`ws://localhost:${ORCH_WS_PORT}`]
+    : ["ws://localhost:3773", "ws://localhost:3774"];
 
 let wsConnection: WebSocket | null = null;
 let wsRequestId = 0;
@@ -337,21 +428,39 @@ const wsPending = new Map<string, { resolve: (v: any) => void; reject: (e: any) 
 
 async function ensureWs(): Promise<WebSocket> {
   if (wsConnection && wsConnection.readyState === WebSocket.OPEN) return wsConnection;
+  let lastError: Error | null = null;
+  for (const url of ORCH_WS_URLS) {
+    try {
+      return await connectWs(url);
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? error
+          : new Error(`Cannot connect to orchestration server at ${url}`);
+    }
+  }
+  throw lastError ?? new Error(`Cannot connect to orchestration server at ${ORCH_WS_URLS[0]}`);
+}
+
+function connectWs(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(ORCH_WS_URL);
+    const ws = new WebSocket(url);
     ws.onopen = () => {
       wsConnection = ws;
       resolve(ws);
     };
-    ws.onerror = () =>
-      reject(new Error(`Cannot connect to orchestration server at ${ORCH_WS_URL}`));
+    ws.onerror = () => reject(new Error(`Cannot connect to orchestration server at ${url}`));
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(String(event.data));
         if (msg.id && wsPending.has(String(msg.id))) {
           const p = wsPending.get(String(msg.id))!;
           wsPending.delete(String(msg.id));
-          msg.error ? p.reject(msg.error) : p.resolve(msg.result);
+          if (msg.error) {
+            p.reject(msg.error);
+          } else {
+            p.resolve(msg.result);
+          }
         }
       } catch {}
     };
@@ -371,6 +480,72 @@ async function wsRequest(method: string, fields?: any): Promise<any> {
       }
     }, 30000);
   });
+}
+
+function summarizeBrowserObservation(observation: any, includeScreenshot: boolean): any {
+  if (!observation || typeof observation !== "object") return observation;
+  const screenshotDataUrl =
+    typeof observation.screenshotDataUrl === "string" ? observation.screenshotDataUrl : undefined;
+  const previewScreenshotDataUrl =
+    typeof observation.previewScreenshotDataUrl === "string"
+      ? observation.previewScreenshotDataUrl
+      : undefined;
+  const fullPageScreenshotDataUrl =
+    typeof observation.fullPageScreenshotDataUrl === "string"
+      ? observation.fullPageScreenshotDataUrl
+      : undefined;
+  return {
+    sessionId: observation.sessionId,
+    url: observation.url,
+    title: observation.title,
+    readyState: observation.readyState,
+    textSummary: observation.textSummary,
+    ariaSnapshot: observation.ariaSnapshot,
+    targets: Array.isArray(observation.targets) ? observation.targets.slice(0, 50) : [],
+    consoleErrors: observation.consoleErrors ?? [],
+    networkErrors: observation.networkErrors ?? [],
+    pageMetrics: observation.pageMetrics,
+    navigationError: observation.navigationError,
+    evaluateResult: observation.evaluateResult,
+    observedAt: observation.observedAt,
+    screenshot: {
+      present: Boolean(screenshotDataUrl),
+      bytes: screenshotDataUrl ? Buffer.byteLength(screenshotDataUrl) : 0,
+      previewDataUrl: includeScreenshot ? previewScreenshotDataUrl : undefined,
+      previewBytes: previewScreenshotDataUrl ? Buffer.byteLength(previewScreenshotDataUrl) : 0,
+    },
+    fullPageScreenshot: {
+      present: Boolean(fullPageScreenshotDataUrl),
+      bytes: fullPageScreenshotDataUrl ? Buffer.byteLength(fullPageScreenshotDataUrl) : 0,
+      dataUrl: includeScreenshot ? fullPageScreenshotDataUrl : undefined,
+    },
+  };
+}
+
+function normalizeBrowserAction(action: Record<string, unknown>): Record<string, unknown> {
+  if (action.kind !== "scroll") {
+    return action;
+  }
+  const direction = action.direction;
+  const amount = action.amount;
+  if ((direction === "up" || direction === "down") && typeof amount === "number") {
+    return action;
+  }
+
+  const rawDelta =
+    typeof action.deltaY === "number"
+      ? action.deltaY
+      : typeof action.y === "number"
+        ? action.y
+        : undefined;
+  if (typeof rawDelta !== "number" || !Number.isFinite(rawDelta) || rawDelta === 0) {
+    return action;
+  }
+  return {
+    ...action,
+    direction: rawDelta < 0 ? "up" : "down",
+    amount: Math.min(4_000, Math.max(1, Math.round(Math.abs(rawDelta)))),
+  };
 }
 
 async function executeOrchestrationTool(
@@ -994,6 +1169,111 @@ async function executeOrchestrationTool(
       },
     }).catch(() => undefined);
     return JSON.stringify({ terminated: true, workerId, reason });
+  }
+
+  if (toolName === "orchestrate_open_browser_preview") {
+    const targetThreadId =
+      typeof args.threadId === "string" && args.threadId.trim().length > 0
+        ? args.threadId.trim()
+        : threadId;
+    if (!targetThreadId || targetThreadId === "unknown") {
+      return JSON.stringify({ opened: false, error: "Could not resolve an orchestrator thread." });
+    }
+    const url =
+      typeof args.url === "string" && args.url.trim().length > 0 ? args.url.trim() : undefined;
+    const result = await wsRequest("browser.openPreview", {
+      threadId: targetThreadId,
+      ...(url ? { url } : {}),
+    });
+    return JSON.stringify({
+      opened: true,
+      threadId: targetThreadId,
+      url: url ?? null,
+      focused: true,
+      reusedExistingSession: true,
+      result,
+    });
+  }
+
+  if (toolName === "orchestrate_browser_open_session") {
+    const url = typeof args.url === "string" && args.url.trim().length > 0 ? args.url.trim() : "";
+    if (!url) {
+      return JSON.stringify({ error: "url is required" });
+    }
+    const viewportWidth =
+      typeof args.viewportWidth === "number" && Number.isFinite(args.viewportWidth)
+        ? args.viewportWidth
+        : undefined;
+    const viewportHeight =
+      typeof args.viewportHeight === "number" && Number.isFinite(args.viewportHeight)
+        ? args.viewportHeight
+        : undefined;
+    const includeScreenshot = args.includeScreenshot === true;
+    const result = await wsRequest("browser.openSession", {
+      url,
+      ...(viewportWidth ? { viewportWidth } : {}),
+      ...(viewportHeight ? { viewportHeight } : {}),
+    });
+    return JSON.stringify({
+      sessionId: result.sessionId,
+      observation: summarizeBrowserObservation(result.observation, includeScreenshot),
+    });
+  }
+
+  if (toolName === "orchestrate_browser_act") {
+    const sessionId =
+      typeof args.sessionId === "string" && args.sessionId.trim().length > 0
+        ? args.sessionId.trim()
+        : "";
+    if (!sessionId) {
+      return JSON.stringify({ error: "sessionId is required" });
+    }
+    if (!args.action || typeof args.action !== "object" || Array.isArray(args.action)) {
+      return JSON.stringify({ error: "action object is required" });
+    }
+    const includeScreenshot = args.includeScreenshot === true;
+    const result = await wsRequest("browser.act", {
+      sessionId,
+      action: normalizeBrowserAction(args.action as Record<string, unknown>),
+    });
+    return JSON.stringify({
+      sessionId,
+      observation: summarizeBrowserObservation(result.observation, includeScreenshot),
+    });
+  }
+
+  if (toolName === "orchestrate_browser_close_session") {
+    const sessionId =
+      typeof args.sessionId === "string" && args.sessionId.trim().length > 0
+        ? args.sessionId.trim()
+        : "";
+    if (!sessionId) {
+      return JSON.stringify({ error: "sessionId is required" });
+    }
+    const result = await wsRequest("browser.closeSession", { sessionId });
+    return JSON.stringify({ closed: true, sessionId, result });
+  }
+
+  if (toolName === "orchestrate_browser_list_annotations") {
+    const targetThreadId =
+      typeof args.threadId === "string" && args.threadId.trim().length > 0
+        ? args.threadId.trim()
+        : threadId;
+    if (!targetThreadId || targetThreadId === "unknown") {
+      return JSON.stringify({
+        annotations: [],
+        error: "Could not resolve an orchestrator thread.",
+      });
+    }
+    const sessionId =
+      typeof args.sessionId === "string" && args.sessionId.trim().length > 0
+        ? args.sessionId.trim()
+        : undefined;
+    const result = await wsRequest("browser.listAnnotations", {
+      threadId: targetThreadId,
+      ...(sessionId ? { sessionId } : {}),
+    });
+    return JSON.stringify(result);
   }
 
   // Generic fallback — clearly signal the tool isn't wired yet so the

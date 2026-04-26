@@ -1,6 +1,8 @@
 import { memo, useState } from "react";
 
 import type { WorkLogEntry } from "../../session-logic";
+import { browserScreenshotDataUrls, stripOrchestrationToolPrefix } from "~/browserWorkLog";
+import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
 import { cn } from "~/lib/utils";
 import { normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { isOrchestrationToolCall } from "../orchestrator/OrchestrationToolCallCard";
@@ -36,14 +38,11 @@ const ORCH_TOOL_DISPLAY_LABELS: Record<string, string> = {
   orchestrate_review_agent_work: "orchestrate_review_agent_work",
   orchestrate_send_to_agent: "orchestrate_send_to_agent",
   orchestrate_focus_agent: "orchestrate_focus_agent",
+  orchestrate_open_browser_preview: "open browser preview",
+  orchestrate_browser_open_session: "capture browser screenshot",
+  orchestrate_browser_act: "browser observation",
+  orchestrate_browser_close_session: "close browser session",
 };
-
-function stripOrchestrationToolPrefix(toolName: string | undefined): string | null {
-  if (!toolName) return null;
-  // MCP tool names look like `mcp__orchestrate__orchestrate_spawn_agent`. Strip the prefix.
-  const trimmed = toolName.replace(/^mcp__orchestrate__/, "");
-  return trimmed.startsWith("orchestrate_") ? trimmed : null;
-}
 
 function shortWorkerId(workerId: string | undefined): string | null {
   if (!workerId) return null;
@@ -89,15 +88,72 @@ function compactPreviewText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function workEntryPreview(workEntry: Pick<WorkLogEntry, "detail" | "command" | "changedFiles">) {
+function workEntryPreview(
+  workEntry: Pick<WorkLogEntry, "detail" | "command" | "changedFiles" | "output">,
+) {
   if (workEntry.command) return compactPreviewText(workEntry.command);
   if (workEntry.detail) return compactPreviewText(workEntry.detail);
+  if (workEntry.output) return compactPreviewText(workEntry.output);
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
   return workEntry.changedFiles!.length === 1
     ? firstPath
     : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+}
+
+function BrowserScreenshotPreview({
+  screenshot,
+}: {
+  screenshot: { thumbnailDataUrl: string; fullDataUrl?: string };
+}) {
+  return (
+    <BrowserScreenshotImage
+      thumbnailDataUrl={screenshot.thumbnailDataUrl}
+      {...(screenshot.fullDataUrl ? { fullDataUrl: screenshot.fullDataUrl } : {})}
+      className="mt-2 h-28 w-44"
+    />
+  );
+}
+
+function browserToolCallLabel(toolName: string, detail: string | undefined, isLoading: boolean) {
+  if (toolName === "orchestrate_open_browser_preview") {
+    return isLoading ? "Opening visible browser preview" : "Visible browser preview opened";
+  }
+  if (toolName === "orchestrate_browser_open_session") {
+    return isLoading
+      ? "Capturing browser screenshot and ARIA snapshot"
+      : "Browser screenshot and ARIA snapshot captured";
+  }
+  if (toolName === "orchestrate_browser_close_session") {
+    return isLoading ? "Closing browser session" : "Browser session closed";
+  }
+  if (toolName !== "orchestrate_browser_act") {
+    return null;
+  }
+
+  const normalizedDetail = detail ?? "";
+  if (
+    normalizedDetail.includes('"kind":"scroll"') ||
+    normalizedDetail.includes('"kind": "scroll"')
+  ) {
+    return isLoading
+      ? "Scrolling and capturing browser screenshot"
+      : "Scroll observation screenshot captured";
+  }
+  if (
+    normalizedDetail.includes('"kind":"evaluate"') ||
+    normalizedDetail.includes('"kind": "evaluate"')
+  ) {
+    return isLoading ? "Evaluating page after screenshot" : "Page evaluation observation captured";
+  }
+  if (
+    normalizedDetail.includes('"kind":"navigate"') ||
+    normalizedDetail.includes('"kind": "navigate"')
+  ) {
+    return isLoading ? "Navigating browser and observing" : "Navigation observation captured";
+  }
+  return isLoading ? "Acting in browser and capturing observation" : "Browser observation captured";
 }
 
 function workEntryIcon(workEntry: WorkLogEntry): LucideIcon {
@@ -385,9 +441,9 @@ export const WorkEntryRow = memo(function WorkEntryRow({
           toolDisplay={toolDisplay}
           workerBadge={workerBadge}
           title={taskTitle}
-          threadId={workEntry.threadId}
           isLoading={isLoading}
-          onOpenWorker={onOpenWorkerPanel ? handleOpenWorker : undefined}
+          {...(workEntry.threadId ? { threadId: workEntry.threadId } : {})}
+          {...(onOpenWorkerPanel ? { onOpenWorker: handleOpenWorker } : {})}
         />,
       );
     }
@@ -428,6 +484,16 @@ export const WorkEntryRow = memo(function WorkEntryRow({
         />,
       );
     }
+    const browserLabel = browserToolCallLabel(baseTool, workEntry.detail, isLoading);
+    if (browserLabel) {
+      const screenshot = browserScreenshotDataUrls(workEntry);
+      return wrap(
+        <div>
+          <OrchThinkRow label={browserLabel} isLoading={isLoading} />
+          {screenshot ? <BrowserScreenshotPreview screenshot={screenshot} /> : null}
+        </div>,
+      );
+    }
     return wrap(<OrchThinkRow label={toolDisplay} isLoading={isLoading} />);
   }
 
@@ -461,8 +527,8 @@ export const WorkEntryRow = memo(function WorkEntryRow({
       <OrchInstrumentBlock
         variant="command"
         badge={badge}
-        command={command}
-        output={workEntry.command ? workEntry.detail : undefined}
+        {...(command ? { command } : {})}
+        {...(workEntry.command && workEntry.detail ? { output: workEntry.detail } : {})}
       />,
     );
   }
@@ -481,8 +547,8 @@ export const WorkEntryRow = memo(function WorkEntryRow({
       <OrchInstrumentBlock
         variant="file"
         badge={badge}
-        command={changedFiles.length === 0 ? filePath : undefined}
-        changedFiles={changedFiles.length > 0 ? changedFiles : undefined}
+        {...(changedFiles.length === 0 && filePath ? { command: filePath } : {})}
+        {...(changedFiles.length > 0 ? { changedFiles } : {})}
       />,
     );
   }

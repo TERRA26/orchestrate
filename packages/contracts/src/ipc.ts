@@ -53,6 +53,17 @@ import type {
 import { EditorId } from "./editor";
 import type { ThreadId } from "./baseSchemas";
 import type {
+  BrowserActInput,
+  BrowserActResult,
+  BrowserAddAnnotationInput,
+  BrowserAnnotationResult,
+  BrowserAnnotationsResult,
+  BrowserCloseSessionInput,
+  BrowserListAnnotationsInput,
+  BrowserOpenSessionInput,
+  BrowserOpenSessionResult,
+} from "./browser";
+import type {
   ProviderComposerCapabilities,
   ProviderGetComposerCapabilitiesInput,
   ProviderListCommandsInput,
@@ -305,6 +316,11 @@ export interface NativeApi {
     closeTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     openDevTools: (input: BrowserTabInput) => Promise<void>;
+    openSession: (input: BrowserOpenSessionInput) => Promise<BrowserOpenSessionResult>;
+    act: (input: BrowserActInput) => Promise<BrowserActResult>;
+    closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
+    addAnnotation: (input: BrowserAddAnnotationInput) => Promise<BrowserAnnotationResult>;
+    listAnnotations: (input: BrowserListAnnotationsInput) => Promise<BrowserAnnotationsResult>;
     onState: (callback: (state: ThreadBrowserState) => void) => () => void;
   };
 }

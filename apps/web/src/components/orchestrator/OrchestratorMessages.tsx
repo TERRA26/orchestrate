@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckIcon,
   ExternalLinkIcon,
@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 
 import { cn } from "~/lib/utils";
+import { browserScreenshotDataUrls } from "~/browserWorkLog";
+import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
 import type { WorkLogEntry } from "~/session-logic";
@@ -354,11 +356,47 @@ function extractToolArgsPreview(detail: string | undefined): string {
   return argsText.slice(0, 120).replace(/\s+/g, " ").trim();
 }
 
+function BrowserScreenshotThumb({
+  screenshot,
+}: {
+  screenshot: { thumbnailDataUrl: string; fullDataUrl?: string };
+}) {
+  return (
+    <div className="px-3 pb-2">
+      <BrowserScreenshotImage
+        thumbnailDataUrl={screenshot.thumbnailDataUrl}
+        {...(screenshot.fullDataUrl ? { fullDataUrl: screenshot.fullDataUrl } : {})}
+        className="h-24 w-40"
+      />
+    </div>
+  );
+}
+
 function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
   const rawToolName = workEntry.toolName?.replace(/^mcp__orchestrate__/, "");
   const isOrchTool = rawToolName?.startsWith("orchestrate_") ?? false;
+  const screenshot = browserScreenshotDataUrls(workEntry);
 
   const label = (() => {
+    if (rawToolName === "orchestrate_open_browser_preview") {
+      return "→ browser preview";
+    }
+    if (rawToolName === "orchestrate_browser_open_session") {
+      return "→ screenshot + aria";
+    }
+    if (rawToolName === "orchestrate_browser_act") {
+      const detail = workEntry.detail ?? "";
+      if (detail.includes('"kind":"scroll"') || detail.includes('"kind": "scroll"')) {
+        return "→ scroll screenshot";
+      }
+      if (detail.includes('"kind":"evaluate"') || detail.includes('"kind": "evaluate"')) {
+        return "→ evaluate page";
+      }
+      return "→ browser observation";
+    }
+    if (rawToolName === "orchestrate_browser_close_session") {
+      return "→ close browser session";
+    }
     if (isOrchTool && rawToolName) {
       const verb = rawToolName.replace(/^orchestrate_/, "").replace(/_/g, " ");
       const target = workEntry.workerId
@@ -402,17 +440,23 @@ function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
           : "text-muted-foreground/50";
 
   return (
-    <div className="flex items-baseline gap-2 px-3 py-0.5" data-activity-row={rawToolName ?? "x"}>
-      <span
-        className={cn("shrink-0 font-mono text-[10px] leading-[1.5] whitespace-nowrap", toneClass)}
-      >
-        {label}
-      </span>
-      {preview ? (
-        <span className="min-w-0 flex-1 truncate font-mono text-[10px] leading-[1.5] text-muted-foreground/35">
-          {preview}
+    <div data-activity-row={rawToolName ?? "x"}>
+      <div className="flex items-baseline gap-2 px-3 py-0.5">
+        <span
+          className={cn(
+            "shrink-0 font-mono text-[10px] leading-[1.5] whitespace-nowrap",
+            toneClass,
+          )}
+        >
+          {label}
         </span>
-      ) : null}
+        {preview ? (
+          <span className="min-w-0 flex-1 truncate font-mono text-[10px] leading-[1.5] text-muted-foreground/35">
+            {preview}
+          </span>
+        ) : null}
+      </div>
+      {screenshot ? <BrowserScreenshotThumb screenshot={screenshot} /> : null}
     </div>
   );
 }
@@ -509,6 +553,78 @@ export function OrchestratorMessages({
 }: OrchestratorMessagesProps) {
   const hasContent =
     messages.length > 0 || workLogEntries.length > 0 || requirementsChecklist.length > 0;
+  const keepPinnedToBottomRef = useRef(true);
+  const ignoreScrollEventsUntilRef = useRef(0);
+  const latestMessage = messages.at(-1);
+  const latestWorkEntry = workLogEntries.at(-1);
+  const autoScrollKey = [
+    messages.length,
+    latestMessage?.id ?? "",
+    latestMessage?.content.length ?? 0,
+    workLogEntries.length,
+    latestWorkEntry?.id ?? "",
+    latestWorkEntry?.detail?.length ?? 0,
+    latestWorkEntry?.command?.length ?? 0,
+    latestWorkEntry?.output?.length ?? 0,
+    requirementsChecklist.length,
+    isBusy ? "busy" : "idle",
+  ].join(":");
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    if (!isBusy && !keepPinnedToBottomRef.current) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      ignoreScrollEventsUntilRef.current = Date.now() + 250;
+      keepPinnedToBottomRef.current = true;
+      container.scrollTop = container.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [autoScrollKey, isBusy, scrollRef]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    const handleScroll = () => {
+      if (Date.now() < ignoreScrollEventsUntilRef.current) {
+        return;
+      }
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      keepPinnedToBottomRef.current = isBusy || distanceFromBottom <= 128;
+    };
+    const scrollToBottom = () => {
+      if (!keepPinnedToBottomRef.current && !isBusy) {
+        return;
+      }
+      ignoreScrollEventsUntilRef.current = Date.now() + 250;
+      keepPinnedToBottomRef.current = true;
+      container.scrollTop = container.scrollHeight;
+    };
+    const observer = new MutationObserver(() => {
+      requestAnimationFrame(scrollToBottom);
+    });
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      observer.disconnect();
+    };
+  }, [isBusy, scrollRef]);
 
   // Find the index of the last "thinking" message — only that one should spin (and only if busy)
   const lastThinkingIndex = (() => {
@@ -617,7 +733,7 @@ export function OrchestratorMessages({
                     <div key={entry.id} className="pb-2">
                       <WorkEntryRow
                         workEntry={entry.workEntry}
-                        onOpenWorkerPanel={onOpenWorkerPanel}
+                        {...(onOpenWorkerPanel ? { onOpenWorkerPanel } : {})}
                       />
                     </div>
                   );

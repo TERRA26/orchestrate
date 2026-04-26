@@ -3,9 +3,26 @@
 // Layer: Desktop-only React component
 // Depends on: browserStateStore, nativeApi browser bridge, DiffPanelShell
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ClipboardEvent as ReactClipboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type WheelEvent as ReactWheelEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useStore } from "zustand";
-import { type ThreadId } from "@orchestrate/contracts";
+import {
+  type BrowserAction,
+  type BrowserAnnotation,
+  type BrowserObservation,
+  type BrowserObservedTarget,
+  type ThreadBrowserState,
+  type ThreadId,
+} from "@orchestrate/contracts";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -14,6 +31,7 @@ import {
   LoaderCircleIcon,
   PlusIcon,
   RefreshCwIcon,
+  SquarePenIcon,
   XIcon,
 } from "~/lib/icons";
 
@@ -26,6 +44,10 @@ import {
   selectThreadBrowserState,
 } from "../browserStateStore";
 import {
+  createEmbeddedBrowserAutomationSession,
+  useEmbeddedBrowserStateStore,
+} from "../embeddedBrowserStateStore";
+import {
   browserAddressDisplayValue,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
@@ -36,10 +58,29 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
+const FALLBACK_TYPE_FLUSH_DELAY_MS = 160;
+const FALLBACK_MIN_VIEWPORT_WIDTH = 360;
+const FALLBACK_MIN_VIEWPORT_HEIGHT = 480;
+const FALLBACK_MAX_VIEWPORT_WIDTH = 1440;
+const FALLBACK_MAX_VIEWPORT_HEIGHT = 1200;
+
 interface BrowserPanelProps {
   mode: DiffPanelMode;
   threadId: ThreadId;
   onClosePanel: () => void;
+}
+
+interface BrowserPanelAutomationSession {
+  sessionId: string;
+  observation: BrowserObservation;
+  lastActionSummary: string;
+}
+
+interface BrowserAnnotationDraft {
+  x: number;
+  y: number;
+  targetId?: string;
+  targetLabel?: string;
 }
 
 function closeButtonClassName(isActive: boolean) {
@@ -59,13 +100,134 @@ function formatBrowserActionError(error: unknown): string | null {
   return "Couldn't complete that browser action.";
 }
 
+function normalizeComparableBrowserUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "about:blank") {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed.replace(/\/$/, "");
+  }
+}
+
+function browserUrlsLikelyMatch(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const normalizedLeft = normalizeComparableBrowserUrl(left);
+  const normalizedRight = normalizeComparableBrowserUrl(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return true;
+  }
+  if (normalizedLeft === normalizedRight) {
+    return true;
+  }
+
+  try {
+    return new URL(normalizedLeft).host === new URL(normalizedRight).host;
+  } catch {
+    return false;
+  }
+}
+
+function browserObservationScreenshotDataUrl(
+  observation: BrowserObservation | null,
+): string | null {
+  return (
+    observation?.screenshotDataUrl ??
+    observation?.previewScreenshotDataUrl ??
+    observation?.fullPageScreenshotDataUrl ??
+    null
+  );
+}
+
+function findBrowserTargetAtPoint(
+  targets: readonly BrowserObservedTarget[],
+  x: number,
+  y: number,
+): BrowserObservedTarget | null {
+  const candidates = targets
+    .filter((target) => {
+      const padding = Math.max(
+        4,
+        Math.min(14, Math.round(Math.min(target.width, target.height) / 4)),
+      );
+      return (
+        x >= target.x - padding &&
+        x <= target.x + target.width + padding &&
+        y >= target.y - padding &&
+        y <= target.y + target.height + padding
+      );
+    })
+    .toSorted((left, right) => left.width * left.height - right.width * right.height);
+  return candidates[0] ?? null;
+}
+
+function fallbackBrowserTitleFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname || "Browser";
+  } catch {
+    return "Browser";
+  }
+}
+
+function browserStateFromFallbackObservation(input: {
+  currentState: ThreadBrowserState | null | undefined;
+  observation: BrowserObservation;
+  threadId: ThreadId;
+}): ThreadBrowserState {
+  const currentActiveTab =
+    input.currentState?.tabs.find((tab) => tab.id === input.currentState?.activeTabId) ??
+    input.currentState?.tabs[0] ??
+    null;
+  const fallbackTabId = currentActiveTab?.id ?? "fallback-browser-tab";
+  const observedTab = {
+    ...(currentActiveTab ?? {
+      id: fallbackTabId,
+      canGoBack: false,
+      canGoForward: false,
+      faviconUrl: null,
+    }),
+    url: input.observation.url,
+    title: input.observation.title || fallbackBrowserTitleFromUrl(input.observation.url),
+    status: "live" as const,
+    isLoading: false,
+    lastCommittedUrl: input.observation.url,
+    lastError: input.observation.navigationError ?? null,
+  };
+  const tabs =
+    input.currentState && input.currentState.tabs.length > 0
+      ? input.currentState.tabs.map((tab) => (tab.id === fallbackTabId ? observedTab : tab))
+      : [observedTab];
+
+  return {
+    threadId: input.threadId,
+    open: true,
+    activeTabId: fallbackTabId,
+    tabs,
+    lastError: input.observation.navigationError ?? null,
+  };
+}
+
 export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps) {
   const api = readNativeApi();
   const threadBrowserState = useStore(useBrowserStateStore, selectThreadBrowserState(threadId));
   const recentHistory = useStore(useBrowserStateStore, selectThreadBrowserHistory(threadId));
+  const threadAutomationBrowserSession = useEmbeddedBrowserStateStore((store) => {
+    const session = store.threadSessionsById[threadId];
+    return session?.kind === "automation" && session.screenshotDataUrl ? session : null;
+  });
+  const openThreadBrowserSession = useEmbeddedBrowserStateStore((store) => store.openThreadSession);
   const upsertThreadState = useBrowserStateStore((store) => store.upsertThreadState);
   const addressInputRef = useRef<HTMLInputElement>(null);
   const browserViewportRef = useRef<HTMLDivElement>(null);
+  const browserPanelFrameRef = useRef<HTMLDivElement>(null);
+  const fallbackAutomationViewportRef = useRef<HTMLDivElement>(null);
   const addressDraftsByTabIdRef = useRef(new Map<string, string>());
   const lastSyncedAddressByTabIdRef = useRef(new Map<string, string>());
   const previousActiveTabIdRef = useRef<string | null>(null);
@@ -73,10 +235,22 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const isAddressEditingRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
   const boundsBurstFrameRef = useRef<number | null>(null);
+  const fallbackAutomationSessionIdRef = useRef<string | null>(null);
+  const lastAutoOpenedFallbackUrlRef = useRef<string | null>(null);
+  const fallbackActionQueueRef = useRef<Promise<BrowserObservation | null>>(Promise.resolve(null));
+  const fallbackTypeBufferRef = useRef("");
+  const fallbackTypeFlushTimerRef = useRef<number | null>(null);
   const [addressValue, setAddressValue] = useState("");
   const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [fallbackAutomationSession, setFallbackAutomationSession] =
+    useState<BrowserPanelAutomationSession | null>(null);
+  const [fallbackAutomationBusy, setFallbackAutomationBusy] = useState(false);
+  const [browserAnnotations, setBrowserAnnotations] = useState<BrowserAnnotation[]>([]);
+  const [annotationMode, setAnnotationMode] = useState(false);
+  const [annotationDraft, setAnnotationDraft] = useState<BrowserAnnotationDraft | null>(null);
+  const [annotationComment, setAnnotationComment] = useState("");
   const activeTab =
     threadBrowserState?.tabs.find((tab) => tab.id === threadBrowserState.activeTabId) ??
     threadBrowserState?.tabs[0] ??
@@ -92,6 +266,35 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   });
   const showBrowserAddressSuggestions =
     isAddressFocused && browserAddressSuggestions.length > 0 && workspaceReady;
+  const usesNativeBrowserSurface =
+    typeof window !== "undefined" && window.desktopBridge !== undefined;
+  const fallbackFrameUrl =
+    !usesNativeBrowserSurface && activeTab?.url && activeTab.url !== "about:blank"
+      ? activeTab.url
+      : null;
+  const fallbackScreenshotSession =
+    !usesNativeBrowserSurface &&
+    threadAutomationBrowserSession &&
+    !fallbackAutomationSession &&
+    browserUrlsLikelyMatch(
+      threadAutomationBrowserSession.url,
+      activeTab?.lastCommittedUrl ?? activeTab?.url,
+    )
+      ? threadAutomationBrowserSession
+      : null;
+  const fallbackAutomationObservation = fallbackAutomationSession?.observation ?? null;
+  const fallbackAutomationScreenshotDataUrl = browserObservationScreenshotDataUrl(
+    fallbackAutomationObservation,
+  );
+  const activeBrowserUrl =
+    fallbackAutomationObservation?.url ?? activeTab?.lastCommittedUrl ?? activeTab?.url ?? "";
+  const activeBrowserTitle =
+    fallbackAutomationObservation?.title ??
+    activeTab?.title ??
+    fallbackBrowserTitleFromUrl(activeBrowserUrl);
+  const visibleBrowserAnnotations = browserAnnotations.filter((annotation) =>
+    browserUrlsLikelyMatch(annotation.url, activeBrowserUrl),
+  );
 
   const runBrowserAction = useCallback(async <T,>(action: () => Promise<T>): Promise<T | null> => {
     try {
@@ -103,6 +306,268 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       return null;
     }
   }, []);
+
+  const refreshBrowserAnnotations = useCallback(async () => {
+    if (!api) {
+      return;
+    }
+    try {
+      const result = await api.browser.listAnnotations({ threadId });
+      setBrowserAnnotations([...result.annotations]);
+    } catch {
+      // Annotation state should never block the browser itself.
+    }
+  }, [api, threadId]);
+
+  const getFallbackAutomationViewportSize = useCallback(() => {
+    const element = fallbackAutomationViewportRef.current ?? browserPanelFrameRef.current;
+    const rect = element?.getBoundingClientRect();
+    const width = Math.round(rect?.width ?? 0);
+    const height = Math.round(rect?.height ?? 0);
+    return {
+      width: Math.min(
+        FALLBACK_MAX_VIEWPORT_WIDTH,
+        Math.max(FALLBACK_MIN_VIEWPORT_WIDTH, width || FALLBACK_MAX_VIEWPORT_WIDTH),
+      ),
+      height: Math.min(
+        FALLBACK_MAX_VIEWPORT_HEIGHT,
+        Math.max(FALLBACK_MIN_VIEWPORT_HEIGHT, height || 900),
+      ),
+    };
+  }, []);
+
+  const publishFallbackAutomationObservation = useCallback(
+    (observation: BrowserObservation, lastActionSummary: string) => {
+      const previousObservation = fallbackAutomationSession?.observation ?? null;
+      const nextObservation: BrowserObservation =
+        browserObservationScreenshotDataUrl(observation) || !previousObservation
+          ? observation
+          : {
+              ...observation,
+              ...(previousObservation.screenshotDataUrl
+                ? { screenshotDataUrl: previousObservation.screenshotDataUrl }
+                : {}),
+              ...(previousObservation.previewScreenshotDataUrl
+                ? { previewScreenshotDataUrl: previousObservation.previewScreenshotDataUrl }
+                : {}),
+              ...(previousObservation.fullPageScreenshotDataUrl
+                ? { fullPageScreenshotDataUrl: previousObservation.fullPageScreenshotDataUrl }
+                : {}),
+            };
+      fallbackAutomationSessionIdRef.current = observation.sessionId;
+      setFallbackAutomationSession({
+        sessionId: observation.sessionId,
+        observation: nextObservation,
+        lastActionSummary,
+      });
+      openThreadBrowserSession(
+        threadId,
+        createEmbeddedBrowserAutomationSession({
+          source: "sidebar",
+          title: nextObservation.title || fallbackBrowserTitleFromUrl(nextObservation.url),
+          observation: nextObservation,
+          lastActionSummary,
+        }),
+      );
+      const currentBrowserState = useBrowserStateStore.getState().threadStatesByThreadId[threadId];
+      upsertThreadState(
+        browserStateFromFallbackObservation({
+          currentState: currentBrowserState,
+          observation: nextObservation,
+          threadId,
+        }),
+      );
+      void refreshBrowserAnnotations();
+    },
+    [
+      fallbackAutomationSession?.observation,
+      openThreadBrowserSession,
+      refreshBrowserAnnotations,
+      threadId,
+      upsertThreadState,
+    ],
+  );
+
+  const runFallbackAutomationAction = useCallback(
+    async (action: BrowserAction, lastActionSummary: string) => {
+      if (!api) {
+        return null;
+      }
+      const queuedAction = fallbackActionQueueRef.current
+        .catch(() => null)
+        .then(async () => {
+          const sessionId = fallbackAutomationSessionIdRef.current;
+          if (!sessionId) {
+            return null;
+          }
+          setFallbackAutomationBusy(true);
+          try {
+            const result = await api.browser.act({ sessionId, action });
+            publishFallbackAutomationObservation(result.observation, lastActionSummary);
+            setLocalError(null);
+            return result.observation;
+          } catch (error) {
+            setLocalError(formatBrowserActionError(error));
+            return null;
+          } finally {
+            setFallbackAutomationBusy(false);
+          }
+        });
+      fallbackActionQueueRef.current = queuedAction;
+      return queuedAction;
+    },
+    [api, publishFallbackAutomationObservation],
+  );
+
+  const flushFallbackTypeBuffer = useCallback(() => {
+    const bufferedText = fallbackTypeBufferRef.current;
+    if (fallbackTypeFlushTimerRef.current !== null) {
+      window.clearTimeout(fallbackTypeFlushTimerRef.current);
+      fallbackTypeFlushTimerRef.current = null;
+    }
+    if (bufferedText.length === 0) {
+      return;
+    }
+    fallbackTypeBufferRef.current = "";
+    void runFallbackAutomationAction(
+      { kind: "typeFocused", text: bufferedText },
+      "Typed into page",
+    );
+  }, [runFallbackAutomationAction]);
+
+  const queueFallbackTypedText = useCallback(
+    (text: string, lastActionSummary = "Typed into page") => {
+      if (text.length === 0) {
+        return;
+      }
+      fallbackTypeBufferRef.current += text;
+      if (fallbackTypeFlushTimerRef.current !== null) {
+        window.clearTimeout(fallbackTypeFlushTimerRef.current);
+      }
+      fallbackTypeFlushTimerRef.current = window.setTimeout(() => {
+        const bufferedText = fallbackTypeBufferRef.current;
+        fallbackTypeBufferRef.current = "";
+        fallbackTypeFlushTimerRef.current = null;
+        if (bufferedText.length === 0) {
+          return;
+        }
+        void runFallbackAutomationAction(
+          { kind: "typeFocused", text: bufferedText },
+          lastActionSummary,
+        );
+      }, FALLBACK_TYPE_FLUSH_DELAY_MS);
+    },
+    [runFallbackAutomationAction],
+  );
+
+  const openFallbackAutomationUrl = useCallback(
+    async (url: string) => {
+      if (!api) {
+        return null;
+      }
+      setFallbackAutomationBusy(true);
+      try {
+        const activeSessionId = fallbackAutomationSessionIdRef.current;
+        const viewportSize = getFallbackAutomationViewportSize();
+        const observation = activeSessionId
+          ? (
+              await api.browser.act({
+                sessionId: activeSessionId,
+                action: { kind: "navigate", url },
+              })
+            ).observation
+          : (
+              await api.browser.openSession({
+                url,
+                viewportWidth: viewportSize.width,
+                viewportHeight: viewportSize.height,
+              })
+            ).observation;
+        publishFallbackAutomationObservation(observation, "Navigated browser");
+        setLocalError(null);
+        return observation;
+      } catch (error) {
+        setLocalError(formatBrowserActionError(error));
+        return null;
+      } finally {
+        setFallbackAutomationBusy(false);
+      }
+    },
+    [api, getFallbackAutomationViewportSize, publishFallbackAutomationObservation],
+  );
+
+  const beginAnnotationAtPoint = useCallback((input: BrowserAnnotationDraft) => {
+    setAnnotationDraft(input);
+    setAnnotationComment("");
+    setAnnotationMode(true);
+  }, []);
+
+  const submitBrowserAnnotation = useCallback(async () => {
+    if (!api || !annotationDraft || activeBrowserUrl.trim().length === 0) {
+      return;
+    }
+    const comment = annotationComment.trim();
+    if (comment.length === 0) {
+      return;
+    }
+    const observation = fallbackAutomationSession?.observation;
+    try {
+      const result = await api.browser.addAnnotation({
+        threadId,
+        ...(observation?.sessionId ? { sessionId: observation.sessionId } : {}),
+        url: activeBrowserUrl,
+        title: activeBrowserTitle,
+        comment,
+        kind: "point",
+        x: annotationDraft.x,
+        y: annotationDraft.y,
+        ...(observation?.pageMetrics?.viewportWidth !== undefined
+          ? { viewportWidth: observation.pageMetrics.viewportWidth }
+          : {}),
+        ...(observation?.pageMetrics?.viewportHeight !== undefined
+          ? { viewportHeight: observation.pageMetrics.viewportHeight }
+          : {}),
+        ...(observation?.pageMetrics?.scrollTop !== undefined
+          ? { scrollTop: observation.pageMetrics.scrollTop }
+          : {}),
+        ...(annotationDraft.targetId ? { targetId: annotationDraft.targetId } : {}),
+        ...(annotationDraft.targetLabel ? { targetLabel: annotationDraft.targetLabel } : {}),
+        ...(observation?.previewScreenshotDataUrl
+          ? { screenshotDataUrl: observation.previewScreenshotDataUrl }
+          : {}),
+      });
+      setBrowserAnnotations([...result.annotations]);
+      setAnnotationDraft(null);
+      setAnnotationComment("");
+      setAnnotationMode(false);
+    } catch (error) {
+      setLocalError(formatBrowserActionError(error));
+    }
+  }, [
+    activeBrowserTitle,
+    activeBrowserUrl,
+    annotationComment,
+    annotationDraft,
+    api,
+    fallbackAutomationSession?.observation,
+    threadId,
+  ]);
+
+  const onBrowserAnnotationOverlayClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!annotationMode || event.target !== event.currentTarget) {
+        return;
+      }
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+      const unitX = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+      const unitY = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+      beginAnnotationAtPoint({ x: unitX, y: unitY });
+    },
+    [annotationMode, beginAnnotationAtPoint],
+  );
 
   useEffect(() => {
     if (!api) {
@@ -142,6 +607,105 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   }, [api, runBrowserAction, threadId, upsertThreadState]);
 
   useEffect(() => {
+    void refreshBrowserAnnotations();
+  }, [refreshBrowserAnnotations]);
+
+  useEffect(() => {
+    return () => {
+      const sessionId = fallbackAutomationSessionIdRef.current;
+      if (sessionId && api) {
+        void api.browser.closeSession({ sessionId });
+      }
+      if (fallbackTypeFlushTimerRef.current !== null) {
+        window.clearTimeout(fallbackTypeFlushTimerRef.current);
+        fallbackTypeFlushTimerRef.current = null;
+      }
+      fallbackAutomationSessionIdRef.current = null;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    if (usesNativeBrowserSurface || !api || !workspaceReady || !fallbackFrameUrl) {
+      return;
+    }
+    if (
+      fallbackAutomationSession &&
+      browserUrlsLikelyMatch(fallbackAutomationSession.observation.url, fallbackFrameUrl)
+    ) {
+      return;
+    }
+    if (lastAutoOpenedFallbackUrlRef.current === fallbackFrameUrl) {
+      return;
+    }
+    lastAutoOpenedFallbackUrlRef.current = fallbackFrameUrl;
+    void openFallbackAutomationUrl(fallbackFrameUrl);
+  }, [
+    api,
+    fallbackAutomationSession,
+    fallbackFrameUrl,
+    openFallbackAutomationUrl,
+    usesNativeBrowserSurface,
+    workspaceReady,
+  ]);
+
+  useEffect(() => {
+    if (usesNativeBrowserSurface || !api || !workspaceReady) {
+      return;
+    }
+    const element = browserPanelFrameRef.current;
+    if (!element) {
+      return;
+    }
+
+    let resizeFrame: number | null = null;
+    let lastSentSizeKey: string | null = null;
+    const scheduleResize = () => {
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame);
+      }
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        const sessionId = fallbackAutomationSessionIdRef.current;
+        if (!sessionId) {
+          return;
+        }
+        const nextSize = getFallbackAutomationViewportSize();
+        const nextSizeKey = `${nextSize.width}x${nextSize.height}`;
+        const currentMetrics = fallbackAutomationSession?.observation.pageMetrics;
+        const currentSizeKey = currentMetrics
+          ? `${currentMetrics.viewportWidth}x${currentMetrics.viewportHeight}`
+          : null;
+        if (lastSentSizeKey === nextSizeKey || currentSizeKey === nextSizeKey) {
+          return;
+        }
+        lastSentSizeKey = nextSizeKey;
+        void runFallbackAutomationAction(
+          { kind: "resize", width: nextSize.width, height: nextSize.height },
+          "Resized browser viewport",
+        );
+      });
+    };
+
+    const observer = new ResizeObserver(scheduleResize);
+    observer.observe(element);
+    scheduleResize();
+
+    return () => {
+      observer.disconnect();
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame);
+      }
+    };
+  }, [
+    api,
+    fallbackAutomationSession?.observation.pageMetrics,
+    getFallbackAutomationViewportSize,
+    runFallbackAutomationAction,
+    usesNativeBrowserSurface,
+    workspaceReady,
+  ]);
+
+  useEffect(() => {
     const activeTabId = activeTab?.id ?? null;
     const nextDisplayValue = browserAddressDisplayValue(activeTab);
     const decision = resolveBrowserAddressSync({
@@ -178,17 +742,15 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     }
   }, [threadBrowserState?.tabs]);
 
-  useLayoutEffect(() => {
-    if (!api) {
-      return;
-    }
-
-    const element = browserViewportRef.current;
-    if (!element) {
-      return;
-    }
-
-    const syncBounds = () => {
+  const syncPanelBounds = useCallback(
+    (options: { force?: boolean } = {}) => {
+      if (!api) {
+        return;
+      }
+      const element = browserViewportRef.current;
+      if (!element) {
+        return;
+      }
       const rect = element.getBoundingClientRect();
       const bounds =
         rect.width > 0 && rect.height > 0
@@ -202,12 +764,39 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       const nextKey = bounds
         ? `${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
         : "hidden";
-      if (lastSentBoundsRef.current === nextKey) {
+      if (!options.force && lastSentBoundsRef.current === nextKey) {
         return;
       }
       lastSentBoundsRef.current = nextKey;
       void runBrowserAction(() => api.browser.setPanelBounds({ threadId, bounds }));
-    };
+    },
+    [api, runBrowserAction, threadId],
+  );
+
+  const schedulePanelBoundsSync = useCallback(
+    (frames = 2) => {
+      let remaining = Math.max(1, frames);
+      const tick = () => {
+        syncPanelBounds({ force: remaining === Math.max(1, frames) });
+        remaining -= 1;
+        if (remaining > 0) {
+          window.requestAnimationFrame(tick);
+        }
+      };
+      window.requestAnimationFrame(tick);
+    },
+    [syncPanelBounds],
+  );
+
+  useLayoutEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    const element = browserViewportRef.current;
+    if (!element) {
+      return;
+    }
 
     // The right panel opens with an off-canvas slide animation, so the viewport's
     // x/y position changes for a few frames without triggering ResizeObserver.
@@ -218,7 +807,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
 
       let framesRemaining = frames;
       const tick = () => {
-        syncBounds();
+        syncPanelBounds();
         framesRemaining -= 1;
         if (framesRemaining > 0) {
           boundsBurstFrameRef.current = window.requestAnimationFrame(tick);
@@ -236,7 +825,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       }
       resizeFrameRef.current = window.requestAnimationFrame(() => {
         resizeFrameRef.current = null;
-        syncBounds();
+        syncPanelBounds();
       });
     };
 
@@ -280,7 +869,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       }
       void api.browser.hide({ threadId });
     };
-  }, [api, runBrowserAction, threadId]);
+  }, [api, syncPanelBounds, threadId]);
 
   const onSubmitAddress = useCallback(() => {
     if (!api || !activeTab) {
@@ -291,14 +880,35 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     const normalizedAddress = normalizeBrowserAddressInput(addressValue);
     addressDraftsByTabIdRef.current.set(activeTab.id, normalizedAddress);
     setAddressValue(normalizedAddress);
+    if (!usesNativeBrowserSurface) {
+      void api.browser
+        .navigate({ threadId, tabId: activeTab.id, url: normalizedAddress })
+        .then((state) => {
+          upsertThreadState(state);
+          schedulePanelBoundsSync();
+        });
+      void openFallbackAutomationUrl(normalizedAddress);
+      return;
+    }
     void runBrowserAction(() =>
       api.browser.navigate({ threadId, tabId: activeTab.id, url: normalizedAddress }),
     ).then((state) => {
       if (state) {
         upsertThreadState(state);
       }
+      schedulePanelBoundsSync();
     });
-  }, [activeTab, addressValue, api, runBrowserAction, threadId, upsertThreadState]);
+  }, [
+    activeTab,
+    addressValue,
+    api,
+    openFallbackAutomationUrl,
+    runBrowserAction,
+    schedulePanelBoundsSync,
+    threadId,
+    upsertThreadState,
+    usesNativeBrowserSurface,
+  ]);
 
   const onChooseSuggestion = useCallback(
     (suggestion: BrowserAddressSuggestion) => {
@@ -328,6 +938,21 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
         addressDraftsByTabIdRef.current.set(activeTab.id, suggestion.url);
       }
 
+      if (!usesNativeBrowserSurface && activeTab) {
+        void api.browser
+          .navigate({
+            threadId,
+            url: suggestion.url,
+            tabId: activeTab.id,
+          })
+          .then((state) => {
+            upsertThreadState(state);
+            schedulePanelBoundsSync();
+          });
+        void openFallbackAutomationUrl(suggestion.url);
+        return;
+      }
+
       void runBrowserAction(() =>
         api.browser.navigate({
           threadId,
@@ -338,9 +963,19 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
         if (state) {
           upsertThreadState(state);
         }
+        schedulePanelBoundsSync();
       });
     },
-    [activeTab, api, runBrowserAction, threadId, upsertThreadState],
+    [
+      activeTab,
+      api,
+      openFallbackAutomationUrl,
+      runBrowserAction,
+      schedulePanelBoundsSync,
+      threadId,
+      upsertThreadState,
+      usesNativeBrowserSurface,
+    ],
   );
 
   const onCreateTab = useCallback(() => {
@@ -374,6 +1009,153 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       });
     },
     [api, onClosePanel, runBrowserAction, threadId, upsertThreadState],
+  );
+
+  const onFallbackAutomationImageClick = useCallback(
+    (event: ReactMouseEvent<HTMLImageElement>) => {
+      const observation = fallbackAutomationSession?.observation;
+      if (!observation) {
+        return;
+      }
+      flushFallbackTypeBuffer();
+      const image = event.currentTarget;
+      const rect = image.getBoundingClientRect();
+      const naturalWidth = image.naturalWidth || rect.width;
+      const naturalHeight = image.naturalHeight || rect.height;
+      const naturalRatio = naturalWidth / naturalHeight;
+      const elementRatio = rect.width / rect.height;
+      let contentWidth = rect.width;
+      let contentHeight = rect.height;
+      let offsetX = 0;
+      let offsetY = 0;
+      if (elementRatio > naturalRatio) {
+        contentWidth = rect.height * naturalRatio;
+        offsetX = (rect.width - contentWidth) / 2;
+      } else {
+        contentHeight = rect.width / naturalRatio;
+        offsetY = (rect.height - contentHeight) / 2;
+      }
+
+      const localX = event.clientX - rect.left - offsetX;
+      const localY = event.clientY - rect.top - offsetY;
+      if (localX < 0 || localY < 0 || localX > contentWidth || localY > contentHeight) {
+        return;
+      }
+
+      const viewportWidth = observation.pageMetrics?.viewportWidth ?? 1440;
+      const viewportHeight = observation.pageMetrics?.viewportHeight ?? 900;
+      const viewportX = (localX / contentWidth) * viewportWidth;
+      const viewportY = (localY / contentHeight) * viewportHeight;
+      const roundedX = Math.round(viewportX);
+      const roundedY = Math.round(viewportY);
+      const target = findBrowserTargetAtPoint(observation.targets, roundedX, roundedY);
+      if (annotationMode) {
+        const targetLabel = target?.label || target?.text;
+        beginAnnotationAtPoint({
+          x: Math.min(1, Math.max(0, viewportX / viewportWidth)),
+          y: Math.min(1, Math.max(0, viewportY / viewportHeight)),
+          ...(target ? { targetId: target.id } : {}),
+          ...(targetLabel ? { targetLabel } : {}),
+        });
+        return;
+      }
+      fallbackAutomationViewportRef.current?.focus();
+      void runFallbackAutomationAction(
+        target
+          ? {
+              kind: "clickTargetOrAt",
+              targetId: target.id,
+              x: roundedX,
+              y: roundedY,
+            }
+          : { kind: "clickAt", x: roundedX, y: roundedY },
+        "Clicked page",
+      );
+    },
+    [
+      annotationMode,
+      beginAnnotationAtPoint,
+      fallbackAutomationSession?.observation,
+      flushFallbackTypeBuffer,
+      runFallbackAutomationAction,
+    ],
+  );
+
+  const onFallbackAutomationKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (!fallbackAutomationSession || event.metaKey || event.ctrlKey) {
+        return;
+      }
+
+      if (event.key.length === 1) {
+        event.preventDefault();
+        queueFallbackTypedText(event.key);
+        return;
+      }
+
+      const supportedKeys = new Set([
+        "Enter",
+        "Backspace",
+        "Delete",
+        "Tab",
+        "Escape",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+      ]);
+      if (!supportedKeys.has(event.key)) {
+        return;
+      }
+      event.preventDefault();
+      flushFallbackTypeBuffer();
+      void runFallbackAutomationAction({ kind: "press", key: event.key }, "Pressed key");
+    },
+    [
+      fallbackAutomationSession,
+      flushFallbackTypeBuffer,
+      queueFallbackTypedText,
+      runFallbackAutomationAction,
+    ],
+  );
+
+  const onFallbackAutomationWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      if (!fallbackAutomationSession) {
+        return;
+      }
+      event.preventDefault();
+      flushFallbackTypeBuffer();
+      const amount = Math.min(1200, Math.max(240, Math.round(Math.abs(event.deltaY) * 2)));
+      void runFallbackAutomationAction(
+        {
+          kind: "scroll",
+          direction: event.deltaY >= 0 ? "down" : "up",
+          amount,
+        },
+        "Scrolled page",
+      );
+    },
+    [fallbackAutomationSession, flushFallbackTypeBuffer, runFallbackAutomationAction],
+  );
+
+  const onFallbackAutomationPaste = useCallback(
+    (event: ReactClipboardEvent<HTMLDivElement>) => {
+      if (!fallbackAutomationSession) {
+        return;
+      }
+      const text = event.clipboardData.getData("text");
+      if (text.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      queueFallbackTypedText(text, "Pasted into page");
+    },
+    [fallbackAutomationSession, queueFallbackTypedText],
   );
 
   const header = (
@@ -428,6 +1210,10 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
             disabled={!activeTab}
             onClick={() => {
               if (!api || !activeTab) return;
+              if (!usesNativeBrowserSurface && fallbackAutomationSession) {
+                void openFallbackAutomationUrl(fallbackAutomationSession.observation.url);
+                return;
+              }
               void runBrowserAction(() =>
                 api.browser.reload({ threadId, tabId: activeTab.id }),
               ).then((state) => {
@@ -462,6 +1248,13 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
               if (activeTab) {
                 addressDraftsByTabIdRef.current.set(activeTab.id, nextValue);
               }
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+              event.preventDefault();
+              onSubmitAddress();
             }}
             onFocus={() => {
               isAddressEditingRef.current = true;
@@ -611,28 +1404,174 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
             );
           })}
         </div>
-        <div className="border-b border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
-          {localError ? (
-            <span className="text-destructive">{localError}</span>
-          ) : threadBrowserState?.lastError ? (
-            <span className="text-destructive">{threadBrowserState.lastError}</span>
-          ) : activeTabStatus === "suspended" ? (
-            "Restoring tab..."
-          ) : activeTab ? (
-            activeTabDisplayUrl || "New tab"
-          ) : workspaceReady ? (
-            "No tabs open"
-          ) : (
-            "Starting browser..."
-          )}
+        <div className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <div className="min-w-0 flex-1 truncate">
+            {localError ? (
+              <span className="text-destructive">{localError}</span>
+            ) : threadBrowserState?.lastError ? (
+              <span className="text-destructive">{threadBrowserState.lastError}</span>
+            ) : activeTabStatus === "suspended" ? (
+              "Restoring tab..."
+            ) : activeTab ? (
+              activeTabDisplayUrl || "New tab"
+            ) : workspaceReady ? (
+              "No tabs open"
+            ) : (
+              "Starting browser..."
+            )}
+          </div>
+          {workspaceReady && activeBrowserUrl ? (
+            <Button
+              type="button"
+              variant={annotationMode ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-[11px]"
+              onClick={() => {
+                setAnnotationDraft(null);
+                setAnnotationComment("");
+                setAnnotationMode((current) => !current);
+              }}
+              title="Annotate browser for orchestrator"
+            >
+              <SquarePenIcon className="size-3.5" />
+              Annotate
+              {browserAnnotations.length > 0 ? (
+                <span className="ml-0.5 rounded-full bg-primary/12 px-1.5 text-[10px] text-primary">
+                  {browserAnnotations.length}
+                </span>
+              ) : null}
+            </Button>
+          ) : null}
         </div>
-        <div className="relative min-h-0 flex-1 bg-background">
+        <div ref={browserPanelFrameRef} className="relative min-h-0 flex-1 bg-background">
           {!workspaceReady ? (
             <div className="absolute inset-0 z-10">
               <DiffPanelLoadingState label="Starting browser..." />
             </div>
           ) : null}
-          <div ref={browserViewportRef} className="absolute inset-0" />
+          {usesNativeBrowserSurface ? (
+            <div ref={browserViewportRef} className="absolute inset-0" />
+          ) : fallbackAutomationScreenshotDataUrl ? (
+            <div
+              ref={fallbackAutomationViewportRef}
+              className="absolute inset-0 flex flex-col bg-black"
+              data-browser-automation-viewport
+              tabIndex={0}
+              onKeyDown={onFallbackAutomationKeyDown}
+              onPaste={onFallbackAutomationPaste}
+              onWheel={onFallbackAutomationWheel}
+            >
+              <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+                <img
+                  alt="Live browser view"
+                  src={fallbackAutomationScreenshotDataUrl}
+                  className="h-full w-full cursor-pointer object-contain object-top"
+                  onClick={onFallbackAutomationImageClick}
+                />
+              </div>
+              <div className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+                Browser automation view
+                {fallbackAutomationSession?.lastActionSummary
+                  ? ` · ${fallbackAutomationSession.lastActionSummary}`
+                  : ""}
+                {fallbackAutomationBusy ? " · updating" : ""}
+              </div>
+            </div>
+          ) : fallbackFrameUrl ? (
+            <div className="absolute inset-0 z-10">
+              <DiffPanelLoadingState label="Loading browser preview..." />
+            </div>
+          ) : fallbackScreenshotSession ? (
+            <div className="absolute inset-0 flex flex-col bg-black">
+              <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+                <img
+                  alt="Captured browser view"
+                  src={fallbackScreenshotSession.screenshotDataUrl}
+                  className="h-full w-full object-contain object-top"
+                />
+              </div>
+              <div className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+                Captured browser view
+                {fallbackScreenshotSession.lastActionSummary
+                  ? ` · ${fallbackScreenshotSession.lastActionSummary}`
+                  : ""}
+              </div>
+            </div>
+          ) : workspaceReady ? (
+            <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
+              Enter a URL to open a browser preview.
+            </div>
+          ) : null}
+          {visibleBrowserAnnotations.map((annotation) => (
+            <div
+              key={annotation.id}
+              className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full"
+              style={{ left: `${annotation.x * 100}%`, top: `${annotation.y * 100}%` }}
+            >
+              <div className="max-w-56 rounded-md border border-primary/40 bg-background/95 px-2 py-1.5 text-[11px] text-foreground shadow-lg backdrop-blur">
+                <div className="mb-1 font-medium text-primary">User note</div>
+                <div className="line-clamp-3">{annotation.comment}</div>
+              </div>
+              <div className="mx-auto h-3 w-px bg-primary/70" />
+              <div className="mx-auto size-3 rounded-full border-2 border-background bg-primary shadow" />
+            </div>
+          ))}
+          {annotationMode ? (
+            <div
+              className="absolute inset-0 z-30 cursor-crosshair bg-primary/5"
+              onClick={onBrowserAnnotationOverlayClick}
+            >
+              {!annotationDraft ? (
+                <div className="absolute left-3 top-3 rounded-md border border-primary/30 bg-background/95 px-3 py-2 text-xs text-foreground shadow-lg">
+                  Click the page to leave precise feedback for the orchestrator.
+                </div>
+              ) : (
+                <div
+                  className="absolute w-72 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border border-border bg-background p-2 shadow-xl"
+                  style={{
+                    left: `${annotationDraft.x * 100}%`,
+                    top: `min(calc(${annotationDraft.y * 100}% + 14px), calc(100% - 9rem))`,
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="mb-2 text-xs font-medium text-foreground">Browser annotation</div>
+                  {annotationDraft.targetLabel ? (
+                    <div className="mb-2 truncate rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                      Target: {annotationDraft.targetLabel}
+                    </div>
+                  ) : null}
+                  <textarea
+                    value={annotationComment}
+                    onChange={(event) => setAnnotationComment(event.target.value)}
+                    className="min-h-20 w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                    placeholder="Tell the orchestrator what to inspect or change here..."
+                    autoFocus
+                  />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setAnnotationDraft(null);
+                        setAnnotationComment("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={annotationComment.trim().length === 0}
+                      onClick={() => void submitBrowserAnnotation()}
+                    >
+                      Send note
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     </DiffPanelShell>

@@ -624,6 +624,11 @@ const ORCHESTRATION_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   orchestrate_collapse_panel: "Collapse an agent's panel to minimal size.",
   orchestrate_open_diff_view: "Open a diff view comparing an agent's changes against the base.",
   orchestrate_open_browser_preview: "Open the embedded browser preview for visual validation.",
+  orchestrate_browser_open_session:
+    "Open an automated browser session and observe the page with screenshot, ARIA snapshot, text, metrics, and targets.",
+  orchestrate_browser_act:
+    "Perform a browser action in an automated session and return an updated observation.",
+  orchestrate_browser_close_session: "Close an automated browser session.",
   // Configuration
   orchestrate_assign_worktree: "Assign a dedicated git worktree to an agent for isolated writes.",
   orchestrate_set_model: "Change the model used by a running agent.",
@@ -829,6 +834,31 @@ const ORCHESTRATION_TOOL_INPUT_SCHEMAS: Readonly<
   orchestrate_open_browser_preview: {
     agent_id: zAgentId.optional().describe("Agent context."),
     url: z.string().optional().describe("Preview URL to open."),
+  },
+  orchestrate_browser_open_session: {
+    url: z.string().describe("URL to open."),
+    viewportWidth: z.number().optional().describe("Viewport width in pixels."),
+    viewportHeight: z.number().optional().describe("Viewport height in pixels."),
+    includeScreenshot: z
+      .boolean()
+      .optional()
+      .describe("Include screenshot data URLs in the response."),
+  },
+  orchestrate_browser_act: {
+    sessionId: z.string().describe("Browser automation session ID."),
+    action: z
+      .object({})
+      .passthrough()
+      .describe(
+        "Action object. Supported kinds: navigate, click, type, press, scroll, wait, resize, waitFor, evaluate. Scroll uses {kind:'scroll', direction:'up'|'down', amount:number}.",
+      ),
+    includeScreenshot: z
+      .boolean()
+      .optional()
+      .describe("Include screenshot data URLs in the response."),
+  },
+  orchestrate_browser_close_session: {
+    sessionId: z.string().describe("Browser automation session ID."),
   },
   // Configuration
   orchestrate_assign_worktree: {

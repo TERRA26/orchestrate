@@ -1,6 +1,7 @@
 import {
   type ThreadId,
   type ThreadBrowserState,
+  type BrowserOpenPreviewRequestedPayload,
   type GitActionProgressEvent,
   type TerminalEvent,
   ORCHESTRATION_WS_CHANNELS,
@@ -22,6 +23,9 @@ const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => void>();
 const terminalEventListeners = new Set<(payload: TerminalEvent) => void>();
+const browserOpenRequestedListeners = new Set<
+  (payload: BrowserOpenPreviewRequestedPayload) => void
+>();
 const fallbackBrowserStateListeners = new Set<(state: ThreadBrowserState) => void>();
 const fallbackBrowserStates = new Map<ThreadId, ThreadBrowserState>();
 
@@ -158,6 +162,15 @@ export function getWsQueuedRequestCount(): number {
   return instance?.transport.getQueuedRequestCount() ?? 0;
 }
 
+export function onBrowserOpenRequested(
+  listener: (payload: BrowserOpenPreviewRequestedPayload) => void,
+): () => void {
+  browserOpenRequestedListeners.add(listener);
+  return () => {
+    browserOpenRequestedListeners.delete(listener);
+  };
+}
+
 /**
  * Subscribe to server config update events. Replays the latest update for
  * late subscribers to avoid missing config validation feedback.
@@ -220,6 +233,16 @@ export function createWsNativeApi(): NativeApi {
   transport.subscribe(WS_CHANNELS.terminalEvent, (message) => {
     const payload = message.data;
     for (const listener of terminalEventListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+  });
+  transport.subscribe(WS_CHANNELS.browserOpenRequested, (message) => {
+    const payload = message.data;
+    for (const listener of browserOpenRequestedListeners) {
       try {
         listener(payload);
       } catch {
@@ -446,6 +469,14 @@ export function createWsNativeApi(): NativeApi {
           await window.desktopBridge.browser.openDevTools(input);
         }
       },
+      openSession: (input) =>
+        transport.request(WS_METHODS.browserOpenSession, input, { timeoutMs: 90_000 }),
+      act: (input) => transport.request(WS_METHODS.browserAct, input, { timeoutMs: 90_000 }),
+      closeSession: async (input) => {
+        await transport.request(WS_METHODS.browserCloseSession, input, { timeoutMs: 30_000 });
+      },
+      addAnnotation: (input) => transport.request(WS_METHODS.browserAddAnnotation, input),
+      listAnnotations: (input) => transport.request(WS_METHODS.browserListAnnotations, input),
       onState: (callback) => {
         if (window.desktopBridge) {
           return window.desktopBridge.browser.onState(callback);

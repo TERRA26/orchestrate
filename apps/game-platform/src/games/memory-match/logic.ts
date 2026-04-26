@@ -34,16 +34,7 @@ export interface MemoryGameState {
 // ---------------------------------------------------------------------------
 
 /** The 8 emoji symbols used for the 16-card deck (8 pairs). */
-export const SYMBOLS: readonly string[] = [
-  "🎮",
-  "🎲",
-  "🎯",
-  "🎪",
-  "🎨",
-  "🎭",
-  "🎰",
-  "🎸",
-] as const;
+export const SYMBOLS: readonly string[] = ["🎮", "🎲", "🎯", "🎪", "🎨", "🎭", "🎰", "🎸"] as const;
 
 // ---------------------------------------------------------------------------
 // Public API

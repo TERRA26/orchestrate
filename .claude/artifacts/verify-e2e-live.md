@@ -12,11 +12,16 @@ Orchestrator: Claude Opus 4.7; Worker: Claude sonnet (spawned with defaults)
 ## Orchestrator's own report (quoted from the transcript)
 
 > `send_to_agent` on the target worker returned:
+>
 > ```json
-> { "queued": false, "messageId": "18f7adcd-5b8d-43e4-9713-24949acc5360",
+> {
+>   "queued": false,
+>   "messageId": "18f7adcd-5b8d-43e4-9713-24949acc5360",
 >   "workerId": "1386b654-dd1e-4484-a9b3-7f8a3266f39c",
->   "dispatchError": { "message": "Timeout", "name": "Error" } }
+>   "dispatchError": { "message": "Timeout", "name": "Error" }
+> }
 > ```
+>
 > b.txt was NOT created — only a.txt exists in apps/demo-bridge/. The worker's session reports status: ready, hasRunningSubprocess: false, and no new turn was triggered after the follow-up.
 >
 > Did send_to_agent return queued:true or status:unimplemented? **Neither. It returned queued: false with dispatchError: Timeout.** The bridge is wired up (no unimplemented shape), but the dispatch path to a "ready" claudeAgent session times out and never enqueues the message — no new turn is started on the existing worker.
@@ -36,6 +41,7 @@ Orchestrator: Claude Opus 4.7; Worker: Claude sonnet (spawned with defaults)
 **Gap M: claudeAgent worker sessions don't auto-resume on `thread.turn.start`.**
 
 The MCP `send_to_agent` correctly:
+
 - Validates the target worker (Gap K guard on terminated)
 - Dispatches `orchestrator.message.send` (audit)
 - Dispatches `thread.turn.start` with the message as a user turn
@@ -45,6 +51,7 @@ The decider accepts `thread.turn.start` and emits `thread.turn-start-requested`.
 This is a deeper architectural issue than my Round-4 L0 fix can reach. The router-side `handleSendToAgent` and the MCP `handleSendToAgent` both correctly produce the command chain; but the **claudeAgent adapter needs to subscribe continuously to its thread's turn-start stream, not just for the initial turn**, so an idle session wakes up when a new turn arrives.
 
 Locations to investigate:
+
 - `apps/server/src/provider/Layers/ClaudeAdapter.ts` — where the session subscribes to turn-start events
 - `apps/server/src/orchestration/Services/OrchestrationEngine.ts` — how `dispatchCommand` acknowledges vs. completes a turn
 - Possibly: a separate "session reanimation" command that re-opens the Claude SDK `query` stream on an existing thread

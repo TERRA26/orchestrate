@@ -501,6 +501,48 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
       { name: "url", type: "string", required: true, description: "Preview URL to open." },
     ],
   },
+  {
+    name: "orchestrate_browser_open_session",
+    description: "Open an automated browser session and return a page observation.",
+    parameters: [
+      { name: "url", type: "string", required: true, description: "URL to open." },
+      {
+        name: "includeScreenshot",
+        type: "boolean",
+        required: false,
+        description: "Include screenshot data URLs in the tool response.",
+      },
+    ],
+  },
+  {
+    name: "orchestrate_browser_act",
+    description:
+      "Navigate, click, type, scroll, wait, resize, or evaluate in a browser session. Scroll actions use direction plus amount.",
+    parameters: [
+      { name: "sessionId", type: "string", required: true, description: "Browser session ID." },
+      { name: "action", type: "object", required: true, description: "Browser action object." },
+    ],
+  },
+  {
+    name: "orchestrate_browser_close_session",
+    description: "Close an automated browser session.",
+    parameters: [
+      { name: "sessionId", type: "string", required: true, description: "Browser session ID." },
+    ],
+  },
+  {
+    name: "orchestrate_browser_list_annotations",
+    description:
+      "List user-created browser annotations for the orchestrator thread. Check this before and during visual work because annotations are precise user feedback tied to page coordinates.",
+    parameters: [
+      {
+        name: "sessionId",
+        type: "string",
+        required: false,
+        description: "Optional browser session ID to filter annotations.",
+      },
+    ],
+  },
 
   // -- Configuration (3) ----------------------------------------------------
   {

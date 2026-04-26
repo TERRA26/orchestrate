@@ -1448,7 +1448,11 @@ export function formatBrowserValidationActionSummary(input: {
   reason: string | null;
 }): string {
   const targetId =
-    input.action.kind === "click" || input.action.kind === "type" ? input.action.targetId : null;
+    input.action.kind === "click" ||
+    input.action.kind === "clickTargetOrAt" ||
+    input.action.kind === "type"
+      ? input.action.targetId
+      : null;
   const target = targetId
     ? (input.observation.targets.find((candidate) => candidate.id === targetId) ?? null)
     : null;
@@ -1456,23 +1460,29 @@ export function formatBrowserValidationActionSummary(input: {
   const actionLabel =
     input.action.kind === "click"
       ? `Click ${target?.label || target?.text || input.action.targetId}`
-      : input.action.kind === "type"
-        ? `Type into ${target?.label || target?.text || input.action.targetId}`
-        : input.action.kind === "press"
-          ? `Press ${input.action.key}`
-          : input.action.kind === "scroll"
-            ? `Scroll ${input.action.direction}`
-            : input.action.kind === "wait"
-              ? `Wait ${input.action.ms}ms`
-              : input.action.kind === "resize"
-                ? `Resize viewport to ${input.action.width}x${input.action.height}`
-                : input.action.kind === "waitFor"
-                  ? input.action.text
-                    ? `Wait for "${input.action.text}" to appear`
-                    : `Wait for "${input.action.textGone}" to disappear`
-                  : input.action.kind === "evaluate"
-                    ? `Evaluate: ${input.action.expression.length > 60 ? input.action.expression.slice(0, 60) + "..." : input.action.expression}`
-                    : `Navigate to ${input.action.url}`;
+      : input.action.kind === "clickAt"
+        ? `Click at ${input.action.x},${input.action.y}`
+        : input.action.kind === "clickTargetOrAt"
+          ? `Click ${target?.label || target?.text || input.action.targetId}`
+          : input.action.kind === "type"
+            ? `Type into ${target?.label || target?.text || input.action.targetId}`
+            : input.action.kind === "typeFocused"
+              ? "Type into focused element"
+              : input.action.kind === "press"
+                ? `Press ${input.action.key}`
+                : input.action.kind === "scroll"
+                  ? `Scroll ${input.action.direction}`
+                  : input.action.kind === "wait"
+                    ? `Wait ${input.action.ms}ms`
+                    : input.action.kind === "resize"
+                      ? `Resize viewport to ${input.action.width}x${input.action.height}`
+                      : input.action.kind === "waitFor"
+                        ? input.action.text
+                          ? `Wait for "${input.action.text}" to appear`
+                          : `Wait for "${input.action.textGone}" to disappear`
+                        : input.action.kind === "evaluate"
+                          ? `Evaluate: ${input.action.expression.length > 60 ? input.action.expression.slice(0, 60) + "..." : input.action.expression}`
+                          : `Navigate to ${input.action.url}`;
 
   return input.reason ? `${actionLabel}. ${input.reason}` : actionLabel;
 }

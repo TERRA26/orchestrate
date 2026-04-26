@@ -41,6 +41,13 @@ import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload } from "./server";
 import {
+  BrowserActInput,
+  BrowserAddAnnotationInput,
+  BrowserCloseSessionInput,
+  BrowserListAnnotationsInput,
+  BrowserOpenSessionInput,
+} from "./browser";
+import {
   ProviderListCommandsInput,
   ProviderGetComposerCapabilitiesInput,
   ProviderListPluginsInput,
@@ -88,6 +95,12 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  browserOpenPreview: "browser.openPreview",
+  browserOpenSession: "browser.openSession",
+  browserAct: "browser.act",
+  browserCloseSession: "browser.closeSession",
+  browserAddAnnotation: "browser.addAnnotation",
+  browserListAnnotations: "browser.listAnnotations",
 
   // Provider discovery
   providerGetComposerCapabilities: "provider.getComposerCapabilities",
@@ -105,7 +118,26 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  serverProvidersUpdated: "server.providersUpdated",
+  browserOpenRequested: "browser.openRequested",
 } as const;
+
+export const BrowserOpenPreviewInput = Schema.Struct({
+  threadId: ThreadId,
+  url: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
+});
+export type BrowserOpenPreviewInput = typeof BrowserOpenPreviewInput.Type;
+
+export const BrowserOpenPreviewRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  url: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
+});
+export type BrowserOpenPreviewRequestedPayload = typeof BrowserOpenPreviewRequestedPayload.Type;
+
+export const ServerProvidersUpdatedPayload = Schema.Struct({
+  providers: Schema.Array(Schema.Unknown),
+});
+export type ServerProvidersUpdatedPayload = typeof ServerProvidersUpdatedPayload.Type;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
 
@@ -163,6 +195,12 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+  tagRequestBody(WS_METHODS.browserOpenPreview, BrowserOpenPreviewInput),
+  tagRequestBody(WS_METHODS.browserOpenSession, BrowserOpenSessionInput),
+  tagRequestBody(WS_METHODS.browserAct, BrowserActInput),
+  tagRequestBody(WS_METHODS.browserCloseSession, BrowserCloseSessionInput),
+  tagRequestBody(WS_METHODS.browserAddAnnotation, BrowserAddAnnotationInput),
+  tagRequestBody(WS_METHODS.browserListAnnotations, BrowserListAnnotationsInput),
 
   // Provider discovery
   tagRequestBody(WS_METHODS.providerGetComposerCapabilities, ProviderGetComposerCapabilitiesInput),
@@ -205,8 +243,10 @@ export type WsWelcomePayload = typeof WsWelcomePayload.Type;
 export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.serverWelcome]: WsWelcomePayload;
   readonly [WS_CHANNELS.serverConfigUpdated]: typeof ServerConfigUpdatedPayload.Type;
+  readonly [WS_CHANNELS.serverProvidersUpdated]: ServerProvidersUpdatedPayload;
   readonly [WS_CHANNELS.gitActionProgress]: typeof GitActionProgressEvent.Type;
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
+  readonly [WS_CHANNELS.browserOpenRequested]: BrowserOpenPreviewRequestedPayload;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
 }
 
@@ -229,11 +269,19 @@ export const WsPushServerConfigUpdated = makeWsPushSchema(
   WS_CHANNELS.serverConfigUpdated,
   ServerConfigUpdatedPayload,
 );
+export const WsPushServerProvidersUpdated = makeWsPushSchema(
+  WS_CHANNELS.serverProvidersUpdated,
+  ServerProvidersUpdatedPayload,
+);
 export const WsPushGitActionProgress = makeWsPushSchema(
   WS_CHANNELS.gitActionProgress,
   GitActionProgressEvent,
 );
 export const WsPushTerminalEvent = makeWsPushSchema(WS_CHANNELS.terminalEvent, TerminalEvent);
+export const WsPushBrowserOpenRequested = makeWsPushSchema(
+  WS_CHANNELS.browserOpenRequested,
+  BrowserOpenPreviewRequestedPayload,
+);
 export const WsPushOrchestrationDomainEvent = makeWsPushSchema(
   ORCHESTRATION_WS_CHANNELS.domainEvent,
   OrchestrationEvent,
@@ -243,7 +291,9 @@ export const WsPushChannelSchema = Schema.Literals([
   WS_CHANNELS.gitActionProgress,
   WS_CHANNELS.serverWelcome,
   WS_CHANNELS.serverConfigUpdated,
+  WS_CHANNELS.serverProvidersUpdated,
   WS_CHANNELS.terminalEvent,
+  WS_CHANNELS.browserOpenRequested,
   ORCHESTRATION_WS_CHANNELS.domainEvent,
 ]);
 export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
@@ -251,8 +301,10 @@ export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
 export const WsPush = Schema.Union([
   WsPushServerWelcome,
   WsPushServerConfigUpdated,
+  WsPushServerProvidersUpdated,
   WsPushGitActionProgress,
   WsPushTerminalEvent,
+  WsPushBrowserOpenRequested,
   WsPushOrchestrationDomainEvent,
 ]);
 export type WsPush = typeof WsPush.Type;

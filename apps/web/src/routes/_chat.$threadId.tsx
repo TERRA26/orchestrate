@@ -71,6 +71,8 @@ import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { onBrowserOpenRequested } from "../wsNativeApi";
+import { readNativeApi } from "../nativeApi";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
@@ -1041,6 +1043,44 @@ function SingleChatSurface(props: {
   }, [activePanel]);
 
   useEffect(() => {
+    return onBrowserOpenRequested((request) => {
+      if (request.threadId !== props.threadId) {
+        return;
+      }
+
+      const api = readNativeApi();
+      if (api) {
+        void api.browser
+          .open({
+            threadId: props.threadId,
+            ...(request.url ? { initialUrl: request.url } : {}),
+          })
+          .then((state) => {
+            if (!request.url) {
+              return;
+            }
+            const tabId = state.activeTabId ?? state.tabs[0]?.id;
+            void api.browser.navigate({
+              threadId: props.threadId,
+              url: request.url,
+              ...(tabId ? { tabId } : {}),
+            });
+          });
+      }
+
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: props.threadId },
+        replace: true,
+        search: (previous) => ({
+          ...stripDiffSearchParams(previous),
+          panel: "browser",
+        }),
+      });
+    });
+  }, [navigate, props.threadId]);
+
+  useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
     if (typeof onMenuAction !== "function") {
       return;
@@ -1139,35 +1179,75 @@ function writeStoredPaneSizes(agentCount: number, sizes: number[]): void {
   } catch {}
 }
 
-function OrchestratorMultiPaneSurface(props: { agentThreadIds: string[] }) {
+function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[] }) {
   const agentCount = props.agentThreadIds.length;
   const collapseAgent = useOrchestratorPaneStore((state) => state.collapseAgent);
+  const collapseBrowser = useOrchestratorPaneStore((state) => state.collapseBrowser);
+  const focusBrowser = useOrchestratorPaneStore((state) => state.focusBrowser);
+  const focusedBrowserThreadId = useOrchestratorPaneStore((state) => state.focusedBrowserThreadId);
   const orchestratorThreadId = useOrchestratorPaneStore((state) => state.orchestratorThreadId);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const orchestratorSessionStatus = useStore(
     (store) => store.threads.find((t) => t.id === orchestratorThreadId)?.session?.status ?? null,
   );
-  const isOrchestratorRunning =
-    orchestratorSessionStatus === "running" || orchestratorSessionStatus === "starting";
+  const isOrchestratorRunning = orchestratorSessionStatus === "running";
+  const browserOpen =
+    orchestratorThreadId !== null && focusedBrowserThreadId === orchestratorThreadId;
 
-  // Flex-basis percentages for [orchestrator, ...agents].
-  // Defaults: single agent → 50/50. Two agents → 30/35/35.
+  const paneCount = 1 + agentCount + (browserOpen ? 1 : 0);
+
+  // Flex-basis percentages for [orchestrator, ...agents, browser].
+  // Defaults keep the orchestrator readable while side panes share the rest.
   const defaultSizes = useMemo(() => {
-    if (agentCount === 1) return [50, 50];
-    return [30, 35, 35];
-  }, [agentCount]);
+    if (paneCount === 1) return [100];
+    if (paneCount === 2) return [50, 50];
+    if (paneCount === 3) return [30, 35, 35];
+    const sidePaneSize = 70 / (paneCount - 1);
+    return [30, ...Array.from({ length: paneCount - 1 }, () => sidePaneSize)];
+  }, [paneCount]);
 
   const [sizes, setSizes] = useState<number[]>(() => {
-    const stored = typeof window !== "undefined" ? readStoredPaneSizes(agentCount) : null;
+    const stored = typeof window !== "undefined" ? readStoredPaneSizes(paneCount) : null;
     return stored ?? defaultSizes;
   });
 
-  // Reset stored sizes when agentCount changes (different pane layout).
+  // Reset stored sizes when pane count changes (different pane layout).
   useEffect(() => {
-    const stored = readStoredPaneSizes(agentCount);
+    const stored = readStoredPaneSizes(paneCount);
     setSizes(stored ?? defaultSizes);
-  }, [agentCount, defaultSizes]);
+  }, [paneCount, defaultSizes]);
+
+  useEffect(() => {
+    if (!orchestratorThreadId) {
+      return;
+    }
+    return onBrowserOpenRequested((request) => {
+      if (request.threadId !== orchestratorThreadId) {
+        return;
+      }
+      focusBrowser(orchestratorThreadId);
+      const api = readNativeApi();
+      if (api) {
+        void api.browser
+          .open({
+            threadId: orchestratorThreadId as ThreadIdType,
+            ...(request.url ? { initialUrl: request.url } : {}),
+          })
+          .then((state) => {
+            if (!request.url) {
+              return;
+            }
+            const tabId = state.activeTabId ?? state.tabs[0]?.id;
+            void api.browser.navigate({
+              threadId: orchestratorThreadId as ThreadIdType,
+              url: request.url,
+              ...(tabId ? { tabId } : {}),
+            });
+          });
+      }
+    });
+  }, [focusBrowser, orchestratorThreadId]);
 
   const startDrag = useCallback(
     (dividerIndex: number) => (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1186,8 +1266,8 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: string[] }) {
         const next = [...startSizes];
         const leftIdx = dividerIndex;
         const rightIdx = dividerIndex + 1;
-        let nextLeft = next[leftIdx] + deltaPct;
-        let nextRight = next[rightIdx] - deltaPct;
+        let nextLeft = (next[leftIdx] ?? defaultSizes[leftIdx] ?? 50) + deltaPct;
+        let nextRight = (next[rightIdx] ?? defaultSizes[rightIdx] ?? 50) - deltaPct;
         if (nextLeft < minPct) {
           nextRight -= minPct - nextLeft;
           nextLeft = minPct;
@@ -1204,15 +1284,23 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: string[] }) {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         setSizes((current) => {
-          writeStoredPaneSizes(agentCount, current);
+          writeStoredPaneSizes(paneCount, current);
           return current;
         });
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [sizes, agentCount],
+    [defaultSizes, sizes, paneCount],
   );
+
+  const closeBrowserPane = useCallback(() => {
+    if (orchestratorThreadId) {
+      const api = readNativeApi();
+      void api?.browser.hide({ threadId: orchestratorThreadId as ThreadIdType });
+      collapseBrowser(orchestratorThreadId);
+    }
+  }, [collapseBrowser, orchestratorThreadId]);
 
   return (
     <div ref={containerRef} className="flex h-dvh min-w-0 flex-1 overflow-hidden bg-background">
@@ -1258,13 +1346,23 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: string[] }) {
           <AgentPane
             agentThreadId={agentThreadId}
             paneIndex={i}
-            flexBasis={`${sizes[i + 1]}%`}
+            flexBasis={`${sizes[i + 1] ?? defaultSizes[i + 1] ?? 50}%`}
             showRightBorder={false}
             onClose={() => collapseAgent(agentThreadId)}
           />
           {i < agentCount - 1 && <PaneDivider onPointerDown={startDrag(i + 1)} />}
         </Fragment>
       ))}
+      {browserOpen && orchestratorThreadId ? (
+        <>
+          {agentCount > 0 && <PaneDivider onPointerDown={startDrag(agentCount)} />}
+          <BrowserPane
+            threadId={orchestratorThreadId as ThreadIdType}
+            flexBasis={`${sizes[agentCount + 1] ?? defaultSizes[agentCount + 1] ?? 50}%`}
+            onClose={closeBrowserPane}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1296,7 +1394,7 @@ function AgentPane(props: {
   const sessionStatus = useStore(
     (store) => store.threads.find((t) => t.id === props.agentThreadId)?.session?.status ?? null,
   );
-  const isRunning = sessionStatus === "running" || sessionStatus === "starting";
+  const isRunning = sessionStatus === "running";
   const statusDot = isRunning
     ? "bg-emerald-400/85 shadow-[0_0_6px_rgba(52,211,153,0.55)] animate-pulse"
     : sessionStatus === "error"
@@ -1336,6 +1434,37 @@ function AgentPane(props: {
   );
 }
 
+function BrowserPane(props: { threadId: ThreadIdType; flexBasis: string; onClose: () => void }) {
+  return (
+    <div
+      style={{ flexBasis: props.flexBasis, minWidth: 0 }}
+      className="@container/pane relative flex h-full flex-col overflow-hidden border-x border-foreground/8"
+    >
+      <div className="flex h-8 items-center gap-2 border-b border-border/40 px-3">
+        <span className="inline-flex size-1.5 shrink-0 rounded-full bg-sky-400/85" aria-hidden />
+        <span className="shrink-0 font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-foreground">
+          Browser
+        </span>
+        <span className="min-w-0 flex-1" />
+        <button
+          type="button"
+          onClick={props.onClose}
+          className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/50 transition-colors hover:text-foreground/85"
+          title="Close browser pane"
+          aria-label="Close browser pane"
+        >
+          <span aria-hidden className="text-base leading-none">
+            ×
+          </span>
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col [&>div]:h-full [&>div]:flex-1">
+        <BrowserPanel mode="sidebar" threadId={props.threadId} onClosePanel={props.onClose} />
+      </div>
+    </div>
+  );
+}
+
 function ChatThreadRouteView() {
   const threadsHydrated = useStore((store) => store.threadsHydrated);
   const threadId = Route.useParams({
@@ -1368,8 +1497,13 @@ function ChatThreadRouteView() {
   const navigate = useNavigate();
 
   // Orchestrator pane store: track orchestrator thread and focused agent panes
-  const { orchestratorThreadId, focusedAgentThreadIds, setOrchestratorThread, focusAgent } =
-    useOrchestratorPaneStore();
+  const {
+    orchestratorThreadId,
+    focusedAgentThreadIds,
+    focusedBrowserThreadId,
+    setOrchestratorThread,
+    focusAgent,
+  } = useOrchestratorPaneStore();
 
   // Up to two most-recently-created agent children — used to auto-focus on
   // orchestrator open. We sort by createdAt (not updatedAt) so the order is
@@ -1423,6 +1557,8 @@ function ChatThreadRouteView() {
 
   const isOrchestratorThread = orchestratorThreadId === threadId;
   const hasOrchestratorAgentPanes = isOrchestratorThread && focusedAgentThreadIds.length > 0;
+  const hasOrchestratorBrowserPane =
+    isOrchestratorThread && focusedBrowserThreadId === orchestratorThreadId;
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -1459,14 +1595,10 @@ function ChatThreadRouteView() {
   }
 
   if (showOrchestratorSurface) {
-    if (hasOrchestratorAgentPanes) {
+    if (hasOrchestratorAgentPanes || hasOrchestratorBrowserPane) {
       return <OrchestratorMultiPaneSurface agentThreadIds={focusedAgentThreadIds} />;
     }
-    return (
-      <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
-        <OrchestratorPanel />
-      </div>
-    );
+    return <OrchestratorMultiPaneSurface agentThreadIds={EMPTY_AGENT_IDS} />;
   }
 
   return <SingleChatSurface threadId={threadId} search={search} projectId={activeProjectId} />;

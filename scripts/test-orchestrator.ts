@@ -17,7 +17,7 @@ const WS_URL = `ws://localhost:${SERVER_PORT}`;
 
 let ws: WebSocket;
 let requestId = 0;
-const pendingRequests = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+const pendingRequests = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
 const domainEvents: any[] = [];
 
 function connect(): Promise<void> {
@@ -547,3 +547,5 @@ main().catch((e) => {
   console.error("Fatal:", e);
   process.exit(1);
 });
+
+export type TestOrchestratorModule = never;

@@ -7,13 +7,13 @@ Four classic games, one dark-neon UI.
 
 ## Stack
 
-| Layer     | Technology                                    |
-| --------- | --------------------------------------------- |
-| Frontend  | React 19, React Router v7, Tailwind CSS v4    |
-| Bundler   | Vite 8 (`@tailwindcss/vite` — no config file) |
-| Backend   | Bun native HTTP server (`server.ts`)          |
-| Runtime   | Bun                                           |
-| Tests     | Vitest                                        |
+| Layer    | Technology                                    |
+| -------- | --------------------------------------------- |
+| Frontend | React 19, React Router v7, Tailwind CSS v4    |
+| Bundler  | Vite 8 (`@tailwindcss/vite` — no config file) |
+| Backend  | Bun native HTTP server (`server.ts`)          |
+| Runtime  | Bun                                           |
+| Tests    | Vitest                                        |
 
 ---
 
@@ -33,10 +33,10 @@ bun run dev
 
 This starts **both** servers concurrently:
 
-| Server   | URL                       | Role                                      |
-| -------- | ------------------------- | ----------------------------------------- |
-| Vite     | http://localhost:5173     | React dev server with HMR                |
-| API/Bun  | http://localhost:3001     | REST API (`/api/games`, static fallback)  |
+| Server  | URL                   | Role                                     |
+| ------- | --------------------- | ---------------------------------------- |
+| Vite    | http://localhost:5173 | React dev server with HMR                |
+| API/Bun | http://localhost:3001 | REST API (`/api/games`, static fallback) |
 
 Vite proxies all `/api/*` requests to the Bun server automatically — no CORS config needed.
 
@@ -55,12 +55,12 @@ Run `bun run start` to serve the built app on port 3001.
 
 ## Available Games
 
-| Emoji | Game           | Path                   |
-| ----- | -------------- | ---------------------- |
-| 🐍    | Snake          | `/games/snake`         |
-| 🔢    | 2048           | `/games/2048`          |
-| ✕     | Tic-Tac-Toe    | `/games/tic-tac-toe`   |
-| 🃏    | Memory Match   | `/games/memory-match`  |
+| Emoji | Game         | Path                  |
+| ----- | ------------ | --------------------- |
+| 🐍    | Snake        | `/games/snake`        |
+| 🔢    | 2048         | `/games/2048`         |
+| ✕     | Tic-Tac-Toe  | `/games/tic-tac-toe`  |
+| 🃏    | Memory Match | `/games/memory-match` |
 
 ---
 

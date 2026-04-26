@@ -50,6 +50,14 @@ interface EvaluatedTarget extends BrowserObservedTarget {
   selector: string;
 }
 
+interface RawBrowserObservation {
+  readyState: string;
+  title: string;
+  textSummary: string;
+  targets: EvaluatedTarget[];
+  pageMetrics: BrowserPageMetrics;
+}
+
 const ACCESSIBLE_ROLE_LOCATORS = new Set([
   "button",
   "checkbox",
@@ -80,6 +88,16 @@ function truncateText(value: string, maxLength: number): string {
     return value;
   }
   return value.slice(0, maxLength);
+}
+
+function isTransientNavigationEvaluationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("Execution context was destroyed") ||
+    message.includes("Cannot find context with specified id") ||
+    message.includes("Target closed") ||
+    message.includes("Navigation failed because page was closed")
+  );
 }
 
 function buildLocatorCandidates(page: Page, descriptor: BrowserTargetDescriptor): Locator[] {
@@ -183,22 +201,136 @@ function waitForSettled(page: Page): Promise<void> {
 
 async function captureScreenshotDataUrl(
   page: Page,
-  options?: { fullPage?: boolean },
+  options?: {
+    fullPage?: boolean;
+    maxWidth?: number;
+    maxHeight?: number;
+    quality?: number;
+    maxBytes?: number;
+  },
 ): Promise<string | undefined> {
   try {
     const screenshot = await page.screenshot({
       type: "jpeg",
-      quality: options?.fullPage ? 30 : 50,
+      quality: options?.fullPage ? 30 : 45,
       animations: "disabled",
       caret: "hide",
       scale: "css",
       fullPage: options?.fullPage ?? false,
       timeout: 8_000,
     });
-    return `data:image/jpeg;base64,${screenshot.toString("base64")}`;
+    const dataUrl = `data:image/jpeg;base64,${screenshot.toString("base64")}`;
+    if (!options?.maxWidth || !options.maxHeight) {
+      return dataUrl;
+    }
+
+    const downscaled = await downscaleScreenshotDataUrl(page, dataUrl, {
+      maxWidth: options.maxWidth,
+      maxHeight: options.maxHeight,
+      quality: options.quality ?? 0.42,
+      maxBytes: options.maxBytes,
+    });
+    if (downscaled) {
+      return downscaled;
+    }
+    return options.maxBytes ? undefined : dataUrl;
   } catch {
     return undefined;
   }
+}
+
+async function downscaleScreenshotDataUrl(
+  page: Page,
+  dataUrl: string,
+  options: { maxWidth: number; maxHeight: number; quality: number; maxBytes?: number },
+): Promise<string | undefined> {
+  const renderDownscaled = (targetPage: Page) =>
+    targetPage.evaluate(
+      ({ inputDataUrl, maxWidth, maxHeight, quality }) =>
+        new Promise<string>((resolve, reject) => {
+          const image = new Image();
+          image.addEventListener("load", () => {
+            const scale = Math.min(
+              maxWidth / image.naturalWidth,
+              maxHeight / image.naturalHeight,
+              1,
+            );
+            const width = Math.max(1, Math.round(image.naturalWidth * scale));
+            const height = Math.max(1, Math.round(image.naturalHeight * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext("2d");
+            if (!context) {
+              reject(new Error("Canvas context unavailable."));
+              return;
+            }
+            context.drawImage(image, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", quality));
+          });
+          image.addEventListener("error", () =>
+            reject(new Error("Could not decode screenshot preview.")),
+          );
+          image.src = inputDataUrl;
+        }),
+      {
+        inputDataUrl: dataUrl,
+        maxWidth: options.maxWidth,
+        maxHeight: options.maxHeight,
+        quality: options.quality,
+      },
+    );
+
+  try {
+    let candidate: string | undefined;
+    try {
+      candidate = await renderDownscaled(page);
+    } catch {
+      const utilityPage = await page.context().newPage();
+      try {
+        candidate = await renderDownscaled(utilityPage);
+      } finally {
+        await utilityPage.close().catch(() => undefined);
+      }
+    }
+    if (!candidate) {
+      return undefined;
+    }
+    if (options.maxBytes && Buffer.byteLength(candidate, "utf8") > options.maxBytes) {
+      return undefined;
+    }
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
+async function capturePreviewScreenshotDataUrl(page: Page): Promise<string | undefined> {
+  const screenshot = await captureScreenshotDataUrl(page, {
+    maxWidth: 720,
+    maxHeight: 450,
+    quality: 0.4,
+  });
+  if (!screenshot) {
+    return undefined;
+  }
+
+  for (const candidate of [
+    { maxWidth: 520, maxHeight: 325, quality: 0.42, maxBytes: 18_000 },
+    { maxWidth: 420, maxHeight: 263, quality: 0.36, maxBytes: 18_000 },
+    { maxWidth: 320, maxHeight: 200, quality: 0.32, maxBytes: 18_000 },
+  ]) {
+    const downscaled = await downscaleScreenshotDataUrl(page, screenshot, candidate);
+    if (downscaled) {
+      return downscaled;
+    }
+  }
+
+  return downscaleScreenshotDataUrl(page, screenshot, {
+    maxWidth: 280,
+    maxHeight: 175,
+    quality: 0.3,
+  });
 }
 
 async function captureObservation(input: { page: Page; session?: BrowserSessionState }): Promise<{
@@ -209,6 +341,7 @@ async function captureObservation(input: { page: Page; session?: BrowserSessionS
     readyState: string;
     textSummary: string;
     screenshotDataUrl?: string;
+    previewScreenshotDataUrl?: string;
     fullPageScreenshotDataUrl?: string;
     targets: BrowserObservedTarget[];
     consoleErrors?: BrowserConsoleEntry[];
@@ -218,192 +351,213 @@ async function captureObservation(input: { page: Page; session?: BrowserSessionS
   };
   targetDescriptorsById: Map<string, BrowserTargetDescriptor>;
 }> {
-  const raw = await input.page.evaluate(() => {
-    const MAX_TARGETS = 64;
-    const MAX_TEXT_SUMMARY_LENGTH = 4_000;
+  let raw: RawBrowserObservation | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      raw = await input.page.evaluate(() => {
+        const MAX_TARGETS = 64;
+        const MAX_TEXT_SUMMARY_LENGTH = 4_000;
 
-    // eslint-disable-next-line unicorn/consistent-function-scoping
-    const cleanText = (value: string | null | undefined, maxLength: number): string => {
-      const normalized = (value ?? "").replace(/\s+/g, " ").trim();
-      return normalized.length <= maxLength ? normalized : normalized.slice(0, maxLength);
-    };
+        // eslint-disable-next-line unicorn/consistent-function-scoping
+        const cleanText = (value: string | null | undefined, maxLength: number): string => {
+          const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+          return normalized.length <= maxLength ? normalized : normalized.slice(0, maxLength);
+        };
 
-    // eslint-disable-next-line unicorn/consistent-function-scoping
-    const escapeCssSegment = (value: string): string => {
-      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-        return CSS.escape(value);
-      }
-      return value.replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
-    };
+        // eslint-disable-next-line unicorn/consistent-function-scoping
+        const escapeCssSegment = (value: string): string => {
+          if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+            return CSS.escape(value);
+          }
+          return value.replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
+        };
 
-    const toCssPath = (element: Element): string => {
-      const htmlElement = element as HTMLElement;
-      if (htmlElement.id) {
-        return `#${escapeCssSegment(htmlElement.id)}`;
-      }
+        const toCssPath = (element: Element): string => {
+          const htmlElement = element as HTMLElement;
+          if (htmlElement.id) {
+            return `#${escapeCssSegment(htmlElement.id)}`;
+          }
 
-      const segments: string[] = [];
-      let current: Element | null = element;
-      while (current && current !== document.body) {
-        const parent: Element | null = current.parentElement;
-        const tagName = current.tagName.toLowerCase();
-        let segment = tagName;
-        if (parent) {
-          const siblings = Array.from(parent.children).filter(
-            (candidate: Element) => candidate.tagName === current?.tagName,
+          const segments: string[] = [];
+          let current: Element | null = element;
+          while (current && current !== document.body) {
+            const parent: Element | null = current.parentElement;
+            const tagName = current.tagName.toLowerCase();
+            let segment = tagName;
+            if (parent) {
+              const siblings = Array.from(parent.children).filter(
+                (candidate: Element) => candidate.tagName === current?.tagName,
+              );
+              if (siblings.length > 1) {
+                segment += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+              }
+            }
+            segments.unshift(segment);
+            current = parent;
+          }
+
+          return `body > ${segments.join(" > ")}`;
+        };
+
+        // eslint-disable-next-line unicorn/consistent-function-scoping
+        const isVisible = (element: HTMLElement): boolean => {
+          const htmlElement = element;
+          const style = window.getComputedStyle(htmlElement);
+          const rect = htmlElement.getBoundingClientRect();
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.opacity !== "0" &&
+            rect.width > 0 &&
+            rect.height > 0
           );
-          if (siblings.length > 1) {
-            segment += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        };
+
+        const labelFor = (
+          element: HTMLElement & {
+            labels?: NodeListOf<HTMLLabelElement>;
+            placeholder?: string;
+            value?: string;
+          },
+        ): string => {
+          const htmlElement = element;
+          const ariaLabel = htmlElement.getAttribute("aria-label");
+          if (ariaLabel) {
+            return cleanText(ariaLabel, 512);
+          }
+          if (htmlElement.labels && htmlElement.labels.length > 0) {
+            const labels = Array.from(htmlElement.labels)
+              .map((label) => cleanText(label.textContent, 512))
+              .filter((value) => value.length > 0);
+            if (labels.length > 0) {
+              return labels.join(" ");
+            }
+          }
+          const ariaLabelledBy = htmlElement.getAttribute("aria-labelledby");
+          if (ariaLabelledBy) {
+            const labels = ariaLabelledBy
+              .split(/\s+/)
+              .map((id) => document.getElementById(id))
+              .filter((label): label is HTMLElement => label instanceof HTMLElement)
+              .map((label) => cleanText(label.textContent, 512))
+              .filter((value) => value.length > 0);
+            if (labels.length > 0) {
+              return labels.join(" ");
+            }
+          }
+          return "";
+        };
+
+        const elements = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"]',
+          ),
+        );
+
+        const seenSelectors = new Set<string>();
+        const targets: Array<EvaluatedTarget> = [];
+
+        for (const element of elements) {
+          if (!isVisible(element)) {
+            continue;
+          }
+          const selector = toCssPath(element);
+          if (selector.length === 0 || seenSelectors.has(selector)) {
+            continue;
+          }
+          seenSelectors.add(selector);
+
+          const htmlElement = element as HTMLElement & {
+            disabled?: boolean;
+            placeholder?: string;
+          };
+          const rect = htmlElement.getBoundingClientRect();
+          const label = labelFor(element);
+          const text = cleanText(htmlElement.innerText || htmlElement.textContent, 512);
+          const placeholder = cleanText(htmlElement.placeholder, 512);
+          const role = cleanText(element.getAttribute("role") || element.tagName.toLowerCase(), 64);
+          const tagName = cleanText(element.tagName.toLowerCase(), 64);
+          const disabled =
+            htmlElement.disabled === true || htmlElement.getAttribute("aria-disabled") === "true";
+
+          targets.push({
+            id: `target-${targets.length + 1}`,
+            selector,
+            role,
+            tagName,
+            ...(label.length > 0 ? { label } : {}),
+            ...(text.length > 0 ? { text } : {}),
+            ...(placeholder.length > 0 ? { placeholder } : {}),
+            disabled,
+            x: Math.max(0, Math.round(rect.x)),
+            y: Math.max(0, Math.round(rect.y)),
+            width: Math.max(0, Math.round(rect.width)),
+            height: Math.max(0, Math.round(rect.height)),
+          });
+
+          if (targets.length >= MAX_TARGETS) {
+            break;
           }
         }
-        segments.unshift(segment);
-        current = parent;
-      }
 
-      return `body > ${segments.join(" > ")}`;
-    };
+        const interactiveSelector =
+          'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"]';
+        const totalInteractiveElements = document.querySelectorAll(interactiveSelector).length;
+        const totalImages = document.querySelectorAll("img, picture, video, canvas, svg").length;
+        const totalLinks = document.querySelectorAll("a[href]").length;
+        const totalInputs = document.querySelectorAll("input, textarea, select").length;
+        const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6"))
+          .slice(0, 20)
+          .map((heading) => cleanText(heading.textContent, 256))
+          .filter((text) => text.length > 0);
 
-    // eslint-disable-next-line unicorn/consistent-function-scoping
-    const isVisible = (element: HTMLElement): boolean => {
-      const htmlElement = element;
-      const style = window.getComputedStyle(htmlElement);
-      const rect = htmlElement.getBoundingClientRect();
-      return (
-        style.display !== "none" &&
-        style.visibility !== "hidden" &&
-        style.opacity !== "0" &&
-        rect.width > 0 &&
-        rect.height > 0
-      );
-    };
-
-    const labelFor = (
-      element: HTMLElement & {
-        labels?: NodeListOf<HTMLLabelElement>;
-        placeholder?: string;
-        value?: string;
-      },
-    ): string => {
-      const htmlElement = element;
-      const ariaLabel = htmlElement.getAttribute("aria-label");
-      if (ariaLabel) {
-        return cleanText(ariaLabel, 512);
-      }
-      if (htmlElement.labels && htmlElement.labels.length > 0) {
-        const labels = Array.from(htmlElement.labels)
-          .map((label) => cleanText(label.textContent, 512))
-          .filter((value) => value.length > 0);
-        if (labels.length > 0) {
-          return labels.join(" ");
-        }
-      }
-      const ariaLabelledBy = htmlElement.getAttribute("aria-labelledby");
-      if (ariaLabelledBy) {
-        const labels = ariaLabelledBy
-          .split(/\s+/)
-          .map((id) => document.getElementById(id))
-          .filter((label): label is HTMLElement => label instanceof HTMLElement)
-          .map((label) => cleanText(label.textContent, 512))
-          .filter((value) => value.length > 0);
-        if (labels.length > 0) {
-          return labels.join(" ");
-        }
-      }
-      return "";
-    };
-
-    const elements = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"]',
-      ),
-    );
-
-    const seenSelectors = new Set<string>();
-    const targets: Array<EvaluatedTarget> = [];
-
-    for (const element of elements) {
-      if (!isVisible(element)) {
-        continue;
-      }
-      const selector = toCssPath(element);
-      if (selector.length === 0 || seenSelectors.has(selector)) {
-        continue;
-      }
-      seenSelectors.add(selector);
-
-      const htmlElement = element as HTMLElement & {
-        disabled?: boolean;
-        placeholder?: string;
-      };
-      const rect = htmlElement.getBoundingClientRect();
-      const label = labelFor(element);
-      const text = cleanText(htmlElement.innerText || htmlElement.textContent, 512);
-      const placeholder = cleanText(htmlElement.placeholder, 512);
-      const role = cleanText(element.getAttribute("role") || element.tagName.toLowerCase(), 64);
-      const tagName = cleanText(element.tagName.toLowerCase(), 64);
-      const disabled =
-        htmlElement.disabled === true || htmlElement.getAttribute("aria-disabled") === "true";
-
-      targets.push({
-        id: `target-${targets.length + 1}`,
-        selector,
-        role,
-        tagName,
-        ...(label.length > 0 ? { label } : {}),
-        ...(text.length > 0 ? { text } : {}),
-        ...(placeholder.length > 0 ? { placeholder } : {}),
-        disabled,
-        x: Math.max(0, Math.round(rect.x)),
-        y: Math.max(0, Math.round(rect.y)),
-        width: Math.max(0, Math.round(rect.width)),
-        height: Math.max(0, Math.round(rect.height)),
+        return {
+          readyState: document.readyState,
+          title: cleanText(document.title, 512),
+          textSummary: cleanText(document.body?.innerText, MAX_TEXT_SUMMARY_LENGTH),
+          targets,
+          pageMetrics: {
+            totalInteractiveElements,
+            totalImages,
+            totalLinks,
+            totalInputs,
+            headings,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            scrollHeight: document.documentElement.scrollHeight,
+            scrollTop: Math.round(window.scrollY),
+          },
+        };
       });
-
-      if (targets.length >= MAX_TARGETS) {
-        break;
+      break;
+    } catch (error) {
+      if (attempt >= 2 || !isTransientNavigationEvaluationError(error)) {
+        throw error;
       }
+      await waitForSettled(input.page);
     }
+  }
 
-    const interactiveSelector =
-      'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"]';
-    const totalInteractiveElements = document.querySelectorAll(interactiveSelector).length;
-    const totalImages = document.querySelectorAll("img, picture, video, canvas, svg").length;
-    const totalLinks = document.querySelectorAll("a[href]").length;
-    const totalInputs = document.querySelectorAll("input, textarea, select").length;
-    const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6"))
-      .slice(0, 20)
-      .map((heading) => cleanText(heading.textContent, 256))
-      .filter((text) => text.length > 0);
+  if (!raw) {
+    throw new Error("Could not inspect browser page.");
+  }
 
-    return {
-      readyState: document.readyState,
-      title: cleanText(document.title, 512),
-      textSummary: cleanText(document.body?.innerText, MAX_TEXT_SUMMARY_LENGTH),
-      targets,
-      pageMetrics: {
-        totalInteractiveElements,
-        totalImages,
-        totalLinks,
-        totalInputs,
-        headings,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        scrollHeight: document.documentElement.scrollHeight,
-        scrollTop: Math.round(window.scrollY),
-      },
-    };
-  });
-
-  const needsFullPage = raw.pageMetrics.scrollHeight > raw.pageMetrics.viewportHeight * 1.5;
-  const [screenshotDataUrl, fullPageScreenshotDataUrl, ariaSnapshot] = await Promise.all([
-    captureScreenshotDataUrl(input.page),
-    needsFullPage ? captureScreenshotDataUrl(input.page, { fullPage: true }) : undefined,
-    input.page
-      .locator("body")
-      .ariaSnapshot({ timeout: 5_000 })
-      .then((snapshot) => truncateText(snapshot, 16_000))
-      .catch(() => undefined),
-  ]);
+  const [screenshotDataUrl, previewScreenshotDataUrl, fullPageScreenshotDataUrl, ariaSnapshot] =
+    await Promise.all([
+      captureScreenshotDataUrl(input.page, {
+        maxWidth: 1440,
+        maxHeight: 900,
+        quality: 0.72,
+        maxBytes: 650_000,
+      }),
+      capturePreviewScreenshotDataUrl(input.page),
+      undefined,
+      input.page
+        .locator("body")
+        .ariaSnapshot({ timeout: 5_000 })
+        .then((snapshot) => truncateText(snapshot, 16_000))
+        .catch(() => undefined),
+    ]);
 
   const consoleErrors =
     input.session && input.session.consoleBuffer.length > 0
@@ -435,6 +589,7 @@ async function captureObservation(input: { page: Page; session?: BrowserSessionS
       readyState: truncateText(raw.readyState, 32),
       textSummary: truncateText(raw.textSummary, 4_000),
       ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
+      ...(previewScreenshotDataUrl ? { previewScreenshotDataUrl } : {}),
       ...(fullPageScreenshotDataUrl ? { fullPageScreenshotDataUrl } : {}),
       targets: (raw.targets as EvaluatedTarget[]).map(
         ({ selector: _selector, ...target }) => target,
@@ -653,6 +808,32 @@ const makeBrowserAutomation = () =>
                   );
                   break;
                 }
+                case "clickAt": {
+                  try {
+                    await session.page.mouse.click(input.action.x, input.action.y);
+                  } catch {
+                    // Low-level user-style clicks can race with navigation. Still return
+                    // the next observation so the preview does not get stuck on a
+                    // transient protocol error.
+                  }
+                  break;
+                }
+                case "clickTargetOrAt": {
+                  const descriptor = lookupTarget(input.action.targetId);
+                  try {
+                    await tryLocatorCandidates(session.page, descriptor, (locator) =>
+                      locator.click({ timeout: ACTION_TIMEOUT_MS }),
+                    );
+                  } catch {
+                    try {
+                      await session.page.mouse.click(input.action.x, input.action.y);
+                    } catch {
+                      // The preview should keep returning fresh observations even if
+                      // an individual user click races with navigation or stale DOM.
+                    }
+                  }
+                  break;
+                }
                 case "type": {
                   const textAction = input.action;
                   const descriptor = lookupTarget(input.action.targetId);
@@ -666,8 +847,17 @@ const makeBrowserAutomation = () =>
                   });
                   break;
                 }
+                case "typeFocused": {
+                  await session.page.keyboard.type(input.action.text);
+                  break;
+                }
                 case "press": {
-                  await session.page.keyboard.press(input.action.key);
+                  try {
+                    await session.page.keyboard.press(input.action.key);
+                  } catch {
+                    // Key presses can throw while the page is navigating. Treat that
+                    // as a best-effort input and inspect the resulting page state.
+                  }
                   break;
                 }
                 case "scroll": {

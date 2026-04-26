@@ -1,5 +1,11 @@
 import { Schema } from "effect";
-import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas";
 
 const BROWSER_MAX_URL_LENGTH = 2_048;
 const BROWSER_MAX_KEY_LENGTH = 64;
@@ -17,6 +23,7 @@ const BROWSER_MAX_ARIA_SNAPSHOT_LENGTH = 16_000;
 const BROWSER_MAX_WAIT_FOR_TEXT_LENGTH = 512;
 const BROWSER_MAX_EVALUATE_EXPRESSION_LENGTH = 4_000;
 const BROWSER_MAX_EVALUATE_RESULT_LENGTH = 8_000;
+const BROWSER_MAX_ANNOTATION_COMMENT_LENGTH = 2_000;
 
 export const BrowserSessionId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type BrowserSessionId = typeof BrowserSessionId.Type;
@@ -74,6 +81,9 @@ export const BrowserObservation = Schema.Struct({
   screenshotDataUrl: Schema.optional(
     Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
   ),
+  previewScreenshotDataUrl: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
+  ),
   fullPageScreenshotDataUrl: Schema.optional(
     Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
   ),
@@ -123,11 +133,29 @@ const BrowserClickAction = Schema.Struct({
   targetId: BrowserTargetId,
 });
 
+const BrowserClickAtAction = Schema.Struct({
+  kind: Schema.Literal("clickAt"),
+  x: NonNegativeInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
+  y: NonNegativeInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_HEIGHT)),
+});
+
+const BrowserClickTargetOrAtAction = Schema.Struct({
+  kind: Schema.Literal("clickTargetOrAt"),
+  targetId: BrowserTargetId,
+  x: NonNegativeInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
+  y: NonNegativeInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_HEIGHT)),
+});
+
 const BrowserTypeAction = Schema.Struct({
   kind: Schema.Literal("type"),
   targetId: BrowserTargetId,
   text: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_TYPE_TEXT_LENGTH)),
   clearFirst: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+});
+
+const BrowserTypeFocusedAction = Schema.Struct({
+  kind: Schema.Literal("typeFocused"),
+  text: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_TYPE_TEXT_LENGTH)),
 });
 
 const BrowserPressAction = Schema.Struct({
@@ -174,7 +202,10 @@ const BrowserEvaluateAction = Schema.Struct({
 export const BrowserAction = Schema.Union([
   BrowserNavigateAction,
   BrowserClickAction,
+  BrowserClickAtAction,
+  BrowserClickTargetOrAtAction,
   BrowserTypeAction,
+  BrowserTypeFocusedAction,
   BrowserPressAction,
   BrowserScrollAction,
   BrowserWaitAction,
@@ -199,3 +230,69 @@ export const BrowserCloseSessionInput = Schema.Struct({
   sessionId: BrowserSessionId,
 });
 export type BrowserCloseSessionInput = typeof BrowserCloseSessionInput.Type;
+
+export const BrowserAnnotationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export type BrowserAnnotationId = typeof BrowserAnnotationId.Type;
+
+export const BrowserAnnotation = Schema.Struct({
+  id: BrowserAnnotationId,
+  threadId: ThreadId,
+  sessionId: Schema.optional(BrowserSessionId),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  title: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  comment: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_ANNOTATION_COMMENT_LENGTH)),
+  kind: Schema.Literals(["point", "rect"]),
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.optional(Schema.Number),
+  height: Schema.optional(Schema.Number),
+  viewportWidth: Schema.optional(NonNegativeInt),
+  viewportHeight: Schema.optional(NonNegativeInt),
+  scrollTop: Schema.optional(NonNegativeInt),
+  targetId: Schema.optional(BrowserTargetId),
+  targetLabel: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  screenshotDataUrl: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
+  ),
+  createdAt: IsoDateTime,
+});
+export type BrowserAnnotation = typeof BrowserAnnotation.Type;
+
+export const BrowserAddAnnotationInput = Schema.Struct({
+  threadId: ThreadId,
+  sessionId: Schema.optional(BrowserSessionId),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  title: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  comment: Schema.String.check(Schema.isMaxLength(BROWSER_MAX_ANNOTATION_COMMENT_LENGTH)),
+  kind: Schema.Literals(["point", "rect"]),
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.optional(Schema.Number),
+  height: Schema.optional(Schema.Number),
+  viewportWidth: Schema.optional(NonNegativeInt),
+  viewportHeight: Schema.optional(NonNegativeInt),
+  scrollTop: Schema.optional(NonNegativeInt),
+  targetId: Schema.optional(BrowserTargetId),
+  targetLabel: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  screenshotDataUrl: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
+  ),
+});
+export type BrowserAddAnnotationInput = typeof BrowserAddAnnotationInput.Type;
+
+export const BrowserListAnnotationsInput = Schema.Struct({
+  threadId: ThreadId,
+  sessionId: Schema.optional(BrowserSessionId),
+});
+export type BrowserListAnnotationsInput = typeof BrowserListAnnotationsInput.Type;
+
+export const BrowserAnnotationResult = Schema.Struct({
+  annotation: BrowserAnnotation,
+  annotations: Schema.Array(BrowserAnnotation),
+});
+export type BrowserAnnotationResult = typeof BrowserAnnotationResult.Type;
+
+export const BrowserAnnotationsResult = Schema.Struct({
+  annotations: Schema.Array(BrowserAnnotation),
+});
+export type BrowserAnnotationsResult = typeof BrowserAnnotationsResult.Type;

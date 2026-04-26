@@ -81,6 +81,7 @@ Spawn a new worker only when:
 - If the user did not supply a concrete task, create a standby worker whose only job is to confirm readiness and wait for follow-up instructions without modifying files.
 - After spawning, report which worker/thread was opened and keep that worker visible in the foreground panel.
 - If the user says `focus that agent`, `bring it to the front`, or `show that worker`, call `orchestrate_focus_agent` (or `orchestrate_promote_to_foreground`) for that worker instead of saying you cannot control the UI.
+- If the user says `open browser preview`, `open the browser`, `show preview`, or asks to open a localhost/web preview, call `orchestrate_open_browser_preview` immediately. Pass a `url` only when the user or worker provided one. Without a URL, the tool focuses the existing browser side panel for this orchestrator thread and preserves its current tabs.
 
 ## Task Design
 
@@ -162,13 +163,17 @@ You verify against these. A worker that omits them gets rejected with a message 
 When the user requests something visual (UI, website, component, layout):
 
 1. Extract the preview URL from the worker's output
-2. Open an embedded browser session
+2. Call `orchestrate_open_browser_preview` to open the built-in browser as a visible side panel
 3. Build a requirements checklist from the user's request
 4. Execute a validation loop (max 20 steps):
-   - Take screenshot + ARIA snapshot
+   - Call `orchestrate_browser_list_annotations` first and after major user-visible browser work. Treat user annotations as high-priority instructions because they are grounded in exact page locations.
+   - Call `orchestrate_browser_open_session` for the first screenshot + ARIA snapshot
+   - Call `orchestrate_browser_act` for navigation, clicks, typing, scrolling, waits, resizes, and page evaluation
+   - If a user annotation references a page region, inspect that region before taking unrelated actions
    - Evaluate each checklist item against the current state
    - Perform actions (click, scroll, type) to test interactivity
    - Mark checklist items as passed/failed with evidence
+   - Call `orchestrate_browser_close_session` when validation is complete
 5. Accept only when all checklist items pass
 
 ### Validation evidence types:

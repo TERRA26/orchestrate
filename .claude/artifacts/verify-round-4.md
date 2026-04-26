@@ -5,7 +5,7 @@ Branch: fix/orchestrator-remediations (14 commits ahead of main — `4017dc7c`)
 
 ## What the live game-platform transcript revealed
 
-User submitted the prompt *"Build a website server using orchestrator agents with react and tailwind css to build a game platform with multiple browser games."* The orchestrator decomposed correctly but then got stuck:
+User submitted the prompt _"Build a website server using orchestrator agents with react and tailwind css to build a game platform with multiple browser games."_ The orchestrator decomposed correctly but then got stuck:
 
 > **send_to_agent isn't implemented in this MCP build.** Per the runtime's note, I have to use spawn/terminate/accept/reject.
 
@@ -16,6 +16,7 @@ Round 2's Gap A claimed send_to_agent was fixed. The claim was wrong — fixed o
 **Evidence:** `scripts/orchestrate-mcp-server.ts:150` declares the tool, but grepping `toolName === "orchestrate_send_to_agent"` returns zero matches in the handler switch. Falls through to `{ status: "unimplemented" }` at line 926. Round 3 Gap I added `get_agent_diff` and `get_agent_logs` to the MCP layer but I missed `send_to_agent`.
 
 **Fix:** new MCP handler mirrors `handleSendToAgent` semantics:
+
 - Look up target worker via snapshot
 - Return error if not found or terminated
 - Dispatch `orchestrator.message.send` (audit trail)
@@ -26,7 +27,7 @@ The Codex orchestrator can now send follow-ups instead of spawning a fresh worke
 
 ### Gap L2 — workers were asked to call a tool they don't have
 
-**Evidence:** Round 2's Gap J reminder told workers *"When you finish, submit your work with: - summary: … - filesWritten: …"*. But workers are Claude Code / Codex CLI sessions; they have Read/Write/Bash/etc. They do NOT have an `orchestrator.task.submit` tool. The reminder was asking for an impossible action and inducing hallucination. Observed: the game-platform worker "idled without calling orchestrator.task.submit" — exactly what happens when you ask an LLM to call a nonexistent tool.
+**Evidence:** Round 2's Gap J reminder told workers _"When you finish, submit your work with: - summary: … - filesWritten: …"_. But workers are Claude Code / Codex CLI sessions; they have Read/Write/Bash/etc. They do NOT have an `orchestrator.task.submit` tool. The reminder was asking for an impossible action and inducing hallucination. Observed: the game-platform worker "idled without calling orchestrator.task.submit" — exactly what happens when you ask an LLM to call a nonexistent tool.
 
 **Fix:** replaced the reminder with a REPORT-block protocol that uses the worker's final assistant message. Workers end their last message with:
 
@@ -46,6 +47,7 @@ hasChanges: true|false
 The orchestrator reads this via `orchestrate_get_agent_logs` and parses it at accept/reject time. Submission happens server-side via the existing accept/reject auto-submit machinery, which the workers don't need to know about.
 
 Test `Gap J/L2` asserts:
+
 - Reminder contains `## REPORT`, `filesWritten:`, `testsRun:`
 - Reminder does NOT contain `orchestrator.task.submit`
 
@@ -95,6 +97,6 @@ df6bddbe fix(orchestrator): gap-10 implement orchestrate_get_agent_logs
 
 After a dev-server restart (MCP server is spawned fresh on each Codex session):
 
-1. Prompt the orchestrator on a fresh thread: *"Spawn a worker to create `apps/demo/a.txt`. After it finishes, send it a follow-up asking it to also create `apps/demo/b.txt`. Do NOT spawn a second worker."*
+1. Prompt the orchestrator on a fresh thread: _"Spawn a worker to create `apps/demo/a.txt`. After it finishes, send it a follow-up asking it to also create `apps/demo/b.txt`. Do NOT spawn a second worker."_
 2. Expect: orchestrator calls `orchestrate_send_to_agent` with the follow-up, MCP returns `{ queued: true, messageId }`, the worker's thread receives a new user turn, same worker creates the second file.
 3. Before the fix: orchestrator would report `send_to_agent is unimplemented` and spawn a second worker.

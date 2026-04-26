@@ -37,6 +37,7 @@ export interface WorkLogEntry {
   createdAt: string;
   label: string;
   detail?: string;
+  output?: string;
   command?: string;
   changedFiles?: ReadonlyArray<string>;
   toolName?: string;
@@ -513,6 +514,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.detail = detail;
     }
   }
+  if (payload && typeof payload.output === "string" && payload.output.length > 0) {
+    entry.output = payload.output;
+  }
   if (command) {
     entry.command = command;
   }
@@ -556,7 +560,23 @@ function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  const toolEntryIndexByCollapseKey = new Map<string, number>();
   for (const entry of entries) {
+    if (
+      entry.collapseKey &&
+      (entry.activityKind === "tool.updated" || entry.activityKind === "tool.completed")
+    ) {
+      const existingIndex = toolEntryIndexByCollapseKey.get(entry.collapseKey);
+      if (existingIndex !== undefined) {
+        const existing = collapsed[existingIndex];
+        if (existing) {
+          collapsed[existingIndex] = mergeDerivedWorkLogEntries(existing, entry);
+          continue;
+        }
+      }
+      toolEntryIndexByCollapseKey.set(entry.collapseKey, collapsed.length);
+    }
+
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
       collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
@@ -589,6 +609,7 @@ function mergeDerivedWorkLogEntries(
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const detail = next.detail ?? previous.detail;
+  const output = next.output ?? previous.output;
   const command = next.command ?? previous.command;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
@@ -601,6 +622,7 @@ function mergeDerivedWorkLogEntries(
     ...previous,
     ...next,
     ...(detail ? { detail } : {}),
+    ...(output ? { output } : {}),
     ...(command ? { command } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolName ? { toolName } : {}),
@@ -877,9 +899,29 @@ function normalizeDiscoveredToolName(value: string | null): string | null {
 }
 
 function extractToolName(payload: Record<string, unknown> | null): string | null {
-  return normalizeDiscoveredToolName(
-    findFirstStringByKeys(asRecord(payload?.data), ["toolName", "tool_name", "name", "kind"], 0),
-  );
+  const structuredName =
+    findFirstStringByKeys(asRecord(payload?.data), ["toolName", "tool_name", "name", "kind"], 0) ??
+    asTrimmedString(payload?.toolName) ??
+    asTrimmedString(payload?.tool_name) ??
+    asTrimmedString(payload?.name);
+  if (structuredName) {
+    return normalizeDiscoveredToolName(structuredName);
+  }
+
+  const summaryName = extractToolNameFromText(asTrimmedString(payload?.summary));
+  if (summaryName) {
+    return summaryName;
+  }
+
+  return extractToolNameFromText(asTrimmedString(payload?.detail));
+}
+
+function extractToolNameFromText(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const match = /(?:^|\s)((?:mcp__[\w-]+__)?[\w-]+):\s*\{/.exec(value);
+  return normalizeDiscoveredToolName(match?.[1] ?? null);
 }
 
 function extractAssociatedThreadId(payload: Record<string, unknown> | null): string | null {

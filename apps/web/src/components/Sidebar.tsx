@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  GlobeIcon,
   type LucideIcon,
   PlugIcon,
   RocketIcon,
@@ -152,6 +153,8 @@ import { useTemporaryThreadStore } from "../temporaryThreadStore";
 import { usePinnedThreadsStore } from "../pinnedThreadsStore";
 import { useWorkspaceStore, workspaceThreadId } from "../workspaceStore";
 import { usePanelStateStore } from "./orchestrator/panelStateStore";
+import { useBrowserStateStore } from "../browserStateStore";
+import { useOrchestratorPaneStore } from "../lib/orchestratorPaneStore";
 import type {
   SidebarSearchAction,
   SidebarSearchProject,
@@ -569,6 +572,10 @@ export default function Sidebar() {
   const reorderProjects = useStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
+  const browserStatesByThreadId = useBrowserStateStore((state) => state.threadStatesByThreadId);
+  const focusedBrowserThreadId = useOrchestratorPaneStore((state) => state.focusedBrowserThreadId);
+  const setOrchestratorThread = useOrchestratorPaneStore((state) => state.setOrchestratorThread);
+  const focusBrowser = useOrchestratorPaneStore((state) => state.focusBrowser);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const openChatThreadPage = useTerminalStateStore((state) => state.openChatThreadPage);
   const openTerminalThreadPage = useTerminalStateStore((state) => state.openTerminalThreadPage);
@@ -1582,6 +1589,15 @@ export default function Sidebar() {
     [activateThread, rangeSelectTo, toggleThreadSelection],
   );
 
+  const activateOrchestratorBrowser = useCallback(
+    (threadId: ThreadId) => {
+      setOrchestratorThread(threadId);
+      focusBrowser(threadId);
+      activateThread(threadId);
+    },
+    [activateThread, focusBrowser, setOrchestratorThread],
+  );
+
   const handleProjectContextMenu = useCallback(
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const api = readNativeApi();
@@ -1908,7 +1924,20 @@ export default function Sidebar() {
 
     const childThreads = childThreadsByParent?.get(thread.id) ?? [];
     const isOrchestratorThread = thread.threadType === "orchestrator";
-    const hasChildren = childThreads.length > 0;
+    const browserState = isOrchestratorThread ? browserStatesByThreadId[thread.id] : undefined;
+    const browserActiveTab =
+      browserState?.tabs.find((tab) => tab.id === browserState.activeTabId) ??
+      browserState?.tabs[0] ??
+      null;
+    const hasBrowserSession =
+      isOrchestratorThread && browserState !== undefined && browserState.tabs.length > 0;
+    const isBrowserActive =
+      hasBrowserSession && routeThreadId === thread.id && focusedBrowserThreadId === thread.id;
+    const browserTitle =
+      browserActiveTab?.title && browserActiveTab.title !== "New tab"
+        ? browserActiveTab.title
+        : "Browser";
+    const hasChildren = childThreads.length > 0 || hasBrowserSession;
     const isExpanded = !collapsedParentThreads.has(thread.id);
 
     return (
@@ -2144,6 +2173,48 @@ export default function Sidebar() {
         </SidebarMenuSubItem>
         {hasChildren && isExpanded && (
           <div className="relative ml-6 border-l border-border/30 pl-2">
+            {hasBrowserSession ? (
+              <SidebarMenuSubItem
+                key={`${thread.id}:browser`}
+                className="group/browser-row relative w-full before:pointer-events-none before:absolute before:left-[-8px] before:top-1/2 before:h-px before:w-[6px] before:bg-border/30"
+              >
+                <SidebarMenuSubButton
+                  render={<div role="button" tabIndex={0} />}
+                  size="sm"
+                  isActive={isBrowserActive}
+                  className={cn(
+                    resolveThreadRowClassName({
+                      isActive: isBrowserActive,
+                      isSelected: false,
+                    }),
+                    "h-6 gap-1.5 py-0.5",
+                  )}
+                  onClick={() => activateOrchestratorBrowser(thread.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    activateOrchestratorBrowser(thread.id);
+                  }}
+                >
+                  <GlobeIcon className="size-2.5 shrink-0 text-sky-400/85" />
+                  <span
+                    className={cn(
+                      "inline-flex size-1 shrink-0 rounded-full",
+                      focusedBrowserThreadId === thread.id
+                        ? "bg-sky-400/85 shadow-[0_0_5px_rgba(56,189,248,0.55)]"
+                        : "bg-muted-foreground/35",
+                    )}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[11px] leading-4 text-foreground/70">
+                    {browserTitle}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground/35">
+                    Browser
+                  </span>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ) : null}
             {childThreads.map((child) => {
               const childStatus = resolveThreadStatusPill({
                 thread: child,
