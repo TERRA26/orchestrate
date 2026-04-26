@@ -7,7 +7,7 @@ import {
   ProjectEntry,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
@@ -30,6 +30,27 @@ const IGNORED_DIRECTORY_NAMES = new Set([
   "build",
   "out",
   ".cache",
+  // Common tooling caches + artifact directories that bloat agent context and
+  // never contain author-written source. Keep this list narrow — anything here
+  // is force-excluded regardless of .gitignore. Prefer adding to .gitignore
+  // for anything project-specific.
+  ".svelte-kit",
+  ".vercel",
+  ".parcel-cache",
+  ".rollup.cache",
+  ".expo",
+  ".expo-shared",
+  ".idea",
+  ".vscode-test",
+  "target", // Rust, Java build output
+  "__pycache__",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".ipynb_checkpoints",
+  "coverage",
+  ".coverage",
+  ".nyc_output",
 ]);
 
 interface WorkspaceIndex {

@@ -21,7 +21,7 @@ npx t3
 
 ### Security
 
-By default, Orchestrate binds to `127.0.0.1` (loopback only). To expose the server on the network, set `--host 0.0.0.0` and configure an auth token via `--auth-token` or `T3CODE_AUTH_TOKEN`.
+By default, Orchestrate binds to `127.0.0.1` (loopback only). To expose the server on the network, set `--host 0.0.0.0` and configure an auth token via `--auth-token` or `ORCHESTRATE_AUTH_TOKEN`.
 
 ## Some notes
 

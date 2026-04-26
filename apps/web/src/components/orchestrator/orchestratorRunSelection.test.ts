@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OrchestratorRun } from "@t3tools/contracts";
+import type { OrchestratorRun } from "@orchestrate/contracts";
 
 import { selectVisibleOrchestratorRun } from "./orchestratorRunSelection";
 

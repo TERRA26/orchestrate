@@ -1,4 +1,4 @@
-import { type ProjectId, ThreadId } from "@t3tools/contracts";
+import { type ProjectId, ThreadId } from "@orchestrate/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 import { useAppSettings } from "../appSettings";
@@ -89,6 +89,7 @@ export function useHandleNewThread() {
           activeDraftThread: activeDraftThreadSnapshot,
           activeThread: activeThreadSnapshot,
           defaultProvider: settings.defaultProvider,
+          defaultModelByProvider: settings.defaultModelByProvider,
           draftComposerState:
             useComposerDraftStore.getState().draftsByThreadId[targetThreadId] ?? null,
           draftThread,

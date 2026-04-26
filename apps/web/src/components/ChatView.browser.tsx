@@ -12,8 +12,8 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   OrchestrationSessionStatus,
-} from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+} from "@orchestrate/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@orchestrate/contracts/settings";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -115,7 +115,7 @@ function isoAt(offsetSeconds: number): string {
 function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
-    keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    keybindingsConfigPath: "/repo/project/.orchestrate-keybindings.json",
     keybindings: [],
     issues: [],
     providers: [
@@ -1319,7 +1319,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             cwd: "/repo/project",
             env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
+              ORCHESTRATE_PROJECT_ROOT: "/repo/project",
             },
           });
         },
@@ -1396,8 +1396,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             cwd: "/repo/worktrees/feature-draft",
             env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
-              T3CODE_WORKTREE_PATH: "/repo/worktrees/feature-draft",
+              ORCHESTRATE_PROJECT_ROOT: "/repo/project",
+              ORCHESTRATE_WORKTREE_PATH: "/repo/worktrees/feature-draft",
             },
           });
         },

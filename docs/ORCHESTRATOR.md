@@ -65,6 +65,7 @@ If you're unsure whether a command counts as operational or delegated: ask "does
 When an existing worker needs a small correction (a 1-char fix, a config tweak, an adjustment to a just-built file), **send a message** to that worker via `orchestrate_send_to_agent` — do NOT spawn a fresh worker. The running worker already has the context you need it to preserve. A fresh worker would pay the full cold-context cost for what is often a single-line change.
 
 Spawn a new worker only when:
+
 - The existing worker has been terminated or has submitted and been accepted
 - The new task is genuinely independent of the previous work
 - You deliberately want a fresh perspective (e.g., independent code review)
@@ -141,6 +142,7 @@ If you only specify `task` (no `model`/`provider`), the server inherits the orch
 ### When you ask workers to submit:
 
 Require the worker to call `orchestrator.task.submit` with:
+
 - **summary**: 1-sentence description of what it did
 - **filesWritten**: every file it created or modified (absolute repo-relative paths)
 - **testsRun**: each test file or suite it ran + whether it passed

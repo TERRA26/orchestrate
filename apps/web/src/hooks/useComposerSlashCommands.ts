@@ -7,8 +7,8 @@ import {
   type ProviderModelOptions,
   type RuntimeMode,
   type ThreadId,
-} from "@t3tools/contracts";
-import { deriveAssociatedWorktreeMetadata } from "@t3tools/shared/threadWorkspace";
+} from "@orchestrate/contracts";
+import { deriveAssociatedWorktreeMetadata } from "@orchestrate/shared/threadWorkspace";
 import { useCallback, useState } from "react";
 import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";

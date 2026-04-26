@@ -1,4 +1,4 @@
-# Welcome to T3 Code
+# Welcome to Orchestrate
 
 ## How We Use Claude
 
@@ -18,13 +18,13 @@ _(none configured yet)_
 
 ### Codebases
 
-- [ ] t3code — https://github.com/pingdotgg/t3code
+- [ ] orchestrate — https://github.com/pingdotgg/orchestrate
 
 ### Reference Repos
 
 - [ ] claw-code-parity — https://github.com/TERRA26/claw-code-parity.git
 - [ ] dev-browser — https://github.com/SawyerHood/dev-browser.git
-- [ ] dpcode — https://github.com/Emanuele-web04/dpcode.git
+- [ ] dpcode — https://github.com/Emanuele-web04/dpcode.git (upstream reference)
 - [ ] playwright-mcp — https://github.com/microsoft/playwright-mcp.git
 
 ### MCP Servers to Activate

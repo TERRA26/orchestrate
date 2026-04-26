@@ -16,8 +16,8 @@ import {
   TerminalSessionSnapshot,
   TerminalSessionStatus,
   TerminalWriteInput,
-} from "@t3tools/contracts";
-import type { TerminalActivityState, TerminalCliKind } from "@t3tools/shared/terminalThreads";
+} from "@orchestrate/contracts";
+import type { TerminalActivityState, TerminalCliKind } from "@orchestrate/shared/terminalThreads";
 import { PtyProcess } from "./PTY";
 import { Effect, Schema, ServiceMap } from "effect";
 

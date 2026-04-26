@@ -19,7 +19,9 @@ import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPluginsRouteImport } from './routes/_chat.plugins'
 import { Route as ChatThreadIdRouteImport } from './routes/_chat.$threadId'
 import { Route as ChatWorkspaceIndexRouteImport } from './routes/_chat.workspace.index'
+import { Route as ChatBenchmarksIndexRouteImport } from './routes/_chat.benchmarks.index'
 import { Route as ChatWorkspaceWorkspaceIdRouteImport } from './routes/_chat.workspace.$workspaceId'
+import { Route as ChatBenchmarksRunIdRouteImport } from './routes/_chat.benchmarks.$runId'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -70,12 +72,22 @@ const ChatWorkspaceIndexRoute = ChatWorkspaceIndexRouteImport.update({
   path: '/workspace/',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatBenchmarksIndexRoute = ChatBenchmarksIndexRouteImport.update({
+  id: '/benchmarks/',
+  path: '/benchmarks/',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatWorkspaceWorkspaceIdRoute =
   ChatWorkspaceWorkspaceIdRouteImport.update({
     id: '/workspace/$workspaceId',
     path: '/workspace/$workspaceId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatBenchmarksRunIdRoute = ChatBenchmarksRunIdRouteImport.update({
+  id: '/benchmarks/$runId',
+  path: '/benchmarks/$runId',
+  getParentRoute: () => ChatRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -85,7 +97,9 @@ export interface FileRoutesByFullPath {
   '/plugins': typeof ChatPluginsRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/benchmarks/$runId': typeof ChatBenchmarksRunIdRoute
   '/workspace/$workspaceId': typeof ChatWorkspaceWorkspaceIdRoute
+  '/benchmarks/': typeof ChatBenchmarksIndexRoute
   '/workspace/': typeof ChatWorkspaceIndexRoute
 }
 export interface FileRoutesByTo {
@@ -96,7 +110,9 @@ export interface FileRoutesByTo {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/': typeof ChatIndexRoute
+  '/benchmarks/$runId': typeof ChatBenchmarksRunIdRoute
   '/workspace/$workspaceId': typeof ChatWorkspaceWorkspaceIdRoute
+  '/benchmarks': typeof ChatBenchmarksIndexRoute
   '/workspace': typeof ChatWorkspaceIndexRoute
 }
 export interface FileRoutesById {
@@ -110,7 +126,9 @@ export interface FileRoutesById {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/_chat/': typeof ChatIndexRoute
+  '/_chat/benchmarks/$runId': typeof ChatBenchmarksRunIdRoute
   '/_chat/workspace/$workspaceId': typeof ChatWorkspaceWorkspaceIdRoute
+  '/_chat/benchmarks/': typeof ChatBenchmarksIndexRoute
   '/_chat/workspace/': typeof ChatWorkspaceIndexRoute
 }
 export interface FileRouteTypes {
@@ -123,7 +141,9 @@ export interface FileRouteTypes {
     | '/plugins'
     | '/settings/archived'
     | '/settings/general'
+    | '/benchmarks/$runId'
     | '/workspace/$workspaceId'
+    | '/benchmarks/'
     | '/workspace/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -134,7 +154,9 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/general'
     | '/'
+    | '/benchmarks/$runId'
     | '/workspace/$workspaceId'
+    | '/benchmarks'
     | '/workspace'
   id:
     | '__root__'
@@ -147,7 +169,9 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/general'
     | '/_chat/'
+    | '/_chat/benchmarks/$runId'
     | '/_chat/workspace/$workspaceId'
+    | '/_chat/benchmarks/'
     | '/_chat/workspace/'
   fileRoutesById: FileRoutesById
 }
@@ -229,11 +253,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatWorkspaceIndexRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/benchmarks/': {
+      id: '/_chat/benchmarks/'
+      path: '/benchmarks'
+      fullPath: '/benchmarks/'
+      preLoaderRoute: typeof ChatBenchmarksIndexRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/workspace/$workspaceId': {
       id: '/_chat/workspace/$workspaceId'
       path: '/workspace/$workspaceId'
       fullPath: '/workspace/$workspaceId'
       preLoaderRoute: typeof ChatWorkspaceWorkspaceIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/benchmarks/$runId': {
+      id: '/_chat/benchmarks/$runId'
+      path: '/benchmarks/$runId'
+      fullPath: '/benchmarks/$runId'
+      preLoaderRoute: typeof ChatBenchmarksRunIdRouteImport
       parentRoute: typeof ChatRoute
     }
   }
@@ -244,7 +282,9 @@ interface ChatRouteChildren {
   ChatPluginsRoute: typeof ChatPluginsRoute
   ChatSettingsRoute: typeof ChatSettingsRoute
   ChatIndexRoute: typeof ChatIndexRoute
+  ChatBenchmarksRunIdRoute: typeof ChatBenchmarksRunIdRoute
   ChatWorkspaceWorkspaceIdRoute: typeof ChatWorkspaceWorkspaceIdRoute
+  ChatBenchmarksIndexRoute: typeof ChatBenchmarksIndexRoute
   ChatWorkspaceIndexRoute: typeof ChatWorkspaceIndexRoute
 }
 
@@ -253,7 +293,9 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatPluginsRoute: ChatPluginsRoute,
   ChatSettingsRoute: ChatSettingsRoute,
   ChatIndexRoute: ChatIndexRoute,
+  ChatBenchmarksRunIdRoute: ChatBenchmarksRunIdRoute,
   ChatWorkspaceWorkspaceIdRoute: ChatWorkspaceWorkspaceIdRoute,
+  ChatBenchmarksIndexRoute: ChatBenchmarksIndexRoute,
   ChatWorkspaceIndexRoute: ChatWorkspaceIndexRoute,
 }
 

@@ -8,13 +8,13 @@ import {
   type ProviderKind,
   type ThreadId,
   ThreadId as ThreadIdSchema,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 import type { OrchestratorChecklistItem } from "./orchestratorTypes";
 
-export const ORCHESTRATOR_STATE_STORAGE_KEY = "t3code:orchestrator-state:v1";
+export const ORCHESTRATOR_STATE_STORAGE_KEY = "orchestrate:orchestrator-state:v1";
 const ORCHESTRATOR_STATE_STORAGE_VERSION = 1;
 const ORCHESTRATOR_PERSIST_DEBOUNCE_MS = 300;
 const MAX_ORCHESTRATOR_MESSAGES = 400;

@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem } from "@orchestrate/contracts";
 
 /**
  * Imperative DOM-based context menu that matches the app's Base UI menu styling.

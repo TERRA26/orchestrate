@@ -8,7 +8,7 @@ import { OpenLive } from "./open";
 import { Command } from "effect/unstable/cli";
 import { version } from "../package.json" with { type: "json" };
 import { ServerLive } from "./wsServer";
-import { NetService } from "@t3tools/shared/Net";
+import { NetService } from "@orchestrate/shared/Net";
 import { FetchHttpClient } from "effect/unstable/http";
 
 const RuntimeLayer = Layer.empty.pipe(
@@ -20,4 +20,5 @@ const RuntimeLayer = Layer.empty.pipe(
   Layer.provideMerge(FetchHttpClient.layer),
 );
 
+// dev hot-reload watch sentinel: touch this line to trigger bun --watch restart (v2)
 Command.run(t3Cli, { version }).pipe(Effect.provide(RuntimeLayer), NodeRuntime.runMain);

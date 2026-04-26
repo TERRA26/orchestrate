@@ -5,8 +5,11 @@
 
 import { SearchAddon } from "@xterm/addon-search";
 import { Plus, SquareSplitHorizontal, SquareSplitVertical, Trash2 } from "~/lib/icons";
-import { type ThreadId } from "@t3tools/contracts";
-import { type TerminalActivityState, type TerminalCliKind } from "@t3tools/shared/terminalThreads";
+import { type ThreadId } from "@orchestrate/contracts";
+import {
+  type TerminalActivityState,
+  type TerminalCliKind,
+} from "@orchestrate/shared/terminalThreads";
 import { Terminal } from "@xterm/xterm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type TerminalContextSelection } from "~/lib/terminalContext";

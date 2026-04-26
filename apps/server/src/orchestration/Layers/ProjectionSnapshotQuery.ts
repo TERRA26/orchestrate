@@ -22,7 +22,7 @@ import {
   type OrchestrationThreadActivity,
   ThreadHandoff,
   ModelSelection,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -336,7 +336,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
+  // Log snapshot queries that take longer than this threshold so DB health
+  // regressions surface early. Per item #115 of the production roadmap.
+  const SLOW_QUERY_THRESHOLD_MS = 50;
+  const getSnapshotInner = () =>
     sql
       .withTransaction(
         Effect.gen(function* () {
@@ -620,6 +623,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           return toPersistenceSqlError("ProjectionSnapshotQuery.getSnapshot:query")(error);
         }),
       );
+
+  const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
+    Effect.gen(function* () {
+      const start = Date.now();
+      const result = yield* getSnapshotInner();
+      const elapsed = Date.now() - start;
+      if (elapsed > SLOW_QUERY_THRESHOLD_MS) {
+        yield* Effect.logWarning("slow projection snapshot query").pipe(
+          Effect.annotateLogs({
+            query: "ProjectionSnapshotQuery.getSnapshot",
+            durationMs: elapsed,
+            thresholdMs: SLOW_QUERY_THRESHOLD_MS,
+            projects: result.projects.length,
+            threads: result.threads.length,
+          }),
+        );
+      }
+      return result;
+    });
 
   return {
     getSnapshot,

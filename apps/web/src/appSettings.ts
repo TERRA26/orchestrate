@@ -1,16 +1,20 @@
 import { useCallback } from "react";
 import { Option, Schema } from "effect";
-import { TrimmedNonEmptyString, ProviderKind, type ProviderStartOptions } from "@t3tools/contracts";
+import {
+  TrimmedNonEmptyString,
+  ProviderKind,
+  type ProviderStartOptions,
+} from "@orchestrate/contracts";
 import {
   getDefaultModel,
   getModelOptions,
   normalizeModelSlug,
   resolveSelectableModel,
-} from "@t3tools/shared/model";
+} from "@orchestrate/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { EnvMode } from "./components/BranchToolbar.logic";
 
-const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
+const APP_SETTINGS_STORAGE_KEY = "orchestrate:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 
@@ -73,7 +77,18 @@ export const AppSettingsSchema = Schema.Struct({
   customClaudeModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   textGenerationModel: Schema.optional(TrimmedNonEmptyString),
   uiFontFamily: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
-  defaultProvider: ProviderKind.pipe(withDefaults(() => "codex" as const)),
+  defaultProvider: ProviderKind.pipe(withDefaults(() => "claudeAgent" as const)),
+  // Per-provider default model. New threads created with the default provider
+  // use the matching model from this map. Existing threads keep their model.
+  defaultModelByProvider: Schema.Struct({
+    codex: TrimmedNonEmptyString.pipe(withDefaults(() => "gpt-5.4")),
+    claudeAgent: TrimmedNonEmptyString.pipe(withDefaults(() => "claude-opus-4-7")),
+  }).pipe(
+    withDefaults(() => ({
+      codex: "gpt-5.4",
+      claudeAgent: "claude-opus-4-7",
+    })),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {

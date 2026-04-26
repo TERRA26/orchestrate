@@ -402,15 +402,9 @@ function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
           : "text-muted-foreground/50";
 
   return (
-    <div
-      className="flex items-baseline gap-2 px-3 py-0.5"
-      data-activity-row={rawToolName ?? "x"}
-    >
+    <div className="flex items-baseline gap-2 px-3 py-0.5" data-activity-row={rawToolName ?? "x"}>
       <span
-        className={cn(
-          "shrink-0 font-mono text-[10px] leading-[1.5] whitespace-nowrap",
-          toneClass,
-        )}
+        className={cn("shrink-0 font-mono text-[10px] leading-[1.5] whitespace-nowrap", toneClass)}
       >
         {label}
       </span>

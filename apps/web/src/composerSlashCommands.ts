@@ -1,4 +1,4 @@
-import type { GitBranch, ProviderKind } from "@t3tools/contracts";
+import type { GitBranch, ProviderKind } from "@orchestrate/contracts";
 
 export const BUILT_IN_COMPOSER_SLASH_COMMANDS = [
   "clear",

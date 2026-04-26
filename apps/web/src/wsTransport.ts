@@ -5,8 +5,8 @@ import {
   WebSocketResponse,
   type WsResponse as WsResponseMessage,
   WsResponse as WsResponseSchema,
-} from "@t3tools/contracts";
-import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+} from "@orchestrate/contracts";
+import { decodeUnknownJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
 import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
@@ -61,7 +61,35 @@ export class WsTransport {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
   private state: TransportState = "connecting";
+  private readonly stateListeners = new Set<(state: TransportState) => void>();
   private readonly url: string;
+
+  private setState(next: TransportState): void {
+    if (this.state === next) return;
+    this.state = next;
+    for (const listener of this.stateListeners) {
+      try {
+        listener(next);
+      } catch {
+        // Swallow listener errors so a bad subscriber can't break others.
+      }
+    }
+  }
+
+  subscribeToState(listener: (state: TransportState) => void): () => void {
+    this.stateListeners.add(listener);
+    // Fire immediately so callers get the current state.
+    try {
+      listener(this.state);
+    } catch {}
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
+  getQueuedRequestCount(): number {
+    return this.outboundQueue.length + this.pending.size;
+  }
 
   constructor(url?: string) {
     const bridgeUrl = window.desktopBridge?.getWsUrl();
@@ -152,7 +180,7 @@ export class WsTransport {
 
   dispose() {
     this.disposed = true;
-    this.state = "disposed";
+    this.setState("disposed");
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -174,12 +202,12 @@ export class WsTransport {
       return;
     }
 
-    this.state = this.reconnectAttempt > 0 ? "reconnecting" : "connecting";
+    this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
     const ws = new WebSocket(this.url);
 
     ws.addEventListener("open", () => {
       this.ws = ws;
-      this.state = "open";
+      this.setState("open");
       this.reconnectAttempt = 0;
       this.flushQueue();
     });
@@ -210,11 +238,11 @@ export class WsTransport {
       }
 
       if (this.disposed) {
-        this.state = "disposed";
+        this.setState("disposed");
         return;
       }
 
-      this.state = "closed";
+      this.setState("closed");
       this.scheduleReconnect();
     });
 

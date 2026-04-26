@@ -1,4 +1,4 @@
-import type { OrchestratorRun } from "@t3tools/contracts";
+import type { OrchestratorRun } from "@orchestrate/contracts";
 
 function byNewestActivity(a: OrchestratorRun, b: OrchestratorRun): number {
   return b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt);

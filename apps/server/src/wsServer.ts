@@ -12,6 +12,7 @@ import type { Duplex } from "node:stream";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
+  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TERMINAL_ID,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
@@ -28,7 +29,7 @@ import {
   type WsResponse as WsResponseMessage,
   WsResponse,
   type WsPushEnvelopeBase,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,
@@ -81,7 +82,7 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
-import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { decodeJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
 import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
 
 /**
@@ -771,6 +772,35 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
   yield* readiness.markOrchestrationSubscriptionsReady;
 
+  // Orphan-worker reaping: on server startup, any worker still in a non-terminal
+  // state in the read model is definitionally orphaned — the child provider
+  // process (Codex / Claude) was killed when the server exited. Mark those
+  // rows terminated so the UI and orchestrator don't see stale "running" agents.
+  yield* Effect.gen(function* () {
+    const engineReadModel = yield* orchestrationEngine.getReadModel();
+    const orphans = (engineReadModel.orchestratorWorkers ?? []).filter(
+      (w: { status: string }) => w.status !== "terminated",
+    );
+    for (const worker of orphans as Array<{
+      workerId: string;
+      threadId: string;
+      status: string;
+    }>) {
+      yield* orchestrationEngine
+        .dispatch({
+          type: "orchestrator.worker.terminate",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          workerId: worker.workerId as any,
+          reason: `Reclaimed on server restart (was ${worker.status})`,
+          createdAt: new Date().toISOString(),
+        })
+        .pipe(Effect.catch(() => Effect.void));
+    }
+    if (orphans.length > 0) {
+      yield* Effect.log(`Reclaimed ${orphans.length} orphaned worker(s) on startup`);
+    }
+  }).pipe(Effect.catch(() => Effect.void));
+
   let welcomeBootstrapProjectId: ProjectId | undefined;
   let welcomeBootstrapThreadId: ThreadId | undefined;
 
@@ -789,8 +819,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         bootstrapProjectId = ProjectId.makeUnsafe(crypto.randomUUID());
         const bootstrapProjectTitle = path.basename(cwd) || "project";
         bootstrapProjectDefaultModelSelection = {
-          provider: "codex" as const,
-          model: "gpt-5-codex",
+          provider: "claudeAgent" as const,
+          model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
         };
         yield* orchestrationEngine.dispatch({
           type: "project.create",
@@ -804,8 +834,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       } else {
         bootstrapProjectId = existingProject.id;
         bootstrapProjectDefaultModelSelection = existingProject.defaultModelSelection ?? {
-          provider: "codex" as const,
-          model: "gpt-5-codex",
+          provider: "claudeAgent" as const,
+          model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
         };
       }
 

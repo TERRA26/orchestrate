@@ -7,7 +7,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { page } from "vitest/browser";
 import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";

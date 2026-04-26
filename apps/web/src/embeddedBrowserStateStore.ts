@@ -1,4 +1,4 @@
-import { type BrowserObservation, type ThreadId } from "@t3tools/contracts";
+import { type BrowserObservation, type ThreadId } from "@orchestrate/contracts";
 import { create } from "zustand";
 
 export type EmbeddedBrowserSessionSource = "orchestrator" | "sidebar";

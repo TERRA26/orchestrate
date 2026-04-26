@@ -6,13 +6,13 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
   type GitActionProgressEvent,
   type GitActionProgressPhase,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
-} from "@t3tools/shared/git";
-import { resolveWorktreeHandoffIntent } from "@t3tools/shared/worktreeHandoff";
+} from "@orchestrate/shared/git";
+import { resolveWorktreeHandoffIntent } from "@orchestrate/shared/worktreeHandoff";
 
 import { GitManagerError } from "../Errors.ts";
 import {
@@ -128,7 +128,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  return `orchestrate/pr-${pullRequest.number}/${suffix}`;
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
@@ -996,7 +996,7 @@ export const makeGitManager = Effect.gen(function* () {
           : { provider: "codex" as const, model: DEFAULT_GIT_TEXT_GENERATION_MODEL },
       });
 
-      const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
+      const bodyFile = path.join(tempDir, `orchestrate-pr-body-${process.pid}-${randomUUID()}.md`);
       yield* fileSystem
         .writeFileString(bodyFile, generated.body)
         .pipe(
@@ -1609,11 +1609,11 @@ The local stash entry was kept for recovery.`,
 
       const preservedLocalStash = yield* stashWorkingTree(
         input.cwd,
-        `dpcode preserve local handoff ${randomUUID()}`,
+        `orchestrate preserve local handoff ${randomUUID()}`,
       );
       const sourceStash = yield* stashWorkingTree(
         input.worktreePath,
-        `dpcode handoff to local ${randomUUID()}`,
+        `orchestrate handoff to local ${randomUUID()}`,
       );
 
       yield* gitCore
@@ -1776,7 +1776,7 @@ The local stash entry was kept for recovery.`,
 
     const sourceStash = yield* stashWorkingTree(
       input.cwd,
-      `dpcode handoff to worktree ${randomUUID()}`,
+      `orchestrate handoff to worktree ${randomUUID()}`,
     );
     const sourceBranch = currentLocalStatus.branch ?? input.currentBranch ?? null;
     const sourceHeadRef = yield* readHeadRef(input.cwd);

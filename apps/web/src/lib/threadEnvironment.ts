@@ -3,9 +3,9 @@
 // Layer: Web domain helpers
 // Exports: thread env resolution + `/fork` target planning
 
-import type { ThreadEnvironmentMode } from "@t3tools/contracts";
-import { resolveThreadEnvironmentMode } from "@t3tools/shared/threadEnvironment";
-import { deriveAssociatedWorktreeMetadata } from "@t3tools/shared/threadWorkspace";
+import type { ThreadEnvironmentMode } from "@orchestrate/contracts";
+import { resolveThreadEnvironmentMode } from "@orchestrate/shared/threadEnvironment";
+import { deriveAssociatedWorktreeMetadata } from "@orchestrate/shared/threadWorkspace";
 import type { Thread } from "../types";
 
 export type ForkThreadTarget = "local" | "worktree";
@@ -24,7 +24,7 @@ export {
   isPendingThreadWorktree,
   resolveThreadEnvironmentMode,
   resolveThreadWorkspaceState,
-} from "@t3tools/shared/threadEnvironment";
+} from "@orchestrate/shared/threadEnvironment";
 
 // Fork planning keeps "local" attached to the current local checkout. For worktree-backed
 // threads that means reusing the existing worktree, while "worktree" always plans a new one.

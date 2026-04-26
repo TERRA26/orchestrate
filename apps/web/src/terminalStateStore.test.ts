@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@orchestrate/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createJSONStorage } from "zustand/middleware";
 

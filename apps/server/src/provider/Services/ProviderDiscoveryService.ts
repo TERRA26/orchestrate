@@ -11,7 +11,7 @@ import type {
   ProviderListSkillsResult,
   ProviderReadPluginInput,
   ProviderReadPluginResult,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 

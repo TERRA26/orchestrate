@@ -1,7 +1,8 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -36,8 +37,8 @@ import {
   type ProviderTurnStartResult,
   RuntimeMode,
   ProviderInteractionMode,
-} from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+} from "@orchestrate/contracts";
+import { normalizeModelSlug } from "@orchestrate/shared/model";
 import { Effect, ServiceMap } from "effect";
 
 import {
@@ -215,6 +216,32 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
 const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
 const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
 const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
+
+const ORCHESTRATOR_PID_SIDECAR_DIR = path.join(os.tmpdir(), "orchestrate-codex-pid-map");
+
+function writeOrchestratorPidSidecar(input: {
+  readonly codexPid: number | undefined;
+  readonly threadId: string;
+  readonly threadType: "orchestrator" | "agent" | undefined;
+}): void {
+  if (input.threadType !== "orchestrator" || input.codexPid === undefined) {
+    return;
+  }
+  try {
+    mkdirSync(ORCHESTRATOR_PID_SIDECAR_DIR, { recursive: true });
+    writeFileSync(
+      path.join(ORCHESTRATOR_PID_SIDECAR_DIR, `${input.codexPid}.json`),
+      JSON.stringify({ orchestratorThreadId: input.threadId, writtenAt: Date.now() }),
+    );
+  } catch {}
+}
+
+function removeOrchestratorPidSidecar(codexPid: number | undefined): void {
+  if (codexPid === undefined) return;
+  try {
+    rmSync(path.join(ORCHESTRATOR_PID_SIDECAR_DIR, `${codexPid}.json`), { force: true });
+  } catch {}
+}
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {
@@ -455,8 +482,8 @@ export function normalizeCodexModelSlug(
 export function buildCodexInitializeParams() {
   return {
     clientInfo: {
-      name: "t3code_desktop",
-      title: "DP Code Desktop",
+      name: "orchestrate_desktop",
+      title: "Orchestrate Desktop",
       version: "0.1.0",
     },
     capabilities: {
@@ -694,10 +721,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         env: {
           ...process.env,
           ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          ...(input.threadType === "orchestrator"
+            ? { ORCHESTRATE_PARENT_THREAD_ID: threadId }
+            : {}),
         },
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
       });
+      writeOrchestratorPidSidecar({
+        codexPid: child.pid,
+        threadId,
+        threadType: input.threadType,
+      });
+      child.once("exit", () => removeOrchestratorPidSidecar(child.pid));
       const output = readline.createInterface({ input: child.stdout });
 
       context = {
@@ -1901,7 +1937,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private handleServerRequest(context: CodexSessionContext, request: JsonRpcRequest): void {
-    console.log(`[CodexManager] Server request: method=${request.method} params=${JSON.stringify(request.params)?.slice(0, 200)}`);
+    console.log(
+      `[CodexManager] Server request: method=${request.method} params=${JSON.stringify(request.params)?.slice(0, 200)}`,
+    );
     const rawRoute = this.readRouteFields(request.params);
     const childParentTurnId = this.readChildParentTurnId(context, request.params);
     const effectiveTurnId = childParentTurnId ?? rawRoute.turnId;

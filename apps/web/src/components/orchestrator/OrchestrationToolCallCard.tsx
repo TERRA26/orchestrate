@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ORCHESTRATION_TOOL_NAMES } from "@t3tools/contracts";
+import { ORCHESTRATION_TOOL_NAMES } from "@orchestrate/contracts";
 import { useOrchestratorPaneStore } from "~/lib/orchestratorPaneStore";
 
 interface OrchestrationToolCallCardProps {
@@ -42,90 +42,148 @@ export function OrchestrationToolCallCard({
 
   switch (toolName) {
     case "orchestrate_spawn_agent": {
-      const role = String(parsed.role ?? "agent");
-      const model = String(parsed.model ?? "unknown");
+      const task = String(parsed.task ?? parsed.objective ?? "Agent task");
+      const model = String(parsed.model ?? "");
+      const provider = String(parsed.provider ?? "");
       const mode = String(parsed.mode ?? "foreground");
+      const res = (result ?? {}) as Record<string, unknown>;
+      const workerId =
+        typeof res.workerId === "string"
+          ? res.workerId.slice(-8)
+          : typeof res.agentId === "string"
+            ? res.agentId.slice(-8)
+            : null;
+      const statusLabel = isLoading ? "running" : res.agentId || res.workerId ? "done" : "queued";
+      const statusClass = isLoading
+        ? "orch-status-running"
+        : statusLabel === "done"
+          ? "orch-status-done"
+          : "";
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-emerald-400">+</span>
-          <span className="font-medium">Spawned {role}</span>
-          <span className="text-muted-foreground">on</span>
-          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{model}</span>
-          {mode === "background" && (
-            <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-              background
+        <div className="orch-spawn-card">
+          <div className="orch-spawn-head">
+            <span className="orch-spawn-tool">orchestrate_spawn_agent</span>
+            <span className={`orch-spawn-status ${statusClass}`}>
+              <span
+                className={`orch-status-dot ${isLoading ? "orch-pulsing" : ""}`}
+                aria-hidden="true"
+              />
+              {statusLabel}
             </span>
-          )}
-          {isLoading && <span className="animate-pulse text-muted-foreground">...</span>}
+          </div>
+          <div className="orch-spawn-body">
+            <div className="orch-spawn-worker-id">
+              {workerId ? <span className="orch-worker-badge">{workerId}</span> : null}
+              <span className="orch-spawn-title">{task}</span>
+            </div>
+            <div className="orch-spawn-params">
+              {model ? <span className="orch-id-chip">{model}</span> : null}
+              {provider ? <span className="orch-id-chip">{provider}</span> : null}
+              {mode ? (
+                <>
+                  <span className="orch-sep">·</span>
+                  <span>{mode}</span>
+                </>
+              ) : null}
+            </div>
+          </div>
         </div>
       );
     }
     case "orchestrate_terminate_agent": {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
-          <span className="text-destructive">x</span>
-          <span>Terminated agent</span>
-          <span className="text-muted-foreground">{String(parsed.reason ?? "")}</span>
+        <div className="orch-accept-card" style={{ borderColor: "var(--destructive)" }}>
+          <div className="orch-accept-head">
+            <span className="orch-accept-icon" style={{ background: "var(--destructive)" }}>
+              {"\u00D7"}
+            </span>
+            <span className="orch-accept-label" style={{ color: "var(--destructive)" }}>
+              Agent terminated
+            </span>
+          </div>
+          {parsed.reason ? (
+            <div className="text-xs text-muted-foreground">{String(parsed.reason)}</div>
+          ) : null}
         </div>
       );
     }
     case "orchestrate_accept_work": {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
-          <span className="text-emerald-400">{"\u2713"}</span>
-          <span className="font-medium">Work accepted</span>
+        <div className="orch-accept-card">
+          <div className="orch-accept-head">
+            <span className="orch-accept-icon">{"\u2713"}</span>
+            <span className="orch-accept-label">Work accepted</span>
+          </div>
         </div>
       );
     }
     case "orchestrate_reject_work": {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
-          <span className="text-amber-400">{"\u21BB"}</span>
-          <span className="font-medium">Revision requested</span>
-          <span className="text-xs text-muted-foreground">{String(parsed.reason ?? "")}</span>
+        <div className="orch-accept-card" style={{ borderColor: "var(--warning)" }}>
+          <div className="orch-accept-head">
+            <span className="orch-accept-icon" style={{ background: "var(--warning)" }}>
+              {"\u21BB"}
+            </span>
+            <span className="orch-accept-label" style={{ color: "var(--warning)" }}>
+              Revision requested
+            </span>
+          </div>
+          {parsed.reason ? (
+            <div className="text-xs text-muted-foreground">{String(parsed.reason)}</div>
+          ) : null}
         </div>
       );
     }
     case "orchestrate_wait_all":
     case "orchestrate_wait_agent": {
-      if (isLoading) {
-        return (
-          <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-            <span className="animate-pulse text-blue-400">{"\u23F3"}</span>
-            <span className="text-muted-foreground">Waiting for agents to complete...</span>
-          </div>
-        );
-      }
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-blue-400">{"\u2713"}</span>
-          <span>All agents completed</span>
+        <div className={`orch-think-row ${isLoading ? "orch-think-live" : ""}`}>
+          {isLoading ? (
+            <span className="orch-think-spin">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                aria-hidden="true"
+                className="animate-spin"
+              >
+                <path d="M21 12a9 9 0 1 1-9-9" />
+              </svg>
+            </span>
+          ) : (
+            <span className="orch-think-check">{"\u2713"}</span>
+          )}
+          <span>{isLoading ? "Waiting for agent…" : "Agent idle"}</span>
         </div>
       );
     }
     case "orchestrate_get_all_status":
     case "orchestrate_get_agent_status": {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-muted-foreground">{"\uD83D\uDCCA"}</span>
+        <div className="orch-think-row">
+          <span className="orch-section-label">Status</span>
           <span className="text-muted-foreground">Checked agent status</span>
         </div>
       );
     }
     case "orchestrate_review_agent_work": {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-muted-foreground">{"\uD83D\uDD0D"}</span>
-          <span>Reviewing agent work</span>
-          {isLoading && <span className="animate-pulse text-muted-foreground">...</span>}
+        <div className={`orch-think-row ${isLoading ? "orch-think-live" : ""}`}>
+          <span className="orch-section-label">Review</span>
+          <span className="text-muted-foreground">Reviewing agent work</span>
+          {isLoading ? <span className="animate-pulse text-muted-foreground">…</span> : null}
         </div>
       );
     }
     case "orchestrate_send_to_agent":
     case "orchestrate_broadcast": {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-muted-foreground">{"\u2192"}</span>
+        <div className="orch-think-row">
+          <span className="orch-section-label">Msg</span>
           <span>Sent instruction to agent</span>
         </div>
       );
@@ -134,19 +192,19 @@ export function OrchestrationToolCallCard({
     case "orchestrate_promote_to_foreground":
     case "orchestrate_promote_panel": {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
-          <span className="text-sky-400">{"\u25A3"}</span>
-          <span className="font-medium">Brought agent panel to the front</span>
-          {isLoading && <span className="animate-pulse text-muted-foreground">...</span>}
+        <div className="orch-think-row">
+          <span className="orch-section-label">Focus</span>
+          <span>Brought agent panel to the front</span>
+          {isLoading ? <span className="animate-pulse text-muted-foreground">…</span> : null}
         </div>
       );
     }
     default: {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-muted-foreground">{"\u2699"}</span>
-          <span className="font-mono text-xs">{toolName}</span>
-          {isLoading && <span className="animate-pulse text-muted-foreground">...</span>}
+        <div className="orch-think-row">
+          <span className="orch-section-label">Tool</span>
+          <span className="font-mono text-[11.5px]">{toolName}</span>
+          {isLoading ? <span className="animate-pulse text-muted-foreground">…</span> : null}
         </div>
       );
     }

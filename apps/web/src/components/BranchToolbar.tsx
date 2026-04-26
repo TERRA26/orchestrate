@@ -1,18 +1,11 @@
 // FILE: BranchToolbar.tsx
 // Purpose: Renders the chat thread's compact workspace controls, including the
 // local usage popover, workspace handoff actions, and runtime access toggle.
-import type { ThreadId, RuntimeMode } from "@t3tools/contracts";
+import type { ThreadId, RuntimeMode } from "@orchestrate/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { deriveAssociatedWorktreeMetadata } from "@t3tools/shared/threadWorkspace";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  ExternalLinkIcon,
-  GitForkIcon,
-  HandoffIcon,
-} from "~/lib/icons";
+import { deriveAssociatedWorktreeMetadata } from "@orchestrate/shared/threadWorkspace";
+import { ChevronRightIcon, ExternalLinkIcon, GitForkIcon, HandoffIcon } from "~/lib/icons";
 import { LiaUnlockAltSolid, LiaLockSolid } from "react-icons/lia";
-import { PiLaptop } from "react-icons/pi";
 import { useCallback, useMemo, useState } from "react";
 
 import { newCommandId, cn } from "../lib/utils";
@@ -27,7 +20,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import type { ContextWindowSnapshot } from "../lib/contextWindow";
-import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
+import { LocalWorkspacePopover } from "./LocalWorkspacePopover";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
 import type { ThreadWorkspacePatch } from "../types";
 import {
@@ -194,95 +187,58 @@ export default function BranchToolbar({
   );
   const learnMoreHref = useMemo(() => deriveRateLimitLearnMoreHref(rateLimits), [rateLimits]);
   const [rateLimitsOpen, setRateLimitsOpen] = useState(true);
-  const [envPickerOpen, setEnvPickerOpen] = useState(false);
 
   if (!activeThreadId || !activeProject) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-3 pb-3 pt-1">
-      <div className="flex items-center gap-2">
+    <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 px-3 pb-2 pt-0.5 font-mono">
+      <div className="flex min-w-0 flex-1 items-center divide-x divide-border/35 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:whitespace-nowrap">
         {effectiveEnvMode === "local" ? (
-          <Popover open={envPickerOpen} onOpenChange={setEnvPickerOpen}>
-            <PopoverTrigger className="inline-flex cursor-pointer items-center gap-1 px-1.5 text-xs font-normal text-muted-foreground/70 transition-colors hover:text-foreground/80">
-              <PiLaptop className="size-3" />
-              Local
-              <ChevronDownIcon className="size-3 opacity-60" />
-            </PopoverTrigger>
-            <PopoverPopup
-              align="start"
-              side="top"
-              sideOffset={6}
-              className="w-56 [&_[data-slot=popover-viewport]]:py-0 [&_[data-slot=popover-viewport]]:[--viewport-inline-padding:0px]"
-            >
-              <div className="py-1.5">
-                <p className="px-3 pb-1 pt-1 text-[11px] font-medium text-muted-foreground">
-                  Continue in
-                </p>
-                {/* Workspace switching stays in the handoff controls; this popover is the local usage view. */}
-                <div className="flex w-full items-center gap-2 px-3 py-1.5 text-sm">
-                  <PiLaptop className="size-4 text-muted-foreground" />
-                  <span>Local project</span>
+          <LocalWorkspacePopover>
+            <div className="py-1.5">
+              <Collapsible open={rateLimitsOpen} onOpenChange={setRateLimitsOpen}>
+                <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent">
                   <svg
-                    className="ml-auto size-4 text-foreground"
+                    className="size-4 text-muted-foreground"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="2.5"
+                    strokeWidth="2"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <polyline points="20 6 9 17 4 12" />
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
                   </svg>
-                </div>
-              </div>
-
-              <div className="mx-3 border-t border-border/50" />
-
-              <div className="py-1.5">
-                <Collapsible open={rateLimitsOpen} onOpenChange={setRateLimitsOpen}>
-                  <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent">
-                    <svg
-                      className="size-4 text-muted-foreground"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                    <span>Rate limits remaining</span>
-                    <ChevronRightIcon
-                      className={cn(
-                        "ml-auto size-3.5 text-muted-foreground transition-transform duration-150",
-                        rateLimitsOpen && "rotate-90",
-                      )}
-                    />
-                  </CollapsibleTrigger>
-                  <CollapsiblePanel>
-                    <div className="space-y-2 px-3 pb-1 pt-1">
-                      <RateLimitSummaryList rateLimits={rateLimits} />
-                      {learnMoreHref ? (
-                        <a
-                          href={learnMoreHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 pt-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                        >
-                          Learn more
-                          <ExternalLinkIcon className="size-3" />
-                        </a>
-                      ) : null}
-                    </div>
-                  </CollapsiblePanel>
-                </Collapsible>
-              </div>
-            </PopoverPopup>
-          </Popover>
+                  <span>Rate limits remaining</span>
+                  <ChevronRightIcon
+                    className={cn(
+                      "ml-auto size-3.5 text-muted-foreground transition-transform duration-150",
+                      rateLimitsOpen && "rotate-90",
+                    )}
+                  />
+                </CollapsibleTrigger>
+                <CollapsiblePanel>
+                  <div className="space-y-2 px-3 pb-1 pt-1">
+                    <RateLimitSummaryList rateLimits={rateLimits} />
+                    {learnMoreHref ? (
+                      <a
+                        href={learnMoreHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 pt-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        Learn more
+                        <ExternalLinkIcon className="size-3" />
+                      </a>
+                    ) : null}
+                  </div>
+                </CollapsiblePanel>
+              </Collapsible>
+            </div>
+          </LocalWorkspacePopover>
         ) : (
-          <span className="inline-flex items-center gap-1 px-1.5 text-xs font-normal text-muted-foreground/70">
+          <span className="inline-flex items-center gap-1 px-1.5 text-[10px] font-normal text-muted-foreground/60">
             <GitForkIcon className="size-3" />
             {activeWorktreePath ? "Worktree" : "New worktree"}
           </span>
@@ -291,29 +247,31 @@ export default function BranchToolbar({
         {canHandoffToWorktree && onHandoffToWorktree ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 px-1.5 text-xs font-normal text-muted-foreground/70 transition-colors hover:text-foreground/80 disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex cursor-pointer items-center gap-1 px-1.5 text-[10px] font-normal text-muted-foreground/60 transition-colors hover:text-foreground/85 disabled:pointer-events-none disabled:opacity-50"
             disabled={handoffBusy}
             onClick={onHandoffToWorktree}
+            title="Hand off to worktree"
           >
-            <HandoffIcon className="size-3.5" />
-            Hand off
+            <HandoffIcon className="size-3" />
+            <span className="hidden @[460px]/pane:inline">Hand off</span>
           </button>
         ) : null}
         {canHandoffToLocal && onHandoffToLocal ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 px-1.5 text-xs font-normal text-muted-foreground/70 transition-colors hover:text-foreground/80 disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex cursor-pointer items-center gap-1 px-1.5 text-[10px] font-normal text-muted-foreground/60 transition-colors hover:text-foreground/85 disabled:pointer-events-none disabled:opacity-50"
             disabled={handoffBusy}
             onClick={onHandoffToLocal}
+            title="Hand off to local"
           >
-            <HandoffIcon className="size-3.5" />
-            Hand off to local
+            <HandoffIcon className="size-3" />
+            <span className="hidden @[460px]/pane:inline">Hand off to local</span>
           </button>
         ) : null}
         {runtimeMode && onRuntimeModeChange ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-normal text-muted-foreground/70 transition-colors hover:text-foreground/80"
+            className="inline-flex cursor-pointer items-center gap-1 px-1.5 text-[10px] font-normal text-muted-foreground/60 transition-colors hover:text-foreground/85"
             onClick={() =>
               onRuntimeModeChange(
                 runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -330,12 +288,14 @@ export default function BranchToolbar({
             ) : (
               <LiaLockSolid className="size-3" />
             )}
-            {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+            <span className="hidden @[460px]/pane:inline">
+              {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+            </span>
           </button>
         ) : null}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1.5">
         <BranchToolbarBranchSelector
           activeProjectCwd={activeProject.cwd}
           activeThreadBranch={activeThreadBranch}

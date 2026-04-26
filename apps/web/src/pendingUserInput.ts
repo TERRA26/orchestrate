@@ -3,7 +3,7 @@
 // Layer: Web chat state utility
 // Exports: Draft answer helpers and progress derivation used by ChatView/composer panels.
 
-import type { UserInputQuestion } from "@t3tools/contracts";
+import type { UserInputQuestion } from "@orchestrate/contracts";
 
 export interface PendingUserInputDraftAnswer {
   selectedOptionLabels?: string[];

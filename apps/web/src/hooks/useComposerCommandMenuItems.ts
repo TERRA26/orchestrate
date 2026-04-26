@@ -5,7 +5,7 @@ import type {
   ProviderMentionReference,
   ProviderPluginDescriptor,
   ProviderSkillDescriptor,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { useMemo } from "react";
 import {
   buildCommandSearchBlob,

@@ -2,7 +2,7 @@
 // Purpose: Persist terminal-only workspace pages plus their stable synthetic terminal scopes.
 // Layer: Workspace view-model state
 
-import { type ThreadId } from "@t3tools/contracts";
+import { type ThreadId } from "@orchestrate/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -31,7 +31,7 @@ interface WorkspaceStoreState {
   reorderWorkspace: (workspaceId: string, nextIndex: number) => void;
 }
 
-const WORKSPACE_STORE_STORAGE_KEY = "t3code:workspace-pages:v2";
+const WORKSPACE_STORE_STORAGE_KEY = "orchestrate:workspace-pages:v2";
 
 function randomWorkspaceId(): string {
   if (typeof crypto.randomUUID === "function") {

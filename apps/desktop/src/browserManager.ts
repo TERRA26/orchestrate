@@ -12,10 +12,10 @@ import type {
   BrowserThreadInput,
   ThreadBrowserState,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 const ABOUT_BLANK_URL = "about:blank";
-const BROWSER_SESSION_PARTITION = "persist:t3code-browser";
+const BROWSER_SESSION_PARTITION = "persist:orchestrate-browser";
 const BROWSER_THREAD_SUSPEND_DELAY_MS = 30_000;
 const BROWSER_ERROR_ABORTED = -3;
 const SEARCH_URL_PREFIX = "https://www.google.com/search?q=";

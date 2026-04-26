@@ -1,4 +1,4 @@
-import { type MessageId, type TurnId } from "@t3tools/contracts";
+import { type MessageId, type TurnId } from "@orchestrate/contracts";
 import {
   memo,
   useCallback,
@@ -424,9 +424,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
             <div className="flex w-full justify-end">
-              <div className="group flex max-w-[80%] flex-col items-end gap-1">
+              <div className="group flex max-w-[82%] flex-col items-end gap-1">
                 {/* Keep user-message chrome outside the bubble so the message reads as one simple block. */}
-                <div className="w-max max-w-full min-w-0 self-end rounded-xl border border-border/70 bg-secondary px-[14px] py-1.5">
+                <div className="w-max max-w-full min-w-0 self-end rounded-lg border border-border/50 bg-secondary/60 px-3 py-1.5">
                   {userImages.length > 0 && (
                     <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
                       {userImages.map(
@@ -508,12 +508,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           return (
             <>
               {row.showCompletionDivider && (
-                <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 font-mono text-[10px] text-muted-foreground/80">
-                    {completionSummary ? `Response • ${completionSummary}` : "Response"}
+                <div className="my-3 flex items-center gap-2.5">
+                  <span className="h-px flex-1 bg-border/60" />
+                  <span className="font-mono text-[9px] font-medium uppercase tracking-[0.22em] text-muted-foreground/55">
+                    {completionSummary ? `Response · ${completionSummary}` : "Response"}
                   </span>
-                  <span className="h-px flex-1 bg-border" />
+                  <span className="h-px flex-1 bg-border/60" />
                 </div>
               )}
               <div className="min-w-0 px-1 py-0.5">
@@ -852,7 +852,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
 
         return (
-          <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
+          <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-[12px] leading-relaxed text-foreground @[380px]/pane:text-[12.5px] @[520px]/pane:text-[13px]">
             {inlineNodes}
           </div>
         );
@@ -882,7 +882,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     return (
-      <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-sm leading-relaxed text-foreground">
+      <div className="inline-block max-w-full min-w-0 wrap-break-word whitespace-pre-wrap font-system-ui text-[12px] leading-relaxed text-foreground @[380px]/pane:text-[12.5px] @[520px]/pane:text-[13px]">
         {inlineNodes}
       </div>
     );
@@ -901,7 +901,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   }
 
   return (
-    <div className="inline-block max-w-full min-w-0 whitespace-pre-wrap break-words font-system-ui text-sm leading-relaxed text-foreground">
+    <div className="inline-block max-w-full min-w-0 whitespace-pre-wrap break-words font-system-ui text-[12px] leading-relaxed text-foreground @[380px]/pane:text-[12.5px] @[520px]/pane:text-[13px]">
       {renderUserMessageInlineText(props.text, "user-message-inline")}
     </div>
   );

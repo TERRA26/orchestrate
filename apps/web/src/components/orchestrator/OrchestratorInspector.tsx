@@ -4,7 +4,7 @@ import type {
   OrchestratorTask,
   OrchestratorWorker,
   OrchestratorEvidenceRecord,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 import { cn } from "~/lib/utils";
 import type { SelectedEntity } from "./controlRoomTypes";

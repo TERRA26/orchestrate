@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@orchestrate/contracts";
 import { Alert, AlertDescription } from "../ui/alert";
 import { CircleAlertIcon } from "~/lib/icons";
 

@@ -22,7 +22,7 @@ import type {
   GitRemoveWorktreeInput,
   GitStatusInput,
   GitStatusResult,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 import type { GitCommandError } from "../Errors.ts";
 

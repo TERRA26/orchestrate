@@ -1,4 +1,4 @@
-import { resolveLoginShell } from "@t3tools/shared/shell";
+import { resolveLoginShell } from "@orchestrate/shared/shell";
 import { describe, expect, it, vi } from "vitest";
 
 import { syncShellEnvironment } from "./syncShellEnvironment";

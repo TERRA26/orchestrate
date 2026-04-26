@@ -3,7 +3,7 @@ import type {
   CodexModelOptions,
   ProviderKind,
   ProviderModelOptions,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 export type ProviderOptions = ProviderModelOptions[ProviderKind];
 

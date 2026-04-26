@@ -8,7 +8,7 @@ import {
   type BrowserNetworkError,
   type BrowserObservedTarget,
   type BrowserPageMetrics,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Layer, Schema } from "effect";
 import type { Browser, BrowserContext, Locator, Page } from "playwright";
 

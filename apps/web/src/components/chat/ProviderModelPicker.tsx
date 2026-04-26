@@ -1,5 +1,9 @@
-import { type ModelSlug, type ProviderKind, type ServerProviderStatus } from "@t3tools/contracts";
-import { resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  type ModelSlug,
+  type ProviderKind,
+  type ServerProviderStatus,
+} from "@orchestrate/contracts";
+import { resolveSelectableModel } from "@orchestrate/shared/model";
 import { memo, useState } from "react";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "~/lib/icons";
@@ -72,7 +76,7 @@ function providerIconClassName(
   provider: ProviderKind | ProviderPickerKind,
   fallbackClassName: string,
 ): string {
-  return provider === "claudeAgent" ? "text-[#d97757]" : fallbackClassName;
+  return provider === "claudeAgent" ? "orch-prov-claude" : fallbackClassName;
 }
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {

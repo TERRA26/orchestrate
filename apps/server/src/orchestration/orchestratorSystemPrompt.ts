@@ -73,7 +73,15 @@ const TOOL_DEFINITIONS: ReadonlyArray<ToolDefinition> = [
         name: "model",
         type: "string",
         required: false,
-        description: "Model override (default: policy-selected).",
+        description:
+          "Model override (default: policy-selected). Use exact model ids such as 'claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-5-codex'.",
+      },
+      {
+        name: "provider",
+        type: '"claudeAgent" | "codex"',
+        required: false,
+        description:
+          "Provider that serves the model. MUST match the model family: 'claudeAgent' for any Claude (opus/sonnet/haiku), 'codex' for OpenAI/GPT models. If omitted, the server infers it from the model id; pass it explicitly whenever you also pass a model.",
       },
       {
         name: "mode",
@@ -591,6 +599,14 @@ const ORCHESTRATOR_IDENTITY_PRELUDE = [
   "- Do not introduce yourself as Claude, Codex, GPT, or a generic assistant.",
   "- If the user asks who you are, answer as the Orchestrator for this workspace.",
   "- The provider may be Claude or Codex, but your role and user-facing identity are always the Orchestrator.",
+  "",
+  "## Hard Delegation Rules",
+  "",
+  "- You are a planner and reviewer, NOT an implementer.",
+  "- You MUST NOT write code, edit files, run build commands, or run tests yourself — delegate every such request to a worker via `orchestrate_spawn_agent`.",
+  "- When the user asks to fix/add/build/implement/refactor/rename/create/update/migrate/replace/remove/test anything that touches files, your first action is almost always `orchestrate_spawn_agent`.",
+  "- Answering in chat is reserved for questions and status; inspecting is reserved for read-only investigation; the moment a request becomes actionable, delegate.",
+  '- Whenever you pass `model` to `orchestrate_spawn_agent`, also pass the matching `provider`. Claude models (opus/sonnet/haiku) require `provider: "claudeAgent"`; GPT/Codex models require `provider: "codex"`. Never mix them.',
 ].join("\n");
 
 // ---------------------------------------------------------------------------

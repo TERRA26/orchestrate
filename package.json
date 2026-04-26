@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/monorepo",
+  "name": "@orchestrate/monorepo",
   "private": true,
   "workspaces": {
     "packages": [
@@ -25,15 +25,15 @@
     "dev": "bun scripts/dev-runner.ts dev",
     "dev:server": "bun scripts/dev-runner.ts dev:server",
     "dev:web": "bun scripts/dev-runner.ts dev:web",
-    "dev:marketing": "turbo run dev --filter=@t3tools/marketing",
+    "dev:marketing": "turbo run dev --filter=@orchestrate/marketing",
     "dev:desktop": "bun scripts/dev-runner.ts dev:desktop",
-    "start": "turbo run start --filter=t3",
-    "start:desktop": "turbo run start --filter=@t3tools/desktop",
-    "start:marketing": "turbo run preview --filter=@t3tools/marketing",
+    "start": "turbo run start --filter=orchestrate",
+    "start:desktop": "turbo run start --filter=@orchestrate/desktop",
+    "start:marketing": "turbo run preview --filter=@orchestrate/marketing",
     "start:mock-update-server": "bun run scripts/mock-update-server.ts",
     "build": "turbo run build",
-    "build:marketing": "turbo run build --filter=@t3tools/marketing",
-    "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
+    "build:marketing": "turbo run build --filter=@orchestrate/marketing",
+    "build:desktop": "turbo run build --filter=@orchestrate/desktop --filter=orchestrate",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
@@ -47,10 +47,10 @@
     "test:persistence": "cd apps/server && vitest run src/persistence/Layers/OrchestratorRuns.test.ts",
     "test:recovery": "cd apps/server && vitest run src/orchestration/recovery.test.ts",
     "test:journey": "cd apps/server && vitest run src/wsServer.orchestrator.test.ts",
-    "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
+    "test:desktop-smoke": "turbo run smoke-test --filter=@orchestrate/desktop",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "build:contracts": "turbo run build --filter=@t3tools/contracts",
+    "build:contracts": "turbo run build --filter=@orchestrate/contracts",
     "dist:desktop:artifact": "bun scripts/build-desktop-artifact.ts",
     "dist:desktop:dmg": "bun scripts/build-desktop-artifact.ts --platform mac --target dmg",
     "dist:desktop:dmg:arm64": "bun scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
@@ -60,6 +60,9 @@
     "release:smoke": "bun scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
@@ -83,8 +86,5 @@
   },
   "trustedDependencies": [
     "node-pty"
-  ],
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
-  }
+  ]
 }

@@ -1,4 +1,4 @@
-import { TurnId } from "@t3tools/contracts";
+import { TurnId } from "@orchestrate/contracts";
 
 export type ChatRightPanel = "browser" | "diff";
 

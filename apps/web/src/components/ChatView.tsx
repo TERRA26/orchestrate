@@ -28,23 +28,23 @@ import {
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   RuntimeMode,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   applyClaudePromptEffortPrefix,
   getModelCapabilities,
   normalizeModelSlug,
-} from "@t3tools/shared/model";
+} from "@orchestrate/shared/model";
 import {
   buildPromptThreadTitleFallback,
   GENERIC_CHAT_THREAD_TITLE,
-} from "@t3tools/shared/chatThreads";
+} from "@orchestrate/shared/chatThreads";
 import {
   resolveThreadWorkspaceState,
   resolveThreadBranchSourceCwd,
   resolveThreadWorkspaceCwd as resolveSharedThreadWorkspaceCwd,
-} from "@t3tools/shared/threadEnvironment";
-import { deriveTerminalCommandIdentity } from "@t3tools/shared/terminalThreads";
-import { deriveAssociatedWorktreeMetadata } from "@t3tools/shared/threadWorkspace";
+} from "@orchestrate/shared/threadEnvironment";
+import { deriveTerminalCommandIdentity } from "@orchestrate/shared/terminalThreads";
+import { deriveAssociatedWorktreeMetadata } from "@orchestrate/shared/threadWorkspace";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GoTasklist } from "react-icons/go";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -938,8 +938,14 @@ export default function ChatView({
 
   const sessionProvider = activeThread?.session?.provider ?? null;
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
-  const threadProvider =
-    activeThread?.modelSelection.provider ?? activeProject?.defaultModelSelection?.provider ?? null;
+  // For SERVER threads, `activeThread.modelSelection.provider` is authoritative.
+  // For LOCAL DRAFT threads, the synthesized modelSelection is just a fallback
+  // derived from the project's bootstrap default — ignore it so the user's
+  // Settings → Default provider can win for fresh drafts.
+  const persistedThreadProvider = isServerThread
+    ? (activeThread?.modelSelection.provider ?? null)
+    : null;
+  const projectBootstrapProvider = activeProject?.defaultModelSelection?.provider ?? null;
   const hasThreadStarted = Boolean(
     activeThread &&
     (activeThread.latestTurn !== null ||
@@ -947,17 +953,30 @@ export default function ChatView({
       activeThread.session !== null),
   );
   const lockedProvider: ProviderKind | null = hasThreadStarted
-    ? (sessionProvider ?? threadProvider ?? selectedProviderByThreadId ?? null)
+    ? (sessionProvider ??
+      persistedThreadProvider ??
+      projectBootstrapProvider ??
+      selectedProviderByThreadId ??
+      null)
     : null;
   const selectedProvider: ProviderKind =
-    lockedProvider ?? selectedProviderByThreadId ?? threadProvider ?? settings.defaultProvider;
+    lockedProvider ??
+    selectedProviderByThreadId ??
+    persistedThreadProvider ??
+    settings.defaultProvider ??
+    projectBootstrapProvider ??
+    "claudeAgent";
   const customModelsByProvider = useMemo(() => getCustomModelsByProvider(settings), [settings]);
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadId,
     selectedProvider,
-    threadModelSelection: activeThread?.modelSelection,
+    // For drafts, `activeThread.modelSelection` is a synthesized fallback from
+    // the project's bootstrap default — pretend it doesn't exist so the user's
+    // app-level Default model wins. Server threads keep authoritative selection.
+    threadModelSelection: isServerThread ? activeThread?.modelSelection : undefined,
     projectModelSelection: activeProject?.defaultModelSelection,
     customModelsByProvider,
+    defaultModelByProvider: settings.defaultModelByProvider,
   });
   const composerProviderState = useMemo(
     () =>
@@ -5106,7 +5125,7 @@ export default function ChatView({
               {/* Messages */}
               <div
                 ref={setMessagesScrollContainerRef}
-                className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+                className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-2.5 py-2.5 @[380px]/pane:px-4 @[380px]/pane:py-3.5 @[520px]/pane:px-5 @[520px]/pane:py-4"
                 onScroll={onMessagesScroll}
                 onClickCapture={onMessagesClickCapture}
                 onWheel={onMessagesWheel}
@@ -5161,7 +5180,7 @@ export default function ChatView({
             </div>
 
             {/* Input bar */}
-            <div className={cn("px-3 pt-4 sm:px-5 sm:pt-4", isGitRepo ? "pb-1" : "pb-2.5 sm:pb-3")}>
+            <div className={cn("px-3 pt-3", isGitRepo ? "pb-1" : "pb-3")}>
               <form
                 ref={composerFormRef}
                 onSubmit={onSend}
@@ -5228,7 +5247,7 @@ export default function ChatView({
                 ) : null}
                 <div
                   className={cn(
-                    "group rounded-2xl p-px transition-colors duration-200",
+                    "group transition-colors duration-200",
                     composerProviderState.composerFrameClassName,
                   )}
                   onDragEnter={onComposerDragEnter}
@@ -5238,7 +5257,7 @@ export default function ChatView({
                 >
                   <div
                     className={cn(
-                      "rounded-md border bg-card transition-colors duration-200 focus-within:border-neutral-500/15",
+                      "rounded-[10px] border bg-card/60 backdrop-blur-sm transition-colors duration-200 focus-within:border-border focus-within:bg-card/80",
                       isDragOverComposer ? "border-primary/50 bg-accent/20" : "border-border/60",
                       composerProviderState.composerSurfaceClassName,
                     )}

@@ -5,12 +5,13 @@ import type {
   ProviderNativeCommandDescriptor,
   ServerProviderModel,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { useQuery } from "@tanstack/react-query";
 
 import { cn } from "~/lib/utils";
 import type { ProviderOptions } from "~/providerModelOptions";
 import { Separator } from "~/components/ui/separator";
+import { BenchmarksPicker } from "~/components/benchmarks/BenchmarksPicker";
 import { ProviderModelPicker } from "~/components/chat/ProviderModelPicker";
 import { TraitsPicker } from "~/components/chat/TraitsPicker";
 import {
@@ -66,13 +67,13 @@ export interface OrchestratorComposerProps {
 // ---------------------------------------------------------------------------
 
 type ComposerPluginSuggestion = {
-  plugin: import("@t3tools/contracts").ProviderPluginDescriptor;
+  plugin: import("@orchestrate/contracts").ProviderPluginDescriptor;
   mention: ProviderMentionReference;
 };
 
 const EMPTY_PLUGINS: ComposerPluginSuggestion[] = [];
 const EMPTY_NATIVE_COMMANDS: ProviderNativeCommandDescriptor[] = [];
-const EMPTY_SKILLS: import("@t3tools/contracts").ProviderSkillDescriptor[] = [];
+const EMPTY_SKILLS: import("@orchestrate/contracts").ProviderSkillDescriptor[] = [];
 const EMPTY_TERMINAL_CONTEXTS: never[] = [];
 
 // ---------------------------------------------------------------------------
@@ -278,12 +279,12 @@ export function OrchestratorComposer({
   const hasSendableContent = input.trim().length > 0;
 
   return (
-    <div className={cn("px-3 pt-4 sm:px-5 sm:pt-4", "pb-2.5 sm:pb-3")}>
+    <div className="px-3 pb-1 pt-3">
       <form onSubmit={handleSubmit} className="w-full min-w-0">
         <div
           ref={composerRef}
           className={cn(
-            "group relative rounded-2xl p-px transition-colors duration-200",
+            "group relative transition-colors duration-200",
             composerProviderState.composerFrameClassName,
           )}
         >
@@ -303,7 +304,7 @@ export function OrchestratorComposer({
           )}
           <div
             className={cn(
-              "rounded-md border bg-card transition-colors duration-200 focus-within:border-neutral-500/15",
+              "rounded-[10px] border bg-card/60 backdrop-blur-sm transition-colors duration-200 focus-within:border-border focus-within:bg-card/80",
               isBusy ? "border-border/40 opacity-60" : "border-border/60",
               composerProviderState.composerSurfaceClassName,
             )}
@@ -327,8 +328,8 @@ export function OrchestratorComposer({
             </div>
 
             {/* Bottom toolbar */}
-            <div className="flex items-end justify-between px-3 pb-2.5 gap-1.5 sm:flex-nowrap sm:gap-0">
-              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex items-end justify-between gap-1.5 px-3 pb-2.5">
+              <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <ProviderModelPicker
                   compact
                   provider={selectedProvider}
@@ -343,7 +344,7 @@ export function OrchestratorComposer({
                     : {})}
                   onProviderModelChange={onModelChange}
                 />
-                <Separator orientation="vertical" className="mx-0.5 h-4 shrink-0" />
+                <Separator orientation="vertical" className="mx-0.5 h-3 shrink-0 bg-border/40" />
                 <TraitsPicker
                   provider={selectedProvider}
                   threadId={"orchestrator" as unknown as ThreadId}
@@ -353,48 +354,57 @@ export function OrchestratorComposer({
                   modelOptions={composerModelOptions?.[selectedProvider]}
                   onPromptChange={onPromptChangeFromTraits}
                 />
+                <Separator orientation="vertical" className="mx-0.5 h-3 shrink-0 bg-border/40" />
+                <BenchmarksPicker
+                  disabled={isBusy}
+                  onInsertPrompt={(prompt) => {
+                    const next = input.trim().length > 0 ? `${input}\n\n${prompt}` : prompt;
+                    onInputChange(next);
+                    requestAnimationFrame(() => {
+                      editorRef.current?.focusAtEnd();
+                    });
+                  }}
+                />
               </div>
 
               {/* Send button */}
-              <div className="flex shrink-0 items-center">
-                <button
-                  type="submit"
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground/80 text-background transition-all duration-150 hover:bg-foreground hover:scale-105 disabled:opacity-20 disabled:hover:scale-100 sm:h-7 sm:w-7"
-                  disabled={!hasSendableContent || !canSend || isBusy}
-                  aria-label={isBusy ? "Working" : "Send message"}
-                >
-                  {isBusy ? (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 14 14"
-                      fill="none"
-                      className="animate-spin"
-                      aria-hidden="true"
-                    >
-                      <circle
-                        cx="7"
-                        cy="7"
-                        r="5.5"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeDasharray="20 12"
-                      />
-                    </svg>
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                      <path
-                        d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </button>
-              </div>
+              <button
+                type="submit"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/85 text-background transition-all duration-150 hover:bg-foreground hover:scale-105 disabled:opacity-20 disabled:hover:scale-100"
+                disabled={!hasSendableContent || !canSend || isBusy}
+                aria-label={isBusy ? "Working" : "Send message"}
+              >
+                {isBusy ? (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 14 14"
+                    fill="none"
+                    className="animate-spin"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="7"
+                      cy="7"
+                      r="5.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeDasharray="20 12"
+                    />
+                  </svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path
+                      d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </button>
             </div>
           </div>
         </div>

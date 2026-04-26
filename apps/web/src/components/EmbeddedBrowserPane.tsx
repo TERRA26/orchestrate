@@ -8,7 +8,7 @@ import {
   RefreshCcwIcon,
   SparklesIcon,
 } from "lucide-react";
-import { type ThreadId } from "@t3tools/contracts";
+import { type ThreadId } from "@orchestrate/contracts";
 import { Schema } from "effect";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";

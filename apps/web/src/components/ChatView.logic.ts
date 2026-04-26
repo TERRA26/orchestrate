@@ -1,6 +1,6 @@
-import { ProjectId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
-import { sanitizeBranchFragment } from "@t3tools/shared/git";
-import { isGenericTerminalThreadTitle } from "@t3tools/shared/terminalThreads";
+import { ProjectId, type ModelSelection, type ThreadId } from "@orchestrate/contracts";
+import { sanitizeBranchFragment } from "@orchestrate/shared/git";
+import { isGenericTerminalThreadTitle } from "@orchestrate/shared/terminalThreads";
 import { type ChatMessage, type Thread, type ThreadPrimarySurface } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
@@ -10,8 +10,8 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 
-export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-const WORKTREE_NAME_PREFIX = "dpcode";
+export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "orchestrate:last-invoked-script-by-project";
+const WORKTREE_NAME_PREFIX = "orchestrate";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -105,7 +105,7 @@ export function buildSuggestedWorktreeName(input: {
   title?: string | null;
 }): string {
   const normalizedExisting =
-    input.associatedWorktreeBranch?.trim().replace(/^(codex|t3code|dpcode)\//i, "") ?? "";
+    input.associatedWorktreeBranch?.trim().replace(/^(codex|orchestrate)\//i, "") ?? "";
   const preferred =
     normalizedExisting ||
     `${WORKTREE_NAME_PREFIX}/${sanitizeBranchFragment(input.title ?? "update")}`;

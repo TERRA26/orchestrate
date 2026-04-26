@@ -75,10 +75,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function pass(label: string) { console.log(`  ✅ ${label}`); }
-function fail(label: string, detail?: string) { console.log(`  ❌ ${label}${detail ? `: ${detail}` : ""}`); }
-function info(label: string) { console.log(`  ℹ️  ${label}`); }
-function warn(label: string) { console.log(`  ⚠️  ${label}`); }
+function pass(label: string) {
+  console.log(`  ✅ ${label}`);
+}
+function fail(label: string, detail?: string) {
+  console.log(`  ❌ ${label}${detail ? `: ${detail}` : ""}`);
+}
+function info(label: string) {
+  console.log(`  ℹ️  ${label}`);
+}
+function warn(label: string) {
+  console.log(`  ⚠️  ${label}`);
+}
 
 function getEventsOfType(type: string): any[] {
   return domainEvents.filter((e) => e.data?.type === type);
@@ -86,7 +94,9 @@ function getEventsOfType(type: string): any[] {
 
 function getThreadActivities(threadId: string): any[] {
   return domainEvents
-    .filter((e) => e.data?.type === "thread.activity-appended" && e.data?.payload?.threadId === threadId)
+    .filter(
+      (e) => e.data?.type === "thread.activity-appended" && e.data?.payload?.threadId === threadId,
+    )
     .map((e) => e.data.payload.activity);
 }
 
@@ -227,8 +237,11 @@ async function main() {
       // Check for assistant messages
       const activities = getThreadActivities(threadId);
       const hasAssistantActivity = activities.some(
-        (a) => a?.kind === "message.delta" || a?.kind === "message.completed" ||
-               a?.kind === "assistant" || a?.data?.role === "assistant",
+        (a) =>
+          a?.kind === "message.delta" ||
+          a?.kind === "message.completed" ||
+          a?.kind === "assistant" ||
+          a?.data?.role === "assistant",
       );
       // Check for turn completion
       const turnCompleted = getEventsOfType("thread.turn-completed").length > 0;
@@ -304,13 +317,18 @@ async function main() {
 
       // Check activities for tool calls
       const toolCallActivities = (thread.activities ?? []).filter(
-        (a: any) => a?.kind === "tool_call" || a?.kind?.includes("tool") ||
-                    a?.data?.type === "tool_use" || a?.data?.itemType === "orchestration_tool_call",
+        (a: any) =>
+          a?.kind === "tool_call" ||
+          a?.kind?.includes("tool") ||
+          a?.data?.type === "tool_use" ||
+          a?.data?.itemType === "orchestration_tool_call",
       );
       if (toolCallActivities.length > 0) {
         pass(`Got ${toolCallActivities.length} tool call activities`);
         for (const tc of toolCallActivities.slice(0, 5)) {
-          info(`  Tool: ${tc?.data?.name ?? tc?.data?.toolName ?? JSON.stringify(tc).slice(0, 100)}`);
+          info(
+            `  Tool: ${tc?.data?.name ?? tc?.data?.toolName ?? JSON.stringify(tc).slice(0, 100)}`,
+          );
         }
       }
     }

@@ -1,4 +1,4 @@
-import { type ThreadId } from "@t3tools/contracts";
+import { type ThreadId } from "@orchestrate/contracts";
 import { create } from "zustand";
 
 interface TemporaryThreadStoreState {

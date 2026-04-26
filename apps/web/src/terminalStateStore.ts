@@ -5,8 +5,11 @@
  * API constrained to store actions/selectors.
  */
 
-import { type TerminalActivityState, type TerminalCliKind } from "@t3tools/shared/terminalThreads";
-import type { ThreadId } from "@t3tools/contracts";
+import {
+  type TerminalActivityState,
+  type TerminalCliKind,
+} from "@orchestrate/shared/terminalThreads";
+import type { ThreadId } from "@orchestrate/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -53,7 +56,7 @@ interface ThreadTerminalState {
   activeTerminalGroupId: string;
 }
 
-const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_STATE_STORAGE_KEY = "orchestrate:terminal-state:v1";
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];

@@ -26,7 +26,7 @@ import {
   ORCHESTRATION_TOOL_NAMES,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
 
 import {
@@ -1372,7 +1372,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         // composes ProviderService and orchestration runtime services together,
         // so the router may only be available by the time a session starts.
         const toolRouter = yield* Effect.serviceOption(OrchestrationToolRouterService);
-        yield* Effect.logInfo(`[CodexAdapter] OrchestrationToolRouter resolved: ${toolRouter._tag}`);
+        yield* Effect.logInfo(
+          `[CodexAdapter] OrchestrationToolRouter resolved: ${toolRouter._tag}`,
+        );
         if (toolRouter._tag === "Some") {
           const router = toolRouter.value;
           manager.setToolCallHandler(async ({ threadId, toolName, toolInput }) => {

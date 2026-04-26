@@ -10,7 +10,7 @@ import type {
   OrchestratorCapabilityProfile,
   OrchestratorModelCandidate,
   OrchestratorWorkerModelBinding,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Layer } from "effect";
 
 import { ModelRegistryService, type ModelRegistryShape } from "../Services/ModelRegistry.ts";

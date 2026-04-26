@@ -7,7 +7,7 @@ import {
   defaultTerminalTitleForCliKind,
   type TerminalCliKind,
   type TerminalVisualState,
-} from "@t3tools/shared/terminalThreads";
+} from "@orchestrate/shared/terminalThreads";
 import type { Thread, ThreadSession } from "../types";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 

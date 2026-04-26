@@ -11,7 +11,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WsWelcomePayload,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -132,6 +132,30 @@ export function onServerWelcome(listener: (payload: WsWelcomePayload) => void): 
   return () => {
     welcomeListeners.delete(listener);
   };
+}
+
+/**
+ * Subscribe to WebSocket transport connection state changes. Fires immediately
+ * with the current state on subscribe. Used by the connection-loss banner UX.
+ */
+export function onWsStateChange(
+  listener: (state: "connecting" | "open" | "reconnecting" | "closed" | "disposed") => void,
+): () => void {
+  if (!instance) {
+    // No transport yet — fire once with "connecting" so consumers can render
+    // something, and return a no-op unsubscriber. The real subscription will
+    // kick in once the app calls createWsNativeApi().
+    try {
+      listener("connecting");
+    } catch {}
+    return () => {};
+  }
+  return instance.transport.subscribeToState(listener);
+}
+
+/** Number of queued/in-flight WS requests waiting to be sent or resolved. */
+export function getWsQueuedRequestCount(): number {
+  return instance?.transport.getQueuedRequestCount() ?? 0;
 }
 
 /**

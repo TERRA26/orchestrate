@@ -17,7 +17,7 @@ import {
   type ProviderKind,
   ServerSettings,
   type ServerSettingsPatch,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   Cache,
   Deferred,
@@ -38,8 +38,8 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
-import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { type DeepPartial, deepMerge } from "@orchestrate/shared/Struct";
+import { fromLenientJson } from "@orchestrate/shared/schemaJson";
 
 export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsError>()(
   "ServerSettingsError",

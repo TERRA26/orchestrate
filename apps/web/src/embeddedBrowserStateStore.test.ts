@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@orchestrate/contracts";
 
 import {
   createEmbeddedBrowserAutomationSession,

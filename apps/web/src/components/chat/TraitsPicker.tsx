@@ -4,7 +4,7 @@ import {
   type ProviderKind,
   type ServerProviderModel,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   applyClaudePromptEffortPrefix,
   getModelCapabilities,
@@ -14,7 +14,7 @@ import {
   getDefaultContextWindow,
   hasEffortLevel,
   hasContextWindowOption,
-} from "@t3tools/shared/model";
+} from "@orchestrate/shared/model";
 import { memo, useCallback, useState } from "react";
 import { ChevronDownIcon, ZapIcon } from "~/lib/icons";
 import { Button } from "../ui/button";

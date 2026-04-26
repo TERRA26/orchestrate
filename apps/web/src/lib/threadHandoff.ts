@@ -5,7 +5,7 @@ import {
   type ModelSelection,
   type ProviderKind,
   type ThreadHandoffImportedMessage,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { type Thread } from "../types";
 import { randomUUID } from "./utils";
 

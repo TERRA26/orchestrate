@@ -5,7 +5,7 @@ import {
   ChatAttachment,
   ProviderMentionReference,
   ProviderSkillReference,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {

@@ -89,7 +89,7 @@ function ProviderIcon(props: { provider: "codex" | "claudeAgent" }) {
   return (
     <div className="flex size-5 shrink-0 items-center justify-center">
       {props.provider === "claudeAgent" ? (
-        <ClaudeAI aria-hidden="true" className="size-[15px] text-[#d97757]" />
+        <ClaudeAI aria-hidden="true" className="size-[15px] orch-prov-claude" />
       ) : (
         <OpenAI aria-hidden="true" className="size-[15px] text-muted-foreground/60" />
       )}

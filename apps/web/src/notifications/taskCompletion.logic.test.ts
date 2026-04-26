@@ -6,7 +6,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   buildInputNeededCopy,
   buildTaskCompletionCopy,

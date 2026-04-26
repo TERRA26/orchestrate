@@ -3,7 +3,7 @@
 // Layer: UI state store
 // Exports: usePinnedThreadsStore
 
-import { type ThreadId } from "@t3tools/contracts";
+import { type ThreadId } from "@orchestrate/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -15,7 +15,7 @@ interface PinnedThreadsStoreState {
   prunePinnedThreads: (threadIds: readonly ThreadId[]) => void;
 }
 
-const PINNED_THREADS_STORAGE_KEY = "t3code:pinned-threads:v1";
+const PINNED_THREADS_STORAGE_KEY = "orchestrate:pinned-threads:v1";
 
 function normalizePinnedThreadIds(threadIds: readonly ThreadId[]): ThreadId[] {
   const seen = new Set<ThreadId>();

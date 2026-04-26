@@ -1,16 +1,20 @@
-import type { BrowserAction, BrowserObservation, TurnId } from "@t3tools/contracts";
+import type { BrowserAction, BrowserObservation, TurnId } from "@orchestrate/contracts";
 
 import type { WorkLogEntry } from "../session-logic";
 import type { Thread, TurnDiffSummary } from "../types";
 import type { ActiveOrchestratorRun, OrchestratorMessage } from "../orchestratorStateStore";
 import type { OrchestratorChecklistItem, OrchestratorChecklistStatus } from "../orchestratorTypes";
 
-export const ORCHESTRATOR_MAX_ITERATIONS = 6;
-export const ORCHESTRATOR_MAX_REVIEW_FILE_SNAPSHOTS = 12;
-export const ORCHESTRATOR_MAX_REVIEW_DIFF_CHARS = 40_000;
-export const ORCHESTRATOR_MAX_REVIEW_FILE_CHARS = 12_000;
-export const ORCHESTRATOR_MAX_REVIEW_WORK_LOG_ENTRIES = 8;
-export const ORCHESTRATOR_MAX_REVIEW_WORK_LOG_DETAIL_CHARS = 4_000;
+// Re-export the canonical orchestrator run constants from the shared
+// contracts package so server and UI agree on these values.
+export {
+  ORCHESTRATOR_MAX_ITERATIONS,
+  ORCHESTRATOR_MAX_REVIEW_FILE_SNAPSHOTS,
+  ORCHESTRATOR_MAX_REVIEW_DIFF_CHARS,
+  ORCHESTRATOR_MAX_REVIEW_FILE_CHARS,
+  ORCHESTRATOR_MAX_REVIEW_WORK_LOG_ENTRIES,
+  ORCHESTRATOR_MAX_REVIEW_WORK_LOG_DETAIL_CHARS,
+} from "@orchestrate/contracts";
 
 export const ORCHESTRATOR_ROUTER_SYSTEM_PROMPT = [
   "You are an ORCHESTRATOR ROUTER for a coding agent working in a local repository.",

@@ -1,4 +1,4 @@
-import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { type ResolvedKeybindingsConfig } from "@orchestrate/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
@@ -174,7 +174,7 @@ function CollapsedSidebarStrip() {
   if (open) return null;
 
   return (
-    <div className="flex h-dvh w-10 shrink-0 flex-col items-center border-r border-border/30 bg-background/80 pt-2.5 dark:border-white/[0.03]">
+    <div className="flex h-dvh w-10 shrink-0 flex-col items-center border-r border-border/30 bg-background/80 pt-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/80 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
       <SidebarTrigger className="size-7 text-muted-foreground/75 hover:text-foreground" />
     </div>
   );

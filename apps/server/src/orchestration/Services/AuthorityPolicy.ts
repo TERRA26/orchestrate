@@ -9,7 +9,7 @@
  */
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
-import type { OrchestratorWorker } from "@t3tools/contracts";
+import type { OrchestratorWorker } from "@orchestrate/contracts";
 
 export interface AuthorityPolicyShape {
   /** Check whether the root orchestrator is allowed to execute work directly. */

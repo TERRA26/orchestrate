@@ -1,6 +1,7 @@
 import {
   ArrowLeftIcon,
-  BrainIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
   type LucideIcon,
@@ -50,8 +51,8 @@ import {
   ThreadId,
   type GitStatusResult,
   type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
-import { resolveThreadWorkspaceCwd } from "@t3tools/shared/threadEnvironment";
+} from "@orchestrate/contracts";
+import { resolveThreadWorkspaceCwd } from "@orchestrate/shared/threadEnvironment";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
@@ -77,7 +78,6 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { type Thread } from "../types";
 import { ClaudeAI, OpenAI } from "./Icons";
 import { ProjectSidebarIcon } from "./ProjectSidebarIcon";
-import { ThreadPinToggleButton } from "./ThreadPinToggleButton";
 import { SidebarSearchPalette } from "./SidebarSearchPalette";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useThreadHandoff } from "../hooks/useThreadHandoff";
@@ -139,6 +139,7 @@ import {
 } from "../lib/threadHandoff";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { parseDiffRouteSearch } from "../diffRouteSearch";
+import { useSettingsModalStore } from "../settingsModalStore";
 import {
   resolveSplitViewFocusedThreadId,
   resolveSplitViewPaneForThread,
@@ -180,10 +181,9 @@ function ProviderGlyph({
   provider: "codex" | "claudeAgent";
   className?: string;
 }) {
-  if (provider === "claudeAgent") {
-    return <ClaudeAI aria-hidden="true" className={cn("text-[#d97757]", className)} />;
-  }
-  return <OpenAI aria-hidden="true" className={cn("text-muted-foreground/60", className)} />;
+  const Icon = provider === "claudeAgent" ? ClaudeAI : OpenAI;
+  const providerTint = provider === "claudeAgent" ? "orch-prov-claude" : "text-muted-foreground/60";
+  return <Icon aria-hidden="true" className={cn(providerTint, className)} />;
 }
 
 function HandoffProviderGlyph({
@@ -321,13 +321,13 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   return null;
 }
 
-function T3Wordmark() {
+function AppWordmark() {
   return (
     <span
-      aria-label="DP"
+      aria-label="Orchestrate"
       className="shrink-0 text-[14px] font-semibold tracking-tight text-foreground"
     >
-      DP
+      Orchestrate
     </span>
   );
 }
@@ -425,13 +425,13 @@ function SidebarPrimaryAction({
         size="default"
         data-active={active}
         aria-current={active ? "page" : undefined}
-        className="group/sidebar-primary-action h-8 gap-2.5 rounded-lg px-2 font-system-ui text-[13px] font-normal text-foreground/82 transition-colors hover:bg-accent/55 hover:text-foreground data-[active=true]:bg-accent/65"
+        className="group/sidebar-primary-action h-7 gap-2 rounded-md px-2 font-system-ui text-[12px] font-normal text-foreground/78 transition-colors hover:bg-accent/45 hover:text-foreground data-[active=true]:bg-accent/60"
         aria-disabled={disabled || undefined}
         disabled={disabled}
         onClick={onClick}
       >
-        <span className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/72">
-          <Icon className="size-[15px]" />
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/65">
+          <Icon className="size-3.5" />
         </span>
         <span className="truncate">{label}</span>
         {shortcutLabel ? (
@@ -483,17 +483,25 @@ function SortableProjectItem({
   );
 }
 
+type SidebarView = "threads" | "workspace" | "benchmarks";
+
+const SIDEBAR_VIEW_LABELS: Record<SidebarView, string> = {
+  threads: "Threads",
+  workspace: "Workspace",
+  benchmarks: "Benchmarks",
+};
+
 function SidebarSegmentedPicker({
   activeView,
   onSelectView,
 }: {
-  activeView: "threads" | "workspace";
-  onSelectView: (view: "threads" | "workspace") => void;
+  activeView: SidebarView;
+  onSelectView: (view: SidebarView) => void;
 }) {
   return (
     <div className="px-3 pb-2.5">
       <div className="inline-flex w-full rounded-md bg-muted/40 p-0.5">
-        {(["threads", "workspace"] as const).map((view) => {
+        {(["threads", "workspace", "benchmarks"] as const).map((view) => {
           const active = activeView === view;
           return (
             <button
@@ -507,7 +515,7 @@ function SidebarSegmentedPicker({
               )}
               onClick={() => onSelectView(view)}
             >
-              {view === "threads" ? "Threads" : "Workspace"}
+              {SIDEBAR_VIEW_LABELS[view]}
             </button>
           );
         })}
@@ -553,6 +561,7 @@ function SortableWorkspaceItem({
 }
 
 export default function Sidebar() {
+  const openSettingsModal = useSettingsModalStore((s) => s.open);
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -585,6 +594,7 @@ export default function Sidebar() {
   const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const isOnPlugins = useLocation({ select: (loc) => loc.pathname === "/plugins" });
   const isOnWorkspace = pathname.startsWith("/workspace");
+  const isOnBenchmarks = pathname.startsWith("/benchmarks");
   const { settings: appSettings, updateSettings } = useAppSettings();
   const { handleNewThread } = useHandleNewThread();
   const { createThreadHandoff } = useThreadHandoff();
@@ -628,6 +638,9 @@ export default function Sidebar() {
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
+  const [collapsedParentThreads, setCollapsedParentThreads] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [renamingWorkspaceId, setRenamingWorkspaceId] = useState<string | null>(null);
   const [renamingWorkspaceTitle, setRenamingWorkspaceTitle] = useState("");
@@ -803,13 +816,17 @@ export default function Sidebar() {
   );
 
   const handleSidebarViewChange = useCallback(
-    (view: "threads" | "workspace") => {
+    (view: SidebarView) => {
       if (view === "workspace") {
         const fallbackWorkspaceId = workspacePages[0]?.id;
         if (!fallbackWorkspaceId) {
           return;
         }
         navigateToWorkspace(routeWorkspaceId ?? fallbackWorkspaceId);
+        return;
+      }
+      if (view === "benchmarks") {
+        void navigate({ to: "/benchmarks" });
         return;
       }
       void navigate({ to: "/" });
@@ -1818,8 +1835,9 @@ export default function Sidebar() {
         <button
           type="button"
           data-thread-item
+          data-active={isActive ? "true" : undefined}
           className={cn(
-            "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition-colors",
+            "relative flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors",
             isActive
               ? "bg-accent/62 text-foreground/90 dark:bg-accent/42"
               : "text-foreground/72 hover:bg-accent/40 hover:text-foreground/90",
@@ -1833,23 +1851,11 @@ export default function Sidebar() {
             });
           }}
         >
-          <ThreadPinToggleButton
-            pinned
-            presentation="inline"
-            toneClassName="text-muted-foreground/50"
-            onToggle={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              togglePinnedThread(thread.id);
-            }}
-          />
+          {isActive ? <span className="orch-active-bar" /> : null}
           {threadEntryPoint === "terminal" ? (
-            <TerminalIcon aria-hidden="true" className="size-3.5 shrink-0 text-teal-600/85" />
+            <TerminalIcon aria-hidden="true" className="size-3 shrink-0 text-teal-600/85" />
           ) : (
-            <ProviderGlyph
-              provider={thread.modelSelection.provider}
-              className="size-3.5 shrink-0"
-            />
+            <ProviderGlyph provider={thread.modelSelection.provider} className="size-3 shrink-0" />
           )}
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -1858,7 +1864,7 @@ export default function Sidebar() {
                 {folderLabel}
               </span>
             ) : null}
-            <span className="shrink-0 text-[11px] text-muted-foreground/38">
+            <span className="orch-tnum shrink-0 text-[11px] text-muted-foreground/38">
               {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
             </span>
           </div>
@@ -1901,24 +1907,21 @@ export default function Sidebar() {
       : "text-muted-foreground/34";
 
     const childThreads = childThreadsByParent?.get(thread.id) ?? [];
+    const isOrchestratorThread = thread.threadType === "orchestrator";
+    const hasChildren = childThreads.length > 0;
+    const isExpanded = !collapsedParentThreads.has(thread.id);
 
     return (
       <Fragment key={thread.id}>
-        <SidebarMenuSubItem className="group/thread-row w-full" data-thread-item>
-          <ThreadPinToggleButton
-            pinned={isPinned}
-            presentation="overlay"
-            toneClassName={secondaryMetaClass}
-            onToggle={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              togglePinnedThread(thread.id);
-            }}
-          />
+        <SidebarMenuSubItem
+          className="group/thread-row w-full"
+          data-thread-item
+          data-thread-kind={isOrchestratorThread ? "orchestrator" : "agent"}
+        >
           {threadStatus && (
             <span
               className={cn(
-                "pointer-events-none absolute left-3 top-1/2 z-10 h-1.5 w-1.5 -translate-y-1/2 rounded-full transition-opacity",
+                "pointer-events-none absolute left-1.5 top-1/2 z-10 h-1.5 w-1.5 -translate-y-1/2 rounded-full transition-opacity",
                 threadStatus.dotClass,
                 threadStatus.pulse ? "animate-pulse" : "",
                 isPinned
@@ -1936,7 +1939,18 @@ export default function Sidebar() {
               isActive,
               isSelected,
             })}
-            onClick={(event) => handleThreadClick(event, thread.id, orderedProjectThreadIds)}
+            onClick={(event) => {
+              handleThreadClick(event, thread.id, orderedProjectThreadIds);
+              // Auto-expand child threads when clicking a parent thread
+              if (childThreads.length > 0) {
+                setCollapsedParentThreads((prev) => {
+                  if (!prev.has(thread.id)) return prev;
+                  const next = new Set(prev);
+                  next.delete(thread.id);
+                  return next;
+                });
+              }
+            }}
             onKeyDown={(event) => {
               if (event.key !== "Enter" && event.key !== " ") return;
               event.preventDefault();
@@ -1960,6 +1974,32 @@ export default function Sidebar() {
               }
             }}
           >
+            {hasChildren ? (
+              <button
+                type="button"
+                aria-label={isExpanded ? "Collapse agents" : "Expand agents"}
+                aria-expanded={isExpanded}
+                className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/55 outline-hidden transition-colors hover:bg-foreground/10 hover:text-foreground/80 focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setCollapsedParentThreads((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(thread.id)) next.delete(thread.id);
+                    else next.add(thread.id);
+                    return next;
+                  });
+                }}
+              >
+                {isExpanded ? (
+                  <ChevronDownIcon className="size-3" />
+                ) : (
+                  <ChevronRightIcon className="size-3" />
+                )}
+              </button>
+            ) : isOrchestratorThread ? (
+              <span aria-hidden className="inline-flex size-4 shrink-0" />
+            ) : null}
             {threadEntryPoint === "terminal" ? (
               <TerminalIcon aria-hidden="true" className="size-3.5 shrink-0 text-teal-600/85" />
             ) : handoffBadgeLabel && thread.handoff ? (
@@ -1979,7 +2019,7 @@ export default function Sidebar() {
             ) : (
               <ProviderGlyph
                 provider={thread.modelSelection.provider}
-                className="size-3.5 shrink-0"
+                className="size-3 shrink-0"
               />
             )}
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
@@ -2034,7 +2074,7 @@ export default function Sidebar() {
                   onClick={(e) => e.stopPropagation()}
                 />
               ) : (
-                <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-foreground/86">
+                <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-foreground/86">
                   {thread.title}
                 </span>
               )}
@@ -2096,14 +2136,14 @@ export default function Sidebar() {
                   <TooltipPopup side="top">Disposable chat</TooltipPopup>
                 </Tooltip>
               ) : null}
-              <span className={`shrink-0 text-[12px] ${secondaryMetaClass}`}>
+              <span className={`shrink-0 font-mono text-[10px] ${secondaryMetaClass}`}>
                 {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
               </span>
             </div>
           </SidebarMenuSubButton>
         </SidebarMenuSubItem>
-        {childThreads.length > 0 && (
-          <div className="ml-4 border-l border-border/20 pl-1">
+        {hasChildren && isExpanded && (
+          <div className="relative ml-6 border-l border-border/30 pl-2">
             {childThreads.map((child) => {
               const childStatus = resolveThreadStatusPill({
                 thread: child,
@@ -2111,16 +2151,29 @@ export default function Sidebar() {
                 hasPendingUserInput: derivePendingUserInputs(child.activities).length > 0,
               });
               const isChildActive = !activeSplitView && routeThreadId === child.id;
+              const childProvider = child.modelSelection?.provider;
+              const ProviderIcon =
+                childProvider === "claudeAgent"
+                  ? ClaudeAI
+                  : childProvider === "codex"
+                    ? OpenAI
+                    : null;
               return (
-                <SidebarMenuSubItem key={child.id} className="w-full">
+                <SidebarMenuSubItem
+                  key={child.id}
+                  className="group/child-row relative w-full before:pointer-events-none before:absolute before:left-[-8px] before:top-1/2 before:h-px before:w-[6px] before:bg-border/30"
+                >
                   <SidebarMenuSubButton
                     render={<div role="button" tabIndex={0} />}
                     size="sm"
                     isActive={isChildActive}
-                    className={resolveThreadRowClassName({
-                      isActive: isChildActive,
-                      isSelected: false,
-                    })}
+                    className={cn(
+                      resolveThreadRowClassName({
+                        isActive: isChildActive,
+                        isSelected: false,
+                      }),
+                      "h-6 gap-1.5 py-0.5",
+                    )}
                     onClick={() => activateThread(child.id)}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
@@ -2135,19 +2188,29 @@ export default function Sidebar() {
                       });
                     }}
                   >
+                    {ProviderIcon && (
+                      <ProviderIcon
+                        className={cn(
+                          "size-2.5 shrink-0",
+                          childProvider === "claudeAgent"
+                            ? "orch-prov-claude"
+                            : "text-foreground/50",
+                        )}
+                      />
+                    )}
                     {childStatus && (
                       <span
                         className={cn(
-                          "inline-flex size-1.5 shrink-0 rounded-full",
+                          "inline-flex size-1 shrink-0 rounded-full",
                           childStatus.dotClass,
                           childStatus.pulse ? "animate-pulse" : "",
                         )}
                       />
                     )}
-                    <span className="min-w-0 flex-1 truncate text-xs leading-5 text-foreground/78">
+                    <span className="min-w-0 flex-1 truncate text-[11px] leading-4 text-foreground/70">
                       {child.title}
                     </span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground/38">
+                    <span className="shrink-0 font-mono text-[10px] text-muted-foreground/35">
                       {formatRelativeTime(child.updatedAt ?? child.createdAt)}
                     </span>
                   </SidebarMenuSubButton>
@@ -2337,7 +2400,7 @@ export default function Sidebar() {
           <SidebarMenuButton
             ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
             size="sm"
-            className={`h-7.5 gap-2 rounded-lg px-2 py-0.5 text-left text-[13px] font-normal hover:bg-accent/55 group-hover/project-header:bg-accent/55 group-hover/project-header:text-sidebar-accent-foreground ${
+            className={`h-7 gap-2 rounded-md px-2 py-0.5 text-left text-[12px] font-normal hover:bg-accent/45 group-hover/project-header:bg-accent/45 group-hover/project-header:text-sidebar-accent-foreground ${
               isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
             }`}
             {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -2353,19 +2416,19 @@ export default function Sidebar() {
               });
             }}
           >
-            <span className="relative inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/72">
+            <span className="relative inline-flex size-3 shrink-0 items-center justify-center text-muted-foreground/60 [&_svg]:size-3">
               <ProjectSidebarIcon cwd={project.cwd} expanded={project.expanded} />
               {projectStatus ? (
                 <span
                   aria-hidden="true"
                   title={projectStatus.label}
-                  className={`absolute -right-0.5 top-0.5 size-1.5 rounded-full ${projectStatus.dotClass} ${
+                  className={`absolute -right-0.5 top-0 size-1.5 rounded-full ${projectStatus.dotClass} ${
                     projectStatus.pulse ? "animate-pulse" : ""
                   }`}
                 />
               ) : null}
             </span>
-            <span className="flex-1 truncate font-system-ui text-[13px] font-normal text-muted-foreground/72">
+            <span className="flex-1 truncate font-system-ui text-[11px] font-normal text-muted-foreground/65">
               {project.name}
             </span>
           </SidebarMenuButton>
@@ -2873,9 +2936,6 @@ export default function Sidebar() {
     });
   }, []);
 
-  const orchestratorOpen = usePanelStateStore((state) => state.orchestratorOpen);
-  const toggleOrchestrator = usePanelStateStore((state) => state.toggleOrchestrator);
-
   const wordmark = (
     <div className="flex items-center gap-1.5">
       <SidebarTrigger className="shrink-0 md:hidden" />
@@ -2884,10 +2944,7 @@ export default function Sidebar() {
           render={
             <div className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 font-system-ui">
               <div className="flex min-w-0 items-center gap-1">
-                <T3Wordmark />
-                <span className="truncate text-[14px] font-normal tracking-tight text-foreground/82">
-                  Code
-                </span>
+                <AppWordmark />
               </div>
               <SidebarTrigger
                 className="hidden size-7 shrink-0 text-muted-foreground/75 hover:text-foreground md:inline-flex"
@@ -2898,28 +2955,6 @@ export default function Sidebar() {
         />
         <TooltipPopup side="bottom" sideOffset={2}>
           Version {APP_VERSION}
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label="Toggle orchestrator panel"
-              className={cn(
-                "inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors",
-                orchestratorOpen
-                  ? "text-primary hover:text-primary/80"
-                  : "text-muted-foreground/50 hover:text-foreground",
-              )}
-              onClick={toggleOrchestrator}
-            >
-              <BrainIcon className="size-4" />
-            </button>
-          }
-        />
-        <TooltipPopup side="bottom" sideOffset={2}>
-          {orchestratorOpen ? "Hide orchestrator" : "Show orchestrator"}
         </TooltipPopup>
       </Tooltip>
     </div>
@@ -2983,7 +3018,7 @@ export default function Sidebar() {
           </SidebarGroup>
         ) : null}
         <SidebarSegmentedPicker
-          activeView={isOnWorkspace ? "workspace" : "threads"}
+          activeView={isOnBenchmarks ? "benchmarks" : isOnWorkspace ? "workspace" : "threads"}
           onSelectView={handleSidebarViewChange}
         />
         {/* Primary sidebar actions stay limited to features we currently ship. */}
@@ -3028,7 +3063,7 @@ export default function Sidebar() {
           <SidebarGroup className="px-1.5 pt-1 pb-1.5">
             <div className="my-2 h-px w-full bg-border" />
             <div className="mb-1.5 flex items-center px-2">
-              <span className="text-[13px] font-normal tracking-tight text-muted-foreground/58">
+              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/55">
                 Workspace
               </span>
             </div>
@@ -3149,7 +3184,7 @@ export default function Sidebar() {
               <div className="-mx-1.5 my-1 h-px bg-border" />
             )}
             <div className="mb-1.5 flex items-center justify-between px-2">
-              <span className="text-[13px] font-normal tracking-tight text-muted-foreground/58">
+              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/55">
                 Threads
               </span>
               <div className="flex items-center gap-1">
@@ -3313,7 +3348,7 @@ export default function Sidebar() {
               <SidebarMenuButton
                 size="default"
                 className="h-8 gap-2.5 rounded-lg px-2 text-[13px] font-normal text-muted-foreground/72 hover:bg-accent/55 hover:text-foreground"
-                onClick={() => void navigate({ to: "/settings" })}
+                onClick={() => openSettingsModal()}
               >
                 <SettingsIcon className="size-[15px]" />
                 <span>Settings</span>
@@ -3335,7 +3370,7 @@ export default function Sidebar() {
           void navigate({ to: "/plugins" });
         }}
         onOpenSettings={() => {
-          void navigate({ to: "/settings" });
+          openSettingsModal();
         }}
         onOpenProject={handleOpenProjectFromSearch}
         onOpenThread={(threadId) => {

@@ -5,7 +5,10 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { type TerminalActivityState, type TerminalCliKind } from "@t3tools/shared/terminalThreads";
+import {
+  type TerminalActivityState,
+  type TerminalCliKind,
+} from "@orchestrate/shared/terminalThreads";
 import { Terminal, type IDisposable } from "@xterm/xterm";
 
 export interface TerminalRuntimeCallbacks {

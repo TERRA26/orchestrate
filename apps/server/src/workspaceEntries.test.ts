@@ -39,7 +39,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("returns files and directories relative to cwd", async () => {
-    const cwd = makeTempDir("t3code-workspace-entries-");
+    const cwd = makeTempDir("orchestrate-workspace-entries-");
     writeFile(cwd, "src/components/Composer.tsx");
     writeFile(cwd, "src/index.ts");
     writeFile(cwd, "README.md");
@@ -59,7 +59,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("filters and ranks entries by query", async () => {
-    const cwd = makeTempDir("t3code-workspace-query-");
+    const cwd = makeTempDir("orchestrate-workspace-query-");
     writeFile(cwd, "src/components/Composer.tsx");
     writeFile(cwd, "src/components/composePrompt.ts");
     writeFile(cwd, "docs/composition.md");
@@ -72,7 +72,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("supports fuzzy subsequence queries for composer path search", async () => {
-    const cwd = makeTempDir("t3code-workspace-fuzzy-query-");
+    const cwd = makeTempDir("orchestrate-workspace-fuzzy-query-");
     writeFile(cwd, "src/components/Composer.tsx");
     writeFile(cwd, "src/components/composePrompt.ts");
     writeFile(cwd, "docs/composition.md");
@@ -86,7 +86,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("tracks truncation without sorting every fuzzy match", async () => {
-    const cwd = makeTempDir("t3code-workspace-fuzzy-limit-");
+    const cwd = makeTempDir("orchestrate-workspace-fuzzy-limit-");
     writeFile(cwd, "src/components/Composer.tsx");
     writeFile(cwd, "src/components/composePrompt.ts");
     writeFile(cwd, "docs/composition.md");
@@ -98,7 +98,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("excludes gitignored paths for git repositories", async () => {
-    const cwd = makeTempDir("t3code-workspace-gitignore-");
+    const cwd = makeTempDir("orchestrate-workspace-gitignore-");
     runGit(cwd, ["init"]);
     writeFile(cwd, ".gitignore", ".convex/\nconvex/\nignored.txt\n");
     writeFile(cwd, "src/keep.ts", "export {};");
@@ -117,7 +117,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("excludes tracked paths that match ignore rules", async () => {
-    const cwd = makeTempDir("t3code-workspace-tracked-gitignore-");
+    const cwd = makeTempDir("orchestrate-workspace-tracked-gitignore-");
     runGit(cwd, ["init"]);
     writeFile(cwd, ".convex/local-storage/data.json", "{}");
     writeFile(cwd, "src/keep.ts", "export {};");
@@ -133,7 +133,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("disables fsmonitor and untracked cache helpers during git workspace indexing", async () => {
-    const cwd = makeTempDir("t3code-workspace-hardened-git-");
+    const cwd = makeTempDir("orchestrate-workspace-hardened-git-");
     runGit(cwd, ["init"]);
     writeFile(cwd, ".gitignore", "ignored.txt\n");
     writeFile(cwd, "src/keep.ts", "export {};");
@@ -171,7 +171,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("excludes .convex in non-git workspaces", async () => {
-    const cwd = makeTempDir("t3code-workspace-non-git-convex-");
+    const cwd = makeTempDir("orchestrate-workspace-non-git-convex-");
     writeFile(cwd, ".convex/local-storage/data.json", "{}");
     writeFile(cwd, "src/keep.ts", "export {};");
 
@@ -184,7 +184,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("deduplicates concurrent index builds for the same cwd", async () => {
-    const cwd = makeTempDir("t3code-workspace-concurrent-build-");
+    const cwd = makeTempDir("orchestrate-workspace-concurrent-build-");
     writeFile(cwd, "src/components/Composer.tsx");
 
     let rootReadCount = 0;
@@ -209,7 +209,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   it("limits concurrent directory reads while walking the filesystem", async () => {
-    const cwd = makeTempDir("t3code-workspace-read-concurrency-");
+    const cwd = makeTempDir("orchestrate-workspace-read-concurrency-");
     for (let index = 0; index < 80; index += 1) {
       writeFile(cwd, `group-${index}/entry-${index}.ts`, "export {};");
     }

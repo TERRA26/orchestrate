@@ -1,6 +1,7 @@
 import { CheckCircle, XCircle } from "lucide-react";
 
 import { cn } from "~/lib/utils";
+import ChatMarkdown from "~/components/ChatMarkdown";
 import { getTaskStatusConfig } from "./controlRoomHelpers";
 
 // ---------------------------------------------------------------------------
@@ -131,7 +132,9 @@ export function DecisionCard({
           {formatTime(decision.createdAt)}
         </span>
       </div>
-      <p className="mt-1 text-[11px] text-foreground/70">{decision.reason}</p>
+      <div className="mt-1">
+        <ChatMarkdown text={decision.reason} cwd={undefined} />
+      </div>
     </div>
   );
 }
@@ -205,7 +208,9 @@ export function VerdictBanner({
           {evidenceCount} evidence
         </span>
       </div>
-      <p className="mt-1 text-[11px] text-foreground/60">{summary}</p>
+      <div className="mt-1">
+        <ChatMarkdown text={summary} cwd={undefined} />
+      </div>
     </div>
   );
 }

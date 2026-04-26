@@ -12,7 +12,7 @@ import {
   type BrowserCloseSessionInput,
   type BrowserOpenSessionInput,
   type BrowserOpenSessionResult,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Schema, ServiceMap } from "effect";
 
 export class BrowserAutomationError extends Schema.TaggedErrorClass<BrowserAutomationError>()(

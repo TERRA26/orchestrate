@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/web",
+  "name": "@orchestrate/web",
   "version": "0.0.15",
   "private": true,
   "type": "module",
@@ -24,9 +24,9 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@formkit/auto-animate": "^0.9.0",
     "@lexical/react": "^0.41.0",
+    "@orchestrate/contracts": "workspace:*",
+    "@orchestrate/shared": "workspace:*",
     "@pierre/diffs": "^1.1.0-beta.16",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
     "@tabler/icons-react": "^3.41.1",
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-query": "^5.90.0",

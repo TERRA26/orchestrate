@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "DP Code (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "Orchestrate (Dev)" instead of "electron"
 
 import { spawnSync } from "node:child_process";
 import {
@@ -17,8 +17,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "DP Code (Dev)" : "DP Code (Alpha)";
-const APP_BUNDLE_ID = isDevelopment ? "com.t3tools.dpcode.dev" : "com.t3tools.dpcode";
+const APP_DISPLAY_NAME = isDevelopment ? "Orchestrate (Dev)" : "Orchestrate";
+const APP_BUNDLE_ID = isDevelopment ? "com.orchestrate.app.dev" : "com.orchestrate.app";
 const LAUNCHER_VERSION = 1;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

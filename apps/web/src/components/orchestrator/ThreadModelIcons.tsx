@@ -1,4 +1,4 @@
-import type { OrchestratorWorker, ProviderKind } from "@t3tools/contracts";
+import type { OrchestratorWorker, ProviderKind } from "@orchestrate/contracts";
 
 // ---------------------------------------------------------------------------
 // ThreadModelIcons

@@ -3,7 +3,7 @@
 // Layer: UI state store
 // Exports: split view types, selectors, and mutation helpers used by sidebar and route surfaces
 
-import { type ProjectId, type ThreadId, type TurnId } from "@t3tools/contracts";
+import { type ProjectId, type ThreadId, type TurnId } from "@orchestrate/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { randomUUID } from "./lib/utils";
@@ -60,7 +60,7 @@ interface SplitViewStore {
   removeThreadFromSplitViews: (threadId: ThreadId) => void;
 }
 
-const SPLIT_VIEW_STORAGE_KEY = "t3code:split-view-state:v1";
+const SPLIT_VIEW_STORAGE_KEY = "orchestrate:split-view-state:v1";
 const DEFAULT_RATIO = 0.5;
 const MIN_RATIO = 0.25;
 const MAX_RATIO = 0.75;

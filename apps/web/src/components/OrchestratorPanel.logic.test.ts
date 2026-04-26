@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import { MessageId, ProjectId, ThreadId, TurnId } from "@orchestrate/contracts";
 
 import {
   buildAdHocBrowserValidationRun,

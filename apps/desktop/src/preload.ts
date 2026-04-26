@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge } from "@orchestrate/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -27,7 +27,7 @@ const BROWSER_NEW_TAB_CHANNEL = "desktop:browser-new-tab";
 const BROWSER_CLOSE_TAB_CHANNEL = "desktop:browser-close-tab";
 const BROWSER_SELECT_TAB_CHANNEL = "desktop:browser-select-tab";
 const BROWSER_OPEN_DEVTOOLS_CHANNEL = "desktop:browser-open-devtools";
-const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
+const wsUrl = process.env.ORCHESTRATE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,

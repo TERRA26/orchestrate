@@ -14,7 +14,7 @@ import type {
   OrchestratorTask,
   OrchestratorWorker,
   OrchestratorDecision,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 // --- Input/output types ---
 
@@ -25,7 +25,7 @@ export interface RoutingInput {
   readonly activeWorkers: ReadonlyArray<OrchestratorWorker>;
   readonly recentDecisions: ReadonlyArray<OrchestratorDecision>;
   readonly rootCapabilities: ReadonlyArray<
-    typeof import("@t3tools/contracts").RequiredCapability.Type
+    typeof import("@orchestrate/contracts").RequiredCapability.Type
   >;
 }
 
@@ -38,7 +38,7 @@ export interface TaskDraft {
   readonly objective: string;
   readonly acceptanceCriteria: ReadonlyArray<string>;
   readonly requiredCapabilities?: ReadonlyArray<
-    typeof import("@t3tools/contracts").RequiredCapability.Type
+    typeof import("@orchestrate/contracts").RequiredCapability.Type
   >;
 }
 

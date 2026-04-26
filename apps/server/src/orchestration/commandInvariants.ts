@@ -11,7 +11,7 @@ import type {
   OrchestratorWorkerId,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";

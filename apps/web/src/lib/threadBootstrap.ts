@@ -12,7 +12,7 @@ import {
   type RuntimeMode,
   type ThreadEnvironmentMode,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import {
   type ComposerThreadDraftState,
   type DraftThreadEnvMode,
@@ -60,6 +60,7 @@ interface ResolveTerminalThreadCreationStateInput {
   activeDraftThread: DraftThreadState | null;
   activeThread: ActiveThreadSnapshot | null;
   defaultProvider?: ProviderKind | null | undefined;
+  defaultModelByProvider?: Partial<Record<ProviderKind, string | null | undefined>> | null;
   draftComposerState: ComposerThreadDraftState | null;
   draftThread: DraftThreadState | null;
   options: NewThreadOptions | undefined;
@@ -255,6 +256,7 @@ export function resolveTerminalThreadCreationState(
           : null,
       projectModelSelection: input.projectDefaultModelSelection,
       defaultProvider: input.defaultProvider,
+      defaultModelByProvider: input.defaultModelByProvider,
     }),
     runtimeMode:
       input.draftThread?.runtimeMode ??

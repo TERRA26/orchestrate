@@ -4,7 +4,7 @@ import {
   OrchestratorWorkerId,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 

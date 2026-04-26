@@ -51,14 +51,14 @@ import {
   ORCHESTRATION_TOOL_NAMES,
   ORCHESTRATION_TOOL_NAMES_LIST,
   type OrchestrationToolName,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { z } from "zod";
 import {
   hasEffortLevel,
   applyClaudePromptEffortPrefix,
   getModelCapabilities,
   trimOrNull,
-} from "@t3tools/shared/model";
+} from "@orchestrate/shared/model";
 import {
   Cause,
   DateTime,
@@ -459,7 +459,10 @@ function findRepoRoot(startDir: string): string {
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
-  if (ORCHESTRATION_TOOL_NAMES.has(toolName)) {
+  const bareToolName = toolName.startsWith("mcp__orchestrate__")
+    ? toolName.slice("mcp__orchestrate__".length)
+    : toolName;
+  if (ORCHESTRATION_TOOL_NAMES.has(bareToolName)) {
     return "orchestration_tool_call";
   }
   const normalized = toolName.toLowerCase();
@@ -604,7 +607,8 @@ const ORCHESTRATION_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   // Coordination
   orchestrate_wait_agent: "Block until a specific agent completes its current task.",
   orchestrate_wait_all: "Block until all specified agents complete.",
-  orchestrate_set_dependency: "Declare that one task depends on another, enforcing execution order.",
+  orchestrate_set_dependency:
+    "Declare that one task depends on another, enforcing execution order.",
   orchestrate_merge_work: "Merge the output of one agent's worktree into another's or into main.",
   orchestrate_set_spawn_budget: "Update the spawn budget for the current orchestration run.",
   // Review
@@ -3024,7 +3028,12 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
               // Orchestration tools are executed by the in-process MCP server
               // handler; auto-allow them without user permission prompts.
-              if (ORCHESTRATION_TOOL_NAMES.has(toolName)) {
+              // When tools are surfaced through MCP, Claude sees them with the
+              // mcp__orchestrate__ prefix (e.g. mcp__orchestrate__orchestrate_spawn_agent).
+              const bareToolName = toolName.startsWith("mcp__orchestrate__")
+                ? toolName.slice("mcp__orchestrate__".length)
+                : toolName;
+              if (ORCHESTRATION_TOOL_NAMES.has(bareToolName)) {
                 return {
                   behavior: "allow",
                   updatedInput: toolInput,
@@ -3220,30 +3229,67 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const toolRouterOption = yield* Effect.serviceOption(OrchestrationToolRouterService);
         const toolRouter = toolRouterOption._tag === "Some" ? toolRouterOption.value : undefined;
         const isOrchestrator = input.threadType === "orchestrator" && toolRouter !== undefined;
-        console.log(`[ClaudeAdapter] threadType=${input.threadType}, toolRouter=${toolRouterOption._tag}, isOrchestrator=${isOrchestrator}`);
+        console.log(
+          `[ClaudeAdapter] threadType=${input.threadType}, toolRouter=${toolRouterOption._tag}, isOrchestrator=${isOrchestrator}`,
+        );
         let orchestratorSystemPromptAppend: string | undefined;
-        let orchestrationMcpServer: ReturnType<typeof buildOrchestrationMcpServer> | undefined;
+        let orchestrationMcpServerConfig:
+          | { type: "stdio"; command: string; args: string[]; env: Record<string, string> }
+          | undefined;
 
         if (isOrchestrator) {
-          // The server CWD is apps/server, but ORCHESTRATOR.md lives at the repo root.
-          // Walk up from the CWD to find the repo root (where docs/ORCHESTRATOR.md exists).
-          const baseCwd = input.cwd ?? serverConfig.cwd;
-          const projectRoot = findRepoRoot(baseCwd);
+          // ORCHESTRATOR.md and the MCP server script are SERVER ASSETS, not
+          // project assets — they live inside the orchestrate repo regardless
+          // of which workspace the user is targeting. Always resolve from the
+          // server's own CWD (which lives somewhere inside the orchestrate
+          // repo). Falling through to `input.cwd` would break orchestrator
+          // identity for any thread running in a directory outside the
+          // orchestrate repo (e.g. a sibling test dir, a different project).
+          // Try server CWD first; only fall back to input.cwd if walking up
+          // from the server CWD genuinely fails to find docs/ORCHESTRATOR.md.
+          const serverWalkRoot = findRepoRoot(serverConfig.cwd);
+          const serverWalkHasMd = nodeFs.existsSync(
+            nodePath.join(serverWalkRoot, "docs", "ORCHESTRATOR.md"),
+          );
+          const projectRoot = serverWalkHasMd
+            ? serverWalkRoot
+            : findRepoRoot(input.cwd ?? serverConfig.cwd);
           orchestratorSystemPromptAppend = yield* buildOrchestratorSystemPrompt({
             projectRoot,
           }).pipe(Effect.orElseSucceed(() => undefined));
 
-          orchestrationMcpServer = buildOrchestrationMcpServer({
-            router: toolRouter,
-            services: adapterServices,
-            threadId,
-          });
+          // Use the standalone MCP server as a stdio subprocess. It connects
+          // back to our WebSocket server to execute orchestration tools. This
+          // is more reliable than the in-process SDK MCP server approach since
+          // it avoids bidirectional transport issues.
+          const mcpServerScript = nodePath.join(
+            projectRoot,
+            "scripts",
+            "orchestrate-mcp-server.ts",
+          );
+          orchestrationMcpServerConfig = {
+            type: "stdio" as const,
+            command: "bun",
+            args: [mcpServerScript],
+            env: {
+              ORCHESTRATE_WS_PORT: String(serverConfig.port),
+              ORCHESTRATE_PARENT_THREAD_ID: threadId,
+            },
+          };
         }
 
         const queryEnv = {
           ...process.env,
-          ...(input.threadType === "orchestrator" ? { ENABLE_TOOL_SEARCH: "false" } : {}),
         };
+
+        // Orchestrator threads must NOT invoke Claude Code's built-in
+        // Agent / Task / subagent tools — those spawn hidden workers that don't
+        // appear in the Orchestrate UI. Hard-block them at the SDK level via
+        // disallowedTools so even bypassPermissions mode can't slip past the
+        // canUseTool denial.
+        const orchestratorDisallowedTools = isOrchestrator
+          ? ["Agent", "Task", "Subagent", "SubAgent"]
+          : [];
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -3254,6 +3300,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(permissionMode ? { permissionMode } : {}),
           ...(permissionMode === "bypassPermissions"
             ? { allowDangerouslySkipPermissions: true }
+            : {}),
+          ...(orchestratorDisallowedTools.length > 0
+            ? { disallowedTools: orchestratorDisallowedTools }
             : {}),
           ...(providerOptions?.maxThinkingTokens !== undefined
             ? { maxThinkingTokens: providerOptions.maxThinkingTokens }
@@ -3266,7 +3315,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           env: queryEnv,
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
           // Orchestrator threads: inject ORCHESTRATOR.md into system prompt
-          // and register orchestration tools via an in-process MCP server.
+          // and register orchestration tools via a stdio MCP server subprocess.
           ...(orchestratorSystemPromptAppend
             ? {
                 systemPrompt: {
@@ -3276,8 +3325,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 },
               }
             : {}),
-          ...(orchestrationMcpServer
-            ? { mcpServers: { orchestrate: orchestrationMcpServer } }
+          ...(orchestrationMcpServerConfig
+            ? { mcpServers: { orchestrate: orchestrationMcpServerConfig } }
             : {}),
         };
 

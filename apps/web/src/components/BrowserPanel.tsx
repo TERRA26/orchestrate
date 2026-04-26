@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
-import { type ThreadId } from "@t3tools/contracts";
+import { type ThreadId } from "@orchestrate/contracts";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,

@@ -11,7 +11,7 @@
 import { Effect, Layer, ServiceMap } from "effect";
 
 import { OrchestratorRuntimeService } from "../Services/OrchestratorRuntime.ts";
-import type { OrchestratorTaskId, OrchestratorWorkerId } from "@t3tools/contracts";
+import type { OrchestratorTaskId, OrchestratorWorkerId } from "@orchestrate/contracts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 
 // ---------------------------------------------------------------------------

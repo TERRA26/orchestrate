@@ -14,7 +14,14 @@ export const useOrchestratorPaneStore = create<OrchestratorPaneStore>((set) => (
   orchestratorThreadId: null,
   focusedAgentThreadIds: [],
 
-  setOrchestratorThread: (threadId) => set({ orchestratorThreadId: threadId }),
+  // Switching orchestrators must reset focused agent panes — focused agents
+  // belong to a single orchestrator and should not leak across switches.
+  setOrchestratorThread: (threadId) =>
+    set((state) =>
+      threadId === state.orchestratorThreadId
+        ? state
+        : { orchestratorThreadId: threadId, focusedAgentThreadIds: [] },
+    ),
 
   focusAgent: (threadId) =>
     set((state) => {

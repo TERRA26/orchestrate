@@ -15,7 +15,7 @@ import {
   OrchestratorRunId,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

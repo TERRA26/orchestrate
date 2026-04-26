@@ -1,10 +1,16 @@
 @import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap");
 
 @custom-variant dark (&:is(.dark, .dark *));
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
   --font-mono: var(--font-mono-family);
+  --color-sidebar: var(--sidebar-bg);
+  --color-sidebar-foreground: var(--foreground);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-accent: var(--accent);
+  --color-sidebar-accent-foreground: var(--accent-foreground);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -65,17 +71,28 @@
 :root {
   color-scheme: light;
   --radius: 0.75rem;
-  --font-ui-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-ui-family:
+    "Inter Tight", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono-family:
     "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas,
     "Liberation Mono", Menlo, monospace;
   --terminal-font-family: "JetBrainsMono NFM", "JetBrainsMono NF", "JetBrains Mono", monospace;
-  --background: var(--color-white);
-  --foreground: var(--color-neutral-800);
-  --card: var(--color-white);
-  --card-foreground: var(--color-neutral-800);
-  --popover: var(--color-white);
-  --popover-foreground: var(--color-neutral-800);
+  /* Orchestrate design — Mono (paper) theme: warm off-white base */
+  --background: #f7f5ef;
+  --foreground: #0e0e0c;
+  --card: #ffffff;
+  --card-foreground: #0e0e0c;
+  --popover: #ffffff;
+  --popover-foreground: #0e0e0c;
+  /* Sidebar lifted (whiter than the cream pane bg) per design contrast inversion:
+     the pane content is the focus, the sidebar floats forward as chrome. */
+  --sidebar-bg: #ffffff;
+  --workspace-bg: #f7f5ef;
+  --surface-raised: #ffffff;
+  --surface-sunken: #e8e5db;
+  /* Provider accents — Claude warm orange, OpenAI neutral */
+  --provider-claude: #d97757;
+  --provider-codex: currentColor;
   --primary: oklch(0.488 0.217 264);
   --primary-foreground: var(--color-white);
   --secondary: --alpha(var(--color-black) / 4%);
@@ -98,12 +115,19 @@
 
   @variant dark {
     color-scheme: dark;
-    --background: var(--color-neutral-950);
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 99%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 99%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
+    /* Orchestrate design — Ink (dark) theme: pure-black panels, lifted sidebar */
+    --background: #0a0a0a;
+    --foreground: #ffffff;
+    --card: #0f0f0f;
+    --card-foreground: #e8e8e8;
+    --popover: #141414;
+    --popover-foreground: #ffffff;
+    --sidebar-bg: #1f1f1f;
+    --workspace-bg: #0a0a0a;
+    --surface-raised: #141414;
+    --surface-sunken: #1f1f1f;
+    --provider-claude: #d97757;
+    --provider-codex: currentColor;
     --primary: oklch(0.588 0.217 264);
     --primary-foreground: var(--color-white);
     --secondary: --alpha(var(--color-white) / 4%);
@@ -184,9 +208,12 @@ input {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollbar styling */
+/* Scrollbar styling — hidden by default, revealed on hover over the scrolling
+   container. Uses a fallback-friendly pattern: the thumb is transparent until
+   the container (or the scrollbar itself) is hovered. */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 3px;
+  height: 3px;
 }
 
 ::-webkit-scrollbar-track {
@@ -194,20 +221,27 @@ input {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: transparent;
   border-radius: 3px;
+  transition: background-color 150ms ease;
+}
+
+*:hover > ::-webkit-scrollbar-thumb,
+*:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.3) !important;
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+.dark *:hover > ::-webkit-scrollbar-thumb,
+.dark *:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.22) !important;
 }
 
 .turn-chip-strip {
@@ -247,11 +281,60 @@ label:has(> select#reasoning-effort) select {
   height: 100%;
 }
 
-/* Chat markdown rendering */
+/* ----- Chat markdown rendering -------------------------------------------- */
+/* Responsive via pane-scoped container queries (@container pane). The pane */
+/* root sets container-name: pane + container-type: inline-size via Tailwind  */
+/* `@container/pane`. When not inside a named pane, the base sizing applies.  */
+
 .chat-markdown {
+  --cm-font-size: 12px;
+  --cm-line-height: 1.55;
+  --cm-code-size: 11px;
+  --cm-inline-code-size: 0.85em;
+  --cm-pre-padding: 0.6rem 0.75rem;
+  --cm-block-gap: 0.5rem;
+  --cm-list-indent: 1.05rem;
+  --cm-heading-1: 1.125em;
+  --cm-heading-2: 1.06em;
+  --cm-heading-3: 1em;
+
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+  font-size: var(--cm-font-size);
+  line-height: var(--cm-line-height);
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+  letter-spacing: -0.005em;
+}
+
+@container pane (max-width: 380px) {
+  .chat-markdown {
+    --cm-font-size: 11px;
+    --cm-line-height: 1.5;
+    --cm-code-size: 10.5px;
+    --cm-pre-padding: 0.5rem 0.6rem;
+    --cm-block-gap: 0.45rem;
+    --cm-list-indent: 0.95rem;
+  }
+}
+
+@container pane (min-width: 520px) {
+  .chat-markdown {
+    --cm-font-size: 12.5px;
+    --cm-line-height: 1.58;
+    --cm-code-size: 11.5px;
+    --cm-pre-padding: 0.7rem 0.85rem;
+    --cm-block-gap: 0.55rem;
+  }
+}
+
+@container pane (min-width: 720px) {
+  .chat-markdown {
+    --cm-font-size: 13px;
+    --cm-code-size: 12px;
+    --cm-pre-padding: 0.8rem 0.95rem;
+    --cm-block-gap: 0.6rem;
+  }
 }
 
 .chat-markdown > :first-child {
@@ -267,17 +350,53 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown ol,
 .chat-markdown blockquote,
 .chat-markdown pre,
-.chat-markdown table {
-  margin: 0.65rem 0;
+.chat-markdown table,
+.chat-markdown hr {
+  margin: var(--cm-block-gap) 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: calc(var(--cm-block-gap) * 1.15) 0 calc(var(--cm-block-gap) * 0.4);
+  font-weight: 600;
+  line-height: 1.28;
+  letter-spacing: -0.015em;
+  color: var(--foreground);
+}
+
+.chat-markdown h1 {
+  font-size: var(--cm-heading-1);
+  letter-spacing: -0.02em;
+}
+.chat-markdown h2 {
+  font-size: var(--cm-heading-2);
+  letter-spacing: -0.015em;
+}
+.chat-markdown h3,
+.chat-markdown h4 {
+  font-size: var(--cm-heading-3);
+  font-weight: 600;
+}
+.chat-markdown h5,
+.chat-markdown h6 {
+  font-size: 0.9em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--muted-foreground) 90%, transparent);
 }
 
 .chat-markdown ul {
-  padding-left: 1.25rem;
+  padding-left: var(--cm-list-indent);
   list-style-type: disc;
 }
 
 .chat-markdown ol {
-  padding-left: 1.25rem;
+  padding-left: var(--cm-list-indent);
   list-style-type: decimal;
 }
 
@@ -297,54 +416,91 @@ label:has(> select#reasoning-effort) select {
   list-style-type: lower-roman;
 }
 
+.chat-markdown li::marker {
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+
 .chat-markdown li + li {
-  margin-top: 0.25rem;
+  margin-top: 0.15rem;
+}
+
+.chat-markdown li > p {
+  margin: 0.15rem 0;
+}
+
+.chat-markdown li > ul,
+.chat-markdown li > ol {
+  margin: 0.15rem 0;
 }
 
 .chat-markdown a {
-  color: var(--info-foreground);
-  text-decoration: none;
+  color: var(--foreground);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--info-foreground) 55%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 120ms ease;
 }
 
 .chat-markdown a:hover {
-  opacity: 0.8;
+  text-decoration-color: var(--info-foreground);
 }
 
 .chat-markdown blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 0.8rem;
-  color: var(--muted-foreground);
+  border-left: 1.5px solid color-mix(in srgb, var(--foreground) 22%, transparent);
+  padding-left: 0.75rem;
+  color: color-mix(in srgb, var(--muted-foreground) 95%, transparent);
+  font-style: italic;
 }
 
-.chat-markdown :not(pre) > code {
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  background: var(--muted);
-  padding: 0.1rem 0.35rem;
+.chat-markdown hr {
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+}
+
+.chat-markdown strong {
   color: var(--foreground);
-  font-size: 0.75rem;
+  font-weight: 600;
 }
 
+.chat-markdown em {
+  color: color-mix(in srgb, var(--foreground) 95%, transparent);
+}
+
+/* ----- Inline code chip --------------------------------------------------- */
+.chat-markdown :not(pre) > code {
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  padding: 0.05em 0.3em;
+  color: color-mix(in srgb, var(--foreground) 90%, transparent);
+  font-size: var(--cm-inline-code-size);
+  font-variant-ligatures: none;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+/* ----- Code block --------------------------------------------------------- */
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: var(--muted);
-  padding: 0.8rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 55%, var(--background));
+  padding: var(--cm-pre-padding);
 }
 
 .chat-markdown pre code {
   border: none;
   background: transparent;
   padding: 0;
-  line-height: 1.5;
-  font-size: 0.875rem;
+  line-height: 1.55;
+  font-size: var(--cm-code-size);
 }
 
 .chat-markdown .chat-markdown-codeblock {
   position: relative;
-  margin: 0.65rem 0;
+  margin: var(--cm-block-gap) 0;
 }
 
 .chat-markdown .chat-markdown-codeblock pre {
@@ -353,18 +509,18 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown .chat-markdown-copy-button {
   position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
+  top: 0.4rem;
+  right: 0.4rem;
   z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 1.5rem;
-  width: 1.5rem;
-  border-radius: 0.375rem;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--background) 82%, transparent);
-  color: var(--muted-foreground);
+  height: 1.35rem;
+  width: 1.35rem;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--background) 85%, transparent);
+  color: color-mix(in srgb, var(--muted-foreground) 90%, transparent);
   opacity: 0;
   pointer-events: none;
   transition:
@@ -381,11 +537,11 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown .chat-markdown-copy-button:hover {
   color: var(--foreground);
-  border-color: color-mix(in srgb, var(--border) 70%, var(--foreground));
+  border-color: color-mix(in srgb, var(--border) 60%, var(--foreground));
 }
 
 .chat-markdown .chat-markdown-shiki .shiki {
-  background: color-mix(in srgb, var(--muted) 78%, var(--background)) !important;
+  background: color-mix(in srgb, var(--muted) 55%, var(--background)) !important;
   font-family: var(--font-mono-family) !important;
 }
 
@@ -393,16 +549,37 @@ label:has(> select#reasoning-effort) select {
   font-family: inherit !important;
 }
 
+/* ----- Tables ------------------------------------------------------------- */
 .chat-markdown table {
   width: 100%;
   border-collapse: collapse;
+  font-size: calc(var(--cm-font-size) - 1px);
 }
 
-.chat-markdown th,
-.chat-markdown td {
-  border: 1px solid var(--border);
-  padding: 0.35rem 0.45rem;
+.chat-markdown thead {
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+}
+
+.chat-markdown th {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  padding: 0.35rem 0.55rem;
   text-align: left;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--muted-foreground) 95%, var(--foreground));
+  font-size: 0.88em;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.chat-markdown td {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  padding: 0.3rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.chat-markdown tbody tr:last-child td {
+  border-bottom: none;
 }
 
 /* Feed the diff web component's own CSS variables so shadow-root chrome uses JetBrains Mono too. */
@@ -486,4 +663,581 @@ diffs-container {
   background-clip: text;
   -webkit-background-clip: text;
   animation: ultrathink-rainbow 10s linear infinite;
+}
+
+/* =========================================================================
+   Orchestrate design language — ported from the Claude Design handoff bundle.
+   All class names prefixed `orch-` to avoid collisions with existing UI.
+   ========================================================================= */
+
+/* Tag — slim uppercase mono label used above orchestrator and agent blocks */
+.orch-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono-family);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.orch-tag .orch-tag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 15%, transparent);
+}
+
+/* Mono-uppercase section label (sidebar headers, card titles) */
+.orch-section-label {
+  font-family: var(--font-mono-family);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+/* Mono id chip — short monospaced identifier (worker id, commit sha, etc.) */
+.orch-id-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  font-family: var(--font-mono-family);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Worker badge — solid monospaced badge that reads against an inverted bg */
+.orch-worker-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  font-family: var(--font-mono-family);
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--foreground);
+  color: var(--background);
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Branch pill — inline git branch indicator used in pane heads */
+.orch-branch-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 4px;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.orch-branch-pill svg {
+  opacity: 0.7;
+}
+
+/* Thinking pill — rounded step indicator with spinner or check */
+.orch-think-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 8px;
+  margin: 0 0 8px;
+  border-radius: 100px;
+  background: var(--surface-sunken, var(--muted));
+  font-size: 12px;
+  color: var(--foreground);
+}
+.orch-think-row.orch-think-live {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.orch-think-check {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--success);
+  color: white;
+  display: grid;
+  place-items: center;
+}
+.orch-think-spin {
+  color: var(--foreground);
+  display: grid;
+  place-items: center;
+}
+.orch-think-dur {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Spawn card — rendered inline when the orchestrator calls orchestrate_spawn_agent */
+.orch-spawn-card {
+  margin: 6px 0 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised, var(--card));
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    border-color 120ms,
+    background 120ms;
+}
+.orch-spawn-card:hover {
+  border-color: color-mix(in srgb, var(--foreground) 20%, transparent);
+  background: color-mix(in srgb, var(--foreground) 3%, var(--card));
+}
+.orch-spawn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.orch-spawn-tool {
+  color: var(--foreground);
+  font-weight: 500;
+  font-size: 10.5px;
+}
+.orch-spawn-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.orch-spawn-status.orch-status-running {
+  color: var(--warning);
+}
+.orch-spawn-status.orch-status-done {
+  color: var(--success);
+}
+.orch-spawn-status.orch-status-failed {
+  color: var(--destructive);
+}
+.orch-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.orch-status-dot.orch-pulsing {
+  animation: orch-pulse 1.2s ease-in-out infinite;
+}
+@keyframes orch-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.orch-spawn-body {
+  padding: 7px 10px 8px;
+}
+.orch-spawn-worker-id {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.orch-spawn-title {
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.25;
+}
+.orch-spawn-params {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  flex-wrap: wrap;
+}
+.orch-spawn-params .orch-sep {
+  opacity: 0.5;
+}
+
+/* Accept card — green-bordered "task accepted" receipt */
+.orch-accept-card {
+  margin: 8px 0 12px;
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+  background: color-mix(in srgb, var(--success) 8%, var(--card));
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.orch-accept-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  margin-bottom: 4px;
+}
+.orch-accept-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--success);
+  color: white;
+  display: grid;
+  place-items: center;
+}
+.orch-accept-label {
+  color: var(--success);
+  font-weight: 500;
+}
+.orch-accept-title {
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.orch-accept-diff {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+/* Diff chips (inline +N/-M counts) */
+.orch-diff-add {
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+.orch-diff-del {
+  color: var(--destructive);
+  font-variant-numeric: tabular-nums;
+}
+.orch-diff-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--surface-sunken, var(--muted));
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Instrument readout — boxed mono block for command/file events */
+.orch-instrument {
+  margin: 5px 0;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--surface-sunken, var(--muted)) 60%, transparent);
+  overflow: hidden;
+  font-size: 11px;
+}
+.orch-instrument-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  min-height: 22px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color 120ms ease;
+}
+.orch-instrument-expandable .orch-instrument-head {
+  cursor: pointer;
+}
+.orch-instrument-expandable .orch-instrument-head:hover {
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+.orch-instrument-open .orch-instrument-head {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-raised, var(--card)) 55%, transparent);
+}
+.orch-instrument-caret {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+.orch-instrument-cmd-inline-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+}
+.orch-instrument-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono-family);
+  font-size: 9.5px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.orch-instrument-dur {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  font-family: var(--font-mono-family);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+/* Single-line command rendering inside head — replaces the old two-row layout */
+.orch-instrument-cmd-inline {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+  font-family: var(--font-mono-family);
+  font-size: 11px;
+}
+.orch-instrument-cmd-inline::before {
+  content: "❯ ";
+  color: color-mix(in srgb, var(--foreground) 40%, transparent);
+}
+.orch-instrument-out {
+  margin: 0;
+  padding: 6px 8px 7px;
+  color: color-mix(in srgb, var(--muted-foreground) 90%, transparent);
+  font-family: var(--font-mono-family);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow: auto;
+}
+.orch-instrument-path {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--foreground) 85%, transparent);
+  font-family: var(--font-mono-family);
+  font-size: 11px;
+}
+
+/* Compact pane-status bar — 22px strip, mono text, branch/ctx gauge */
+.orch-pane-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  height: 22px;
+  flex-shrink: 0;
+  background: var(--surface-sunken, var(--muted));
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.orch-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-family: var(--font-mono-family);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.orch-status-spacer {
+  flex: 1;
+}
+
+/* Circular context meter — small ring percent indicator */
+.orch-ctx-meter {
+  color: var(--foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono-family);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.orch-ctx-meter .orch-ctx-ring {
+  width: 12px;
+  height: 12px;
+}
+.orch-ctx-meter .orch-ctx-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+.orch-ctx-meter .orch-ctx-ring .orch-ctx-track {
+  stroke: var(--border);
+}
+.orch-ctx-meter .orch-ctx-ring .orch-ctx-fill {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset 200ms ease;
+}
+
+/* Sidebar surface — lifted contrast plane (one step lighter than pane bg)
+   Per design system: pane bg is the focus, sidebar floats forward as chrome.
+   Visible right-edge divider reinforces the plane change. */
+[data-slot="sidebar"] {
+  background: var(--sidebar-bg);
+}
+[data-slot="sidebar-inner"] {
+  background: var(--sidebar-bg) !important;
+  border-right: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent) !important;
+  box-shadow: none !important;
+}
+/* Pane container — explicit darkest plane so sidebar contrast reads cleanly */
+.bg-background:has(> [data-slot="sidebar-inset"]),
+[data-slot="sidebar-inset"] {
+  background: var(--background) !important;
+}
+
+/* ----- Sidebar typography (design spec: 4 sizes total, tight rhythm) ----- */
+/* Action rows (New thread, Search, Plugins) — 12.5px sentence case, tighter */
+[data-slot="sidebar"] [data-slot="sidebar-menu-button"] {
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+  height: 28px;
+  min-height: 28px;
+}
+/* Project (parent) rows — bold 500 */
+[data-slot="sidebar"] [data-slot="sidebar-menu-button"][aria-expanded] {
+  font-weight: 500;
+}
+/* Thread (child) rows — 12.5px / 500 / -0.005em / 24px tight rows */
+[data-slot="sidebar"] [data-slot="sidebar-menu-sub-button"] {
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  min-height: 24px;
+  height: auto;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  color: var(--foreground);
+}
+/* Worker (grandchild) rows — dimmed 400 weight to read as secondary */
+[data-slot="sidebar"]
+  [data-slot="sidebar-menu-sub-item"]
+  [data-slot="sidebar-menu-sub-button"]
+  [data-slot="sidebar-menu-sub-button"],
+[data-slot="sidebar"]
+  [data-slot="sidebar-menu-sub"]
+  [data-slot="sidebar-menu-sub"]
+  [data-slot="sidebar-menu-sub-button"] {
+  font-weight: 400;
+  color: color-mix(in srgb, var(--foreground) 65%, transparent);
+}
+/* Section heads (THREADS) — 10.5px UPPERCASE mono with letter-spacing */
+[data-slot="sidebar"] [data-slot="sidebar-group-label"] {
+  font-family: var(--font-mono-family);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  height: auto;
+  padding-top: 14px;
+  padding-bottom: 6px;
+}
+/* Timestamps — 10px mono tabular-nums */
+[data-slot="sidebar"] .orch-thread-time,
+[data-slot="sidebar"] [data-thread-time] {
+  font-family: var(--font-mono-family);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--foreground) 45%, transparent);
+}
+/* Brand name in sidebar header */
+[data-slot="sidebar"] [data-sidebar-brand] {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-size: 15px;
+}
+.orch-thread-guide {
+  position: relative;
+}
+.orch-thread-guide::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Active-thread accent bar used in sidebar rows */
+.orch-active-bar {
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--foreground);
+}
+
+/* Running agent glow dot (sidebar active-session cue) */
+.orch-running-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 25%, transparent);
+}
+
+/* Tabular nums helper — for any timestamp / counter alignment */
+.orch-tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Provider glyph consumed tint: Claude tinted warm orange, Codex currentColor */
+.orch-prov-claude {
+  color: var(--provider-claude, #d97757);
+}
+.orch-prov-codex {
+  color: var(--provider-codex, currentColor);
+}
+
+/* Pane header — slim 32px variant used by orchestrator + agent panes */
+.orch-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised, var(--card));
+  min-height: 32px;
+}
+
+/* Inline tag-line used when a pane opens straight into conversation (no title bar) */
+.orch-pane-inline-tag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  margin-bottom: 12px;
+  border-bottom: 1px dashed var(--border);
 }

@@ -1,6 +1,8 @@
 import {
+  AlertTriangleIcon,
   BrainIcon,
   CheckCircleIcon,
+  CircleAlertIcon,
   GlobeIcon,
   LoaderIcon,
   SendIcon,
@@ -15,6 +17,58 @@ import type { OrchestratorStatus } from "./useOrchestratorEngine";
 // Sub-components
 // ---------------------------------------------------------------------------
 
+type StatusBarConfig = {
+  icon: typeof LoaderIcon;
+  label: string;
+  color: string;
+  spin: boolean;
+};
+
+const STATUS_BAR_CONFIG: Record<Exclude<OrchestratorStatus, "idle">, StatusBarConfig> = {
+  thinking: {
+    icon: LoaderIcon,
+    label: "Thinking...",
+    color: "text-muted-foreground",
+    spin: true,
+  },
+  sending: {
+    icon: SendIcon,
+    label: "Sending to agent...",
+    color: "text-muted-foreground",
+    spin: false,
+  },
+  waiting: {
+    icon: LoaderIcon,
+    label: "Agent working...",
+    color: "text-muted-foreground",
+    spin: true,
+  },
+  reviewing: {
+    icon: CheckCircleIcon,
+    label: "Reviewing output",
+    color: "text-muted-foreground",
+    spin: false,
+  },
+  completed: {
+    icon: CheckCircleIcon,
+    label: "Finished",
+    color: "text-emerald-500",
+    spin: false,
+  },
+  failed: {
+    icon: CircleAlertIcon,
+    label: "Orchestrator run failed",
+    color: "text-destructive",
+    spin: false,
+  },
+  stuck: {
+    icon: AlertTriangleIcon,
+    label: "Agent appears stuck",
+    color: "text-amber-500",
+    spin: false,
+  },
+};
+
 function OrchestratorStatusBar({
   status,
   detail,
@@ -23,34 +77,7 @@ function OrchestratorStatusBar({
   detail?: string | null;
 }) {
   if (status === "idle") return null;
-
-  const config = {
-    thinking: {
-      icon: LoaderIcon,
-      label: "Thinking...",
-      color: "text-muted-foreground",
-      spin: true,
-    },
-    sending: {
-      icon: SendIcon,
-      label: "Sending to agent...",
-      color: "text-muted-foreground",
-      spin: false,
-    },
-    waiting: {
-      icon: LoaderIcon,
-      label: "Agent working...",
-      color: "text-muted-foreground",
-      spin: true,
-    },
-    reviewing: {
-      icon: CheckCircleIcon,
-      label: "Reviewing output",
-      color: "text-muted-foreground",
-      spin: false,
-    },
-  }[status];
-
+  const config = STATUS_BAR_CONFIG[status];
   const Icon = config.icon;
 
   return (
@@ -117,11 +144,12 @@ export function OrchestratorHeader({
 
   return (
     <>
-      {/* ---- Title bar ---- */}
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/30 px-3 dark:border-white/[0.03]">
-        <div className="flex items-center gap-2">
-          <BrainIcon className="size-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Orchestrator</span>
+      {/* ---- Title bar (Orchestrate design: slim 36px + orch-tag) ---- */}
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/40 px-3">
+        <div className="orch-tag">
+          <span className="orch-tag-dot" />
+          <BrainIcon className="size-3.5 opacity-60" />
+          <span>Orchestrator</span>
         </div>
         <div className="flex items-center gap-0.5">
           <Button

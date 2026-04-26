@@ -6,7 +6,7 @@ import {
   ProviderListPluginsInput,
   ProviderListSkillsInput,
   ProviderReadPluginInput,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Layer, Schema, SchemaIssue } from "effect";
 
 import { ProviderValidationError } from "../Errors.ts";

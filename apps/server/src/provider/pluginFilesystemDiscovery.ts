@@ -16,7 +16,7 @@ import type {
   ProviderPluginDescriptor,
   ProviderPluginMarketplaceDescriptor,
   ProviderSkillDescriptor,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 // ---------------------------------------------------------------------------
 // Types

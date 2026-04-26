@@ -11,7 +11,7 @@ import {
   RuntimeMode,
   ThreadId,
   ThreadType,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import { DeepMutable } from "effect/Types";
@@ -19,7 +19,7 @@ import {
   getDefaultModel,
   normalizeModelSlug,
   resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+} from "@orchestrate/shared/model";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection } from "./appSettings";
@@ -38,7 +38,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 
-export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+export const COMPOSER_DRAFT_STORAGE_KEY = "orchestrate:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 5;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
@@ -684,10 +684,20 @@ export function deriveEffectiveComposerModelState(input: {
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   customModelsByProvider: Record<ProviderKind, readonly string[]>;
+  defaultModelByProvider?: Partial<Record<ProviderKind, string | null | undefined>> | null;
 }): EffectiveComposerModelState {
+  // User's explicit Settings → Default model trumps a project's bootstrap
+  // default. Project defaults are auto-set when the workspace is detected and
+  // rarely reflect the user's current preference.
+  const userDefaultModel = input.defaultModelByProvider?.[input.selectedProvider];
+  const userDefaultModelSlug =
+    typeof userDefaultModel === "string" && userDefaultModel.trim().length > 0
+      ? userDefaultModel
+      : null;
   const baseModel = resolveModelSlugForProvider(
     input.selectedProvider,
     input.threadModelSelection?.model ??
+      userDefaultModelSlug ??
       input.projectModelSelection?.model ??
       getDefaultModel(input.selectedProvider),
   );
@@ -721,24 +731,42 @@ export function resolvePreferredComposerModelSelection(input: {
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   defaultProvider?: ProviderKind | null | undefined;
+  defaultModelByProvider?: Partial<Record<ProviderKind, string | null | undefined>> | null;
 }): ModelSelection {
   const draftProviderWithSelection =
     (["codex", "claudeAgent"] as const).find(
       (provider) => input.draft?.modelSelectionByProvider?.[provider] !== undefined,
     ) ?? null;
+
+  // Provider precedence: explicit draft → continuing thread → user's app
+  // default (settings) → project bootstrap default → hardcoded fallback.
+  //
+  // The user's Settings → Default provider intentionally trumps a project's
+  // bootstrap-default, because project defaults are auto-set at project
+  // creation time and rarely reflect the user's current preference.
   const preferredProvider =
     input.draft?.activeProvider ??
     draftProviderWithSelection ??
     input.threadModelSelection?.provider ??
-    input.projectModelSelection?.provider ??
     input.defaultProvider ??
-    "codex";
+    input.projectModelSelection?.provider ??
+    "claudeAgent";
+
+  // Per-provider model precedence (within the preferred provider):
+  //   draft → continuing thread → user app-level default → project default
+  //   → hardcoded built-in default.
+  const userDefaultModel = input.defaultModelByProvider?.[preferredProvider];
+  const userDefaultModelSelection =
+    typeof userDefaultModel === "string" && userDefaultModel.trim().length > 0
+      ? ({ provider: preferredProvider, model: userDefaultModel } as const)
+      : null;
 
   return (
     input.draft?.modelSelectionByProvider?.[preferredProvider] ??
     (input.threadModelSelection?.provider === preferredProvider
       ? input.threadModelSelection
       : null) ??
+    userDefaultModelSelection ??
     (input.projectModelSelection?.provider === preferredProvider
       ? input.projectModelSelection
       : null) ?? {
@@ -2404,6 +2432,7 @@ export function useEffectiveComposerModelState(input: {
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   customModelsByProvider: Record<ProviderKind, readonly string[]>;
+  defaultModelByProvider?: Partial<Record<ProviderKind, string | null | undefined>> | null;
 }): EffectiveComposerModelState {
   const draft = useComposerThreadDraft(input.threadId);
 
@@ -2415,6 +2444,9 @@ export function useEffectiveComposerModelState(input: {
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
         customModelsByProvider: input.customModelsByProvider,
+        ...(input.defaultModelByProvider !== undefined
+          ? { defaultModelByProvider: input.defaultModelByProvider }
+          : {}),
       }),
     [
       draft,
@@ -2422,6 +2454,7 @@ export function useEffectiveComposerModelState(input: {
       input.projectModelSelection,
       input.selectedProvider,
       input.threadModelSelection,
+      input.defaultModelByProvider,
     ],
   );
 }

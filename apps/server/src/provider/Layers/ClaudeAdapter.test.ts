@@ -15,7 +15,7 @@ import {
   ProviderItemId,
   ProviderRuntimeEvent,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Random, Stream } from "effect";
 
@@ -3049,8 +3049,11 @@ describe("ClaudeAdapterLive", () => {
           ) ?? false,
           true,
         );
-        assert.equal(createInput?.options.mcpServers?.orchestrate !== undefined, true);
-        assert.equal(createInput?.options.env?.ENABLE_TOOL_SEARCH, "false");
+        const mcpConfig = createInput?.options.mcpServers?.orchestrate as
+          | { type?: string; command?: string }
+          | undefined;
+        assert.equal(mcpConfig !== undefined, true);
+        assert.equal(mcpConfig?.command, "bun");
       }).pipe(
         Effect.provideService(OrchestrationToolRouterService, {
           isOrchestrationTool: () => false,

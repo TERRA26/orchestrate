@@ -8,11 +8,11 @@ import path from "node:path";
 import {
   defaultTerminalTitleForCliKind,
   managedTerminalCommandNameForCliKind,
-  T3CODE_TERMINAL_HOOK_OSC_PREFIX,
-  T3CODE_TERMINAL_CLI_KIND_ENV_KEY,
+  ORCHESTRATE_TERMINAL_HOOK_OSC_PREFIX,
+  ORCHESTRATE_TERMINAL_CLI_KIND_ENV_KEY,
   type TerminalAgentHookEventType,
   type TerminalCliKind,
-} from "@t3tools/shared/terminalThreads";
+} from "@orchestrate/shared/terminalThreads";
 
 export interface ManagedTerminalWrapperState {
   binDir: string | null;
@@ -83,56 +83,56 @@ function resolveExecutableOnPath(commandName: string, env: NodeJS.ProcessEnv): s
 }
 
 function buildHookOscSequence(eventType: TerminalAgentHookEventType): string {
-  return `\\033]${T3CODE_TERMINAL_HOOK_OSC_PREFIX}${eventType}\\007`;
+  return `\\033]${ORCHESTRATE_TERMINAL_HOOK_OSC_PREFIX}${eventType}\\007`;
 }
 
 function buildNotifyHookScript(): string {
   return `#!/bin/sh
 set -eu
 if [ "$#" -gt 0 ]; then
-  _t3code_hook_input="$1"
+  _orchestrate_hook_input="$1"
 else
-  _t3code_hook_input="$(cat)"
+  _orchestrate_hook_input="$(cat)"
 fi
 
-_t3code_extract_event() {
-  printf '%s' "$_t3code_hook_input" | sed -n "s/.*\\\"$1\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n 1
+_orchestrate_extract_event() {
+  printf '%s' "$_orchestrate_hook_input" | sed -n "s/.*\\\"$1\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n 1
 }
 
-_t3code_event="$(_t3code_extract_event hook_event_name)"
-if [ -z "$_t3code_event" ]; then
-  _t3code_type="$(_t3code_extract_event type)"
-  case "$_t3code_type" in
+_orchestrate_event="$(_orchestrate_extract_event hook_event_name)"
+if [ -z "$_orchestrate_event" ]; then
+  _orchestrate_type="$(_orchestrate_extract_event type)"
+  case "$_orchestrate_type" in
     task_started|userPromptSubmitted|user_prompt_submit)
-      _t3code_event="Start"
+      _orchestrate_event="Start"
       ;;
     task_complete|agent-turn-complete|stop|session_end|sessionEnd)
-      _t3code_event="Stop"
+      _orchestrate_event="Stop"
       ;;
     exec_approval_request|apply_patch_approval_request|request_user_input)
-      _t3code_event="PermissionRequest"
+      _orchestrate_event="PermissionRequest"
       ;;
   esac
 fi
 
-_t3code_emit_osc() {
-  _t3code_sequence="$1"
+_orchestrate_emit_osc() {
+  _orchestrate_sequence="$1"
   if [ -w /dev/tty ]; then
-    printf '%b' "$_t3code_sequence" > /dev/tty 2>/dev/null || printf '%b' "$_t3code_sequence"
+    printf '%b' "$_orchestrate_sequence" > /dev/tty 2>/dev/null || printf '%b' "$_orchestrate_sequence"
     return
   fi
-  printf '%b' "$_t3code_sequence"
+  printf '%b' "$_orchestrate_sequence"
 }
 
-case "$_t3code_event" in
+case "$_orchestrate_event" in
   UserPromptSubmit|PostToolUse|PostToolUseFailure|Start)
-    _t3code_emit_osc '${buildHookOscSequence("Start")}'
+    _orchestrate_emit_osc '${buildHookOscSequence("Start")}'
     ;;
   Stop)
-    _t3code_emit_osc '${buildHookOscSequence("Stop")}'
+    _orchestrate_emit_osc '${buildHookOscSequence("Stop")}'
     ;;
   PermissionRequest|PreToolUse|Notification)
-    _t3code_emit_osc '${buildHookOscSequence("PermissionRequest")}'
+    _orchestrate_emit_osc '${buildHookOscSequence("PermissionRequest")}'
     ;;
 esac
 `;
@@ -181,78 +181,78 @@ function buildCodexWrapperScript(input: {
     `if [ -f ${shellQuote(notifyHookPath)} ]; then`,
     "  export CODEX_TUI_RECORD_SESSION=1",
     '  if [ -z "${CODEX_TUI_SESSION_LOG_PATH:-}" ]; then',
-    '    _t3code_codex_ts="$(date +%s 2>/dev/null || echo "$$")"',
-    '    export CODEX_TUI_SESSION_LOG_PATH="${TMPDIR:-/tmp}/t3code-codex-session-$$_${_t3code_codex_ts}.jsonl"',
+    '    _orchestrate_codex_ts="$(date +%s 2>/dev/null || echo "$$")"',
+    '    export CODEX_TUI_SESSION_LOG_PATH="${TMPDIR:-/tmp}/orchestrate-codex-session-$$_${_orchestrate_codex_ts}.jsonl"',
     "  fi",
     "  (",
-    '    _t3code_log="$CODEX_TUI_SESSION_LOG_PATH"',
-    `    _t3code_notify=${shellQuote(notifyHookPath)}`,
-    '    _t3code_last_turn_id=""',
-    '    _t3code_last_approval_id=""',
-    '    _t3code_last_exec_call_id=""',
-    "    _t3code_approval_fallback_seq=0",
+    '    _orchestrate_log="$CODEX_TUI_SESSION_LOG_PATH"',
+    `    _orchestrate_notify=${shellQuote(notifyHookPath)}`,
+    '    _orchestrate_last_turn_id=""',
+    '    _orchestrate_last_approval_id=""',
+    '    _orchestrate_last_exec_call_id=""',
+    "    _orchestrate_approval_fallback_seq=0",
     "",
-    "    _t3code_emit_event() {",
-    '      _t3code_event="$1"',
-    `      _t3code_payload=$(printf '{"hook_event_name":"%s"}' "$_t3code_event")`,
-    '      "$_t3code_notify" "$_t3code_payload" >/dev/null 2>&1 || true',
+    "    _orchestrate_emit_event() {",
+    '      _orchestrate_event="$1"',
+    `      _orchestrate_payload=$(printf '{"hook_event_name":"%s"}' "$_orchestrate_event")`,
+    '      "$_orchestrate_notify" "$_orchestrate_payload" >/dev/null 2>&1 || true',
     "    }",
     "",
-    "    _t3code_i=0",
-    '    while [ ! -f "$_t3code_log" ] && [ "$_t3code_i" -lt 200 ]; do',
-    "      _t3code_i=$((_t3code_i + 1))",
+    "    _orchestrate_i=0",
+    '    while [ ! -f "$_orchestrate_log" ] && [ "$_orchestrate_i" -lt 200 ]; do',
+    "      _orchestrate_i=$((_orchestrate_i + 1))",
     "      sleep 0.05",
     "    done",
-    '    if [ ! -f "$_t3code_log" ]; then',
+    '    if [ ! -f "$_orchestrate_log" ]; then',
     "      exit 0",
     "    fi",
     "",
-    '    tail -n 0 -F "$_t3code_log" 2>/dev/null | while IFS= read -r _t3code_line; do',
-    '      case "$_t3code_line" in',
+    '    tail -n 0 -F "$_orchestrate_log" 2>/dev/null | while IFS= read -r _orchestrate_line; do',
+    '      case "$_orchestrate_line" in',
     `        *'"dir":"to_tui"'*'"kind":"codex_event"'*'"msg":{"type":"task_started"'*)`,
-    `          _t3code_turn_id=$(printf '%s\n' "$_t3code_line" | awk -F'"turn_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
-    '          [ -n "$_t3code_turn_id" ] || _t3code_turn_id="task_started"',
-    '          if [ "$_t3code_turn_id" != "$_t3code_last_turn_id" ]; then',
-    '            _t3code_last_turn_id="$_t3code_turn_id"',
-    '            _t3code_emit_event "Start"',
+    `          _orchestrate_turn_id=$(printf '%s\n' "$_orchestrate_line" | awk -F'"turn_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
+    '          [ -n "$_orchestrate_turn_id" ] || _orchestrate_turn_id="task_started"',
+    '          if [ "$_orchestrate_turn_id" != "$_orchestrate_last_turn_id" ]; then',
+    '            _orchestrate_last_turn_id="$_orchestrate_turn_id"',
+    '            _orchestrate_emit_event "Start"',
     "          fi",
     "          ;;",
     `        *'"dir":"to_tui"'*'"kind":"codex_event"'*'"msg":{"type":"'*'_approval_request"'*)`,
-    `          _t3code_approval_id=$(printf '%s\n' "$_t3code_line" | awk -F'"id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
-    `          [ -n "$_t3code_approval_id" ] || _t3code_approval_id=$(printf '%s\n' "$_t3code_line" | awk -F'"approval_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
-    `          [ -n "$_t3code_approval_id" ] || _t3code_approval_id=$(printf '%s\n' "$_t3code_line" | awk -F'"call_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
-    '          if [ -z "$_t3code_approval_id" ]; then',
-    "            _t3code_approval_fallback_seq=$((_t3code_approval_fallback_seq + 1))",
-    '            _t3code_approval_id="approval_request_${_t3code_approval_fallback_seq}"',
+    `          _orchestrate_approval_id=$(printf '%s\n' "$_orchestrate_line" | awk -F'"id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
+    `          [ -n "$_orchestrate_approval_id" ] || _orchestrate_approval_id=$(printf '%s\n' "$_orchestrate_line" | awk -F'"approval_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
+    `          [ -n "$_orchestrate_approval_id" ] || _orchestrate_approval_id=$(printf '%s\n' "$_orchestrate_line" | awk -F'"call_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
+    '          if [ -z "$_orchestrate_approval_id" ]; then',
+    "            _orchestrate_approval_fallback_seq=$((_orchestrate_approval_fallback_seq + 1))",
+    '            _orchestrate_approval_id="approval_request_${_orchestrate_approval_fallback_seq}"',
     "          fi",
-    '          if [ "$_t3code_approval_id" != "$_t3code_last_approval_id" ]; then',
-    '            _t3code_last_approval_id="$_t3code_approval_id"',
-    '            _t3code_emit_event "PermissionRequest"',
+    '          if [ "$_orchestrate_approval_id" != "$_orchestrate_last_approval_id" ]; then',
+    '            _orchestrate_last_approval_id="$_orchestrate_approval_id"',
+    '            _orchestrate_emit_event "PermissionRequest"',
     "          fi",
     "          ;;",
     `        *'"dir":"to_tui"'*'"kind":"codex_event"'*'"msg":{"type":"exec_command_begin"'*)`,
-    `          _t3code_exec_call_id=$(printf '%s\n' "$_t3code_line" | awk -F'"call_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
-    '          if [ -n "$_t3code_exec_call_id" ]; then',
-    '            if [ "$_t3code_exec_call_id" != "$_t3code_last_exec_call_id" ]; then',
-    '              _t3code_last_exec_call_id="$_t3code_exec_call_id"',
-    '              _t3code_emit_event "Start"',
+    `          _orchestrate_exec_call_id=$(printf '%s\n' "$_orchestrate_line" | awk -F'"call_id":"' 'NF > 1 { sub(/".*/, "", $2); print $2; exit }')`,
+    '          if [ -n "$_orchestrate_exec_call_id" ]; then',
+    '            if [ "$_orchestrate_exec_call_id" != "$_orchestrate_last_exec_call_id" ]; then',
+    '              _orchestrate_last_exec_call_id="$_orchestrate_exec_call_id"',
+    '              _orchestrate_emit_event "Start"',
     "            fi",
     "          else",
-    '            _t3code_emit_event "Start"',
+    '            _orchestrate_emit_event "Start"',
     "          fi",
     "          ;;",
     "      esac",
     "    done",
     "  ) &",
-    "  T3CODE_CODEX_START_WATCHER_PID=$!",
+    "  ORCHESTRATE_CODEX_START_WATCHER_PID=$!",
     "fi",
     `${shellQuote(targetPath)} --enable codex_hooks -c ${shellQuote(`notify=["bash",${JSON.stringify(notifyHookPath)}]`)} "$@"`,
-    "_t3code_status=$?",
-    'if [ -n "${T3CODE_CODEX_START_WATCHER_PID:-}" ]; then',
-    '  kill "$T3CODE_CODEX_START_WATCHER_PID" >/dev/null 2>&1 || true',
-    '  wait "$T3CODE_CODEX_START_WATCHER_PID" 2>/dev/null || true',
+    "_orchestrate_status=$?",
+    'if [ -n "${ORCHESTRATE_CODEX_START_WATCHER_PID:-}" ]; then',
+    '  kill "$ORCHESTRATE_CODEX_START_WATCHER_PID" >/dev/null 2>&1 || true',
+    '  wait "$ORCHESTRATE_CODEX_START_WATCHER_PID" 2>/dev/null || true',
     "fi",
-    'exit "$_t3code_status"',
+    'exit "$_orchestrate_status"',
   ].join("\n");
 }
 
@@ -272,9 +272,9 @@ function buildWrapperScript(input: {
       : buildCodexWrapperScript({ codexHomeDir, notifyHookPath, targetPath });
   return [
     "#!/bin/sh",
-    `# Managed ${commandName} wrapper injected by t3code terminal sessions.`,
+    `# Managed ${commandName} wrapper injected by orchestrate terminal sessions.`,
     `printf '\\033]0;%s\\007' ${shellQuote(title)}`,
-    `export ${T3CODE_TERMINAL_CLI_KIND_ENV_KEY}=${shellQuote(cliKind)}`,
+    `export ${ORCHESTRATE_TERMINAL_CLI_KIND_ENV_KEY}=${shellQuote(cliKind)}`,
     commandBody,
     "",
   ].join("\n");
@@ -293,41 +293,41 @@ function writeFileIfChanged(filePath: string, content: string, mode: number): vo
 }
 
 function buildManagedZshRc(quotedZshDir: string): string {
-  return `# T3 Code zsh rc wrapper
-_t3code_home="\${T3CODE_ORIGINAL_ZDOTDIR:-$HOME}"
-export ZDOTDIR="$_t3code_home"
-[[ -f "$_t3code_home/.zshrc" ]] && source "$_t3code_home/.zshrc"
+  return `# Orchestrate zsh rc wrapper
+_orchestrate_home="\${ORCHESTRATE_ORIGINAL_ZDOTDIR:-$HOME}"
+export ZDOTDIR="$_orchestrate_home"
+[[ -f "$_orchestrate_home/.zshrc" ]] && source "$_orchestrate_home/.zshrc"
 export ZDOTDIR=${quotedZshDir}
-if [ -n "\${T3CODE_MANAGED_BIN_DIR:-}" ] && [ -d "\${T3CODE_MANAGED_BIN_DIR}" ]; then
+if [ -n "\${ORCHESTRATE_MANAGED_BIN_DIR:-}" ] && [ -d "\${ORCHESTRATE_MANAGED_BIN_DIR}" ]; then
   case ":$PATH:" in
-    *:\${T3CODE_MANAGED_BIN_DIR}:*) ;;
-    *) export PATH="\${T3CODE_MANAGED_BIN_DIR}:$PATH" ;;
+    *:\${ORCHESTRATE_MANAGED_BIN_DIR}:*) ;;
+    *) export PATH="\${ORCHESTRATE_MANAGED_BIN_DIR}:$PATH" ;;
   esac
   unalias claude 2>/dev/null || true
   claude() {
-    if [ -x "\${T3CODE_MANAGED_BIN_DIR}/claude" ] && [ ! -d "\${T3CODE_MANAGED_BIN_DIR}/claude" ]; then
-      "\${T3CODE_MANAGED_BIN_DIR}/claude" "$@"
+    if [ -x "\${ORCHESTRATE_MANAGED_BIN_DIR}/claude" ] && [ ! -d "\${ORCHESTRATE_MANAGED_BIN_DIR}/claude" ]; then
+      "\${ORCHESTRATE_MANAGED_BIN_DIR}/claude" "$@"
     else
       command claude "$@"
     fi
   }
   unalias codex 2>/dev/null || true
   codex() {
-    if [ -x "\${T3CODE_MANAGED_BIN_DIR}/codex" ] && [ ! -d "\${T3CODE_MANAGED_BIN_DIR}/codex" ]; then
-      "\${T3CODE_MANAGED_BIN_DIR}/codex" "$@"
+    if [ -x "\${ORCHESTRATE_MANAGED_BIN_DIR}/codex" ] && [ ! -d "\${ORCHESTRATE_MANAGED_BIN_DIR}/codex" ]; then
+      "\${ORCHESTRATE_MANAGED_BIN_DIR}/codex" "$@"
     else
       command codex "$@"
     fi
   }
   typeset -ga precmd_functions 2>/dev/null || true
-  _t3code_ensure_managed_bin() {
+  _orchestrate_ensure_managed_bin() {
     case ":$PATH:" in
-      *:\${T3CODE_MANAGED_BIN_DIR}:*) ;;
-      *) PATH="\${T3CODE_MANAGED_BIN_DIR}:$PATH" ;;
+      *:\${ORCHESTRATE_MANAGED_BIN_DIR}:*) ;;
+      *) PATH="\${ORCHESTRATE_MANAGED_BIN_DIR}:$PATH" ;;
     esac
   }
   {
-    precmd_functions=(\${precmd_functions:#_t3code_ensure_managed_bin} _t3code_ensure_managed_bin)
+    precmd_functions=(\${precmd_functions:#_orchestrate_ensure_managed_bin} _orchestrate_ensure_managed_bin)
   } 2>/dev/null || true
 fi
 `;
@@ -338,20 +338,20 @@ function ensureManagedZshWrappers(zshDir: string): void {
   const quotedZshDir = shellQuote(zshDir);
   writeFileIfChanged(
     path.join(zshDir, ".zshenv"),
-    `# T3 Code zsh env wrapper
-_t3code_home="\${T3CODE_ORIGINAL_ZDOTDIR:-$HOME}"
-export ZDOTDIR="$_t3code_home"
-[[ -f "$_t3code_home/.zshenv" ]] && source "$_t3code_home/.zshenv"
+    `# Orchestrate zsh env wrapper
+_orchestrate_home="\${ORCHESTRATE_ORIGINAL_ZDOTDIR:-$HOME}"
+export ZDOTDIR="$_orchestrate_home"
+[[ -f "$_orchestrate_home/.zshenv" ]] && source "$_orchestrate_home/.zshenv"
 export ZDOTDIR=${quotedZshDir}
 `,
     0o644,
   );
   writeFileIfChanged(
     path.join(zshDir, ".zprofile"),
-    `# T3 Code zsh profile wrapper
-_t3code_home="\${T3CODE_ORIGINAL_ZDOTDIR:-$HOME}"
-export ZDOTDIR="$_t3code_home"
-[[ -f "$_t3code_home/.zprofile" ]] && source "$_t3code_home/.zprofile"
+    `# Orchestrate zsh profile wrapper
+_orchestrate_home="\${ORCHESTRATE_ORIGINAL_ZDOTDIR:-$HOME}"
+export ZDOTDIR="$_orchestrate_home"
+[[ -f "$_orchestrate_home/.zprofile" ]] && source "$_orchestrate_home/.zprofile"
 export ZDOTDIR=${quotedZshDir}
 `,
     0o644,
@@ -460,8 +460,8 @@ function applyManagedTerminalWrapperEnvState(
 
   return {
     ...env,
-    T3CODE_MANAGED_BIN_DIR: wrapperState.binDir,
-    T3CODE_ORIGINAL_ZDOTDIR: env.ZDOTDIR ?? env.HOME ?? "",
+    ORCHESTRATE_MANAGED_BIN_DIR: wrapperState.binDir,
+    ORCHESTRATE_ORIGINAL_ZDOTDIR: env.ZDOTDIR ?? env.HOME ?? "",
     ...(wrapperState.zshDir ? { ZDOTDIR: wrapperState.zshDir } : {}),
     [envPathKey]: currentEntries.join(path.delimiter),
   };

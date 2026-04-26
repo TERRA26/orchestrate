@@ -17,14 +17,14 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker } from "@orchestrate/shared/DrainableWorker";
 import {
   buildPromptThreadTitleFallback,
   isGenericChatThreadTitle,
-} from "@t3tools/shared/chatThreads";
-import { resolveThreadWorkspaceState } from "@t3tools/shared/threadEnvironment";
+} from "@orchestrate/shared/chatThreads";
+import { resolveThreadWorkspaceState } from "@orchestrate/shared/threadEnvironment";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
@@ -91,7 +91,7 @@ const serverCommandId = (tag: string): CommandId =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const WORKTREE_BRANCH_PREFIX = "dpcode";
+const WORKTREE_BRANCH_PREFIX = "orchestrate";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 const HANDOFF_CONTEXT_WRAPPER_OVERHEAD =
   "<handoff_context>\n\n</handoff_context>\n\n<latest_user_message>\n\n</latest_user_message>"

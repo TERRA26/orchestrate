@@ -1,5 +1,5 @@
-import { ThreadId } from "@t3tools/contracts";
-import { defaultTerminalTitleForCliKind } from "@t3tools/shared/terminalThreads";
+import { ThreadId } from "@orchestrate/contracts";
+import { defaultTerminalTitleForCliKind } from "@orchestrate/shared/terminalThreads";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -13,6 +13,8 @@ import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
+import { ConnectionStatusBanner } from "../components/ConnectionStatusBanner";
+import { SettingsModal } from "../components/SettingsModal";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
@@ -27,6 +29,7 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { TaskCompletionNotifications } from "../notifications/taskCompletion";
 import { useWorkspaceStore, workspaceThreadId } from "../workspaceStore";
+import { useOrchestratorPaneStore } from "../lib/orchestratorPaneStore";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -57,7 +60,9 @@ function RootRouteView() {
         <EventRouter />
         <TaskCompletionNotifications />
         <DesktopProjectBootstrap />
+        <ConnectionStatusBanner />
         <Outlet />
+        <SettingsModal />
       </AnchoredToastProvider>
     </ToastProvider>
   );
@@ -221,6 +226,20 @@ function EventRouter() {
       if (event.type === "thread.turn-diff-completed" || event.type === "thread.reverted") {
         needsProviderInvalidation = true;
       }
+
+      // Auto-focus agent threads spawned as children of the active orchestrator
+      if (event.type === "thread.created") {
+        const { parentThreadId, threadId, threadType } = event.payload;
+        const paneStore = useOrchestratorPaneStore.getState();
+        if (
+          parentThreadId &&
+          threadType === "agent" &&
+          paneStore.orchestratorThreadId === parentThreadId
+        ) {
+          paneStore.focusAgent(threadId);
+        }
+      }
+
       domainEventFlushThrottler.maybeExecute();
     });
     const unsubTerminalEvent = api.terminal.onEvent((event) => {

@@ -3,7 +3,7 @@
  *
  * @module textGenerationUtils
  */
-import { sanitizeGeneratedThreadTitle } from "@t3tools/shared/chatThreads";
+import { sanitizeGeneratedThreadTitle } from "@orchestrate/shared/chatThreads";
 import { Schema } from "effect";
 
 import { TextGenerationError } from "./Errors.ts";

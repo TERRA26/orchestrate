@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-const ORCHESTRATOR_OPEN_STORAGE_KEY = "t3code:orchestrator-panel-open";
+const ORCHESTRATOR_OPEN_STORAGE_KEY = "orchestrate:orchestrator-panel-open";
 
 function readOrchestratorOpen(): boolean {
   try {

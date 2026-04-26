@@ -1,6 +1,6 @@
 import { Encoding } from "effect";
-import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
-import { resolveThreadWorkspaceCwd as resolveSharedThreadWorkspaceCwd } from "@t3tools/shared/threadEnvironment";
+import { CheckpointRef, ProjectId, type ThreadId } from "@orchestrate/contracts";
+import { resolveThreadWorkspaceCwd as resolveSharedThreadWorkspaceCwd } from "@orchestrate/shared/threadEnvironment";
 
 export const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 

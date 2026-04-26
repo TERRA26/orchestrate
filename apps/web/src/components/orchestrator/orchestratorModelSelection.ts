@@ -1,4 +1,4 @@
-import type { ModelSelection, ProviderKind, ServerProvider } from "@t3tools/contracts";
+import type { ModelSelection, ProviderKind, ServerProvider } from "@orchestrate/contracts";
 
 import { getDefaultServerModel, getProviderModels } from "~/providerModels";
 

@@ -4,7 +4,7 @@ import type {
   OrchestratorTaskId,
   OrchestratorWorker,
   OrchestratorWorkerId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 // ---------------------------------------------------------------------------
 // Shared types for the Control Room components

@@ -3,7 +3,7 @@
 // Layer: UI state helpers
 // Exports: split-view mutation helpers used by the store and split-aware navigation flows
 
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@orchestrate/contracts";
 import type { SplitView, SplitViewPane, SplitViewPanePanelState } from "./splitViewStore";
 
 export interface SplitViewThreadRemovalResult {

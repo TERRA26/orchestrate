@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import type { OrchestratorTask, OrchestratorTaskId } from "@t3tools/contracts";
+import type { OrchestratorTask, OrchestratorTaskId } from "@orchestrate/contracts";
 
 import { cn } from "~/lib/utils";
 import { getTaskStatusConfig } from "./controlRoomHelpers";

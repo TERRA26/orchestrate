@@ -9,7 +9,7 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   type ProviderKind,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 export interface SelectableModelOption {
   slug: string;
@@ -33,6 +33,7 @@ const MODEL_OPTIONS_BY_PROVIDER: Record<ProviderKind, ReadonlyArray<SelectableMo
     { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
   ],
   claudeAgent: [
+    { slug: "claude-opus-4-7", name: "Claude Opus 4.7" },
     { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },

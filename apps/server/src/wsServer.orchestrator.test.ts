@@ -26,7 +26,7 @@ import {
   type WsPushChannel,
   type WsPushMessage,
   type WsPush,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
@@ -381,7 +381,7 @@ describe("Orchestrator Journey Smoke Tests", () => {
       throw new Error("Test server is already running");
     }
 
-    const baseDir = makeTempDir("t3code-ws-journey-base-");
+    const baseDir = makeTempDir("orchestrate-ws-journey-base-");
     const devUrl = undefined;
     const derivedPaths = deriveServerPathsSync(baseDir, devUrl);
     const scope = await Effect.runPromise(Scope.make("sequential"));
@@ -613,7 +613,7 @@ describe("Orchestrator Journey Smoke Tests", () => {
     const [ws] = await connectAndAwaitWelcome(port);
     connections.push(ws);
 
-    const workspaceRoot = makeTempDir("t3code-journey-delegate-");
+    const workspaceRoot = makeTempDir("orchestrate-journey-delegate-");
     const { run, rootTaskId, workerId } = await bootstrapOrchestration(
       ws,
       workspaceRoot,
@@ -700,7 +700,7 @@ describe("Orchestrator Journey Smoke Tests", () => {
     const [ws] = await connectAndAwaitWelcome(port);
     connections.push(ws);
 
-    const workspaceRoot = makeTempDir("t3code-journey-rework-");
+    const workspaceRoot = makeTempDir("orchestrate-journey-rework-");
     const { run, rootTaskId, workerId } = await bootstrapOrchestration(ws, workspaceRoot, "rework");
     const now = new Date().toISOString();
 

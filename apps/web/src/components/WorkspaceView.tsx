@@ -3,7 +3,7 @@
 // Layer: Workspace route surface
 
 import { Plus, SettingsIcon } from "~/lib/icons";
-import { type TerminalCliKind } from "@t3tools/shared/terminalThreads";
+import { type TerminalCliKind } from "@orchestrate/shared/terminalThreads";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 

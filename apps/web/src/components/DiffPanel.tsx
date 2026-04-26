@@ -2,8 +2,8 @@ import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { ThreadId, type TurnId } from "@t3tools/contracts";
-import { resolveThreadWorkspaceCwd } from "@t3tools/shared/threadEnvironment";
+import { ThreadId, type TurnId } from "@orchestrate/contracts";
+import { resolveThreadWorkspaceCwd } from "@orchestrate/shared/threadEnvironment";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,

@@ -1,4 +1,4 @@
-import type { TerminalEvent } from "@t3tools/contracts";
+import type { TerminalEvent } from "@orchestrate/contracts";
 
 import { readNativeApi } from "~/nativeApi";
 

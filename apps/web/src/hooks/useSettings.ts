@@ -17,8 +17,8 @@ import {
   ServerConfig,
   ModelSelection,
   ThreadEnvMode,
-} from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+} from "@orchestrate/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@orchestrate/contracts";
 import {
   type ClientSettings,
   ClientSettingsSchema,
@@ -28,17 +28,17 @@ import {
   SidebarThreadSortOrder,
   TimestampFormat,
   UnifiedSettings,
-} from "@t3tools/contracts/settings";
+} from "@orchestrate/contracts/settings";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { ensureNativeApi } from "~/nativeApi";
 import { useLocalStorage } from "./useLocalStorage";
 import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
-import { deepMerge } from "@t3tools/shared/Struct";
+import { deepMerge } from "@orchestrate/shared/Struct";
 
-const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
-const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
+const CLIENT_SETTINGS_STORAGE_KEY = "orchestrate:client-settings:v1";
+const OLD_SETTINGS_KEY = "orchestrate:app-settings:v1";
 
 // ── Key sets for routing patches ─────────────────────────────────────
 

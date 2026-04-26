@@ -12,6 +12,7 @@ export * from "./server";
 export * from "./settings";
 export * from "./git";
 export * from "./orchestration";
+export * from "./orchestrationRun";
 export * from "./orchestrationTools";
 export * from "./editor";
 export * from "./project";

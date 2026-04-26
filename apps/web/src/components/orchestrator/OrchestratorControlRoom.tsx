@@ -12,11 +12,11 @@ import type {
   OrchestratorTaskId,
   OrchestratorWorker,
   OrchestratorWorkerId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 import { cn } from "~/lib/utils";
 import type { SelectedEntity } from "./controlRoomTypes";
-import { formatElapsedTime, getRunStatusDotColor, getTaskStatusConfig } from "./controlRoomHelpers";
+import { getRunStatusDotColor, getTaskStatusConfig } from "./controlRoomHelpers";
 import { OrchestratorLeftRail } from "./OrchestratorLeftRail";
 import { OrchestratorInspector } from "./OrchestratorInspector";
 import {
@@ -24,7 +24,6 @@ import {
   type BrowserWorkspaceProps,
 } from "./OrchestratorBrowserWorkspace";
 import { WorkerCanvas } from "./WorkerCanvas";
-import { WorkerChip } from "./WorkerPanel";
 import { usePanelStateStore } from "./panelStateStore";
 
 // ---------------------------------------------------------------------------
@@ -96,79 +95,6 @@ function CompactSelectionCard({ selectedEntity }: { selectedEntity: SelectedEnti
           <span className="font-mono">task {worker.activeTaskId.slice(-6)}</span>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function CompactRunHeader({
-  run,
-  tasks,
-  workers,
-  selectedEntityId,
-  onSelectTask,
-  onSelectWorker,
-}: {
-  run: OrchestratorRun | null;
-  tasks: ReadonlyArray<OrchestratorTask>;
-  workers: ReadonlyArray<OrchestratorWorker>;
-  selectedEntityId: OrchestratorTaskId | OrchestratorWorkerId | null;
-  onSelectTask: (taskId: OrchestratorTaskId) => void;
-  onSelectWorker: (workerId: OrchestratorWorkerId) => void;
-}) {
-  // Only show task/worker selectors when there's more than one entity to pick
-  const showSelectors = tasks.length > 1 || workers.length > 1;
-
-  return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-border/10 px-3 py-1">
-      <CircleIcon
-        className={cn(
-          "size-1.5 shrink-0 fill-current",
-          getRunStatusDotColor(run?.status ?? "idle"),
-        )}
-      />
-      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/50">
-        {run ? run.status : "Orchestrator"}
-      </span>
-      {run ? (
-        <span className="font-mono text-[10px] text-muted-foreground/35">
-          {formatElapsedTime(run.createdAt)}
-        </span>
-      ) : null}
-
-      {showSelectors ? (
-        <div className="ml-auto flex items-center gap-1.5">
-          {tasks.slice(0, 3).map((task) => (
-            <button
-              key={task.taskId}
-              type="button"
-              onClick={() => onSelectTask(task.taskId)}
-              className={cn(
-                "text-[10px] transition-colors",
-                selectedEntityId === task.taskId
-                  ? "font-medium text-foreground/70"
-                  : "text-muted-foreground/30 hover:text-muted-foreground/50",
-              )}
-            >
-              {task.title}
-            </button>
-          ))}
-          {workers.map((worker) => (
-            <button
-              key={worker.workerId}
-              type="button"
-              onClick={() => onSelectWorker(worker.workerId)}
-              className={cn(
-                "text-[10px] transition-colors",
-                selectedEntityId === worker.workerId
-                  ? "font-medium text-foreground/70"
-                  : "text-muted-foreground/30 hover:text-muted-foreground/50",
-              )}
-            >
-              W-{worker.workerId.slice(-4)}
-            </button>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -265,38 +191,11 @@ export function OrchestratorControlRoom({
   if (compactMode) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-gradient-to-b from-background to-background/92">
-        <CompactRunHeader
-          run={run}
-          tasks={tasks}
-          workers={workers}
-          selectedEntityId={selectedEntityId}
-          onSelectTask={handleSelectTask}
-          onSelectWorker={handleSelectWorker}
-        />
-
         <OrchestratorBrowserWorkspace
           {...browserWorkspace}
           isCollapsed={panelState.browserCollapsed}
           onToggleCollapse={panelState.toggleBrowser}
         />
-
-        {workers.length > 0 ? (
-          <div className="shrink-0 border-b border-border/20 bg-background/35 px-3 py-1.5">
-            <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/45">
-                Workers
-              </span>
-              {workers.map((worker) => (
-                <WorkerChip
-                  key={worker.workerId}
-                  worker={worker}
-                  selected={selectedEntityId === worker.workerId}
-                  onClick={() => handleSelectWorker(worker.workerId)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         {/* Only show task selection card when multiple tasks exist — single-task
             info is already visible in the checklist card within the messages area */}
@@ -381,7 +280,7 @@ export function OrchestratorControlRoom({
               workers.length === 1 ? "h-32" : workers.length <= 2 ? "h-28" : "h-36",
             )}
           >
-            <WorkerCanvas workers={workers} />
+            <WorkerCanvas workers={workers} tasks={tasks} />
           </div>
         )}
 

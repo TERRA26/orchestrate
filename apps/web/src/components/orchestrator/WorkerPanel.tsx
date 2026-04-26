@@ -1,4 +1,4 @@
-import type { OrchestratorTask, OrchestratorWorker } from "@t3tools/contracts";
+import type { OrchestratorTask, OrchestratorWorker } from "@orchestrate/contracts";
 
 import { cn } from "~/lib/utils";
 import { useThreadById } from "~/storeSelectors";

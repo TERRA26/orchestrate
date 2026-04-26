@@ -15,13 +15,13 @@ import {
   OrchestratorTaskId,
   OrchestratorWorkerId,
   ProjectId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import type {
   OrchestratorDecision,
   OrchestratorEvidenceRecord,
   OrchestratorFallbackPolicy,
   OrchestratorWorkerModelBinding,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { Effect, Layer } from "effect";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";

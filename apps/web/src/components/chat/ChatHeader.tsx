@@ -10,7 +10,7 @@ import {
   type ProviderKind,
   type ResolvedKeybindingsConfig,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { useQuery } from "@tanstack/react-query";
 import React, { memo, useEffect, useRef, useState } from "react";
 import { BsLayoutSplit } from "react-icons/bs";
@@ -152,7 +152,7 @@ export const ChatHeader = memo(function ChatHeader({
   );
   const renderProviderIcon = (provider: ProviderKind | null, className: string) => {
     if (provider === "claudeAgent") {
-      return <ClaudeAI className={cn("text-[#d97757]", className)} />;
+      return <ClaudeAI className={cn("orch-prov-claude", className)} />;
     }
     if (provider === "codex") {
       return <OpenAI className={cn("text-muted-foreground/75", className)} />;

@@ -1,7 +1,7 @@
 // Purpose: Branch/worktree picker for the chat toolbar.
 // Coordinates branch checkout/create actions and decorates rows with git metadata.
 // Depends on: git React Query helpers, native API mutations, and toolbar selection rules.
-import type { GitBranch, GitStatusResult } from "@t3tools/contracts";
+import type { GitBranch, GitStatusResult } from "@orchestrate/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon, PlusIcon } from "~/lib/icons";

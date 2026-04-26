@@ -24,7 +24,7 @@ import type {
   OrchestratorWorkerModelBinding,
   OrchestratorFallbackPolicy,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 
@@ -49,7 +49,7 @@ export interface CreateTaskInput {
   readonly writeScope?: ReadonlyArray<string>;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly evidenceRequired?: ReadonlyArray<
-    typeof import("@t3tools/contracts").OrchestratorEvidenceType.Type
+    typeof import("@orchestrate/contracts").OrchestratorEvidenceType.Type
   >;
   readonly dependsOn?: ReadonlyArray<OrchestratorTaskId>;
   readonly modelPolicy?: OrchestratorModelPolicy;
@@ -68,7 +68,7 @@ export interface SpawnWorkerInput {
 export interface CaptureEvidenceInput {
   readonly taskId: OrchestratorTaskId;
   readonly workerId?: OrchestratorWorkerId;
-  readonly evidenceType: typeof import("@t3tools/contracts").OrchestratorEvidenceType.Type;
+  readonly evidenceType: typeof import("@orchestrate/contracts").OrchestratorEvidenceType.Type;
   readonly content: string;
   readonly contentTruncated: boolean;
   readonly metadata?: Record<string, string>;
@@ -77,7 +77,7 @@ export interface CaptureEvidenceInput {
 export interface RecordDecisionInput {
   readonly runId: OrchestratorRunId;
   readonly taskId?: OrchestratorTaskId;
-  readonly decisionType: typeof import("@t3tools/contracts").OrchestratorDecisionType.Type;
+  readonly decisionType: typeof import("@orchestrate/contracts").OrchestratorDecisionType.Type;
   readonly reason: string;
   readonly inputs?: string;
 }

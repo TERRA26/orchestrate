@@ -16,7 +16,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadEnvironmentMode,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";

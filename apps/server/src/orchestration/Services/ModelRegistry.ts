@@ -16,7 +16,7 @@ import type {
   OrchestratorWorkerModelBinding,
   OrchestratorWorkerId,
   RequiredCapability,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 export interface ModelRegistryShape {
   /** Return all known capability profiles. */

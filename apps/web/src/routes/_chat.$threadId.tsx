@@ -8,15 +8,17 @@ import {
   ThreadId,
   type ThreadId as ThreadIdType,
   type TurnId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
 import {
+  Fragment,
   Suspense,
   lazy,
   type CSSProperties,
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -473,7 +475,7 @@ function SplitPaneEmptyState(props: {
 
 function PickerProviderGlyph(props: { provider: "codex" | "claudeAgent"; className?: string }) {
   if (props.provider === "claudeAgent") {
-    return <ClaudeAI aria-hidden="true" className={cn("text-[#d97757]", props.className)} />;
+    return <ClaudeAI aria-hidden="true" className={cn("orch-prov-claude", props.className)} />;
   }
 
   return <OpenAI aria-hidden="true" className={cn("text-muted-foreground/60", props.className)} />;
@@ -1114,35 +1116,222 @@ function SingleChatSurface(props: {
 // Orchestrator 3-pane layout: orchestrator panel + up to 2 agent ChatViews
 // ---------------------------------------------------------------------------
 
+const EMPTY_AGENT_IDS: readonly string[] = Object.freeze([]);
+
+const PANE_SIZES_STORAGE_KEY = "orchestrate:multiPaneSizes:v1";
+
+function readStoredPaneSizes(agentCount: number): number[] | null {
+  try {
+    const raw = window.localStorage.getItem(`${PANE_SIZES_STORAGE_KEY}:${agentCount}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length !== agentCount + 1) return null;
+    if (!parsed.every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredPaneSizes(agentCount: number, sizes: number[]): void {
+  try {
+    window.localStorage.setItem(`${PANE_SIZES_STORAGE_KEY}:${agentCount}`, JSON.stringify(sizes));
+  } catch {}
+}
+
 function OrchestratorMultiPaneSurface(props: { agentThreadIds: string[] }) {
   const agentCount = props.agentThreadIds.length;
-  const orchestratorWidth = agentCount === 1 ? "50%" : "30%";
-  const agentWidth = agentCount === 1 ? "50%" : "35%";
+  const collapseAgent = useOrchestratorPaneStore((state) => state.collapseAgent);
+  const orchestratorThreadId = useOrchestratorPaneStore((state) => state.orchestratorThreadId);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const orchestratorSessionStatus = useStore(
+    (store) => store.threads.find((t) => t.id === orchestratorThreadId)?.session?.status ?? null,
+  );
+  const isOrchestratorRunning =
+    orchestratorSessionStatus === "running" || orchestratorSessionStatus === "starting";
+
+  // Flex-basis percentages for [orchestrator, ...agents].
+  // Defaults: single agent → 50/50. Two agents → 30/35/35.
+  const defaultSizes = useMemo(() => {
+    if (agentCount === 1) return [50, 50];
+    return [30, 35, 35];
+  }, [agentCount]);
+
+  const [sizes, setSizes] = useState<number[]>(() => {
+    const stored = typeof window !== "undefined" ? readStoredPaneSizes(agentCount) : null;
+    return stored ?? defaultSizes;
+  });
+
+  // Reset stored sizes when agentCount changes (different pane layout).
+  useEffect(() => {
+    const stored = readStoredPaneSizes(agentCount);
+    setSizes(stored ?? defaultSizes);
+  }, [agentCount, defaultSizes]);
+
+  const startDrag = useCallback(
+    (dividerIndex: number) => (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const container = containerRef.current;
+      if (!container) return;
+      const startX = event.clientX;
+      const startSizes = [...sizes];
+      const totalWidth = container.getBoundingClientRect().width;
+      // Minimum pane size (in %) so panes never collapse to zero.
+      const minPct = 12;
+
+      const onMove = (e: PointerEvent) => {
+        const deltaPx = e.clientX - startX;
+        const deltaPct = (deltaPx / totalWidth) * 100;
+        const next = [...startSizes];
+        const leftIdx = dividerIndex;
+        const rightIdx = dividerIndex + 1;
+        let nextLeft = next[leftIdx] + deltaPct;
+        let nextRight = next[rightIdx] - deltaPct;
+        if (nextLeft < minPct) {
+          nextRight -= minPct - nextLeft;
+          nextLeft = minPct;
+        }
+        if (nextRight < minPct) {
+          nextLeft -= minPct - nextRight;
+          nextRight = minPct;
+        }
+        next[leftIdx] = nextLeft;
+        next[rightIdx] = nextRight;
+        setSizes(next);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        setSizes((current) => {
+          writeStoredPaneSizes(agentCount, current);
+          return current;
+        });
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [sizes, agentCount],
+  );
 
   return (
-    <div className="flex h-dvh w-full">
-      {/* Orchestrator pane - always present */}
+    <div ref={containerRef} className="flex h-dvh min-w-0 flex-1 overflow-hidden bg-background">
+      {/* Orchestrator pane */}
       <div
-        style={{ width: orchestratorWidth }}
-        className="h-full min-w-0 overflow-hidden border-r border-border/30"
+        style={{ flexBasis: `${sizes[0]}%`, minWidth: 0 }}
+        className="@container/pane relative flex h-full flex-col overflow-hidden"
       >
-        <OrchestratorPanel />
-      </div>
-      {/* Agent panes */}
-      {props.agentThreadIds.map((agentThreadId, i) => (
-        <div
-          key={agentThreadId}
-          style={{ width: agentWidth }}
-          className={`h-full min-w-0 overflow-hidden ${i < agentCount - 1 ? "border-r border-border/30" : ""}`}
-        >
-          <ChatView
-            key={agentThreadId}
-            threadId={agentThreadId as ThreadIdType}
-            paneScopeId={`orchestrator-agent:${agentThreadId}`}
-            surfaceMode="split"
+        <div className="flex h-8 items-center gap-2 border-b border-border/40 pl-4 pr-2">
+          <span
+            className={`inline-flex size-1.5 shrink-0 rounded-full ${
+              isOrchestratorRunning
+                ? "bg-emerald-400/85 shadow-[0_0_6px_rgba(52,211,153,0.55)] animate-pulse"
+                : "bg-foreground"
+            }`}
+            style={
+              !isOrchestratorRunning
+                ? { boxShadow: "0 0 0 3px color-mix(in srgb, currentColor 15%, transparent)" }
+                : undefined
+            }
+            aria-hidden
           />
+          <span className="shrink-0 font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-foreground">
+            Orchestrator
+          </span>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <span className="hidden text-[10px] font-medium text-muted-foreground/45 @[460px]/pane:inline">
+              {agentCount}
+              <span className="mx-0.5 text-muted-foreground/30">×</span>
+              <span className="uppercase tracking-[0.14em] text-muted-foreground/55">agent</span>
+            </span>
+          </div>
         </div>
+        <div className="flex min-h-0 flex-1 flex-col [&>div]:h-full [&>div]:flex-1">
+          <OrchestratorPanel hideHeader />
+        </div>
+      </div>
+      {/* Divider after orchestrator */}
+      <PaneDivider onPointerDown={startDrag(0)} />
+      {/* Agent panes with dividers */}
+      {props.agentThreadIds.map((agentThreadId, i) => (
+        <Fragment key={agentThreadId}>
+          <AgentPane
+            agentThreadId={agentThreadId}
+            paneIndex={i}
+            flexBasis={`${sizes[i + 1]}%`}
+            showRightBorder={false}
+            onClose={() => collapseAgent(agentThreadId)}
+          />
+          {i < agentCount - 1 && <PaneDivider onPointerDown={startDrag(i + 1)} />}
+        </Fragment>
       ))}
+    </div>
+  );
+}
+
+function PaneDivider(props: {
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      onPointerDown={props.onPointerDown}
+      className="group relative w-px shrink-0 cursor-col-resize touch-none select-none bg-foreground/10 hover:bg-foreground/35 transition-colors"
+    >
+      <div className="pointer-events-none absolute inset-y-0 -left-1.5 -right-1.5" />
+    </div>
+  );
+}
+
+function AgentPane(props: {
+  agentThreadId: string;
+  paneIndex: number;
+  flexBasis: string;
+  showRightBorder: boolean;
+  onClose: () => void;
+}) {
+  // Each selector must return a primitive so zustand v5's Object.is compare
+  // works without re-render loops.
+  const sessionStatus = useStore(
+    (store) => store.threads.find((t) => t.id === props.agentThreadId)?.session?.status ?? null,
+  );
+  const isRunning = sessionStatus === "running" || sessionStatus === "starting";
+  const statusDot = isRunning
+    ? "bg-emerald-400/85 shadow-[0_0_6px_rgba(52,211,153,0.55)] animate-pulse"
+    : sessionStatus === "error"
+      ? "bg-rose-400/80"
+      : "bg-muted-foreground/40";
+  return (
+    <div
+      style={{ flexBasis: props.flexBasis, minWidth: 0 }}
+      className={`@container/pane group/agent-pane relative flex h-full flex-col overflow-hidden border-x border-foreground/8 transition-colors duration-150 hover:border-foreground/25 ${props.showRightBorder ? "border-r border-border/40" : ""}`}
+    >
+      <div className="flex h-8 items-center gap-2 border-b border-border/40 px-3">
+        <span className={`inline-flex size-1.5 shrink-0 rounded-full ${statusDot}`} aria-hidden />
+        <span className="shrink-0 font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-foreground">
+          Agent
+        </span>
+        <span className="min-w-0 flex-1" />
+        <button
+          type="button"
+          onClick={props.onClose}
+          className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/50 transition-colors hover:text-foreground/85"
+          title="Close this agent pane"
+          aria-label="Close agent pane"
+        >
+          <span aria-hidden className="text-base leading-none">
+            ×
+          </span>
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col [&>div]:h-full [&>div]:flex-1">
+        <ChatView
+          threadId={props.agentThreadId as ThreadIdType}
+          paneScopeId={`orchestrator-agent:${props.agentThreadId}`}
+          surfaceMode="split"
+        />
+      </div>
     </div>
   );
 }
@@ -1179,19 +1368,58 @@ function ChatThreadRouteView() {
   const navigate = useNavigate();
 
   // Orchestrator pane store: track orchestrator thread and focused agent panes
-  const { orchestratorThreadId, focusedAgentThreadIds, setOrchestratorThread } =
+  const { orchestratorThreadId, focusedAgentThreadIds, setOrchestratorThread, focusAgent } =
     useOrchestratorPaneStore();
+
+  // Up to two most-recently-created agent children — used to auto-focus on
+  // orchestrator open. We sort by createdAt (not updatedAt) so the order is
+  // stable: ongoing activity must NOT reshuffle the agent panes.
+  // Return a JSON-stable key so zustand v5's Object.is equality works.
+  const recentAgentThreadIdsKey = useStore((store) => {
+    if (!showOrchestratorSurface) return "";
+    const candidates = store.threads
+      .filter(
+        (t) =>
+          t.threadType === "agent" &&
+          t.parentThreadId === threadId &&
+          t.session?.status !== "error",
+      )
+      .sort((a, b) => {
+        // Newest first.
+        const aTime = new Date(a.createdAt).getTime();
+        const bTime = new Date(b.createdAt).getTime();
+        return bTime - aTime;
+      })
+      .slice(0, 2)
+      .map((t) => t.id);
+    return candidates.join(",");
+  });
+  const recentAgentThreadIds = useMemo(
+    () => (recentAgentThreadIdsKey ? recentAgentThreadIdsKey.split(",") : EMPTY_AGENT_IDS),
+    [recentAgentThreadIdsKey],
+  );
 
   useEffect(() => {
     if (showOrchestratorSurface) {
       setOrchestratorThread(threadId);
+      // Auto-focus only when NO agents are currently focused — keeps the
+      // pane order stable once the user has started a session. Otherwise
+      // tool-call cards and live events will handle new spawns.
+      const focused = useOrchestratorPaneStore.getState().focusedAgentThreadIds;
+      if (focused.length === 0 && recentAgentThreadIds.length > 0) {
+        // Reverse so oldest-of-top-2 ends up as pane 1 (matches focusAgent's
+        // append-to-tail ordering).
+        for (const candidate of [...recentAgentThreadIds].reverse()) {
+          focusAgent(candidate);
+        }
+      }
     }
     return () => {
       if (showOrchestratorSurface) {
         setOrchestratorThread(null);
       }
     };
-  }, [threadId, showOrchestratorSurface, setOrchestratorThread]);
+  }, [threadId, showOrchestratorSurface, setOrchestratorThread, focusAgent, recentAgentThreadIds]);
 
   const isOrchestratorThread = orchestratorThreadId === threadId;
   const hasOrchestratorAgentPanes = isOrchestratorThread && focusedAgentThreadIds.length > 0;
@@ -1234,7 +1462,11 @@ function ChatThreadRouteView() {
     if (hasOrchestratorAgentPanes) {
       return <OrchestratorMultiPaneSurface agentThreadIds={focusedAgentThreadIds} />;
     }
-    return <OrchestratorPanel />;
+    return (
+      <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
+        <OrchestratorPanel />
+      </div>
+    );
   }
 
   return <SingleChatSurface threadId={threadId} search={search} projectId={activeProjectId} />;

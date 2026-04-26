@@ -4,7 +4,7 @@
 // Exports: browserAddressDisplayValue, normalizeBrowserAddressInput, buildBrowserAddressSuggestions
 // Depends on: browser tab metadata and thread-local browser history
 
-import type { BrowserTabState } from "@t3tools/contracts";
+import type { BrowserTabState } from "@orchestrate/contracts";
 import type { BrowserHistoryEntry } from "../browserStateStore";
 
 const ABOUT_BLANK_URL = "about:blank";

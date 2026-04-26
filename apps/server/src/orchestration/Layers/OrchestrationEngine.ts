@@ -4,8 +4,8 @@ import type {
   OrchestratorRunId,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+} from "@orchestrate/contracts";
+import { OrchestrationCommand } from "@orchestrate/contracts";
 import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 

@@ -49,20 +49,36 @@ function request(method: string, fields?: Record<string, unknown>): Promise<any>
     pendingRequests.set(id, { resolve, reject });
     ws.send(JSON.stringify({ id, body: { _tag: method, ...fields } }));
     setTimeout(() => {
-      if (pendingRequests.has(id)) { pendingRequests.delete(id); reject(new Error(`Timeout: ${method}`)); }
+      if (pendingRequests.has(id)) {
+        pendingRequests.delete(id);
+        reject(new Error(`Timeout: ${method}`));
+      }
     }, 15000);
   });
 }
 
-function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
-function pass(l: string) { console.log(`  ✅ ${l}`); }
-function fail(l: string, d?: string) { console.log(`  ❌ ${l}${d ? `: ${d}` : ""}`); }
-function info(l: string) { console.log(`  ℹ️  ${l}`); }
-function warn(l: string) { console.log(`  ⚠️  ${l}`); }
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+function pass(l: string) {
+  console.log(`  ✅ ${l}`);
+}
+function fail(l: string, d?: string) {
+  console.log(`  ❌ ${l}${d ? `: ${d}` : ""}`);
+}
+function info(l: string) {
+  console.log(`  ℹ️  ${l}`);
+}
+function warn(l: string) {
+  console.log(`  ⚠️  ${l}`);
+}
 
 async function waitFor(check: () => boolean, ms: number = 60000): Promise<boolean> {
   const s = Date.now();
-  while (Date.now() - s < ms) { if (check()) return true; await sleep(1000); }
+  while (Date.now() - s < ms) {
+    if (check()) return true;
+    await sleep(1000);
+  }
   return false;
 }
 
@@ -76,7 +92,10 @@ async function main() {
   // Get project
   const snapshot = await request("orchestration.getSnapshot");
   const projectId = snapshot.projects?.[0]?.id;
-  if (!projectId) { fail("No project"); process.exit(1); }
+  if (!projectId) {
+    fail("No project");
+    process.exit(1);
+  }
 
   // Create orchestrator thread
   const threadId = crypto.randomUUID();
@@ -100,7 +119,9 @@ async function main() {
   pass(`Orchestrator thread: ${threadId.slice(0, 8)}...`);
 
   // Send message asking to spawn an agent
-  console.log("\n── Sending: 'open an agent window and tell it to list files in the current directory' ──");
+  console.log(
+    "\n── Sending: 'open an agent window and tell it to list files in the current directory' ──",
+  );
   domainEvents.length = 0;
   await request("orchestration.dispatchCommand", {
     command: {
@@ -129,9 +150,7 @@ async function main() {
     const activities = domainEvents
       .filter((e) => e.data?.type === "thread.activity-appended")
       .map((e) => e.data?.payload?.activity);
-    const hasSpawn = activities.some(
-      (a) => JSON.stringify(a).includes("orchestrate_spawn_agent"),
-    );
+    const hasSpawn = activities.some((a) => JSON.stringify(a).includes("orchestrate_spawn_agent"));
     // Also check for new thread.created events (child thread)
     const childThreads = domainEvents.filter(
       (e) => e.data?.type === "thread.created" && e.data?.payload?.parentThreadId === threadId,
@@ -148,8 +167,8 @@ async function main() {
     .filter((e) => e.data?.type === "thread.activity-appended")
     .map((e) => e.data?.payload?.activity);
 
-  const toolCalls = activities.filter((a) =>
-    a?.kind?.includes("tool") || JSON.stringify(a).includes("orchestrate_"),
+  const toolCalls = activities.filter(
+    (a) => a?.kind?.includes("tool") || JSON.stringify(a).includes("orchestrate_"),
   );
 
   if (toolCalls.length > 0) {
@@ -192,11 +211,14 @@ async function main() {
     }
   }
 
-  const childThreads = finalSnapshot.threads?.filter((t: any) => t.parentThreadId === threadId) ?? [];
+  const childThreads =
+    finalSnapshot.threads?.filter((t: any) => t.parentThreadId === threadId) ?? [];
   if (childThreads.length > 0) {
     pass(`${childThreads.length} child thread(s) in snapshot`);
     for (const ct of childThreads) {
-      info(`  ${ct.id.slice(0, 8)}... type=${ct.threadType} parent=${ct.parentThreadId?.slice(0, 8)}...`);
+      info(
+        `  ${ct.id.slice(0, 8)}... type=${ct.threadType} parent=${ct.parentThreadId?.slice(0, 8)}...`,
+      );
     }
   } else {
     fail("No child threads in snapshot");
@@ -206,7 +228,9 @@ async function main() {
   if (workers.length > 0) {
     pass(`${workers.length} worker(s) in snapshot`);
     for (const w of workers) {
-      info(`  Worker ${w.workerId?.slice(0, 8)}... thread=${w.threadId?.slice(0, 8)}... status=${w.status}`);
+      info(
+        `  Worker ${w.workerId?.slice(0, 8)}... thread=${w.threadId?.slice(0, 8)}... status=${w.status}`,
+      );
     }
   }
 
@@ -226,4 +250,7 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((e) => { console.error("Fatal:", e); process.exit(1); });
+main().catch((e) => {
+  console.error("Fatal:", e);
+  process.exit(1);
+});

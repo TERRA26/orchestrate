@@ -84,7 +84,7 @@ export function ThreadWorktreeHandoffDialog({
                 size="lg"
                 value={worktreeName}
                 onChange={(event) => onWorktreeNameChange(event.target.value)}
-                placeholder="dpcode/check-code"
+                placeholder="orchestrate/check-code"
               />
             </div>
             <DialogFooter variant="bare" className="px-0 pb-0 pt-2 sm:justify-start">

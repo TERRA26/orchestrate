@@ -1,4 +1,4 @@
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider } from "@orchestrate/contracts";
 
 interface ProviderHealthBannerProps {
   status: ServerProvider | null;

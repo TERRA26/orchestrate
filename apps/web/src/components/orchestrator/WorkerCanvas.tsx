@@ -1,5 +1,9 @@
-import { useCallback } from "react";
-import type { OrchestratorWorker, OrchestratorWorkerId } from "@t3tools/contracts";
+import { useCallback, useMemo } from "react";
+import type {
+  OrchestratorTask,
+  OrchestratorWorker,
+  OrchestratorWorkerId,
+} from "@orchestrate/contracts";
 
 import { cn } from "~/lib/utils";
 import { WorkerPanel, WorkerChip } from "./WorkerPanel";
@@ -23,13 +27,30 @@ function getGridClass(count: number, hasPromoted: boolean): string {
 
 export interface WorkerCanvasProps {
   workers: ReadonlyArray<OrchestratorWorker>;
+  tasks?: ReadonlyArray<OrchestratorTask>;
 }
 
-export function WorkerCanvas({ workers }: WorkerCanvasProps) {
+export function WorkerCanvas({ workers, tasks }: WorkerCanvasProps) {
   const focusedPanelId = usePanelStateStore((s) => s.focusedPanelId);
   const promotedPanelId = usePanelStateStore((s) => s.promotedPanelId);
   const focus = usePanelStateStore((s) => s.focus);
   const promote = usePanelStateStore((s) => s.promote);
+
+  const taskByWorkerId = useMemo(() => {
+    if (!tasks || tasks.length === 0) return new Map<OrchestratorWorkerId, OrchestratorTask>();
+    const byId = new Map<string, OrchestratorTask>();
+    for (const task of tasks) {
+      byId.set(task.taskId as unknown as string, task);
+    }
+    const result = new Map<OrchestratorWorkerId, OrchestratorTask>();
+    for (const worker of workers) {
+      const taskId = worker.taskId as unknown as string | undefined;
+      if (!taskId) continue;
+      const task = byId.get(taskId);
+      if (task) result.set(worker.workerId, task);
+    }
+    return result;
+  }, [tasks, workers]);
 
   const focusedWorkerId = focusedPanelId as OrchestratorWorkerId | null;
   const promotedWorkerId = promotedPanelId as OrchestratorWorkerId | null;
@@ -74,6 +95,7 @@ export function WorkerCanvas({ workers }: WorkerCanvasProps) {
           <WorkerPanel
             key={worker.workerId}
             worker={worker}
+            task={taskByWorkerId.get(worker.workerId)}
             isFocused={focusedWorkerId === worker.workerId}
             isPromoted={promotedWorkerId === worker.workerId}
             onClick={() => handleFocus(worker.workerId)}

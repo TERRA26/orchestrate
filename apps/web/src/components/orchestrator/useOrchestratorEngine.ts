@@ -12,7 +12,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@orchestrate/contracts";
 
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { useSettings } from "~/hooks/useSettings";
@@ -79,14 +79,33 @@ import type { ComposerProviderState } from "../chat/composerProviderRegistry";
 import { countOrchestratorChecklistItems } from "../../orchestratorTypes";
 import type { OrchestratorChecklistItem } from "../../orchestratorTypes";
 import type { Thread } from "~/types";
-import type { BrowserAction } from "@t3tools/contracts";
+import type { BrowserAction } from "@orchestrate/contracts";
 import { selectVisibleOrchestratorRun } from "./orchestratorRunSelection";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type OrchestratorStatus = "idle" | "thinking" | "sending" | "waiting" | "reviewing";
+export type OrchestratorStatus =
+  | "idle"
+  | "thinking"
+  | "sending"
+  | "waiting"
+  | "reviewing"
+  | "completed"
+  | "failed"
+  | "stuck";
+
+const ORCHESTRATOR_BUSY_STATUSES: ReadonlySet<OrchestratorStatus> = new Set([
+  "thinking",
+  "sending",
+  "waiting",
+  "reviewing",
+]);
+
+export function isOrchestratorStatusBusy(status: OrchestratorStatus): boolean {
+  return ORCHESTRATOR_BUSY_STATUSES.has(status);
+}
 
 type ReviewArtifactsResult =
   | {
@@ -345,12 +364,16 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   const currentThreadType =
     routeDraftThread?.threadType ?? routeThread?.threadType ?? "orchestrator";
   const selectedProviderByThread = orchestratorThreadState.activeProvider ?? null;
+  // Persisted thread provider only matters for SERVER threads — for fresh
+  // drafts the user's Settings → Default provider should win.
+  const persistedThreadProvider = routeThread?.modelSelection?.provider ?? null;
   const selectedProvider = resolveSelectableProvider(
     providers,
     selectedProviderByThread ??
-      currentThreadModelSelection?.provider ??
+      persistedThreadProvider ??
+      appSettings.defaultProvider ??
       currentProject?.defaultModelSelection?.provider ??
-      "codex",
+      "claudeAgent",
   );
   const composerModelState = useMemo(
     () =>
@@ -360,18 +383,23 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
           activeProvider: orchestratorThreadState.activeProvider,
         },
         selectedProvider,
-        threadModelSelection: currentThreadModelSelection,
+        // Drafts get a synthesized fallback modelSelection from the project's
+        // bootstrap default; ignore that so user's app-level Default model wins.
+        threadModelSelection: routeThread ? currentThreadModelSelection : undefined,
         projectModelSelection: currentProject?.defaultModelSelection ?? null,
         customModelsByProvider: {
           codex: settings.providers.codex.customModels,
           claudeAgent: settings.providers.claudeAgent.customModels,
         },
+        defaultModelByProvider: appSettings.defaultModelByProvider,
       }),
     [
+      appSettings.defaultModelByProvider,
       currentProject?.defaultModelSelection,
       currentThreadModelSelection,
       orchestratorThreadState.activeProvider,
       orchestratorThreadState.modelSelectionByProvider,
+      routeThread,
       selectedProvider,
       settings,
     ],
@@ -436,7 +464,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   const shouldAutoScrollRef = useRef(true);
   const status = statusByThreadId[currentThreadId] ?? "idle";
   const statusDetail = statusDetailByThreadId[currentThreadId] ?? null;
-  const isBusy = status !== "idle";
+  const isBusy = isOrchestratorStatusBusy(status);
   const canUseSelectedModel = selectedModel.length > 0;
 
   const setStatusForThread = useCallback(
@@ -532,6 +560,20 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     [managedThread?.session],
   );
   const latestActivity = managedThread?.activities?.at(-1) ?? null;
+
+  // Drive orchestrator status from canonical thread session phase so the
+  // header/composer aren't permanently stuck in "waiting" when the agent
+  // finishes on its own. This is a narrow, read-only transition: we only
+  // clear busy statuses when the phase says the session is no longer running.
+  useEffect(() => {
+    if (!managedThreadId) return;
+    const current = statusByThreadId[managedThreadId];
+    if (!current) return;
+    if (!isOrchestratorStatusBusy(current)) return;
+    if (agentPhase === "ready" || agentPhase === "disconnected") {
+      setStatusForThread(managedThreadId, "idle");
+    }
+  }, [agentPhase, managedThreadId, statusByThreadId, setStatusForThread]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -1586,6 +1628,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       }
 
       setOrchestratorPrompt(currentThreadId, "");
+      setStatusForThread(currentThreadId, "sending", "Sending to the orchestrator…");
 
       const createdAt = new Date().toISOString();
       let threadIdForSend = currentThreadId;
@@ -1597,6 +1640,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
             "orchestrator",
             "No project is available for this orchestrator chat.",
           );
+          setStatusForThread(currentThreadId, "failed", "No project is associated with this chat.");
           return;
         }
 
@@ -1667,14 +1711,15 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
 
         const snapshot = await api.orchestration.getSnapshot();
         syncServerReadModel(snapshot);
-      } catch (error) {
-        addMessage(
+        setStatusForThread(
           threadIdForSend,
-          "orchestrator",
-          error instanceof Error
-            ? `Failed to send message: ${error.message}`
-            : "Failed to send message.",
+          "waiting",
+          "Orchestrator received the request; waiting for tool calls.",
         );
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "Unknown error while sending.";
+        addMessage(threadIdForSend, "orchestrator", `Failed to send message: ${reason}`);
+        setStatusForThread(threadIdForSend, "failed", reason);
       }
     },
     [
@@ -1691,6 +1736,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
       selectedModel,
       selectedModelSelection,
       setOrchestratorPrompt,
+      setStatusForThread,
       syncServerReadModel,
     ],
   );

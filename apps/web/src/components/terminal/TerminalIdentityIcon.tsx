@@ -3,7 +3,7 @@
 // Layer: Terminal presentation primitive
 // Depends on: shared terminal icon keys plus local provider/icon components.
 
-import type { TerminalIconKey } from "@t3tools/shared/terminalThreads";
+import type { TerminalIconKey } from "@orchestrate/shared/terminalThreads";
 
 import { TerminalSquare } from "~/lib/icons";
 import { cn } from "~/lib/utils";
@@ -26,7 +26,7 @@ export default function TerminalIdentityIcon({ iconKey, className }: TerminalIde
         className={cn(
           "size-full",
           iconKey === "claude"
-            ? "text-[#d97757]"
+            ? "orch-prov-claude"
             : iconKey === "openai"
               ? "text-foreground/80"
               : "",
