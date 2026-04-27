@@ -136,6 +136,21 @@ function browserUrlsLikelyMatch(
   }
 }
 
+function browserUrlsExactlyMatch(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const normalizedLeft = normalizeComparableBrowserUrl(left);
+  const normalizedRight = normalizeComparableBrowserUrl(right);
+  if (!normalizedLeft && !normalizedRight) {
+    return true;
+  }
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  return normalizedLeft === normalizedRight;
+}
+
 function browserObservationScreenshotDataUrl(
   observation: BrowserObservation | null,
 ): string | null {
@@ -271,24 +286,38 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     typeof window !== "undefined" && window.desktopBridge !== undefined;
   const activeTabUrl = activeTab?.lastCommittedUrl ?? activeTab?.url ?? "";
   const restorableAutomationUrl = threadAutomationBrowserSession?.url ?? "";
+  const prefersThreadAutomationSession = threadAutomationBrowserSession?.source === "orchestrator";
   const fallbackFrameUrl =
-    !usesNativeBrowserSurface && activeTabUrl && activeTabUrl !== "about:blank"
-      ? activeTabUrl
-      : !usesNativeBrowserSurface && restorableAutomationUrl
-        ? restorableAutomationUrl
-        : null;
+    !usesNativeBrowserSurface && prefersThreadAutomationSession && restorableAutomationUrl
+      ? restorableAutomationUrl
+      : !usesNativeBrowserSurface && activeTabUrl && activeTabUrl !== "about:blank"
+        ? activeTabUrl
+        : !usesNativeBrowserSurface && restorableAutomationUrl
+          ? restorableAutomationUrl
+          : null;
   const hasActiveComparableBrowserUrl = normalizeComparableBrowserUrl(activeTabUrl) !== null;
   const fallbackScreenshotSession =
     !usesNativeBrowserSurface &&
     threadAutomationBrowserSession &&
-    !fallbackAutomationSession &&
-    (!hasActiveComparableBrowserUrl ||
-      browserUrlsLikelyMatch(threadAutomationBrowserSession.url, activeTabUrl))
+    (prefersThreadAutomationSession ||
+      (!fallbackAutomationSession &&
+        (!hasActiveComparableBrowserUrl ||
+          browserUrlsLikelyMatch(threadAutomationBrowserSession.url, activeTabUrl))))
       ? threadAutomationBrowserSession
       : null;
   const fallbackAutomationObservation = fallbackAutomationSession?.observation ?? null;
+  const fallbackAutomationObservationMatchesFrame =
+    !fallbackFrameUrl ||
+    browserUrlsExactlyMatch(fallbackAutomationObservation?.url, fallbackFrameUrl);
+  const displayedFallbackAutomationObservation =
+    fallbackAutomationObservation &&
+    (!prefersThreadAutomationSession ||
+      fallbackAutomationObservationMatchesFrame ||
+      !fallbackScreenshotSession)
+      ? fallbackAutomationObservation
+      : null;
   const fallbackAutomationScreenshotDataUrl = browserObservationScreenshotDataUrl(
-    fallbackAutomationObservation,
+    displayedFallbackAutomationObservation,
   );
   const browserSurfaceModeLabel = usesNativeBrowserSurface
     ? "Live shared browser"
@@ -298,9 +327,9 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
         ? "Static screenshot evidence"
         : null;
   const activeBrowserUrl =
-    fallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
+    displayedFallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
   const activeBrowserTitle =
-    fallbackAutomationObservation?.title ??
+    displayedFallbackAutomationObservation?.title ??
     fallbackScreenshotSession?.title ??
     activeTab?.title ??
     fallbackBrowserTitleFromUrl(activeBrowserUrl);
@@ -642,7 +671,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     }
     if (
       fallbackAutomationSession &&
-      browserUrlsLikelyMatch(fallbackAutomationSession.observation.url, fallbackFrameUrl)
+      browserUrlsExactlyMatch(fallbackAutomationSession.observation.url, fallbackFrameUrl)
     ) {
       return;
     }
@@ -720,9 +749,11 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   useEffect(() => {
     const activeTabId = activeTab?.id ?? null;
     const nextDisplayValue =
-      activeTab && normalizeComparableBrowserUrl(browserAddressDisplayValue(activeTab))
-        ? browserAddressDisplayValue(activeTab)
-        : (fallbackScreenshotSession?.url ?? browserAddressDisplayValue(activeTab));
+      fallbackScreenshotSession?.source === "orchestrator"
+        ? fallbackScreenshotSession.url
+        : activeTab && normalizeComparableBrowserUrl(browserAddressDisplayValue(activeTab))
+          ? browserAddressDisplayValue(activeTab)
+          : (fallbackScreenshotSession?.url ?? browserAddressDisplayValue(activeTab));
     const decision = resolveBrowserAddressSync({
       activeTabId,
       previousActiveTabId: previousActiveTabIdRef.current,
@@ -745,7 +776,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     }
 
     previousActiveTabIdRef.current = activeTabId;
-  }, [activeTab, fallbackScreenshotSession?.url]);
+  }, [activeTab, fallbackScreenshotSession?.source, fallbackScreenshotSession?.url]);
 
   useEffect(() => {
     const liveTabIds = new Set(threadBrowserState?.tabs.map((tab) => tab.id) ?? []);
@@ -1497,15 +1528,12 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
               </div>
               <div className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
                 {browserSurfaceModeLabel}
-                {fallbackAutomationSession?.lastActionSummary
+                {displayedFallbackAutomationObservation &&
+                fallbackAutomationSession?.lastActionSummary
                   ? ` · ${fallbackAutomationSession.lastActionSummary}`
                   : ""}
                 {fallbackAutomationBusy ? " · updating" : ""}
               </div>
-            </div>
-          ) : fallbackFrameUrl ? (
-            <div className="absolute inset-0 z-10">
-              <DiffPanelLoadingState label="Loading browser preview..." />
             </div>
           ) : fallbackScreenshotSession ? (
             <div className="absolute inset-0 flex flex-col bg-black">
@@ -1522,6 +1550,10 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                   ? ` · ${fallbackScreenshotSession.lastActionSummary}`
                   : ""}
               </div>
+            </div>
+          ) : fallbackFrameUrl ? (
+            <div className="absolute inset-0 z-10">
+              <DiffPanelLoadingState label="Loading browser preview..." />
             </div>
           ) : workspaceReady ? (
             <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-muted-foreground">

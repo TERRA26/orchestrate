@@ -31,6 +31,79 @@ function readArray(value: unknown): ReadonlyArray<unknown> {
   return Array.isArray(value) ? value : [];
 }
 
+function parseJsonLikeString(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeBrowserObservation(value: Record<string, unknown> | null): boolean {
+  return (
+    typeof value?.url === "string" &&
+    (typeof value.sessionId === "string" ||
+      typeof value.observedAt === "string" ||
+      Array.isArray(value.targets) ||
+      typeof value.title === "string")
+  );
+}
+
+function findBrowserObservation(
+  value: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet(),
+): Record<string, unknown> | null {
+  if (depth > 8) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const parsed = parseJsonLikeString(value);
+    return parsed === null ? null : findBrowserObservation(parsed, depth + 1, seen);
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const observation = findBrowserObservation(item, depth + 1, seen);
+      if (observation) {
+        return observation;
+      }
+    }
+    return null;
+  }
+
+  const record = readRecord(value);
+  if (!record) {
+    return null;
+  }
+  if (seen.has(record)) {
+    return null;
+  }
+  seen.add(record);
+
+  const directObservation = readRecord(record.observation);
+  if (looksLikeBrowserObservation(directObservation)) {
+    return directObservation;
+  }
+  if (looksLikeBrowserObservation(record)) {
+    return record;
+  }
+
+  for (const key of ["result", "data", "payload", "output", "response", "content", "text"]) {
+    const observation = findBrowserObservation(record[key], depth + 1, seen);
+    if (observation) {
+      return observation;
+    }
+  }
+
+  return null;
+}
+
 function browserTitleFromUrl(url: string): string {
   try {
     return new URL(url).hostname || "Browser";
@@ -78,12 +151,7 @@ function parseBrowserToolObservation(workEntry: WorkLogEntry): Record<string, un
   if (!workEntry.output) {
     return null;
   }
-  try {
-    const parsed = readRecord(JSON.parse(workEntry.output));
-    return readRecord(parsed?.observation);
-  } catch {
-    return null;
-  }
+  return findBrowserObservation(workEntry.output);
 }
 
 export function browserScreenshotDataUrls(
@@ -136,4 +204,21 @@ export function embeddedBrowserSessionFromBrowserWorkEntry(
     screenshotDataUrl: screenshot.fullDataUrl ?? screenshot.thumbnailDataUrl,
     lastActionSummary: summarizeBrowserWorkEntry(workEntry),
   };
+}
+
+export function latestEmbeddedBrowserSessionFromBrowserWorkEntries(
+  workLogEntries: readonly WorkLogEntry[],
+  source: EmbeddedBrowserSessionSource,
+): { entryId: string; session: EmbeddedBrowserSession } | null {
+  for (let index = workLogEntries.length - 1; index >= 0; index -= 1) {
+    const entry = workLogEntries[index];
+    if (!entry) {
+      continue;
+    }
+    const session = embeddedBrowserSessionFromBrowserWorkEntry(entry, source);
+    if (session) {
+      return { entryId: entry.id, session };
+    }
+  }
+  return null;
 }

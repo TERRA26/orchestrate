@@ -212,7 +212,7 @@ async function captureScreenshotDataUrl(
   try {
     const screenshot = await page.screenshot({
       type: "jpeg",
-      quality: options?.fullPage ? 30 : 45,
+      quality: options?.fullPage ? 65 : 85,
       animations: "disabled",
       caret: "hide",
       scale: "css",
@@ -545,10 +545,10 @@ async function captureObservation(input: { page: Page; session?: BrowserSessionS
   const [screenshotDataUrl, previewScreenshotDataUrl, fullPageScreenshotDataUrl, ariaSnapshot] =
     await Promise.all([
       captureScreenshotDataUrl(input.page, {
-        maxWidth: 1440,
-        maxHeight: 900,
-        quality: 0.72,
-        maxBytes: 650_000,
+        maxWidth: 1600,
+        maxHeight: 1200,
+        quality: 0.86,
+        maxBytes: 1_400_000,
       }),
       capturePreviewScreenshotDataUrl(input.page),
       undefined,

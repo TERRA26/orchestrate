@@ -32,7 +32,7 @@ import { useStore } from "~/store";
 import { readNativeApi } from "~/nativeApi";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 import { getProviderModels, resolveSelectableProvider } from "~/providerModels";
-import { embeddedBrowserSessionFromBrowserWorkEntry } from "~/browserWorkLog";
+import { latestEmbeddedBrowserSessionFromBrowserWorkEntries } from "~/browserWorkLog";
 import {
   ORCHESTRATOR_DRAFT_THREAD_ID,
   type ActiveOrchestratorRun,
@@ -1820,25 +1820,32 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   }, [refetchOrchestratorSnapshot, workLogEntries]);
 
   useEffect(() => {
-    let latestBrowserWorkEntryId: string | null = null;
-    let latestBrowserSession: EmbeddedBrowserSession | null = null;
-    for (let index = workLogEntries.length - 1; index >= 0; index -= 1) {
-      const entry = workLogEntries[index];
-      if (!entry || entry.id === latestBrowserWorkEntryIdRef.current) {
-        break;
-      }
-      const browserSession = embeddedBrowserSessionFromBrowserWorkEntry(entry, "orchestrator");
-      if (browserSession) {
-        latestBrowserWorkEntryId = entry.id;
-        latestBrowserSession = browserSession;
-        break;
-      }
-    }
-    if (!latestBrowserWorkEntryId || !latestBrowserSession) {
+    const latestBrowserWorkEntry = latestEmbeddedBrowserSessionFromBrowserWorkEntries(
+      workLogEntries,
+      "orchestrator",
+    );
+    if (!latestBrowserWorkEntry) {
       return;
     }
-    latestBrowserWorkEntryIdRef.current = latestBrowserWorkEntryId;
-    openThreadBrowserSession(currentThreadId, latestBrowserSession);
+
+    const signature = [
+      latestBrowserWorkEntry.entryId,
+      latestBrowserWorkEntry.session.kind === "automation"
+        ? latestBrowserWorkEntry.session.url
+        : "",
+      latestBrowserWorkEntry.session.kind === "automation"
+        ? latestBrowserWorkEntry.session.observedAt
+        : latestBrowserWorkEntry.session.openedAt,
+      latestBrowserWorkEntry.session.kind === "automation"
+        ? (latestBrowserWorkEntry.session.screenshotDataUrl?.length ?? 0)
+        : 0,
+    ].join(":");
+    if (signature === latestBrowserWorkEntryIdRef.current) {
+      return;
+    }
+
+    latestBrowserWorkEntryIdRef.current = signature;
+    openThreadBrowserSession(currentThreadId, latestBrowserWorkEntry.session);
   }, [currentThreadId, openThreadBrowserSession, workLogEntries]);
 
   const handleOpenWorkerPanel = useCallback(

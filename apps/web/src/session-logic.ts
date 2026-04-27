@@ -497,6 +497,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
   const toolName = extractToolName(payload);
+  const output = extractToolOutput(payload, toolName);
   const threadId = extractAssociatedThreadId(payload);
   const workerId = extractAssociatedWorkerId(payload);
   const entry: DerivedWorkLogEntry = {
@@ -514,8 +515,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.detail = detail;
     }
   }
-  if (payload && typeof payload.output === "string" && payload.output.length > 0) {
-    entry.output = payload.output;
+  if (output) {
+    entry.output = output;
   }
   if (command) {
     entry.command = command;
@@ -922,6 +923,97 @@ function extractToolNameFromText(value: string | null): string | null {
   }
   const match = /(?:^|\s)((?:mcp__[\w-]+__)?[\w-]+):\s*\{/.exec(value);
   return normalizeDiscoveredToolName(match?.[1] ?? null);
+}
+
+function isBrowserToolName(toolName: string | null): boolean {
+  return (
+    toolName === "orchestrate_browser_open_session" ||
+    toolName === "orchestrate_browser_act" ||
+    toolName === "mcp__orchestrate__orchestrate_browser_open_session" ||
+    toolName === "mcp__orchestrate__orchestrate_browser_act"
+  );
+}
+
+function serializeToolOutput(value: unknown): string | null {
+  const direct = asTrimmedString(value);
+  if (direct) {
+    return direct;
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function findBrowserToolOutput(
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object> = new WeakSet(),
+): string | null {
+  if (depth > 6) {
+    return null;
+  }
+
+  const direct = asTrimmedString(value);
+  if (direct) {
+    return direct;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findBrowserToolOutput(item, depth + 1, seen);
+      if (nested) {
+        return nested;
+      }
+    }
+    return null;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  if (seen.has(record)) {
+    return null;
+  }
+  seen.add(record);
+
+  if (
+    asRecord(record.observation) ||
+    (typeof record.url === "string" &&
+      (typeof record.sessionId === "string" ||
+        typeof record.observedAt === "string" ||
+        Array.isArray(record.targets)))
+  ) {
+    return serializeToolOutput(record);
+  }
+
+  for (const key of ["output", "result", "response", "data", "payload", "item", "content"]) {
+    if (!(key in record)) {
+      continue;
+    }
+    const nested = findBrowserToolOutput(record[key], depth + 1, seen);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function extractToolOutput(payload: Record<string, unknown> | null, toolName: string | null) {
+  const directOutput = asTrimmedString(payload?.output);
+  if (directOutput) {
+    return directOutput;
+  }
+  if (!isBrowserToolName(toolName)) {
+    return null;
+  }
+  return findBrowserToolOutput(asRecord(payload?.data), 0);
 }
 
 function extractAssociatedThreadId(payload: Record<string, unknown> | null): string | null {
