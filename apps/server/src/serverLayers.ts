@@ -48,6 +48,7 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { BrowserAutomationLive } from "./browser/Layers/BrowserAutomation.ts";
 import { BrowserAnnotationServiceLive } from "./browserAnnotations/Layers/BrowserAnnotationService.ts";
+import { BrowserControlLeaseServiceLive } from "./browserControl/Layers/BrowserControlLeaseService.ts";
 import { BrowserAnnotationRepositoryLive } from "./persistence/Layers/BrowserAnnotations.ts";
 
 type RuntimePtyAdapterLoader = {
@@ -185,6 +186,7 @@ export function makeServerRuntimeServicesLayer() {
     orchestrationReactorLayer,
     BrowserAutomationLive,
     browserAnnotationServiceLayer,
+    BrowserControlLeaseServiceLive,
     workspacePathsLayer,
     workspaceEntriesLayer,
     workspaceFileSystemLayer,

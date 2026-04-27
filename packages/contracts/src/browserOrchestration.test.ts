@@ -3,6 +3,9 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  BrowserControlAcquireInput,
+  BrowserControlLeaseResult,
+  BrowserControlReleaseInput,
   BrowserPolicyDecision,
   BrowserAssertion,
   BrowserWorkflowRun,
@@ -21,6 +24,9 @@ const decodePreviewTarget = Schema.decodeUnknownEffect(PreviewTarget);
 const decodeBrowserPolicyDecision = Schema.decodeUnknownEffect(BrowserPolicyDecision);
 const decodeBrowserAssertion = Schema.decodeUnknownEffect(BrowserAssertion);
 const decodeBrowserWorkflowRun = Schema.decodeUnknownEffect(BrowserWorkflowRun);
+const decodeBrowserControlAcquireInput = Schema.decodeUnknownEffect(BrowserControlAcquireInput);
+const decodeBrowserControlReleaseInput = Schema.decodeUnknownEffect(BrowserControlReleaseInput);
+const decodeBrowserControlLeaseResult = Schema.decodeUnknownEffect(BrowserControlLeaseResult);
 const decodeLaunchConfigFile = Schema.decodeUnknownEffect(LaunchConfigFile);
 const decodeDevServerInstance = Schema.decodeUnknownEffect(DevServerInstance);
 
@@ -179,6 +185,39 @@ it.effect("decodes BrowserPolicyDecision requiring approval", () =>
     });
 
     assert.strictEqual(parsed.outcome, "requires-approval");
+  }),
+);
+
+it.effect("decodes browser control lease acquire and release contracts", () =>
+  Effect.gen(function* () {
+    const acquire = yield* decodeBrowserControlAcquireInput({
+      browserSessionId: "browser-session-1",
+      requestedBy: "human",
+      reason: "user-takeover",
+      lastSnapshotBeforeAcquireRef: "artifact-before",
+    });
+    assert.strictEqual(acquire.requestedBy, "human");
+
+    const release = yield* decodeBrowserControlReleaseInput({
+      browserSessionId: "browser-session-1",
+      leaseId: "lease-1",
+      snapshotAfterReleaseRef: "artifact-after",
+    });
+    assert.strictEqual(release.leaseId, "lease-1");
+
+    const result = yield* decodeBrowserControlLeaseResult({
+      lease: {
+        id: "lease-1",
+        browserSessionId: "browser-session-1",
+        holder: "human",
+        mode: "exclusive",
+        acquiredAt: ISO,
+        reason: "user-takeover",
+        lastSnapshotBeforeAcquireRef: "artifact-before",
+        requiredSnapshotAfterRelease: true,
+      },
+    });
+    assert.strictEqual(result.lease.requiredSnapshotAfterRelease, true);
   }),
 );
 

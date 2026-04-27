@@ -286,6 +286,13 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const fallbackAutomationScreenshotDataUrl = browserObservationScreenshotDataUrl(
     fallbackAutomationObservation,
   );
+  const browserSurfaceModeLabel = usesNativeBrowserSurface
+    ? "Live shared browser"
+    : fallbackAutomationScreenshotDataUrl
+      ? "Headless validation mirror"
+      : fallbackScreenshotSession
+        ? "Static screenshot evidence"
+        : null;
   const activeBrowserUrl =
     fallbackAutomationObservation?.url ?? activeTab?.lastCommittedUrl ?? activeTab?.url ?? "";
   const activeBrowserTitle =
@@ -1267,6 +1274,11 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
             className="font-mono h-8 min-w-0 bg-background/70 text-xs tracking-tight"
           />
         </form>
+        {browserSurfaceModeLabel ? (
+          <span className="hidden max-w-40 shrink-0 truncate rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground md:inline">
+            {browserSurfaceModeLabel}
+          </span>
+        ) : null}
         {showBrowserAddressSuggestions ? (
           <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
             <div className="max-h-64 overflow-auto p-1">
@@ -1450,7 +1462,13 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
             </div>
           ) : null}
           {usesNativeBrowserSurface ? (
-            <div ref={browserViewportRef} className="absolute inset-0" />
+            <div ref={browserViewportRef} className="absolute inset-0">
+              {browserSurfaceModeLabel ? (
+                <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+                  {browserSurfaceModeLabel}
+                </div>
+              ) : null}
+            </div>
           ) : fallbackAutomationScreenshotDataUrl ? (
             <div
               ref={fallbackAutomationViewportRef}
@@ -1470,7 +1488,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                 />
               </div>
               <div className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
-                Browser automation view
+                {browserSurfaceModeLabel}
                 {fallbackAutomationSession?.lastActionSummary
                   ? ` · ${fallbackAutomationSession.lastActionSummary}`
                   : ""}
@@ -1491,7 +1509,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                 />
               </div>
               <div className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
-                Captured browser view
+                {browserSurfaceModeLabel}
                 {fallbackScreenshotSession.lastActionSummary
                   ? ` · ${fallbackScreenshotSession.lastActionSummary}`
                   : ""}

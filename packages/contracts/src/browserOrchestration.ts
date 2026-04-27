@@ -515,6 +515,33 @@ export const HumanControlLease = Schema.Struct({
 });
 export type HumanControlLease = typeof HumanControlLease.Type;
 
+export const BrowserControlAcquireInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+  requestedBy: Schema.Literals(["agent", "human"]),
+  reason: Schema.Literals([
+    "user-takeover",
+    "agent-action",
+    "approval-needed",
+    "login-needed",
+    "captcha-needed",
+    "sensitive-action",
+  ]),
+  lastSnapshotBeforeAcquireRef: Schema.optional(EvidenceArtifactId),
+});
+export type BrowserControlAcquireInput = typeof BrowserControlAcquireInput.Type;
+
+export const BrowserControlReleaseInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+  leaseId: HumanControlLeaseId,
+  snapshotAfterReleaseRef: Schema.optional(EvidenceArtifactId),
+});
+export type BrowserControlReleaseInput = typeof BrowserControlReleaseInput.Type;
+
+export const BrowserControlLeaseResult = Schema.Struct({
+  lease: HumanControlLease,
+});
+export type BrowserControlLeaseResult = typeof BrowserControlLeaseResult.Type;
+
 export const EvidenceBundle = Schema.Struct({
   id: EvidenceBundleId,
   sessionId: EntityId,

@@ -86,6 +86,7 @@ import { decodeJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJ
 import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
 import { BrowserAutomation } from "./browser/Services/BrowserAutomation.ts";
 import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
+import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -281,7 +282,8 @@ export type ServerRuntimeServices =
   | Open
   | AnalyticsService
   | BrowserAutomation
-  | BrowserAnnotationService;
+  | BrowserAnnotationService
+  | BrowserControlLeaseService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -382,6 +384,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerDiscoveryService = yield* ProviderDiscoveryService;
   const browserAutomation = yield* BrowserAutomation;
   const browserAnnotations = yield* BrowserAnnotationService;
+  const browserControlLeases = yield* BrowserControlLeaseService;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1142,6 +1145,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         yield* browserAutomation.closeSession(body);
         return { closed: true, sessionId: body.sessionId };
+      }
+
+      case WS_METHODS.browserControlAcquire: {
+        const body = stripRequestTag(request.body);
+        return yield* browserControlLeases.acquire(body);
+      }
+
+      case WS_METHODS.browserControlRelease: {
+        const body = stripRequestTag(request.body);
+        return yield* browserControlLeases.release(body);
       }
 
       case WS_METHODS.browserAddAnnotation: {

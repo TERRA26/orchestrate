@@ -47,6 +47,7 @@ import {
   BrowserListAnnotationsInput,
   BrowserOpenSessionInput,
 } from "./browser";
+import { BrowserControlAcquireInput, BrowserControlReleaseInput } from "./browserOrchestration";
 import {
   ProviderListCommandsInput,
   ProviderGetComposerCapabilitiesInput,
@@ -99,6 +100,8 @@ export const WS_METHODS = {
   browserOpenSession: "browser.openSession",
   browserAct: "browser.act",
   browserCloseSession: "browser.closeSession",
+  browserControlAcquire: "browser.control.acquire",
+  browserControlRelease: "browser.control.release",
   browserAddAnnotation: "browser.addAnnotation",
   browserListAnnotations: "browser.listAnnotations",
 
@@ -199,6 +202,8 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.browserOpenSession, BrowserOpenSessionInput),
   tagRequestBody(WS_METHODS.browserAct, BrowserActInput),
   tagRequestBody(WS_METHODS.browserCloseSession, BrowserCloseSessionInput),
+  tagRequestBody(WS_METHODS.browserControlAcquire, BrowserControlAcquireInput),
+  tagRequestBody(WS_METHODS.browserControlRelease, BrowserControlReleaseInput),
   tagRequestBody(WS_METHODS.browserAddAnnotation, BrowserAddAnnotationInput),
   tagRequestBody(WS_METHODS.browserListAnnotations, BrowserListAnnotationsInput),
 
