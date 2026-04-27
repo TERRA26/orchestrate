@@ -130,9 +130,11 @@ export function makeServerRuntimeServicesLayer() {
   );
   const orchestratorRouterLayer = OrchestratorRouterLive;
   const authorityPolicyLayer = AuthorityPolicyLive;
+  const browserAutomationLayer = BrowserAutomationLive;
 
   const orchestrationToolRouterLayer = OrchestrationToolRouterLive.pipe(
     Layer.provide(orchestrationLayer),
+    Layer.provide(browserAutomationLayer),
   );
 
   const runtimeServicesLayer = Layer.mergeAll(
@@ -184,7 +186,7 @@ export function makeServerRuntimeServicesLayer() {
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
-    BrowserAutomationLive,
+    browserAutomationLayer,
     browserAnnotationServiceLayer,
     BrowserControlLeaseServiceLive,
     workspacePathsLayer,

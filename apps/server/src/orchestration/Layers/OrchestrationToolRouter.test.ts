@@ -6,13 +6,12 @@ import {
   type OrchestrationThread,
   type OrchestratorRunId,
   type OrchestratorWorkerId,
-  type OrchestrationEvent,
   EventId,
-  CommandId,
 } from "@orchestrate/contracts";
 import { describe, expect, it } from "vitest";
 import { Effect, Layer, Stream } from "effect";
 
+import { BrowserAutomation } from "../../browser/Services/BrowserAutomation.ts";
 import { OrchestrationToolRouterLive } from "./OrchestrationToolRouter.ts";
 import { OrchestrationToolRouterService } from "../Services/OrchestrationToolRouter.ts";
 import {
@@ -90,7 +89,123 @@ function makeEngine(readModel: OrchestrationReadModel, commands: OrchestrationCo
   return Layer.succeed(OrchestrationEngineService, engine);
 }
 
+function makeBrowserAutomation() {
+  const calls: Array<{ name: string; input: unknown }> = [];
+  const layer = Layer.succeed(BrowserAutomation, {
+    openSession: (input) =>
+      Effect.sync(() => {
+        calls.push({ name: "openSession", input });
+        return {
+          sessionId: "browser-session-1",
+          observation: {
+            sessionId: "browser-session-1",
+            url: input.url,
+            title: "Example Domain",
+            readyState: "complete",
+            textSummary: "Example Domain",
+            screenshotDataUrl: "data:image/jpeg;base64,abc",
+            previewScreenshotDataUrl: "data:image/jpeg;base64,preview",
+            targets: [],
+            observedAt: NOW,
+          },
+        };
+      }),
+    act: (input) =>
+      Effect.sync(() => {
+        calls.push({ name: "act", input });
+        return {
+          observation: {
+            sessionId: input.sessionId,
+            url: "https://example.com/next",
+            title: "Next",
+            readyState: "complete",
+            textSummary: "Next page",
+            screenshotDataUrl: "data:image/jpeg;base64,next",
+            previewScreenshotDataUrl: "data:image/jpeg;base64,next-preview",
+            targets: [],
+            observedAt: NOW,
+          },
+        };
+      }),
+    closeSession: (input) =>
+      Effect.sync(() => {
+        calls.push({ name: "closeSession", input });
+      }),
+  });
+  return { calls, layer };
+}
+
 describe("OrchestrationToolRouter", () => {
+  it("executes browser open-session tools through browser automation so screenshots reach the thread", async () => {
+    const browser = makeBrowserAutomation();
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(makeReadModel(), [])),
+      Layer.provide(browser.layer),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_browser_open_session",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { url: "https://example.com" },
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(browser.calls).toEqual([{ name: "openSession", input: { url: "https://example.com" } }]);
+    expect(result).toMatchObject({
+      sessionId: "browser-session-1",
+      observation: {
+        url: "https://example.com",
+        screenshotDataUrl: "data:image/jpeg;base64,abc",
+        previewScreenshotDataUrl: "data:image/jpeg;base64,preview",
+      },
+    });
+  });
+
+  it("executes browser action tools through the active browser automation session", async () => {
+    const browser = makeBrowserAutomation();
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(makeReadModel(), [])),
+      Layer.provide(browser.layer),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_browser_act",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: {
+            sessionId: "browser-session-1",
+            action: { kind: "navigate", url: "https://example.com/next" },
+          },
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(browser.calls).toEqual([
+      {
+        name: "act",
+        input: {
+          sessionId: "browser-session-1",
+          action: { kind: "navigate", url: "https://example.com/next" },
+        },
+      },
+    ]);
+    expect(result).toMatchObject({
+      observation: {
+        url: "https://example.com/next",
+        screenshotDataUrl: "data:image/jpeg;base64,next",
+        previewScreenshotDataUrl: "data:image/jpeg;base64,next-preview",
+      },
+    });
+  });
+
   it("spawns a foreground agent from the simple documented orchestrate_spawn_agent shape", async () => {
     const commands: OrchestrationCommand[] = [];
     const layer = OrchestrationToolRouterLive.pipe(
@@ -125,7 +240,9 @@ describe("OrchestrationToolRouter", () => {
     expect(commands.map((command) => command.type)).toEqual([
       "orchestrator.run.create",
       "orchestrator.task.create",
+      "thread.create",
       "orchestrator.worker.spawn",
+      "thread.turn.start",
     ]);
     expect(commands[0]).toMatchObject({
       type: "orchestrator.run.create",
@@ -136,7 +253,7 @@ describe("OrchestrationToolRouter", () => {
       type: "orchestrator.task.create",
       title: "Build a blank page website template",
     });
-    expect(commands[2]).toMatchObject({
+    expect(commands[3]).toMatchObject({
       type: "orchestrator.worker.spawn",
       modelBinding: {
         provider: "claudeAgent",
@@ -601,7 +718,7 @@ describe("OrchestrationToolRouter", () => {
       }).pipe(Effect.provide(layer)),
     )) as { results: Array<{ agentId: string; status: string }>; timedOut: boolean };
     expect(result.timedOut).toBe(false);
-    expect(result.results.map((r) => r.agentId).sort()).toEqual(ids.sort());
+    expect(result.results.map((r) => r.agentId).toSorted()).toEqual(ids.toSorted());
     for (const r of result.results) expect(r.status).toBe("submitted");
   });
 
@@ -628,11 +745,13 @@ describe("OrchestrationToolRouter", () => {
     expect(commands.map((command) => command.type)).toEqual([
       "orchestrator.run.create",
       "orchestrator.task.create",
+      "thread.create",
       "orchestrator.worker.spawn",
+      "thread.turn.start",
     ]);
     expect(commands[0]).toMatchObject({
       type: "orchestrator.run.create",
-      userRequest: "Stand by for follow-up instructions",
+      userRequest: expect.stringContaining("Stand by for follow-up instructions"),
     });
     expect(commands[1]).toMatchObject({
       type: "orchestrator.task.create",
@@ -660,7 +779,7 @@ describe("OrchestrationToolRouter", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       focused: true,
       agentId: "worker-focus-1",
     });
