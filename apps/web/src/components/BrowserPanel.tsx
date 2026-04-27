@@ -288,6 +288,10 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const activeTabUrl = activeTab?.lastCommittedUrl ?? activeTab?.url ?? "";
   const restorableAutomationUrl = threadAutomationBrowserSession?.url ?? "";
   const prefersThreadAutomationSession = threadAutomationBrowserSession?.source === "orchestrator";
+  const orchestratorAutomationSessionId =
+    prefersThreadAutomationSession && threadAutomationBrowserSession?.kind === "automation"
+      ? (threadAutomationBrowserSession.sessionId ?? null)
+      : null;
   const fallbackFrameUrl =
     !usesNativeBrowserSurface && prefersThreadAutomationSession && restorableAutomationUrl
       ? restorableAutomationUrl
@@ -306,6 +310,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
           browserUrlsLikelyMatch(threadAutomationBrowserSession.url, activeTabUrl))))
       ? threadAutomationBrowserSession
       : null;
+  const hasFallbackScreenshotSession = fallbackScreenshotSession !== null;
   const fallbackAutomationObservation = fallbackAutomationSession?.observation ?? null;
   const showStaticThreadEvidence =
     prefersThreadAutomationSession && fallbackScreenshotSession !== null;
@@ -326,11 +331,11 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const browserSurfaceModeLabel = usesNativeBrowserSurface
     ? "Live shared browser"
     : showStaticThreadEvidence
-      ? "Static screenshot evidence"
+      ? "Screenshot evidence"
       : fallbackAutomationScreenshotDataUrl
         ? "Headless validation mirror"
         : fallbackScreenshotSession
-          ? "Static screenshot evidence"
+          ? "Screenshot evidence"
           : null;
   const activeBrowserUrl =
     displayedFallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
@@ -384,8 +389,13 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   }, []);
 
   const publishFallbackAutomationObservation = useCallback(
-    (observation: BrowserObservation, lastActionSummary: string) => {
-      const previousObservation = fallbackAutomationSession?.observation ?? null;
+    (
+      observation: BrowserObservation,
+      lastActionSummary: string,
+      source: "orchestrator" | "sidebar" = "sidebar",
+    ) => {
+      const previousObservation =
+        source === "sidebar" ? (fallbackAutomationSession?.observation ?? null) : null;
       const nextObservation: BrowserObservation =
         browserObservationScreenshotDataUrl(observation) || !previousObservation
           ? observation
@@ -401,16 +411,18 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                 ? { fullPageScreenshotDataUrl: previousObservation.fullPageScreenshotDataUrl }
                 : {}),
             };
-      fallbackAutomationSessionIdRef.current = observation.sessionId;
-      setFallbackAutomationSession({
-        sessionId: observation.sessionId,
-        observation: nextObservation,
-        lastActionSummary,
-      });
+      if (source === "sidebar") {
+        fallbackAutomationSessionIdRef.current = observation.sessionId;
+        setFallbackAutomationSession({
+          sessionId: observation.sessionId,
+          observation: nextObservation,
+          lastActionSummary,
+        });
+      }
       openThreadBrowserSession(
         threadId,
         createEmbeddedBrowserAutomationSession({
-          source: "sidebar",
+          source,
           title: nextObservation.title || fallbackBrowserTitleFromUrl(nextObservation.url),
           observation: nextObservation,
           lastActionSummary,
@@ -631,6 +643,27 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       return;
     }
 
+    return api.browser.onObservation((payload) => {
+      if (payload.threadId !== threadId) {
+        return;
+      }
+      openThreadBrowserSession(
+        threadId,
+        createEmbeddedBrowserAutomationSession({
+          source: "orchestrator",
+          title: payload.observation.title || fallbackBrowserTitleFromUrl(payload.observation.url),
+          observation: payload.observation,
+          lastActionSummary: payload.actionSummary,
+        }),
+      );
+    });
+  }, [api, openThreadBrowserSession, threadId]);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
     let cancelled = false;
     setWorkspaceReady(false);
     setLocalError(null);
@@ -670,6 +703,62 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       fallbackAutomationSessionIdRef.current = null;
     };
   }, [api]);
+
+  useEffect(() => {
+    if (
+      usesNativeBrowserSurface ||
+      !api ||
+      !workspaceReady ||
+      !prefersThreadAutomationSession ||
+      !orchestratorAutomationSessionId ||
+      !hasFallbackScreenshotSession
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const refreshCurrentObservation = async () => {
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const result = await api.browser.act({
+          sessionId: orchestratorAutomationSessionId,
+          action: { kind: "wait", ms: 250 },
+        });
+        if (!cancelled) {
+          publishFallbackAutomationObservation(
+            result.observation,
+            "Refreshed screenshot evidence",
+            "orchestrator",
+          );
+        }
+      } catch {
+        // The orchestrator-owned browser session may have been closed after the evidence was
+        // captured. Keep the last screenshot visible rather than surfacing noisy polling errors.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void refreshCurrentObservation();
+    const intervalId = window.setInterval(refreshCurrentObservation, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    api,
+    hasFallbackScreenshotSession,
+    orchestratorAutomationSessionId,
+    prefersThreadAutomationSession,
+    publishFallbackAutomationObservation,
+    usesNativeBrowserSurface,
+    workspaceReady,
+  ]);
 
   useEffect(() => {
     if (

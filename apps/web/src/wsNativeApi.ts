@@ -1,6 +1,7 @@
 import {
   type ThreadId,
   type ThreadBrowserState,
+  type BrowserObservationCapturedPayload,
   type BrowserOpenPreviewRequestedPayload,
   type GitActionProgressEvent,
   type TerminalEvent,
@@ -25,6 +26,9 @@ const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => 
 const terminalEventListeners = new Set<(payload: TerminalEvent) => void>();
 const browserOpenRequestedListeners = new Set<
   (payload: BrowserOpenPreviewRequestedPayload) => void
+>();
+const browserObservationCapturedListeners = new Set<
+  (payload: BrowserObservationCapturedPayload) => void
 >();
 const fallbackBrowserStateListeners = new Set<(state: ThreadBrowserState) => void>();
 const fallbackBrowserStates = new Map<ThreadId, ThreadBrowserState>();
@@ -243,6 +247,16 @@ export function createWsNativeApi(): NativeApi {
   transport.subscribe(WS_CHANNELS.browserOpenRequested, (message) => {
     const payload = message.data;
     for (const listener of browserOpenRequestedListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+  });
+  transport.subscribe(WS_CHANNELS.browserObservationCaptured, (message) => {
+    const payload = message.data;
+    for (const listener of browserObservationCapturedListeners) {
       try {
         listener(payload);
       } catch {
@@ -484,6 +498,12 @@ export function createWsNativeApi(): NativeApi {
         fallbackBrowserStateListeners.add(callback);
         return () => {
           fallbackBrowserStateListeners.delete(callback);
+        };
+      },
+      onObservation: (callback) => {
+        browserObservationCapturedListeners.add(callback);
+        return () => {
+          browserObservationCapturedListeners.delete(callback);
         };
       },
     },

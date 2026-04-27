@@ -60,6 +60,7 @@ import type {
   BrowserAnnotationsResult,
   BrowserCloseSessionInput,
   BrowserListAnnotationsInput,
+  BrowserObservation,
   BrowserOpenSessionInput,
   BrowserOpenSessionResult,
 } from "./browser";
@@ -225,6 +226,7 @@ export interface DesktopBridge {
     selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     openDevTools: (input: BrowserTabInput) => Promise<void>;
     onState: (listener: (state: ThreadBrowserState) => void) => () => void;
+    onObservation: () => () => void;
   };
 }
 
@@ -322,5 +324,12 @@ export interface NativeApi {
     addAnnotation: (input: BrowserAddAnnotationInput) => Promise<BrowserAnnotationResult>;
     listAnnotations: (input: BrowserListAnnotationsInput) => Promise<BrowserAnnotationsResult>;
     onState: (callback: (state: ThreadBrowserState) => void) => () => void;
+    onObservation: (
+      callback: (payload: {
+        threadId: ThreadId;
+        observation: BrowserObservation;
+        actionSummary: string;
+      }) => void,
+    ) => () => void;
   };
 }

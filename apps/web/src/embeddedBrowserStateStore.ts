@@ -16,6 +16,7 @@ interface EmbeddedBrowserSessionBase {
 export type EmbeddedBrowserSession =
   | (EmbeddedBrowserSessionBase & {
       kind: "automation";
+      sessionId?: string;
       url: string;
       readyState: string;
       observedAt: string;
@@ -69,6 +70,9 @@ export function createEmbeddedBrowserAutomationSession(input: {
     openedAt: new Date().toISOString(),
     source: input.source,
     title: input.title?.trim() || input.observation.title.trim() || "Computer Use Preview",
+    ...(input.observation.sessionId.trim().length > 0
+      ? { sessionId: input.observation.sessionId }
+      : {}),
     url: input.observation.url,
     readyState: input.observation.readyState,
     observedAt: input.observation.observedAt,

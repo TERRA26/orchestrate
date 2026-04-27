@@ -107,6 +107,7 @@ export const BrowserObservation = Schema.Struct({
 export type BrowserObservation = typeof BrowserObservation.Type;
 
 export const BrowserOpenSessionInput = Schema.Struct({
+  threadId: Schema.optionalKey(ThreadId),
   url: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
   viewportWidth: Schema.optionalKey(
     PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
@@ -216,6 +217,7 @@ export const BrowserAction = Schema.Union([
 export type BrowserAction = typeof BrowserAction.Type;
 
 export const BrowserActInput = Schema.Struct({
+  threadId: Schema.optionalKey(ThreadId),
   sessionId: BrowserSessionId,
   action: BrowserAction,
 });

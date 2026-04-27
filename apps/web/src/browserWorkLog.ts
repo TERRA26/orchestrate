@@ -191,11 +191,13 @@ export function embeddedBrowserSessionFromBrowserWorkEntry(
   }
 
   const title = readString(observation.title)?.trim() || browserTitleFromUrl(url);
+  const sessionId = readString(observation.sessionId)?.trim() ?? "";
   return {
     kind: "automation",
     openedAt: workEntry.createdAt,
     source,
     title,
+    ...(sessionId ? { sessionId } : {}),
     url,
     readyState: readString(observation.readyState)?.trim() || "complete",
     observedAt: readString(observation.observedAt) ?? workEntry.createdAt,

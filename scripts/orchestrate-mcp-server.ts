@@ -75,6 +75,58 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function truncateText(value: unknown, maxLength: number): unknown {
+  if (typeof value !== "string" || value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}\n...[truncated ${value.length - maxLength} chars]`;
+}
+
+function summarizeBrowserTarget(target: unknown): unknown {
+  if (!target || typeof target !== "object" || Array.isArray(target)) {
+    return target;
+  }
+  const record = target as Record<string, unknown>;
+  return {
+    ...record,
+    ...(typeof record.text === "string" ? { text: truncateText(record.text, 240) } : {}),
+    ...(typeof record.label === "string" ? { label: truncateText(record.label, 240) } : {}),
+    ...(typeof record.name === "string" ? { name: truncateText(record.name, 240) } : {}),
+  };
+}
+
+function browserVisualWarnings(observation: any): string[] {
+  const haystack = [
+    observation?.title,
+    observation?.textSummary,
+    observation?.ariaSnapshot,
+    ...(Array.isArray(observation?.targets)
+      ? observation.targets.map((target: any) =>
+          [target?.text, target?.label, target?.name].filter(Boolean).join(" "),
+        )
+      : []),
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n")
+    .toLowerCase();
+
+  const warnings: string[] = [];
+  if (haystack.includes("something went wrong")) {
+    warnings.push(
+      "Visible page reports 'Something went wrong'; do not claim media playback succeeded.",
+    );
+  }
+  if (haystack.includes("try searching to get started")) {
+    warnings.push("Visible page is still the YouTube home/search-start screen, not a watch page.");
+  }
+  if (haystack.includes("sign in to like videos")) {
+    warnings.push(
+      "Visible page is unauthenticated YouTube shell; verify player state from screenshot.",
+    );
+  }
+  return warnings;
+}
+
 function serializeWsError(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
     return { message: error.message, name: error.name };
@@ -500,16 +552,22 @@ export function summarizeBrowserObservation(observation: any, includeScreenshot:
     url: observation.url,
     title: observation.title,
     readyState: observation.readyState,
-    textSummary: observation.textSummary,
-    ariaSnapshot: observation.ariaSnapshot,
-    targets: Array.isArray(observation.targets) ? observation.targets.slice(0, 50) : [],
-    consoleErrors: observation.consoleErrors ?? [],
-    networkErrors: observation.networkErrors ?? [],
+    textSummary: truncateText(observation.textSummary, 4_000),
+    ariaSnapshot: truncateText(observation.ariaSnapshot, 6_000),
+    visualWarnings: browserVisualWarnings(observation),
+    targets: Array.isArray(observation.targets)
+      ? observation.targets.slice(0, 50).map(summarizeBrowserTarget)
+      : [],
+    consoleErrors: Array.isArray(observation.consoleErrors)
+      ? observation.consoleErrors.slice(0, 20)
+      : [],
+    networkErrors: Array.isArray(observation.networkErrors)
+      ? observation.networkErrors.slice(0, 20)
+      : [],
     pageMetrics: observation.pageMetrics,
     navigationError: observation.navigationError,
     evaluateResult: observation.evaluateResult,
     observedAt: observation.observedAt,
-    ...(previewScreenshotDataUrl ? { previewScreenshotDataUrl } : {}),
     screenshot: {
       present: Boolean(screenshotDataUrl),
       bytes: screenshotDataUrl ? Buffer.byteLength(screenshotDataUrl) : 0,
@@ -1211,6 +1269,7 @@ async function executeOrchestrationTool(
         : undefined;
     const includeScreenshot = args.includeScreenshot === true;
     const result = await wsRequest("browser.openSession", {
+      ...(threadId && threadId !== "unknown" ? { threadId } : {}),
       url,
       ...(viewportWidth ? { viewportWidth } : {}),
       ...(viewportHeight ? { viewportHeight } : {}),
@@ -1234,6 +1293,7 @@ async function executeOrchestrationTool(
     }
     const includeScreenshot = args.includeScreenshot === true;
     const result = await wsRequest("browser.act", {
+      ...(threadId && threadId !== "unknown" ? { threadId } : {}),
       sessionId,
       action: normalizeBrowserAction(args.action as Record<string, unknown>),
     });

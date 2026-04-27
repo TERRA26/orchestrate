@@ -261,6 +261,33 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
+function browserActionSummary(action: { readonly kind: string }): string {
+  switch (action.kind) {
+    case "navigate":
+      return "Navigated browser";
+    case "click":
+    case "clickAt":
+    case "clickTargetOrAt":
+      return "Clicked page";
+    case "type":
+    case "typeFocused":
+      return "Typed into page";
+    case "press":
+      return "Pressed key";
+    case "scroll":
+      return "Scrolled page";
+    case "resize":
+      return "Resized browser viewport";
+    case "evaluate":
+      return "Evaluated page";
+    case "wait":
+    case "waitFor":
+      return "Refreshed screenshot evidence";
+    default:
+      return "Updated browser observation";
+  }
+}
+
 const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
 const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
 
@@ -907,6 +934,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
   );
 
+  const browserPreviewThreadBySocket = new WeakMap<WebSocket, ThreadId>();
+
   const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot: {
@@ -1127,18 +1156,37 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.browserOpenPreview: {
         const body = stripRequestTag(request.body);
+        browserPreviewThreadBySocket.set(ws, body.threadId);
         yield* pushBus.publishAll(WS_CHANNELS.browserOpenRequested, body);
         return { opened: true, threadId: body.threadId, url: body.url ?? null };
       }
 
       case WS_METHODS.browserOpenSession: {
         const body = stripRequestTag(request.body);
-        return yield* browserAutomation.openSession(body);
+        const result = yield* browserAutomation.openSession(body);
+        const threadId = body.threadId ?? browserPreviewThreadBySocket.get(ws);
+        if (threadId) {
+          yield* pushBus.publishAll(WS_CHANNELS.browserObservationCaptured, {
+            threadId,
+            observation: result.observation,
+            actionSummary: "Opened browser session",
+          });
+        }
+        return result;
       }
 
       case WS_METHODS.browserAct: {
         const body = stripRequestTag(request.body);
-        return yield* browserAutomation.act(body);
+        const result = yield* browserAutomation.act(body);
+        const threadId = body.threadId ?? browserPreviewThreadBySocket.get(ws);
+        if (threadId) {
+          yield* pushBus.publishAll(WS_CHANNELS.browserObservationCaptured, {
+            threadId,
+            observation: result.observation,
+            actionSummary: browserActionSummary(body.action),
+          });
+        }
+        return result;
       }
 
       case WS_METHODS.browserCloseSession: {

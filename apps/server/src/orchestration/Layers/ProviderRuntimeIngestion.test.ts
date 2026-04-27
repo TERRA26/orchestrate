@@ -2389,6 +2389,56 @@ describe("ProviderRuntimeIngestion", () => {
     expect(payload?.output).toBe(browserOutput);
   });
 
+  it("uses browser output limits when the tool name is nested under item metadata", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const previewDataUrl = `data:image/jpeg;base64,${"b".repeat(80_000)}`;
+    const browserOutput = JSON.stringify({
+      observation: {
+        sessionId: "browser-session-2",
+        url: "https://www.youtube.com/watch?v=abc123",
+        title: "Video",
+        previewScreenshotDataUrl: previewDataUrl,
+      },
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-browser-output-nested-name"),
+      provider: "claudeAgent",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-browser-output-nested-name"),
+      itemId: asItemId("tool-call-browser-output-nested-name"),
+      payload: {
+        itemType: "orchestration_tool_call",
+        status: "completed",
+        detail: "tool completed",
+        data: {
+          item: {
+            name: "mcp__orchestrate__orchestrate_browser_act",
+            result: {
+              content: [{ type: "text", text: browserOutput }],
+            },
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-browser-output-nested-name",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (a: ProviderRuntimeTestActivity) => a.id === "evt-browser-output-nested-name",
+    );
+    const payload = activity?.payload as Record<string, unknown> | undefined;
+    expect(payload?.truncated).toBe(false);
+    expect(payload?.output).toBe(browserOutput);
+  });
+
   it("truncates tool output above 24KB and flags it (Gap 3)", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

@@ -21,7 +21,6 @@ describe("summarizeBrowserObservation", () => {
     expect(summary).toMatchObject({
       sessionId: "browser-session-1",
       url: "https://example.com/",
-      previewScreenshotDataUrl: "data:image/jpeg;base64,preview",
       screenshot: {
         present: true,
         previewDataUrl: "data:image/jpeg;base64,preview",
@@ -49,7 +48,6 @@ describe("summarizeBrowserObservation", () => {
     );
 
     expect(summary).toMatchObject({
-      previewScreenshotDataUrl: "data:image/jpeg;base64,preview",
       screenshot: {
         previewDataUrl: "data:image/jpeg;base64,preview",
       },

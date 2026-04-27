@@ -306,19 +306,15 @@ async function downscaleScreenshotDataUrl(
 }
 
 async function capturePreviewScreenshotDataUrl(page: Page): Promise<string | undefined> {
-  const screenshot = await captureScreenshotDataUrl(page, {
-    maxWidth: 720,
-    maxHeight: 450,
-    quality: 0.4,
-  });
+  const screenshot = await captureScreenshotDataUrl(page);
   if (!screenshot) {
     return undefined;
   }
 
   for (const candidate of [
-    { maxWidth: 960, maxHeight: 600, quality: 0.72, maxBytes: 96_000 },
-    { maxWidth: 800, maxHeight: 500, quality: 0.66, maxBytes: 96_000 },
-    { maxWidth: 640, maxHeight: 400, quality: 0.6, maxBytes: 96_000 },
+    { maxWidth: 1_120, maxHeight: 780, quality: 0.78, maxBytes: 175_000 },
+    { maxWidth: 960, maxHeight: 680, quality: 0.72, maxBytes: 155_000 },
+    { maxWidth: 800, maxHeight: 560, quality: 0.68, maxBytes: 130_000 },
   ]) {
     const downscaled = await downscaleScreenshotDataUrl(page, screenshot, candidate);
     if (downscaled) {
@@ -327,9 +323,9 @@ async function capturePreviewScreenshotDataUrl(page: Page): Promise<string | und
   }
 
   return downscaleScreenshotDataUrl(page, screenshot, {
-    maxWidth: 520,
-    maxHeight: 325,
-    quality: 0.48,
+    maxWidth: 720,
+    maxHeight: 500,
+    quality: 0.58,
   });
 }
 

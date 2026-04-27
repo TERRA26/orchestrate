@@ -79,51 +79,107 @@ function truncateDetail(value: string, limit = 180): string {
 // Gap 3: split truncated sidebar detail from full model-visible tool output.
 const TOOL_SUMMARY_LIMIT = 180;
 const TOOL_OUTPUT_LIMIT = 24_576;
-const BROWSER_TOOL_OUTPUT_LIMIT = 262_144;
+const BROWSER_TOOL_OUTPUT_LIMIT = 1_048_576;
 
-function isBrowserToolOutputData(data: unknown): boolean {
-  if (!data || typeof data !== "object") {
+function normalizeToolName(value: unknown): string | null {
+  return typeof value === "string" ? value.replace(/^mcp__orchestrate__/, "") : null;
+}
+
+function isBrowserToolName(value: unknown): boolean {
+  const toolName = normalizeToolName(value);
+  return toolName === "orchestrate_browser_open_session" || toolName === "orchestrate_browser_act";
+}
+
+function hasBrowserToolName(
+  data: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet(),
+): boolean {
+  if (!data || typeof data !== "object" || depth > 6) {
     return false;
   }
-  const toolName = (data as Record<string, unknown>).toolName;
+  if (seen.has(data)) {
+    return false;
+  }
+  seen.add(data);
+  const record = data as Record<string, unknown>;
+  if (
+    isBrowserToolName(record.toolName) ||
+    isBrowserToolName(record.tool_name) ||
+    isBrowserToolName(record.name)
+  ) {
+    return true;
+  }
+  for (const key of ["item", "data", "payload", "result", "content"]) {
+    if (hasBrowserToolName(record[key], depth + 1, seen)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function textMentionsBrowserTool(value: string | undefined): boolean {
   return (
-    toolName === "orchestrate_browser_open_session" ||
-    toolName === "orchestrate_browser_act" ||
-    toolName === "mcp__orchestrate__orchestrate_browser_open_session" ||
-    toolName === "mcp__orchestrate__orchestrate_browser_act"
+    value?.includes("orchestrate_browser_open_session") === true ||
+    value?.includes("orchestrate_browser_act") === true ||
+    value?.includes("mcp__orchestrate__orchestrate_browser_open_session") === true ||
+    value?.includes("mcp__orchestrate__orchestrate_browser_act") === true
   );
 }
 
-function extractToolOutputText(data: unknown): string | undefined {
+function isBrowserToolOutputData(data: unknown, detail?: string): boolean {
+  if (textMentionsBrowserTool(detail)) {
+    return true;
+  }
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  return hasBrowserToolName(data);
+}
+
+function extractToolOutputText(
+  data: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet(),
+): string | undefined {
   if (!data || typeof data !== "object") {
     return undefined;
   }
+  if (depth > 6 || seen.has(data)) {
+    return undefined;
+  }
+  seen.add(data);
   const record = data as Record<string, unknown>;
   const result = record.result;
-  if (result === undefined) {
-    return undefined;
+  if (result !== undefined) {
+    if (typeof result === "string") {
+      return result;
+    }
+    if (result && typeof result === "object") {
+      const resultRecord = result as Record<string, unknown>;
+      if (Array.isArray(resultRecord.content)) {
+        return resultRecord.content
+          .map((entry) => {
+            if (typeof entry === "string") return entry;
+            if (entry && typeof entry === "object") {
+              const candidate = entry as { text?: unknown };
+              if (typeof candidate.text === "string") return candidate.text;
+            }
+            return "";
+          })
+          .join("");
+      }
+      if (typeof resultRecord.text === "string") {
+        return resultRecord.text;
+      }
+    }
   }
-  if (typeof result === "string") {
-    return result;
-  }
-  if (!result || typeof result !== "object") {
-    return undefined;
-  }
-  const resultRecord = result as Record<string, unknown>;
-  if (Array.isArray(resultRecord.content)) {
-    return resultRecord.content
-      .map((entry) => {
-        if (typeof entry === "string") return entry;
-        if (entry && typeof entry === "object") {
-          const candidate = entry as { text?: unknown };
-          if (typeof candidate.text === "string") return candidate.text;
-        }
-        return "";
-      })
-      .join("");
-  }
-  if (typeof resultRecord.text === "string") {
-    return resultRecord.text;
+
+  for (const key of ["item", "data", "payload", "output", "response"]) {
+    const nested = extractToolOutputText(record[key], depth + 1, seen);
+    if (nested !== undefined) {
+      return nested;
+    }
   }
   return undefined;
 }
@@ -159,7 +215,7 @@ function buildToolLifecyclePayload(
       ? truncateDetail(eventPayload.detail, TOOL_SUMMARY_LIMIT)
       : undefined;
   const rawOutput = extractToolOutputText(eventPayload.data);
-  const outputLimit = isBrowserToolOutputData(eventPayload.data)
+  const outputLimit = isBrowserToolOutputData(eventPayload.data, eventPayload.detail)
     ? BROWSER_TOOL_OUTPUT_LIMIT
     : TOOL_OUTPUT_LIMIT;
   const truncated = rawOutput !== undefined && rawOutput.length > outputLimit;

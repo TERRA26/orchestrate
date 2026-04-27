@@ -90,5 +90,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.removeListener(BROWSER_STATE_CHANNEL, wrappedListener);
       };
     },
+    onObservation: () => () => undefined,
   },
 } satisfies DesktopBridge);

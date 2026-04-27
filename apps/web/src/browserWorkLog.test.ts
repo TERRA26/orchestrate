@@ -124,6 +124,7 @@ describe("browserWorkLog", () => {
     expect(latest?.session).toMatchObject({
       kind: "automation",
       source: "orchestrator",
+      sessionId: "browser-session-1",
       url: "https://www.youtube.com/watch?v=abc123",
       screenshotDataUrl: "data:image/jpeg;base64,watch",
     });
