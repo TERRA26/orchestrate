@@ -30,6 +30,10 @@ export const PermissionPolicyId = EntityId.pipe(Schema.brand("PermissionPolicyId
 export type PermissionPolicyId = typeof PermissionPolicyId.Type;
 export const WorkflowRunId = EntityId.pipe(Schema.brand("WorkflowRunId"));
 export type WorkflowRunId = typeof WorkflowRunId.Type;
+export const LaunchConfigId = EntityId.pipe(Schema.brand("LaunchConfigId"));
+export type LaunchConfigId = typeof LaunchConfigId.Type;
+export const DevServerInstanceId = EntityId.pipe(Schema.brand("DevServerInstanceId"));
+export type DevServerInstanceId = typeof DevServerInstanceId.Type;
 export const PreviewTargetId = EntityId.pipe(Schema.brand("PreviewTargetId"));
 export type PreviewTargetId = typeof PreviewTargetId.Type;
 export const EvidenceArtifactId = EntityId.pipe(Schema.brand("EvidenceArtifactId"));
@@ -148,6 +152,105 @@ export const PermissionPolicy = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type PermissionPolicy = typeof PermissionPolicy.Type;
+
+export const LaunchHealthCheck = Schema.Struct({
+  path: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(120_000)),
+  expectedStatus: Schema.optional(
+    Schema.Union([
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(100), Schema.isLessThanOrEqualTo(599)),
+      Schema.Array(
+        Schema.Int.check(Schema.isGreaterThanOrEqualTo(100), Schema.isLessThanOrEqualTo(599)),
+      ).check(Schema.isMinLength(1)),
+    ]),
+  ),
+});
+export type LaunchHealthCheck = typeof LaunchHealthCheck.Type;
+
+export const LaunchReadiness = Schema.Struct({
+  stdoutRegex: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  urlProbe: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(120_000)),
+});
+export type LaunchReadiness = typeof LaunchReadiness.Type;
+
+export const LaunchConfig = Schema.Struct({
+  id: LaunchConfigId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_FILE_PATH_LENGTH)),
+  runtimeExecutable: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  runtimeArgs: Schema.Array(Schema.String.check(Schema.isMaxLength(512))),
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  port: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(65_535)),
+  ),
+  autoPort: Schema.optional(Schema.Boolean),
+  defaultRoute: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  healthCheck: Schema.optional(LaunchHealthCheck),
+  readiness: Schema.optional(LaunchReadiness),
+  autoVerify: Schema.optional(Schema.Boolean),
+  tags: Schema.optional(Schema.Array(Schema.String.check(Schema.isMaxLength(128)))),
+});
+export type LaunchConfig = typeof LaunchConfig.Type;
+
+export const LaunchConfigFile = Schema.Struct({
+  version: Schema.Literal("1.0"),
+  configurations: Schema.Array(LaunchConfig).check(Schema.isMinLength(1)),
+});
+export type LaunchConfigFile = typeof LaunchConfigFile.Type;
+
+export const DevServerStatus = Schema.Literals([
+  "starting",
+  "healthy",
+  "unhealthy",
+  "crashed",
+  "stopping",
+  "stopped",
+]);
+export type DevServerStatus = typeof DevServerStatus.Type;
+
+export const DevServerFailureReason = Schema.Literals([
+  "config-not-found",
+  "invalid-cwd",
+  "command-not-allowed",
+  "port-in-use",
+  "process-start-failed",
+  "readiness-timeout",
+  "health-check-failed",
+  "process-crashed",
+  "stopped-by-user",
+  "stopped-by-workflow",
+]);
+export type DevServerFailureReason = typeof DevServerFailureReason.Type;
+
+export const DevServerInstance = Schema.Struct({
+  id: DevServerInstanceId,
+  sessionId: EntityId,
+  launchConfigId: LaunchConfigId,
+  status: DevServerStatus,
+  pid: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_FILE_PATH_LENGTH)),
+  command: Schema.Array(Schema.String.check(Schema.isMaxLength(512))).check(Schema.isMinLength(1)),
+  assignedPort: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(65_535)),
+  ),
+  baseUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  startedAt: IsoDateTime,
+  lastHealthCheckAt: Schema.optional(IsoDateTime),
+  logStreamRef: EvidenceArtifactId,
+  recentErrorRefs: Schema.Array(EvidenceArtifactId),
+  failureReason: Schema.optional(DevServerFailureReason),
+});
+export type DevServerInstance = typeof DevServerInstance.Type;
+
+export const DevServerReady = Schema.Struct({
+  instance: DevServerInstance,
+  baseUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_URL_LENGTH)),
+  healthEvidenceRef: EvidenceArtifactId,
+  logsEvidenceRef: EvidenceArtifactId,
+});
+export type DevServerReady = typeof DevServerReady.Type;
 
 export const BrowserPolicyDecision = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("allow") }),

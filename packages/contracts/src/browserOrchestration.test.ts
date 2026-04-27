@@ -4,7 +4,9 @@ import { Effect, Schema } from "effect";
 
 import {
   BrowserPolicyDecision,
+  DevServerInstance,
   EvidenceBundle,
+  LaunchConfigFile,
   PreviewTarget,
   ReviewerDecision,
 } from "./browserOrchestration";
@@ -15,6 +17,8 @@ const decodeEvidenceBundle = Schema.decodeUnknownEffect(EvidenceBundle);
 const decodeReviewerDecision = Schema.decodeUnknownEffect(ReviewerDecision);
 const decodePreviewTarget = Schema.decodeUnknownEffect(PreviewTarget);
 const decodeBrowserPolicyDecision = Schema.decodeUnknownEffect(BrowserPolicyDecision);
+const decodeLaunchConfigFile = Schema.decodeUnknownEffect(LaunchConfigFile);
+const decodeDevServerInstance = Schema.decodeUnknownEffect(DevServerInstance);
 
 const viewport = {
   id: "desktop",
@@ -171,5 +175,52 @@ it.effect("decodes BrowserPolicyDecision requiring approval", () =>
     });
 
     assert.strictEqual(parsed.outcome, "requires-approval");
+  }),
+);
+
+it.effect("decodes launch configs and dev server instances", () =>
+  Effect.gen(function* () {
+    const launch = yield* decodeLaunchConfigFile({
+      version: "1.0",
+      configurations: [
+        {
+          id: "web",
+          name: "Web",
+          cwd: ".",
+          runtimeExecutable: "bun",
+          runtimeArgs: ["run", "dev:web"],
+          port: 5734,
+          autoPort: true,
+          defaultRoute: "/",
+          healthCheck: {
+            path: "/",
+            timeoutMs: 30_000,
+            expectedStatus: [200, 304],
+          },
+          autoVerify: true,
+          tags: ["web"],
+        },
+      ],
+    });
+
+    assert.strictEqual(launch.configurations[0]?.id, "web");
+
+    const instance = yield* decodeDevServerInstance({
+      id: "server-1",
+      sessionId: "session-1",
+      launchConfigId: "web",
+      status: "healthy",
+      pid: 123,
+      cwd: "/tmp/orchestrate",
+      command: ["bun", "run", "dev:web"],
+      assignedPort: 5734,
+      baseUrl: "http://127.0.0.1:5734",
+      startedAt: ISO,
+      lastHealthCheckAt: ISO,
+      logStreamRef: "artifact-logs",
+      recentErrorRefs: [],
+    });
+
+    assert.strictEqual(instance.status, "healthy");
   }),
 );
