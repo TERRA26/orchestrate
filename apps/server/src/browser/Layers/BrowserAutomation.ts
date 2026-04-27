@@ -316,9 +316,9 @@ async function capturePreviewScreenshotDataUrl(page: Page): Promise<string | und
   }
 
   for (const candidate of [
-    { maxWidth: 520, maxHeight: 325, quality: 0.42, maxBytes: 18_000 },
-    { maxWidth: 420, maxHeight: 263, quality: 0.36, maxBytes: 18_000 },
-    { maxWidth: 320, maxHeight: 200, quality: 0.32, maxBytes: 18_000 },
+    { maxWidth: 960, maxHeight: 600, quality: 0.72, maxBytes: 96_000 },
+    { maxWidth: 800, maxHeight: 500, quality: 0.66, maxBytes: 96_000 },
+    { maxWidth: 640, maxHeight: 400, quality: 0.6, maxBytes: 96_000 },
   ]) {
     const downscaled = await downscaleScreenshotDataUrl(page, screenshot, candidate);
     if (downscaled) {
@@ -327,9 +327,9 @@ async function capturePreviewScreenshotDataUrl(page: Page): Promise<string | und
   }
 
   return downscaleScreenshotDataUrl(page, screenshot, {
-    maxWidth: 280,
-    maxHeight: 175,
-    quality: 0.3,
+    maxWidth: 520,
+    maxHeight: 325,
+    quality: 0.48,
   });
 }
 

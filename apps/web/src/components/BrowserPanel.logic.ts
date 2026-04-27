@@ -47,6 +47,15 @@ interface BuildBrowserAddressSuggestionsInput {
   recentHistory: BrowserHistoryEntry[];
 }
 
+interface ShouldOpenFallbackAutomationMirrorInput {
+  usesNativeBrowserSurface: boolean;
+  hasApi: boolean;
+  workspaceReady: boolean;
+  fallbackFrameUrl: string | null;
+  prefersThreadAutomationSession: boolean;
+  hasFallbackScreenshotSession: boolean;
+}
+
 // Hides about:blank from the address bar so new tabs behave like real browsers.
 export function browserAddressDisplayValue(
   tab: Pick<BrowserTabState, "url"> | null | undefined,
@@ -231,4 +240,27 @@ export function resolveBrowserAddressSync(
     value: input.nextDisplayValue,
     syncedValue: input.nextDisplayValue,
   };
+}
+
+export function shouldOpenFallbackAutomationMirror(
+  input: ShouldOpenFallbackAutomationMirrorInput,
+): boolean {
+  if (
+    input.usesNativeBrowserSurface ||
+    !input.hasApi ||
+    !input.workspaceReady ||
+    !input.fallbackFrameUrl
+  ) {
+    return false;
+  }
+
+  // Orchestrator browser-tool observations are evidence from the browser the
+  // agent actually used. Starting a second mirror session for the same panel can
+  // diverge on cookie-gated or bot-sensitive sites, making the UI contradict the
+  // thread transcript.
+  if (input.prefersThreadAutomationSession && input.hasFallbackScreenshotSession) {
+    return false;
+  }
+
+  return true;
 }

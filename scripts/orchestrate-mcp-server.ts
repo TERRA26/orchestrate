@@ -357,7 +357,7 @@ const TOOLS = [
         includeScreenshot: {
           type: "boolean",
           description:
-            "Include screenshot data URLs in the response. Defaults to false to keep tool output compact.",
+            "Deprecated. A compact screenshot proof is always returned; full screenshot data URLs are omitted from tool text to keep the thread parseable.",
         },
       },
       required: ["url"],
@@ -379,7 +379,7 @@ const TOOLS = [
         includeScreenshot: {
           type: "boolean",
           description:
-            "Include screenshot data URLs in the response. Defaults to false to keep tool output compact.",
+            "Deprecated. A compact screenshot proof is always returned; full screenshot data URLs are omitted from tool text to keep the thread parseable.",
         },
       },
       required: ["sessionId", "action"],
@@ -482,8 +482,9 @@ async function wsRequest(method: string, fields?: any): Promise<any> {
   });
 }
 
-function summarizeBrowserObservation(observation: any, includeScreenshot: boolean): any {
+export function summarizeBrowserObservation(observation: any, includeScreenshot: boolean): any {
   if (!observation || typeof observation !== "object") return observation;
+  void includeScreenshot;
   const screenshotDataUrl =
     typeof observation.screenshotDataUrl === "string" ? observation.screenshotDataUrl : undefined;
   const previewScreenshotDataUrl =
@@ -508,16 +509,16 @@ function summarizeBrowserObservation(observation: any, includeScreenshot: boolea
     navigationError: observation.navigationError,
     evaluateResult: observation.evaluateResult,
     observedAt: observation.observedAt,
+    ...(previewScreenshotDataUrl ? { previewScreenshotDataUrl } : {}),
     screenshot: {
       present: Boolean(screenshotDataUrl),
       bytes: screenshotDataUrl ? Buffer.byteLength(screenshotDataUrl) : 0,
-      previewDataUrl: includeScreenshot ? previewScreenshotDataUrl : undefined,
+      previewDataUrl: previewScreenshotDataUrl,
       previewBytes: previewScreenshotDataUrl ? Buffer.byteLength(previewScreenshotDataUrl) : 0,
     },
     fullPageScreenshot: {
       present: Boolean(fullPageScreenshotDataUrl),
       bytes: fullPageScreenshotDataUrl ? Buffer.byteLength(fullPageScreenshotDataUrl) : 0,
-      dataUrl: includeScreenshot ? fullPageScreenshotDataUrl : undefined,
     },
   };
 }
@@ -1339,5 +1340,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+if ((import.meta as ImportMeta & { readonly main?: boolean }).main === true) {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}

@@ -79,6 +79,20 @@ function truncateDetail(value: string, limit = 180): string {
 // Gap 3: split truncated sidebar detail from full model-visible tool output.
 const TOOL_SUMMARY_LIMIT = 180;
 const TOOL_OUTPUT_LIMIT = 24_576;
+const BROWSER_TOOL_OUTPUT_LIMIT = 262_144;
+
+function isBrowserToolOutputData(data: unknown): boolean {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const toolName = (data as Record<string, unknown>).toolName;
+  return (
+    toolName === "orchestrate_browser_open_session" ||
+    toolName === "orchestrate_browser_act" ||
+    toolName === "mcp__orchestrate__orchestrate_browser_open_session" ||
+    toolName === "mcp__orchestrate__orchestrate_browser_act"
+  );
+}
 
 function extractToolOutputText(data: unknown): string | undefined {
   if (!data || typeof data !== "object") {
@@ -145,13 +159,12 @@ function buildToolLifecyclePayload(
       ? truncateDetail(eventPayload.detail, TOOL_SUMMARY_LIMIT)
       : undefined;
   const rawOutput = extractToolOutputText(eventPayload.data);
-  const truncated = rawOutput !== undefined && rawOutput.length > TOOL_OUTPUT_LIMIT;
+  const outputLimit = isBrowserToolOutputData(eventPayload.data)
+    ? BROWSER_TOOL_OUTPUT_LIMIT
+    : TOOL_OUTPUT_LIMIT;
+  const truncated = rawOutput !== undefined && rawOutput.length > outputLimit;
   const output =
-    rawOutput === undefined
-      ? undefined
-      : truncated
-        ? rawOutput.slice(0, TOOL_OUTPUT_LIMIT)
-        : rawOutput;
+    rawOutput === undefined ? undefined : truncated ? rawOutput.slice(0, outputLimit) : rawOutput;
   const exitCode = extractToolExitCode(eventPayload.data);
 
   const result: Record<string, unknown> = { itemType: eventPayload.itemType };

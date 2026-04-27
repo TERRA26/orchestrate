@@ -52,6 +52,7 @@ import {
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
   resolveBrowserAddressSync,
+  shouldOpenFallbackAutomationMirror,
   type BrowserAddressSuggestion,
 } from "./BrowserPanel.logic";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -306,11 +307,14 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       ? threadAutomationBrowserSession
       : null;
   const fallbackAutomationObservation = fallbackAutomationSession?.observation ?? null;
+  const showStaticThreadEvidence =
+    prefersThreadAutomationSession && fallbackScreenshotSession !== null;
   const fallbackAutomationObservationMatchesFrame =
     !fallbackFrameUrl ||
     browserUrlsExactlyMatch(fallbackAutomationObservation?.url, fallbackFrameUrl);
   const displayedFallbackAutomationObservation =
     fallbackAutomationObservation &&
+    !showStaticThreadEvidence &&
     (!prefersThreadAutomationSession ||
       fallbackAutomationObservationMatchesFrame ||
       !fallbackScreenshotSession)
@@ -321,11 +325,13 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   );
   const browserSurfaceModeLabel = usesNativeBrowserSurface
     ? "Live shared browser"
-    : fallbackAutomationScreenshotDataUrl
-      ? "Headless validation mirror"
-      : fallbackScreenshotSession
-        ? "Static screenshot evidence"
-        : null;
+    : showStaticThreadEvidence
+      ? "Static screenshot evidence"
+      : fallbackAutomationScreenshotDataUrl
+        ? "Headless validation mirror"
+        : fallbackScreenshotSession
+          ? "Static screenshot evidence"
+          : null;
   const activeBrowserUrl =
     displayedFallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
   const activeBrowserTitle =
@@ -666,7 +672,19 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   }, [api]);
 
   useEffect(() => {
-    if (usesNativeBrowserSurface || !api || !workspaceReady || !fallbackFrameUrl) {
+    if (
+      !shouldOpenFallbackAutomationMirror({
+        usesNativeBrowserSurface,
+        hasApi: Boolean(api),
+        workspaceReady,
+        fallbackFrameUrl,
+        prefersThreadAutomationSession,
+        hasFallbackScreenshotSession: Boolean(fallbackScreenshotSession),
+      })
+    ) {
+      return;
+    }
+    if (!fallbackFrameUrl) {
       return;
     }
     if (
@@ -684,7 +702,9 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     api,
     fallbackAutomationSession,
     fallbackFrameUrl,
+    fallbackScreenshotSession,
     openFallbackAutomationUrl,
+    prefersThreadAutomationSession,
     usesNativeBrowserSurface,
     workspaceReady,
   ]);

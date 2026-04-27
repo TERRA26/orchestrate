@@ -2334,6 +2334,61 @@ describe("ProviderRuntimeIngestion", () => {
     expect(payload?.truncated).toBe(false);
   });
 
+  it("preserves parseable browser screenshot proof above the generic output limit", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const previewDataUrl = `data:image/jpeg;base64,${"a".repeat(40_000)}`;
+    const browserOutput = JSON.stringify({
+      sessionId: "browser-session-1",
+      observation: {
+        sessionId: "browser-session-1",
+        url: "https://example.com/#proof",
+        title: "Example Domain",
+        previewScreenshotDataUrl: previewDataUrl,
+        screenshot: {
+          present: true,
+          previewDataUrl,
+        },
+      },
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-browser-output"),
+      provider: "claudeAgent",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-browser-output"),
+      itemId: asItemId("tool-call-browser-output"),
+      payload: {
+        itemType: "orchestration_tool_call",
+        status: "completed",
+        title: "MCP tool call",
+        detail: "mcp__orchestrate__orchestrate_browser_act: {}",
+        data: {
+          toolName: "mcp__orchestrate__orchestrate_browser_act",
+          input: { sessionId: "browser-session-1", action: { kind: "navigate" } },
+          result: {
+            content: [{ type: "text", text: browserOutput }],
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-browser-output",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (a: ProviderRuntimeTestActivity) => a.id === "evt-browser-output",
+    );
+    const payload = activity?.payload as Record<string, unknown> | undefined;
+    expect(payload?.truncated).toBe(false);
+    expect(payload?.output).toBe(browserOutput);
+  });
+
   it("truncates tool output above 24KB and flags it (Gap 3)", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

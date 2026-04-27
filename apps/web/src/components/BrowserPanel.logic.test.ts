@@ -5,6 +5,7 @@ import {
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
   resolveBrowserAddressSync,
+  shouldOpenFallbackAutomationMirror,
 } from "./BrowserPanel.logic";
 
 describe("browserAddressDisplayValue", () => {
@@ -121,5 +122,39 @@ describe("buildBrowserAddressSuggestions", () => {
     });
     expect(suggestions.some((suggestion) => suggestion.url === "about:blank")).toBe(false);
     expect(suggestions.some((suggestion) => suggestion.url === "https://openai.com/")).toBe(true);
+  });
+});
+
+describe("shouldOpenFallbackAutomationMirror", () => {
+  const BASE_INPUT = {
+    usesNativeBrowserSurface: false,
+    hasApi: true,
+    workspaceReady: true,
+    fallbackFrameUrl: "https://example.com/",
+    prefersThreadAutomationSession: false,
+    hasFallbackScreenshotSession: false,
+  };
+
+  it("opens a fallback automation mirror for manually entered URLs", () => {
+    expect(shouldOpenFallbackAutomationMirror(BASE_INPUT)).toBe(true);
+  });
+
+  it("does not open a separate mirror when orchestrator screenshot evidence exists", () => {
+    expect(
+      shouldOpenFallbackAutomationMirror({
+        ...BASE_INPUT,
+        prefersThreadAutomationSession: true,
+        hasFallbackScreenshotSession: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not open without an addressable fallback URL", () => {
+    expect(
+      shouldOpenFallbackAutomationMirror({
+        ...BASE_INPUT,
+        fallbackFrameUrl: null,
+      }),
+    ).toBe(false);
   });
 });
