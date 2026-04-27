@@ -383,6 +383,78 @@ export const BrowserWorkflowStatus = Schema.Literals([
 ]);
 export type BrowserWorkflowStatus = typeof BrowserWorkflowStatus.Type;
 
+export const BrowserAssertion = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("url-matches"),
+    pattern: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("text-visible"),
+    text: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("selector-visible"),
+    selector: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("selector-not-visible"),
+    selector: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("no-console-errors"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("no-page-errors"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("no-network-failures"),
+    allowPatterns: Schema.optional(
+      Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH))),
+    ),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("http-status-ok"),
+    urlPattern: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("annotation-resolved"),
+    annotationId: EntityId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("screenshot-captured"),
+    label: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+  }),
+]);
+export type BrowserAssertion = typeof BrowserAssertion.Type;
+
+export const BrowserAssertionResult = Schema.Struct({
+  assertion: BrowserAssertion,
+  status: Schema.Literals(["pass", "fail", "not-evaluated"]),
+  evidenceRefs: Schema.Array(EvidenceArtifactId),
+  message: Schema.String.check(Schema.isMaxLength(MAX_REASON_LENGTH)),
+});
+export type BrowserAssertionResult = typeof BrowserAssertionResult.Type;
+
+export const BrowserWorkflowRun = Schema.Struct({
+  id: WorkflowRunId,
+  sessionId: EntityId,
+  previewTargetId: PreviewTargetId,
+  taskSpecId: TaskSpecId,
+  acceptanceCriteriaId: AcceptanceCriteriaId,
+  permissionPolicyId: PermissionPolicyId,
+  browserSessionId: Schema.optional(BrowserSessionId),
+  status: BrowserWorkflowStatus,
+  routes: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))).check(
+    Schema.isMinLength(1),
+  ),
+  viewports: Schema.Array(PreviewViewport).check(Schema.isMinLength(1)),
+  retryBudget: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  evidenceBundleId: Schema.optional(EvidenceBundleId),
+});
+export type BrowserWorkflowRun = typeof BrowserWorkflowRun.Type;
+
 export const BrowserObservationArtifactRefs = Schema.Struct({
   screenshot: Schema.optional(EvidenceArtifactId),
   domSnapshot: Schema.optional(EvidenceArtifactId),

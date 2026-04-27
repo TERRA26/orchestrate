@@ -4,6 +4,8 @@ import { Effect, Schema } from "effect";
 
 import {
   BrowserPolicyDecision,
+  BrowserAssertion,
+  BrowserWorkflowRun,
   DevServerInstance,
   EvidenceBundle,
   LaunchConfigFile,
@@ -17,6 +19,8 @@ const decodeEvidenceBundle = Schema.decodeUnknownEffect(EvidenceBundle);
 const decodeReviewerDecision = Schema.decodeUnknownEffect(ReviewerDecision);
 const decodePreviewTarget = Schema.decodeUnknownEffect(PreviewTarget);
 const decodeBrowserPolicyDecision = Schema.decodeUnknownEffect(BrowserPolicyDecision);
+const decodeBrowserAssertion = Schema.decodeUnknownEffect(BrowserAssertion);
+const decodeBrowserWorkflowRun = Schema.decodeUnknownEffect(BrowserWorkflowRun);
 const decodeLaunchConfigFile = Schema.decodeUnknownEffect(LaunchConfigFile);
 const decodeDevServerInstance = Schema.decodeUnknownEffect(DevServerInstance);
 
@@ -175,6 +179,36 @@ it.effect("decodes BrowserPolicyDecision requiring approval", () =>
     });
 
     assert.strictEqual(parsed.outcome, "requires-approval");
+  }),
+);
+
+it.effect("decodes browser workflow assertions and workflow runs", () =>
+  Effect.gen(function* () {
+    const assertion = yield* decodeBrowserAssertion({
+      type: "text-visible",
+      text: "Sign in",
+    });
+    assert.strictEqual(assertion.type, "text-visible");
+
+    const workflow = yield* decodeBrowserWorkflowRun({
+      id: "workflow-1",
+      sessionId: "session-1",
+      previewTargetId: "target-1",
+      taskSpecId: "task-spec-1",
+      acceptanceCriteriaId: "criteria-1",
+      permissionPolicyId: "policy-1",
+      browserSessionId: "browser-session-1",
+      status: "completed",
+      routes: ["/"],
+      viewports: [viewport],
+      retryBudget: 1,
+      createdAt: ISO,
+      updatedAt: ISO,
+      evidenceBundleId: "bundle-1",
+    });
+
+    assert.strictEqual(workflow.status, "completed");
+    assert.strictEqual(workflow.routes[0], "/");
   }),
 );
 
