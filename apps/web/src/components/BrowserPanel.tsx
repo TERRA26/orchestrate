@@ -121,9 +121,10 @@ function browserUrlsLikelyMatch(
 ): boolean {
   const normalizedLeft = normalizeComparableBrowserUrl(left);
   const normalizedRight = normalizeComparableBrowserUrl(right);
-  if (!normalizedLeft || !normalizedRight) {
+  if (!normalizedLeft && !normalizedRight) {
     return true;
   }
+  if (!normalizedLeft || !normalizedRight) return false;
   if (normalizedLeft === normalizedRight) {
     return true;
   }
@@ -268,18 +269,21 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     isAddressFocused && browserAddressSuggestions.length > 0 && workspaceReady;
   const usesNativeBrowserSurface =
     typeof window !== "undefined" && window.desktopBridge !== undefined;
+  const activeTabUrl = activeTab?.lastCommittedUrl ?? activeTab?.url ?? "";
+  const restorableAutomationUrl = threadAutomationBrowserSession?.url ?? "";
   const fallbackFrameUrl =
-    !usesNativeBrowserSurface && activeTab?.url && activeTab.url !== "about:blank"
-      ? activeTab.url
-      : null;
+    !usesNativeBrowserSurface && activeTabUrl && activeTabUrl !== "about:blank"
+      ? activeTabUrl
+      : !usesNativeBrowserSurface && restorableAutomationUrl
+        ? restorableAutomationUrl
+        : null;
+  const hasActiveComparableBrowserUrl = normalizeComparableBrowserUrl(activeTabUrl) !== null;
   const fallbackScreenshotSession =
     !usesNativeBrowserSurface &&
     threadAutomationBrowserSession &&
     !fallbackAutomationSession &&
-    browserUrlsLikelyMatch(
-      threadAutomationBrowserSession.url,
-      activeTab?.lastCommittedUrl ?? activeTab?.url,
-    )
+    (!hasActiveComparableBrowserUrl ||
+      browserUrlsLikelyMatch(threadAutomationBrowserSession.url, activeTabUrl))
       ? threadAutomationBrowserSession
       : null;
   const fallbackAutomationObservation = fallbackAutomationSession?.observation ?? null;
@@ -294,9 +298,10 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
         ? "Static screenshot evidence"
         : null;
   const activeBrowserUrl =
-    fallbackAutomationObservation?.url ?? activeTab?.lastCommittedUrl ?? activeTab?.url ?? "";
+    fallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
   const activeBrowserTitle =
     fallbackAutomationObservation?.title ??
+    fallbackScreenshotSession?.title ??
     activeTab?.title ??
     fallbackBrowserTitleFromUrl(activeBrowserUrl);
   const visibleBrowserAnnotations = browserAnnotations.filter((annotation) =>
@@ -714,7 +719,10 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
 
   useEffect(() => {
     const activeTabId = activeTab?.id ?? null;
-    const nextDisplayValue = browserAddressDisplayValue(activeTab);
+    const nextDisplayValue =
+      activeTab && normalizeComparableBrowserUrl(browserAddressDisplayValue(activeTab))
+        ? browserAddressDisplayValue(activeTab)
+        : (fallbackScreenshotSession?.url ?? browserAddressDisplayValue(activeTab));
     const decision = resolveBrowserAddressSync({
       activeTabId,
       previousActiveTabId: previousActiveTabIdRef.current,
@@ -737,7 +745,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     }
 
     previousActiveTabIdRef.current = activeTabId;
-  }, [activeTab]);
+  }, [activeTab, fallbackScreenshotSession?.url]);
 
   useEffect(() => {
     const liveTabIds = new Set(threadBrowserState?.tabs.map((tab) => tab.id) ?? []);

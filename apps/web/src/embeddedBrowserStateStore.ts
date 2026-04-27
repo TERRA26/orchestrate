@@ -1,5 +1,8 @@
 import { type BrowserObservation, type ThreadId } from "@orchestrate/contracts";
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+
+const EMBEDDED_BROWSER_STATE_STORAGE_KEY = "orchestrate:embedded-browser-state:v1";
 
 export type EmbeddedBrowserSessionSource = "orchestrator" | "sidebar";
 export type EmbeddedBrowserInternalPageId = "learn-ai";
@@ -172,42 +175,55 @@ export function resolveEmbeddedBrowserSession(input: {
   return { scope: null, session: null };
 }
 
-export const useEmbeddedBrowserStateStore = create<EmbeddedBrowserState>((set) => ({
-  globalSession: null,
-  threadSessionsById: {},
-  threadSessionVisibilityById: {},
-  closeGlobalSession: () => set({ globalSession: null }),
-  closeThreadSession: (threadId) =>
-    set((state) => {
-      if (state.threadSessionsById[threadId] === undefined) {
-        return state;
-      }
-      const nextSessions = { ...state.threadSessionsById };
-      delete nextSessions[threadId];
-      const nextVisibility = { ...state.threadSessionVisibilityById };
-      delete nextVisibility[threadId];
-      return {
-        threadSessionsById: nextSessions,
-        threadSessionVisibilityById: nextVisibility,
-      };
+export const useEmbeddedBrowserStateStore = create<EmbeddedBrowserState>()(
+  persist(
+    (set) => ({
+      globalSession: null,
+      threadSessionsById: {},
+      threadSessionVisibilityById: {},
+      closeGlobalSession: () => set({ globalSession: null }),
+      closeThreadSession: (threadId) =>
+        set((state) => {
+          if (state.threadSessionsById[threadId] === undefined) {
+            return state;
+          }
+          const nextSessions = { ...state.threadSessionsById };
+          delete nextSessions[threadId];
+          const nextVisibility = { ...state.threadSessionVisibilityById };
+          delete nextVisibility[threadId];
+          return {
+            threadSessionsById: nextSessions,
+            threadSessionVisibilityById: nextVisibility,
+          };
+        }),
+      openGlobalSession: (session) => set({ globalSession: session }),
+      openThreadSession: (threadId, session) =>
+        set((state) => ({
+          threadSessionsById: {
+            ...state.threadSessionsById,
+            [threadId]: session,
+          },
+          threadSessionVisibilityById: {
+            ...state.threadSessionVisibilityById,
+            [threadId]: true,
+          },
+        })),
+      setThreadSessionVisible: (threadId, visible) =>
+        set((state) => ({
+          threadSessionVisibilityById: {
+            ...state.threadSessionVisibilityById,
+            [threadId]: visible,
+          },
+        })),
     }),
-  openGlobalSession: (session) => set({ globalSession: session }),
-  openThreadSession: (threadId, session) =>
-    set((state) => ({
-      threadSessionsById: {
-        ...state.threadSessionsById,
-        [threadId]: session,
-      },
-      threadSessionVisibilityById: {
-        ...state.threadSessionVisibilityById,
-        [threadId]: true,
-      },
-    })),
-  setThreadSessionVisible: (threadId, visible) =>
-    set((state) => ({
-      threadSessionVisibilityById: {
-        ...state.threadSessionVisibilityById,
-        [threadId]: visible,
-      },
-    })),
-}));
+    {
+      name: EMBEDDED_BROWSER_STATE_STORAGE_KEY,
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        globalSession: state.globalSession,
+        threadSessionsById: state.threadSessionsById,
+        threadSessionVisibilityById: state.threadSessionVisibilityById,
+      }),
+    },
+  ),
+);
