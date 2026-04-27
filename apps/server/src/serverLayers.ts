@@ -47,6 +47,8 @@ import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { BrowserAutomationLive } from "./browser/Layers/BrowserAutomation.ts";
+import { BrowserAnnotationServiceLive } from "./browserAnnotations/Layers/BrowserAnnotationService.ts";
+import { BrowserAnnotationRepositoryLive } from "./persistence/Layers/BrowserAnnotations.ts";
 
 type RuntimePtyAdapterLoader = {
   layer: Layer.Layer<PtyAdapter, never, FileSystem.FileSystem | Path.Path>;
@@ -175,10 +177,14 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provide(workspaceEntriesLayer),
   );
   const projectFaviconResolverLayer = ProjectFaviconResolverLive;
+  const browserAnnotationServiceLayer = BrowserAnnotationServiceLive.pipe(
+    Layer.provide(BrowserAnnotationRepositoryLive),
+  );
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
     BrowserAutomationLive,
+    browserAnnotationServiceLayer,
     workspacePathsLayer,
     workspaceEntriesLayer,
     workspaceFileSystemLayer,

@@ -7,13 +7,10 @@
  * @module Server
  */
 import http from "node:http";
-import { randomUUID } from "node:crypto";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
 import {
-  type BrowserAddAnnotationInput,
-  type BrowserAnnotation,
   CommandId,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TERMINAL_ID,
@@ -88,6 +85,7 @@ import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
 import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
 import { BrowserAutomation } from "./browser/Services/BrowserAutomation.ts";
+import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -119,59 +117,6 @@ const isServerNotRunningError = (error: Error): boolean => {
     maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
   );
 };
-
-const browserAnnotationsByThreadId = new Map<string, BrowserAnnotation[]>();
-
-function clampAnnotationUnit(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.min(1, Math.max(0, value));
-}
-
-function addBrowserAnnotation(input: BrowserAddAnnotationInput): {
-  annotation: BrowserAnnotation;
-  annotations: BrowserAnnotation[];
-} {
-  const threadKey = input.threadId;
-  const annotation: BrowserAnnotation = {
-    id: randomUUID(),
-    threadId: input.threadId,
-    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-    url: input.url,
-    ...(input.title ? { title: input.title } : {}),
-    comment: input.comment,
-    kind: input.kind,
-    x: clampAnnotationUnit(input.x),
-    y: clampAnnotationUnit(input.y),
-    ...(input.width !== undefined ? { width: clampAnnotationUnit(input.width) } : {}),
-    ...(input.height !== undefined ? { height: clampAnnotationUnit(input.height) } : {}),
-    ...(input.viewportWidth !== undefined ? { viewportWidth: input.viewportWidth } : {}),
-    ...(input.viewportHeight !== undefined ? { viewportHeight: input.viewportHeight } : {}),
-    ...(input.scrollTop !== undefined ? { scrollTop: input.scrollTop } : {}),
-    ...(input.targetId ? { targetId: input.targetId } : {}),
-    ...(input.targetLabel ? { targetLabel: input.targetLabel } : {}),
-    ...(input.screenshotDataUrl ? { screenshotDataUrl: input.screenshotDataUrl } : {}),
-    createdAt: new Date().toISOString(),
-  };
-  const annotations = [annotation, ...(browserAnnotationsByThreadId.get(threadKey) ?? [])].slice(
-    0,
-    100,
-  );
-  browserAnnotationsByThreadId.set(threadKey, annotations);
-  return { annotation, annotations };
-}
-
-function listBrowserAnnotations(input: { threadId: string; sessionId?: string | undefined }): {
-  annotations: BrowserAnnotation[];
-} {
-  const annotations = browserAnnotationsByThreadId.get(input.threadId) ?? [];
-  return {
-    annotations: input.sessionId
-      ? annotations.filter((annotation) => annotation.sessionId === input.sessionId)
-      : annotations,
-  };
-}
 
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
   socket.end(
@@ -335,7 +280,8 @@ export type ServerRuntimeServices =
   | Keybindings
   | Open
   | AnalyticsService
-  | BrowserAutomation;
+  | BrowserAutomation
+  | BrowserAnnotationService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -435,6 +381,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerHealth = yield* ProviderHealth;
   const providerDiscoveryService = yield* ProviderDiscoveryService;
   const browserAutomation = yield* BrowserAutomation;
+  const browserAnnotations = yield* BrowserAnnotationService;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1199,12 +1146,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.browserAddAnnotation: {
         const body = stripRequestTag(request.body);
-        return addBrowserAnnotation(body);
+        return yield* browserAnnotations.create(body);
       }
 
       case WS_METHODS.browserListAnnotations: {
         const body = stripRequestTag(request.body);
-        return listBrowserAnnotations(body);
+        return yield* browserAnnotations.list(body);
       }
 
       case WS_METHODS.providerGetComposerCapabilities: {
