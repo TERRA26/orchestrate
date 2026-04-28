@@ -53,6 +53,7 @@ import { BrowserWorkflowManagerLive } from "./browserWorkflow/Layers/BrowserWork
 import { BrowserOrchestrationEvidenceRepositoryLive } from "./persistence/Layers/BrowserOrchestrationEvidence.ts";
 import { BrowserAnnotationRepositoryLive } from "./persistence/Layers/BrowserAnnotations.ts";
 import { PreviewServiceLive } from "./preview/Layers/PreviewService.ts";
+import { ReviewerDecisionServiceLive } from "./reviewer/Layers/ReviewerDecisionService.ts";
 
 type RuntimePtyAdapterLoader = {
   layer: Layer.Layer<PtyAdapter, never, FileSystem.FileSystem | Path.Path>;
@@ -193,11 +194,15 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provide(BrowserRuntimeStackLive),
     Layer.provide(BrowserOrchestrationEvidenceRepositoryLive),
   );
+  const browserWorkflowAndReviewerLayer = ReviewerDecisionServiceLive.pipe(
+    Layer.provideMerge(browserWorkflowManagerLayer),
+    Layer.provide(BrowserOrchestrationEvidenceRepositoryLive),
+  );
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
     browserRuntimeLayer,
-    browserWorkflowManagerLayer,
+    browserWorkflowAndReviewerLayer,
     BrowserOrchestrationEvidenceRepositoryLive,
     previewServiceLayer,
     browserAnnotationServiceLayer,

@@ -92,6 +92,7 @@ import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserA
 import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
 import { BrowserOrchestrationEvidenceRepository } from "./persistence/Services/BrowserOrchestrationEvidence.ts";
 import { PreviewService } from "./preview/Services/PreviewService.ts";
+import { ReviewerDecisionService } from "./reviewer/Services/ReviewerDecisionService.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -368,7 +369,8 @@ export type ServerRuntimeServices =
   | BrowserAnnotationService
   | BrowserControlLeaseService
   | BrowserOrchestrationEvidenceRepository
-  | PreviewService;
+  | PreviewService
+  | ReviewerDecisionService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -473,6 +475,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const browserControlLeases = yield* BrowserControlLeaseService;
   const browserEvidenceRepository = yield* BrowserOrchestrationEvidenceRepository;
   const previewService = yield* PreviewService;
+  const reviewerDecisionService = yield* ReviewerDecisionService;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1325,6 +1328,31 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           artifact,
           contentText: contentOption.value.contentText,
         });
+      }
+
+      case WS_METHODS.evidenceBundleCreate: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.createEvidenceBundle(body);
+      }
+
+      case WS_METHODS.evidenceBundleGet: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.getEvidenceBundle(body);
+      }
+
+      case WS_METHODS.reviewerDecisionCreate: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.createDecision(body);
+      }
+
+      case WS_METHODS.reviewerDecisionGet: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.getDecision(body);
+      }
+
+      case WS_METHODS.reviewerDecisionList: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.listDecisions(body);
       }
 
       case WS_METHODS.previewDetect: {

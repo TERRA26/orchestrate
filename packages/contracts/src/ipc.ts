@@ -67,6 +67,10 @@ import type {
 import type {
   EvidenceArtifactContentResult,
   EvidenceArtifactGetInput,
+  EvidenceBundleCreateInput,
+  EvidenceBundleCreateResult,
+  EvidenceBundleGetInput,
+  EvidenceBundleGetResult,
   BrowserWorkflowListInput,
   BrowserWorkflowListResult,
   BrowserWorkflowRunInput,
@@ -84,6 +88,12 @@ import type {
   PreviewTargetGetInput,
   PreviewTargetListInput,
   PreviewTargetListResult,
+  ReviewerDecisionCreateInput,
+  ReviewerDecisionCreateResult,
+  ReviewerDecisionGetInput,
+  ReviewerDecisionGetResult,
+  ReviewerDecisionListInput,
+  ReviewerDecisionListResult,
 } from "./browserOrchestration";
 import type {
   ProviderComposerCapabilities,
@@ -362,6 +372,17 @@ export interface NativeApi {
   };
   evidence: {
     getArtifact: (input: EvidenceArtifactGetInput) => Promise<EvidenceArtifactContentResult>;
+    bundle: {
+      create: (input: EvidenceBundleCreateInput) => Promise<EvidenceBundleCreateResult>;
+      get: (input: EvidenceBundleGetInput) => Promise<EvidenceBundleGetResult>;
+    };
+  };
+  reviewer: {
+    decision: {
+      create: (input: ReviewerDecisionCreateInput) => Promise<ReviewerDecisionCreateResult>;
+      get: (input: ReviewerDecisionGetInput) => Promise<ReviewerDecisionGetResult>;
+      list: (input?: ReviewerDecisionListInput) => Promise<ReviewerDecisionListResult>;
+    };
   };
   preview: {
     detect: (input?: PreviewDetectInput) => Promise<PreviewDetectResult>;

@@ -276,3 +276,73 @@ Cannot connect to server on port 3774. Is 'bun run dev:server' running?
 ```
 
 Classification: unchanged scenario harness dependency on a manually running server. Slice 4 adds a self-starting preview-to-workflow integration test, but the broad scenario runner still needs conversion to `preview.start`.
+
+## Slice 5 Verification Update - EvidenceBundle And ReviewerDecision
+
+Commands rerun under Node `24.13.1` after adding deterministic evidence-bundle and reviewer-decision APIs:
+
+```sh
+export PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH
+bun fmt
+bun fmt:check
+bun lint
+bun run test:contracts
+cd apps/server && bun run test src/reviewer/Layers/ReviewerDecisionService.test.ts src/reviewer/ReviewerDecisionEvaluator.test.ts
+cd apps/server && bun run test src/reviewer/Layers/ReviewerDecisionService.test.ts src/browserWorkflow/Layers/BrowserWorkflowManager.test.ts src/browserRuntime/Layers/BrowserRuntimeService.test.ts src/preview/Layers/PreviewService.test.ts
+cd apps/web && bun run test src/browserEvidenceArtifacts.test.ts
+bun typecheck
+bun run test
+bun run test:scenarios
+```
+
+Slice 5 focused checks pass:
+
+- `bun fmt`
+- `bun fmt:check`
+- `bun lint` exits `0`
+- `bun run test:contracts` (`95` tests)
+- focused reviewer service and legacy reviewer evaluator tests
+- focused reviewer/workflow/runtime/preview regression tests
+- focused web artifact evidence test
+
+Slice 5 adds:
+
+- `evidence.bundle.create`
+- `evidence.bundle.get`
+- `reviewer.decision.create`
+- `reviewer.decision.get`
+- `reviewer.decision.list`
+- deterministic reviewer gates for workflow completion, preview target opened, required routes/viewports, screenshot evidence resolution, console/page/network assertions, assertion pass/fail state, and stale evidence when final code state is supplied
+- user-visible review summary artifact refs
+- rework packets for failed deterministic gates/assertions
+
+During Slice 5 verification, one introduced web test-fixture type error was fixed: `apps/web/src/browserEvidenceArtifacts.test.ts` now supplies the new `evidence.bundle.*` methods required by the extended `NativeApi` shape. After that fix, the remaining `bun typecheck` failures are again limited to `@orchestrate/web#typecheck` baseline drift.
+
+`bun typecheck` still fails in `@orchestrate/web#typecheck`, matching the existing web contract/type drift described above. Representative unchanged failures include missing `ServerProvider` / `ServerProviderModel` exports, benchmark select nullability, orchestrator panel contract drift, and thread bootstrap exact-optional-property drift. No Slice 5 reviewer-specific type errors are reported before the existing `@orchestrate/web#typecheck` failure.
+
+Running only the server package typecheck directly (`cd apps/server && bun run typecheck`) still exposes the existing server `tsconfig` / integration-test debt class: integration harness files and scripts are included by `tsc --noEmit` without the package's runtime module-resolution settings. This predates Slice 5 and is separate from the new reviewer service implementation; focused reviewer/workflow tests pass under Vitest.
+
+`bun run test` still fails in `@orchestrate/web#test`, matching the existing broad web test-debt class. The current run reports `12` failed web test files and `16` failed tests. Representative failing files remain:
+
+- `apps/web/src/components/SidebarSearchPalette.logic.test.ts`
+- `apps/web/src/components/OrchestratorPanel.logic.test.ts`
+- `apps/web/src/session-logic.test.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/composerSlashCommands.test.ts`
+- `apps/web/src/pinnedThreadsStore.test.ts`
+- `apps/web/src/wsNativeApi.test.ts`
+- `apps/web/src/wsTransport.test.ts`
+- `apps/web/src/lib/threadBootstrap.test.ts`
+- `apps/web/src/components/chat/MessagesTimeline.test.tsx`
+- `apps/web/src/composerDraftStore.test.ts`
+- `apps/web/src/terminalStateStore.test.ts`
+
+Classification: unchanged broad web test debt. Focused Slice 5 reviewer/evidence tests pass.
+
+`bun run test:scenarios` still fails before scenario execution:
+
+```text
+Cannot connect to server on port 3774. Is 'bun run dev:server' running?
+```
+
+Classification: unchanged scenario harness dependency on a manually running server. The preview/workflow/reviewer focused integration path exists, but the broad scenario runner still needs conversion to `preview.start`.

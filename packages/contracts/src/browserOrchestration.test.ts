@@ -12,18 +12,30 @@ import {
   BrowserWorkflowRun,
   DevServerInstance,
   EvidenceBundle,
+  EvidenceBundleCreateInput,
+  EvidenceBundleGetInput,
   LaunchConfigFile,
   PreviewDetectResult,
   PreviewStartResult,
   PreviewTarget,
   PreviewTargetListResult,
   ReviewerDecision,
+  ReviewerDecisionCreateInput,
+  ReviewerDecisionGetInput,
+  ReviewerDecisionListInput,
+  ReviewerGateResult,
 } from "./browserOrchestration";
 
 const ISO = "2026-04-27T00:00:00.000Z";
 
 const decodeEvidenceBundle = Schema.decodeUnknownEffect(EvidenceBundle);
 const decodeReviewerDecision = Schema.decodeUnknownEffect(ReviewerDecision);
+const decodeReviewerGateResult = Schema.decodeUnknownEffect(ReviewerGateResult);
+const decodeEvidenceBundleCreateInput = Schema.decodeUnknownEffect(EvidenceBundleCreateInput);
+const decodeEvidenceBundleGetInput = Schema.decodeUnknownEffect(EvidenceBundleGetInput);
+const decodeReviewerDecisionCreateInput = Schema.decodeUnknownEffect(ReviewerDecisionCreateInput);
+const decodeReviewerDecisionGetInput = Schema.decodeUnknownEffect(ReviewerDecisionGetInput);
+const decodeReviewerDecisionListInput = Schema.decodeUnknownEffect(ReviewerDecisionListInput);
 const decodePreviewTarget = Schema.decodeUnknownEffect(PreviewTarget);
 const decodeBrowserPolicyDecision = Schema.decodeUnknownEffect(BrowserPolicyDecision);
 const decodeBrowserAssertion = Schema.decodeUnknownEffect(BrowserAssertion);
@@ -70,11 +82,29 @@ it.effect("decodes EvidenceBundle with required CodeStateRef", () =>
       codeState,
       artifactRefs: ["artifact-shot"],
       eventRefs: ["event-1"],
+      preview: {
+        readinessEvidenceRef: "artifact-health",
+        serverLogRefs: ["artifact-server-log"],
+        healthEvidenceRefs: ["artifact-health"],
+      },
+      browser: {
+        observationRefs: ["artifact-observation"],
+        screenshotArtifactRefs: ["artifact-shot"],
+        consoleSummaryRefs: [],
+        networkSummaryRefs: [],
+        pageErrorRefs: [],
+      },
+      workflow: {
+        workflowRunRef: "workflow-1",
+        assertionResultRefs: ["artifact-assertion"],
+        statusEventRefs: ["artifact-status"],
+      },
       createdAt: ISO,
     });
 
     assert.strictEqual(parsed.id, "bundle-1");
     assert.strictEqual(parsed.codeState.diffArtifactRef, "artifact-diff");
+    assert.deepStrictEqual(parsed.browser?.screenshotArtifactRefs, ["artifact-shot"]);
   }),
 );
 
@@ -138,6 +168,14 @@ it.effect("rejects evidence-backed criterion results without evidence refs", () 
         evidenceBundleId: "bundle-1",
         outcome: "accepted",
         confidence: "high",
+        gates: [
+          {
+            name: "evidence-bundle-exists",
+            status: "pass",
+            message: "Evidence exists.",
+            evidenceRefs: ["artifact-shot"],
+          },
+        ],
         criteria: [
           {
             criterionId: "criterion-1",
@@ -154,6 +192,48 @@ it.effect("rejects evidence-backed criterion results without evidence refs", () 
     );
 
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes reviewer hard gate results and review API inputs", () =>
+  Effect.gen(function* () {
+    const gate = yield* decodeReviewerGateResult({
+      name: "screenshot-evidence-resolves",
+      status: "pass",
+      message: "Screenshot ref resolved.",
+      evidenceRefs: ["artifact-shot"],
+    });
+    assert.strictEqual(gate.name, "screenshot-evidence-resolves");
+
+    const bundleCreate = yield* decodeEvidenceBundleCreateInput({
+      workflowRunId: "workflow-1",
+      codeState,
+    });
+    assert.strictEqual(bundleCreate.workflowRunId, "workflow-1");
+
+    const bundleGet = yield* decodeEvidenceBundleGetInput({
+      evidenceBundleId: "bundle-1",
+    });
+    assert.strictEqual(bundleGet.evidenceBundleId, "bundle-1");
+
+    const decisionCreate = yield* decodeReviewerDecisionCreateInput({
+      evidenceBundleId: "bundle-1",
+      workflowRunId: "workflow-1",
+      requiredRoutes: ["/"],
+      requiredViewports: [viewport],
+      finalCodeState: codeState,
+    });
+    assert.strictEqual(decisionCreate.evidenceBundleId, "bundle-1");
+
+    const decisionGet = yield* decodeReviewerDecisionGetInput({
+      decisionId: "decision-1",
+    });
+    assert.strictEqual(decisionGet.decisionId, "decision-1");
+
+    const decisionList = yield* decodeReviewerDecisionListInput({
+      sessionId: "session-1",
+    });
+    assert.strictEqual(decisionList.sessionId, "session-1");
   }),
 );
 

@@ -518,6 +518,17 @@ export function createWsNativeApi(): NativeApi {
     evidence: {
       getArtifact: (input) =>
         transport.request(WS_METHODS.evidenceArtifactGet, input, { timeoutMs: 30_000 }),
+      bundle: {
+        create: (input) => transport.request(WS_METHODS.evidenceBundleCreate, input),
+        get: (input) => transport.request(WS_METHODS.evidenceBundleGet, input),
+      },
+    },
+    reviewer: {
+      decision: {
+        create: (input) => transport.request(WS_METHODS.reviewerDecisionCreate, input),
+        get: (input) => transport.request(WS_METHODS.reviewerDecisionGet, input),
+        list: (input = {}) => transport.request(WS_METHODS.reviewerDecisionList, input),
+      },
     },
     preview: {
       detect: (input = {}) => transport.request(WS_METHODS.previewDetect, input),

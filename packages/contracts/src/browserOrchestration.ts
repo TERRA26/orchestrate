@@ -787,6 +787,30 @@ export const EvidenceBundle = Schema.Struct({
   codeState: CodeStateRef,
   artifactRefs: Schema.Array(EvidenceArtifactId),
   eventRefs: Schema.Array(SessionEventId),
+  preview: Schema.optional(
+    Schema.Struct({
+      devServerInstanceId: Schema.optional(DevServerInstanceId),
+      readinessEvidenceRef: Schema.optional(EvidenceArtifactId),
+      serverLogRefs: Schema.Array(EvidenceArtifactId),
+      healthEvidenceRefs: Schema.Array(EvidenceArtifactId),
+    }),
+  ),
+  browser: Schema.optional(
+    Schema.Struct({
+      observationRefs: Schema.Array(EvidenceArtifactId),
+      screenshotArtifactRefs: Schema.Array(EvidenceArtifactId),
+      consoleSummaryRefs: Schema.Array(EvidenceArtifactId),
+      networkSummaryRefs: Schema.Array(EvidenceArtifactId),
+      pageErrorRefs: Schema.Array(EvidenceArtifactId),
+    }),
+  ),
+  workflow: Schema.optional(
+    Schema.Struct({
+      workflowRunRef: WorkflowRunId,
+      assertionResultRefs: Schema.Array(EvidenceArtifactId),
+      statusEventRefs: Schema.Array(EvidenceArtifactId),
+    }),
+  ),
   createdAt: IsoDateTime,
 });
 export type EvidenceBundle = typeof EvidenceBundle.Type;
@@ -830,7 +854,32 @@ export const ReviewerOutcome = Schema.Literals([
 ]);
 export type ReviewerOutcome = typeof ReviewerOutcome.Type;
 
+export const ReviewerGateName = Schema.Literals([
+  "evidence-bundle-exists",
+  "workflow-completed",
+  "preview-target-opened",
+  "dev-server-healthy",
+  "required-routes-checked",
+  "required-viewports-checked",
+  "screenshot-evidence-resolves",
+  "no-page-errors",
+  "no-console-errors",
+  "no-network-failures",
+  "assertions-passed",
+  "evidence-not-stale",
+]);
+export type ReviewerGateName = typeof ReviewerGateName.Type;
+
+export const ReviewerGateResult = Schema.Struct({
+  name: ReviewerGateName,
+  status: Schema.Literals(["pass", "fail", "warn", "not-applicable"]),
+  message: Schema.String.check(Schema.isMaxLength(MAX_REASON_LENGTH)),
+  evidenceRefs: Schema.Array(EvidenceArtifactId),
+});
+export type ReviewerGateResult = typeof ReviewerGateResult.Type;
+
 export const ReviewerFinding = Schema.Struct({
+  id: Schema.optional(EntityId),
   severity: Schema.Literals(["blocker", "major", "minor", "note"]),
   title: Schema.String.check(Schema.isMaxLength(512)),
   description: Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
@@ -861,7 +910,9 @@ export const ReviewerDecision = Schema.Struct({
   evidenceBundleId: EvidenceBundleId,
   outcome: ReviewerOutcome,
   confidence: Schema.Literals(["high", "medium", "low"]),
+  gates: Schema.optional(Schema.Array(ReviewerGateResult)),
   criteria: Schema.Array(AcceptanceCriterionResult).check(Schema.isMinLength(1)),
+  criterionResults: Schema.optional(Schema.Array(AcceptanceCriterionResult)),
   findings: Schema.Array(ReviewerFinding),
   unresolvedCriteria: Schema.Array(AcceptanceCriterionId),
   reworkPacket: Schema.optional(ReworkPacket),
@@ -869,6 +920,68 @@ export const ReviewerDecision = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type ReviewerDecision = typeof ReviewerDecision.Type;
+
+export const EvidenceBundleCreateInput = Schema.Struct({
+  workflowRunId: WorkflowRunId,
+  codeState: Schema.optional(CodeStateRef),
+});
+export type EvidenceBundleCreateInput = typeof EvidenceBundleCreateInput.Type;
+
+export const EvidenceBundleGetInput = Schema.Struct({
+  evidenceBundleId: EvidenceBundleId,
+});
+export type EvidenceBundleGetInput = typeof EvidenceBundleGetInput.Type;
+
+export const EvidenceBundleCreateResult = Schema.Struct({
+  evidenceBundle: EvidenceBundle,
+});
+export type EvidenceBundleCreateResult = typeof EvidenceBundleCreateResult.Type;
+
+export const EvidenceBundleGetResult = Schema.Struct({
+  evidenceBundle: Schema.optional(EvidenceBundle),
+});
+export type EvidenceBundleGetResult = typeof EvidenceBundleGetResult.Type;
+
+export const ReviewerDecisionCreateInput = Schema.Struct({
+  evidenceBundleId: EvidenceBundleId,
+  workflowRunId: Schema.optional(WorkflowRunId),
+  requiredRoutes: Schema.optional(
+    Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  ),
+  requiredViewports: Schema.optional(Schema.Array(PreviewViewport)),
+  criteria: Schema.optional(Schema.Array(AcceptanceCriterionResult)),
+  requiredCriterionIds: Schema.optional(Schema.Array(AcceptanceCriterionId)),
+  finalCodeState: Schema.optional(CodeStateRef),
+  finalCodeMutationCompletedAt: Schema.optional(IsoDateTime),
+  maxReworkAttemptsRemaining: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+export type ReviewerDecisionCreateInput = typeof ReviewerDecisionCreateInput.Type;
+
+export const ReviewerDecisionGetInput = Schema.Struct({
+  decisionId: ReviewerDecisionId,
+});
+export type ReviewerDecisionGetInput = typeof ReviewerDecisionGetInput.Type;
+
+export const ReviewerDecisionListInput = Schema.Struct({
+  sessionId: Schema.optional(EntityId),
+});
+export type ReviewerDecisionListInput = typeof ReviewerDecisionListInput.Type;
+
+export const ReviewerDecisionCreateResult = Schema.Struct({
+  decision: ReviewerDecision,
+  evidenceBundle: EvidenceBundle,
+});
+export type ReviewerDecisionCreateResult = typeof ReviewerDecisionCreateResult.Type;
+
+export const ReviewerDecisionGetResult = Schema.Struct({
+  decision: Schema.optional(ReviewerDecision),
+});
+export type ReviewerDecisionGetResult = typeof ReviewerDecisionGetResult.Type;
+
+export const ReviewerDecisionListResult = Schema.Struct({
+  decisions: Schema.Array(ReviewerDecision),
+});
+export type ReviewerDecisionListResult = typeof ReviewerDecisionListResult.Type;
 
 export const SessionEventActor = Schema.Literals(["system", "agent", "human", "reviewer"]);
 export type SessionEventActor = typeof SessionEventActor.Type;

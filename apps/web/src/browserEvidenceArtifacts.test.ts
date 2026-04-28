@@ -56,6 +56,12 @@ describe("browserEvidenceArtifacts", () => {
             content: "aGVsbG8=",
             metadata,
           }),
+          bundle: {
+            create: async () => {
+              throw new Error("Not used by artifact image fetch test.");
+            },
+            get: async () => ({ evidenceBundle: undefined }),
+          },
         },
       },
       "artifact-1",
