@@ -46,10 +46,9 @@ import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResol
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
-import { BrowserAutomationLive } from "./browser/Layers/BrowserAutomation.ts";
 import { BrowserAnnotationServiceLive } from "./browserAnnotations/Layers/BrowserAnnotationService.ts";
 import { BrowserControlLeaseServiceLive } from "./browserControl/Layers/BrowserControlLeaseService.ts";
-import { BrowserRuntimeServiceLive } from "./browserRuntime/Layers/BrowserRuntimeService.ts";
+import { BrowserRuntimeStackLive } from "./browserRuntime/Layers/BrowserRuntimeStack.ts";
 import { BrowserAnnotationRepositoryLive } from "./persistence/Layers/BrowserAnnotations.ts";
 
 type RuntimePtyAdapterLoader = {
@@ -131,8 +130,7 @@ export function makeServerRuntimeServicesLayer() {
   );
   const orchestratorRouterLayer = OrchestratorRouterLive;
   const authorityPolicyLayer = AuthorityPolicyLive;
-  const browserAutomationLayer = BrowserAutomationLive;
-  const browserRuntimeLayer = BrowserRuntimeServiceLive.pipe(Layer.provide(browserAutomationLayer));
+  const browserRuntimeLayer = BrowserRuntimeStackLive;
 
   const orchestrationToolRouterLayer = OrchestrationToolRouterLive.pipe(
     Layer.provide(orchestrationLayer),
@@ -188,7 +186,6 @@ export function makeServerRuntimeServicesLayer() {
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
-    browserAutomationLayer,
     browserRuntimeLayer,
     browserAnnotationServiceLayer,
     BrowserControlLeaseServiceLive,

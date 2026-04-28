@@ -11,8 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { Effect, Layer, Stream } from "effect";
 
-import { BrowserAutomation } from "../../browser/Services/BrowserAutomation.ts";
-import { BrowserRuntimeServiceLive } from "../../browserRuntime/Layers/BrowserRuntimeService.ts";
+import { BrowserRuntimeService } from "../../browserRuntime/Services/BrowserRuntimeService.ts";
 import { OrchestrationToolRouterLive } from "./OrchestrationToolRouter.ts";
 import { OrchestrationToolRouterService } from "../Services/OrchestrationToolRouter.ts";
 import {
@@ -90,9 +89,9 @@ function makeEngine(readModel: OrchestrationReadModel, commands: OrchestrationCo
   return Layer.succeed(OrchestrationEngineService, engine);
 }
 
-function makeBrowserAutomation() {
+function makeBrowserRuntime() {
   const calls: Array<{ name: string; input: unknown }> = [];
-  const layer = Layer.succeed(BrowserAutomation, {
+  const layer = Layer.succeed(BrowserRuntimeService, {
     openSession: (input) =>
       Effect.sync(() => {
         calls.push({ name: "openSession", input });
@@ -107,7 +106,33 @@ function makeBrowserAutomation() {
             screenshotDataUrl: "data:image/jpeg;base64,abc",
             previewScreenshotDataUrl: "data:image/jpeg;base64,preview",
             targets: [],
+            runtimeKind: "playwright-headless",
+            surfaceMode: "headless-validation-mirror",
+            isUserVisibleSurface: false,
+            screenshotArtifactRef: "screenshot-preview",
+            observedUrl: input.url,
+            urlAgreement: "unknown",
+            runtimeTruth: {
+              runtimeKind: "playwright-headless",
+              surfaceMode: "headless-validation-mirror",
+              isUserVisibleSurface: false,
+              browserSessionId: "browser-session-1",
+              screenshotArtifactRef: "screenshot-preview",
+              screenshotDataUrl: "data:image/jpeg;base64,preview",
+              observedUrl: input.url,
+              urlAgreement: "unknown",
+            },
             observedAt: NOW,
+          },
+          runtimeTruth: {
+            runtimeKind: "playwright-headless",
+            surfaceMode: "headless-validation-mirror",
+            isUserVisibleSurface: false,
+            browserSessionId: "browser-session-1",
+            screenshotArtifactRef: "screenshot-preview",
+            screenshotDataUrl: "data:image/jpeg;base64,preview",
+            observedUrl: input.url,
+            urlAgreement: "unknown",
           },
         };
       }),
@@ -124,7 +149,33 @@ function makeBrowserAutomation() {
             screenshotDataUrl: "data:image/jpeg;base64,next",
             previewScreenshotDataUrl: "data:image/jpeg;base64,next-preview",
             targets: [],
+            runtimeKind: "playwright-headless",
+            surfaceMode: "headless-validation-mirror",
+            isUserVisibleSurface: false,
+            screenshotArtifactRef: "screenshot-next",
+            observedUrl: "https://example.com/next",
+            urlAgreement: "unknown",
+            runtimeTruth: {
+              runtimeKind: "playwright-headless",
+              surfaceMode: "headless-validation-mirror",
+              isUserVisibleSurface: false,
+              browserSessionId: input.sessionId,
+              screenshotArtifactRef: "screenshot-next",
+              screenshotDataUrl: "data:image/jpeg;base64,next-preview",
+              observedUrl: "https://example.com/next",
+              urlAgreement: "unknown",
+            },
             observedAt: NOW,
+          },
+          runtimeTruth: {
+            runtimeKind: "playwright-headless",
+            surfaceMode: "headless-validation-mirror",
+            isUserVisibleSurface: false,
+            browserSessionId: input.sessionId,
+            screenshotArtifactRef: "screenshot-next",
+            screenshotDataUrl: "data:image/jpeg;base64,next-preview",
+            observedUrl: "https://example.com/next",
+            urlAgreement: "unknown",
           },
         };
       }),
@@ -138,11 +189,10 @@ function makeBrowserAutomation() {
 
 describe("OrchestrationToolRouter", () => {
   it("executes browser open-session tools through browser runtime so screenshots reach the thread with runtime truth", async () => {
-    const browser = makeBrowserAutomation();
-    const browserRuntimeLayer = BrowserRuntimeServiceLive.pipe(Layer.provide(browser.layer));
+    const browser = makeBrowserRuntime();
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), [])),
-      Layer.provide(browserRuntimeLayer),
+      Layer.provide(browser.layer),
     );
 
     const result = await Effect.runPromise(
@@ -160,9 +210,8 @@ describe("OrchestrationToolRouter", () => {
     expect(browser.calls).toEqual([
       {
         name: "openSession",
-        input: { url: "https://example.com", viewportHeight: 900, viewportWidth: 1440 },
+        input: { url: "https://example.com" },
       },
-      { name: "act", input: { sessionId: "browser-session-1", action: { kind: "wait", ms: 0 } } },
     ]);
     expect(result).toMatchObject({
       sessionId: "browser-session-1",
@@ -172,22 +221,21 @@ describe("OrchestrationToolRouter", () => {
         isUserVisibleSurface: false,
       },
       observation: {
-        url: "https://example.com/next",
+        url: "https://example.com",
         runtimeKind: "playwright-headless",
         surfaceMode: "headless-validation-mirror",
         isUserVisibleSurface: false,
-        screenshotDataUrl: "data:image/jpeg;base64,next",
-        previewScreenshotDataUrl: "data:image/jpeg;base64,next-preview",
+        screenshotDataUrl: "data:image/jpeg;base64,abc",
+        previewScreenshotDataUrl: "data:image/jpeg;base64,preview",
       },
     });
   });
 
   it("executes browser action tools through the active browser runtime session", async () => {
-    const browser = makeBrowserAutomation();
-    const browserRuntimeLayer = BrowserRuntimeServiceLive.pipe(Layer.provide(browser.layer));
+    const browser = makeBrowserRuntime();
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), [])),
-      Layer.provide(browserRuntimeLayer),
+      Layer.provide(browser.layer),
     );
 
     const result = await Effect.runPromise(
@@ -214,9 +262,8 @@ describe("OrchestrationToolRouter", () => {
     expect(browser.calls).toEqual([
       {
         name: "openSession",
-        input: { url: "https://example.com", viewportHeight: 900, viewportWidth: 1440 },
+        input: { url: "https://example.com" },
       },
-      { name: "act", input: { sessionId: "browser-session-1", action: { kind: "wait", ms: 0 } } },
       {
         name: "act",
         input: {
@@ -224,7 +271,6 @@ describe("OrchestrationToolRouter", () => {
           action: { kind: "navigate", url: "https://example.com/next" },
         },
       },
-      { name: "act", input: { sessionId: "browser-session-1", action: { kind: "wait", ms: 0 } } },
     ]);
     expect(result).toMatchObject({
       runtimeTruth: {
