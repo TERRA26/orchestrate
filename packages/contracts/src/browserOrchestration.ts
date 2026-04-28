@@ -337,6 +337,33 @@ export const EvidenceArtifact = Schema.Struct({
 });
 export type EvidenceArtifact = typeof EvidenceArtifact.Type;
 
+export const EvidenceArtifactGetInput = Schema.Struct({
+  artifactId: EvidenceArtifactId,
+});
+export type EvidenceArtifactGetInput = typeof EvidenceArtifactGetInput.Type;
+
+export const EvidenceArtifactMetadata = Schema.Struct({
+  artifactId: EvidenceArtifactId,
+  kind: EvidenceArtifactKind,
+  contentType: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  byteSize: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  sha256: EntityId,
+  sensitivity: EvidenceSensitivity,
+  access: EvidenceAccess,
+  createdAt: IsoDateTime,
+});
+export type EvidenceArtifactMetadata = typeof EvidenceArtifactMetadata.Type;
+
+export const EvidenceArtifactContentResult = Schema.Struct({
+  artifactId: EvidenceArtifactId,
+  contentType: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  encoding: Schema.Literals(["base64", "utf8", "binary-ref"]),
+  content: Schema.optional(Schema.String),
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_ARTIFACT_URI_LENGTH))),
+  metadata: EvidenceArtifactMetadata,
+});
+export type EvidenceArtifactContentResult = typeof EvidenceArtifactContentResult.Type;
+
 export const PreviewTargetKind = Schema.Literals([
   "local-dev-server",
   "file-backed",

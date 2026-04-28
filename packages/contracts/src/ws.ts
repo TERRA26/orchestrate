@@ -48,7 +48,11 @@ import {
   BrowserObservation,
   BrowserOpenSessionInput,
 } from "./browser";
-import { BrowserControlAcquireInput, BrowserControlReleaseInput } from "./browserOrchestration";
+import {
+  BrowserControlAcquireInput,
+  BrowserControlReleaseInput,
+  EvidenceArtifactGetInput,
+} from "./browserOrchestration";
 import {
   ProviderListCommandsInput,
   ProviderGetComposerCapabilitiesInput,
@@ -105,6 +109,7 @@ export const WS_METHODS = {
   browserControlRelease: "browser.control.release",
   browserAddAnnotation: "browser.addAnnotation",
   browserListAnnotations: "browser.listAnnotations",
+  evidenceArtifactGet: "evidence.artifact.get",
 
   // Provider discovery
   providerGetComposerCapabilities: "provider.getComposerCapabilities",
@@ -215,6 +220,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.browserControlRelease, BrowserControlReleaseInput),
   tagRequestBody(WS_METHODS.browserAddAnnotation, BrowserAddAnnotationInput),
   tagRequestBody(WS_METHODS.browserListAnnotations, BrowserListAnnotationsInput),
+  tagRequestBody(WS_METHODS.evidenceArtifactGet, EvidenceArtifactGetInput),
 
   // Provider discovery
   tagRequestBody(WS_METHODS.providerGetComposerCapabilities, ProviderGetComposerCapabilitiesInput),

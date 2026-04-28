@@ -136,3 +136,26 @@ Cannot connect to server on port 3774. Is 'bun run dev:server' running?
 ```
 
 Classification: unchanged scenario harness dependency on a manually running server. This remains a follow-up for the `DevServerSupervisor` / `PreviewTarget` slice.
+
+## Slice 2B Verification Update - Artifact Fetch And Render
+
+Commands rerun under Node `24.13.1` after adding `evidence.artifact.get` and BrowserPanel artifact-backed screenshot rendering:
+
+```sh
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun fmt
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun fmt:check
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun lint
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun typecheck
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun run test:contracts
+```
+
+Slice 2B focused checks pass:
+
+- `bun fmt`
+- `bun fmt:check`
+- `bun lint` exits `0`
+- `bun run test:contracts`
+- focused server persistence/evidence/runtime/router tests
+- focused web artifact rendering, browser work-log, and embedded browser state tests
+
+`bun typecheck` still fails in `@orchestrate/web#typecheck`, matching the existing web contract/type drift described above. During Slice 2B verification, one new BrowserPanel optional NativeApi type error was found and fixed; the remaining errors are the same baseline class.

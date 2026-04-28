@@ -65,6 +65,10 @@ import type {
   BrowserOpenSessionResult,
 } from "./browser";
 import type {
+  EvidenceArtifactContentResult,
+  EvidenceArtifactGetInput,
+} from "./browserOrchestration";
+import type {
   ProviderComposerCapabilities,
   ProviderGetComposerCapabilitiesInput,
   ProviderListCommandsInput,
@@ -331,5 +335,8 @@ export interface NativeApi {
         actionSummary: string;
       }) => void,
     ) => () => void;
+  };
+  evidence: {
+    getArtifact: (input: EvidenceArtifactGetInput) => Promise<EvidenceArtifactContentResult>;
   };
 }

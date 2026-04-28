@@ -49,6 +49,7 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { BrowserAnnotationServiceLive } from "./browserAnnotations/Layers/BrowserAnnotationService.ts";
 import { BrowserControlLeaseServiceLive } from "./browserControl/Layers/BrowserControlLeaseService.ts";
 import { BrowserRuntimeStackLive } from "./browserRuntime/Layers/BrowserRuntimeStack.ts";
+import { BrowserOrchestrationEvidenceRepositoryLive } from "./persistence/Layers/BrowserOrchestrationEvidence.ts";
 import { BrowserAnnotationRepositoryLive } from "./persistence/Layers/BrowserAnnotations.ts";
 
 type RuntimePtyAdapterLoader = {
@@ -187,6 +188,7 @@ export function makeServerRuntimeServicesLayer() {
   return Layer.mergeAll(
     orchestrationReactorLayer,
     browserRuntimeLayer,
+    BrowserOrchestrationEvidenceRepositoryLive,
     browserAnnotationServiceLayer,
     BrowserControlLeaseServiceLive,
     workspacePathsLayer,

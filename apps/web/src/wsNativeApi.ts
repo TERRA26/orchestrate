@@ -507,6 +507,10 @@ export function createWsNativeApi(): NativeApi {
         };
       },
     },
+    evidence: {
+      getArtifact: (input) =>
+        transport.request(WS_METHODS.evidenceArtifactGet, input, { timeoutMs: 30_000 }),
+    },
   };
 
   instance = { api, transport };

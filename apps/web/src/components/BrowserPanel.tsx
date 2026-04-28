@@ -37,6 +37,7 @@ import {
 
 import { readNativeApi } from "~/nativeApi";
 import { cn } from "~/lib/utils";
+import { fetchEvidenceArtifactImageDataUrl } from "~/browserEvidenceArtifacts";
 
 import {
   useBrowserStateStore,
@@ -272,6 +273,11 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const [localError, setLocalError] = useState<string | null>(null);
   const [fallbackAutomationSession, setFallbackAutomationSession] =
     useState<BrowserPanelAutomationSession | null>(null);
+  const [artifactScreenshot, setArtifactScreenshot] = useState<{
+    ref: string;
+    dataUrl: string | null;
+    error: string | null;
+  } | null>(null);
   const [fallbackAutomationBusy, setFallbackAutomationBusy] = useState(false);
   const [browserAnnotations, setBrowserAnnotations] = useState<BrowserAnnotation[]>([]);
   const [annotationMode, setAnnotationMode] = useState(false);
@@ -334,9 +340,23 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       !fallbackScreenshotSession)
       ? fallbackAutomationObservation
       : null;
-  const fallbackAutomationScreenshotDataUrl = browserObservationScreenshotDataUrl(
+  const legacyFallbackAutomationScreenshotDataUrl = browserObservationScreenshotDataUrl(
     displayedFallbackAutomationObservation,
   );
+  const displayedEvidenceRef =
+    displayedFallbackAutomationObservation?.screenshotArtifactRef ??
+    displayedFallbackAutomationObservation?.runtimeTruth?.screenshotArtifactRef ??
+    fallbackScreenshotSession?.screenshotArtifactRef ??
+    null;
+  const displayedEvidenceLabel = shortEvidenceRef(displayedEvidenceRef);
+  const artifactScreenshotDataUrl =
+    artifactScreenshot?.ref === displayedEvidenceRef ? artifactScreenshot.dataUrl : null;
+  const artifactScreenshotError =
+    artifactScreenshot?.ref === displayedEvidenceRef ? artifactScreenshot.error : null;
+  const fallbackAutomationScreenshotDataUrl =
+    artifactScreenshotDataUrl ?? legacyFallbackAutomationScreenshotDataUrl;
+  const fallbackStaticScreenshotDataUrl =
+    artifactScreenshotDataUrl ?? fallbackScreenshotSession?.screenshotDataUrl ?? null;
   const browserSurfaceModeLabel = usesNativeBrowserSurface
     ? "Live shared browser"
     : showStaticThreadEvidence
@@ -346,12 +366,13 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
         : fallbackScreenshotSession
           ? "Static screenshot evidence"
           : null;
-  const displayedEvidenceRef =
-    displayedFallbackAutomationObservation?.screenshotArtifactRef ??
-    displayedFallbackAutomationObservation?.runtimeTruth?.screenshotArtifactRef ??
-    fallbackScreenshotSession?.screenshotArtifactRef ??
-    null;
-  const displayedEvidenceLabel = shortEvidenceRef(displayedEvidenceRef);
+  const evidenceStatusLabel = displayedEvidenceLabel
+    ? artifactScreenshotDataUrl
+      ? `artifact ${displayedEvidenceLabel}`
+      : artifactScreenshotError
+        ? `artifact unavailable ${displayedEvidenceLabel}`
+        : `artifact loading ${displayedEvidenceLabel}`
+    : "legacy screenshot";
   const activeBrowserUrl =
     displayedFallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
   const activeBrowserTitle =
@@ -362,6 +383,45 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const visibleBrowserAnnotations = browserAnnotations.filter((annotation) =>
     browserUrlsLikelyMatch(annotation.url, activeBrowserUrl),
   );
+
+  useEffect(() => {
+    if (!displayedEvidenceRef) {
+      setArtifactScreenshot(null);
+      return;
+    }
+
+    let cancelled = false;
+    setArtifactScreenshot({ ref: displayedEvidenceRef, dataUrl: null, error: null });
+    if (!api) {
+      setArtifactScreenshot({
+        ref: displayedEvidenceRef,
+        dataUrl: null,
+        error: "Native API unavailable.",
+      });
+      return;
+    }
+    void fetchEvidenceArtifactImageDataUrl(api, displayedEvidenceRef)
+      .then((dataUrl) => {
+        if (cancelled) return;
+        setArtifactScreenshot({
+          ref: displayedEvidenceRef,
+          dataUrl,
+          error: dataUrl ? null : "Artifact content is not a renderable image.",
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setArtifactScreenshot({
+          ref: displayedEvidenceRef,
+          dataUrl: null,
+          error: error instanceof Error ? error.message : "Artifact fetch failed.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, displayedEvidenceRef]);
 
   const runBrowserAction = useCallback(async <T,>(action: () => Promise<T>): Promise<T | null> => {
     try {
@@ -1656,16 +1716,16 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                 fallbackAutomationSession?.lastActionSummary
                   ? ` · ${fallbackAutomationSession.lastActionSummary}`
                   : ""}
-                {displayedEvidenceLabel ? ` · evidence ${displayedEvidenceLabel}` : ""}
+                {evidenceStatusLabel ? ` · ${evidenceStatusLabel}` : ""}
                 {fallbackAutomationBusy ? " · updating" : ""}
               </div>
             </div>
-          ) : fallbackScreenshotSession ? (
+          ) : fallbackScreenshotSession && fallbackStaticScreenshotDataUrl ? (
             <div className="absolute inset-0 flex flex-col bg-black">
               <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
                 <img
                   alt="Captured browser view"
-                  src={fallbackScreenshotSession.screenshotDataUrl}
+                  src={fallbackStaticScreenshotDataUrl}
                   className="h-full w-full object-contain object-top"
                 />
               </div>
@@ -1674,7 +1734,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                 {fallbackScreenshotSession.lastActionSummary
                   ? ` · ${fallbackScreenshotSession.lastActionSummary}`
                   : ""}
-                {displayedEvidenceLabel ? ` · evidence ${displayedEvidenceLabel}` : ""}
+                {evidenceStatusLabel ? ` · ${evidenceStatusLabel}` : ""}
               </div>
             </div>
           ) : fallbackFrameUrl ? (

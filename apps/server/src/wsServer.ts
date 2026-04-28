@@ -15,6 +15,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TERMINAL_ID,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  type EvidenceArtifactContentResult,
   type ClientOrchestrationCommand,
   type OrchestrationReadModel,
   type OrchestrationCommand,
@@ -43,6 +44,7 @@ import {
   Schema,
   Scope,
   ServiceMap,
+  Option,
   Stream,
   Struct,
 } from "effect";
@@ -87,6 +89,7 @@ import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracke
 import { BrowserRuntimeService } from "./browserRuntime/Services/BrowserRuntimeService.ts";
 import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
 import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
+import { BrowserOrchestrationEvidenceRepository } from "./persistence/Services/BrowserOrchestrationEvidence.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -288,6 +291,56 @@ function browserActionSummary(action: { readonly kind: string }): string {
   }
 }
 
+function evidenceArtifactContentResult(input: {
+  readonly artifact: {
+    readonly artifactId: EvidenceArtifactContentResult["artifactId"];
+    readonly kind: EvidenceArtifactContentResult["metadata"]["kind"];
+    readonly contentType: string;
+    readonly byteSize: number;
+    readonly sha256: EvidenceArtifactContentResult["metadata"]["sha256"];
+    readonly sensitivity: EvidenceArtifactContentResult["metadata"]["sensitivity"];
+    readonly access: EvidenceArtifactContentResult["metadata"]["access"];
+    readonly storageUri: string;
+    readonly createdAt: string;
+  };
+  readonly contentText: string;
+}): EvidenceArtifactContentResult {
+  const metadata = {
+    artifactId: input.artifact.artifactId,
+    kind: input.artifact.kind,
+    contentType: input.artifact.contentType,
+    byteSize: input.artifact.byteSize,
+    sha256: input.artifact.sha256,
+    sensitivity: input.artifact.sensitivity,
+    access: input.artifact.access,
+    createdAt: input.artifact.createdAt,
+  };
+
+  if (input.artifact.contentType.startsWith("image/")) {
+    const parsed = parseBase64DataUrl(input.contentText);
+    if (parsed) {
+      return {
+        artifactId: input.artifact.artifactId,
+        contentType: parsed.mimeType,
+        encoding: "base64",
+        content: parsed.base64,
+        metadata: {
+          ...metadata,
+          contentType: parsed.mimeType,
+        },
+      };
+    }
+  }
+
+  return {
+    artifactId: input.artifact.artifactId,
+    contentType: input.artifact.contentType,
+    encoding: "utf8",
+    content: input.contentText,
+    metadata,
+  };
+}
+
 const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
 const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
 
@@ -310,7 +363,8 @@ export type ServerRuntimeServices =
   | AnalyticsService
   | BrowserRuntimeService
   | BrowserAnnotationService
-  | BrowserControlLeaseService;
+  | BrowserControlLeaseService
+  | BrowserOrchestrationEvidenceRepository;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -412,6 +466,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const browserRuntime = yield* BrowserRuntimeService;
   const browserAnnotations = yield* BrowserAnnotationService;
   const browserControlLeases = yield* BrowserControlLeaseService;
+  const browserEvidenceRepository = yield* BrowserOrchestrationEvidenceRepository;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1213,6 +1268,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.browserListAnnotations: {
         const body = stripRequestTag(request.body);
         return yield* browserAnnotations.list(body);
+      }
+
+      case WS_METHODS.evidenceArtifactGet: {
+        const body = stripRequestTag(request.body);
+        const artifactOption = yield* browserEvidenceRepository.getEvidenceArtifact(body);
+        if (Option.isNone(artifactOption)) {
+          return yield* new RouteRequestError({
+            message: `Evidence artifact not found: ${body.artifactId}`,
+          });
+        }
+        const artifact = artifactOption.value;
+        if (artifact.access === "never-display-raw") {
+          return yield* new RouteRequestError({
+            message: `Evidence artifact is not displayable: ${body.artifactId}`,
+          });
+        }
+        const contentOption = yield* browserEvidenceRepository.getEvidenceArtifactContent(body);
+        if (Option.isNone(contentOption)) {
+          return yield* new RouteRequestError({
+            message: `Evidence artifact content not found: ${body.artifactId}`,
+          });
+        }
+        return evidenceArtifactContentResult({
+          artifact,
+          contentText: contentOption.value.contentText,
+        });
       }
 
       case WS_METHODS.providerGetComposerCapabilities: {
