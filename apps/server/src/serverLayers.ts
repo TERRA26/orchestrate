@@ -49,6 +49,7 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { BrowserAnnotationServiceLive } from "./browserAnnotations/Layers/BrowserAnnotationService.ts";
 import { BrowserControlLeaseServiceLive } from "./browserControl/Layers/BrowserControlLeaseService.ts";
 import { BrowserRuntimeStackLive } from "./browserRuntime/Layers/BrowserRuntimeStack.ts";
+import { BrowserWorkflowManagerLive } from "./browserWorkflow/Layers/BrowserWorkflowManager.ts";
 import { BrowserOrchestrationEvidenceRepositoryLive } from "./persistence/Layers/BrowserOrchestrationEvidence.ts";
 import { BrowserAnnotationRepositoryLive } from "./persistence/Layers/BrowserAnnotations.ts";
 import { PreviewServiceLive } from "./preview/Layers/PreviewService.ts";
@@ -188,10 +189,15 @@ export function makeServerRuntimeServicesLayer() {
   const previewServiceLayer = PreviewServiceLive.pipe(
     Layer.provide(BrowserOrchestrationEvidenceRepositoryLive),
   );
+  const browserWorkflowManagerLayer = BrowserWorkflowManagerLive.pipe(
+    Layer.provide(BrowserRuntimeStackLive),
+    Layer.provide(BrowserOrchestrationEvidenceRepositoryLive),
+  );
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
     browserRuntimeLayer,
+    browserWorkflowManagerLayer,
     BrowserOrchestrationEvidenceRepositoryLive,
     previewServiceLayer,
     browserAnnotationServiceLayer,

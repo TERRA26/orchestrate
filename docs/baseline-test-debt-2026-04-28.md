@@ -212,3 +212,67 @@ Classification: unchanged scenario harness dependency on a manually running serv
 - `apps/web/src/components/chat/MessagesTimeline.test.tsx`
 
 Classification: still broad web test debt, not introduced by Slice 3 preview APIs. The new Slice 3 focused preview/runtime tests and the existing browser evidence UI tests passed.
+
+## Slice 4 Verification Update - BrowserWorkflowManager
+
+Commands rerun under Node `24.13.1` after adding the server-owned `BrowserWorkflowManager`:
+
+```sh
+export PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH
+bun fmt
+bun fmt:check
+bun lint
+bun run test:contracts
+cd apps/server && bun run test src/browserWorkflow src/browserRuntime/Layers/BrowserRuntimeService.test.ts src/preview/Layers/PreviewService.test.ts
+cd apps/web && bun run test src/wsNativeApi.test.ts
+bun typecheck
+bun run test
+bun run test:scenarios
+```
+
+Slice 4 focused checks pass:
+
+- `bun fmt`
+- `bun fmt:check`
+- `bun lint` exits `0`
+- `bun run test:contracts` (`94` tests)
+- focused workflow, runtime, and preview tests:
+  - `apps/server/src/browserWorkflow/BrowserWorkflowManager.test.ts`
+  - `apps/server/src/browserWorkflow/Layers/BrowserWorkflowManager.test.ts`
+  - `apps/server/src/browserWorkflow/Layers/BrowserWorkflowManager.integration.test.ts`
+  - `apps/server/src/browserRuntime/Layers/BrowserRuntimeService.test.ts`
+  - `apps/server/src/preview/Layers/PreviewService.test.ts`
+
+The new Slice 4 integration test starts a fixture preview server through `PreviewService`, creates a `PreviewTarget`, runs `browser.workflow.start` through `BrowserWorkflowManager`, captures durable workflow evidence and screenshot refs through the runtime service boundary, verifies that screenshot assertions require resolvable artifact refs, and stops the preview.
+
+`bun typecheck` still fails in `@orchestrate/web#typecheck`, matching the existing web contract/type drift described above. Representative unchanged failures include missing `ServerProvider` / `ServerProviderModel` exports, benchmark select nullability, orchestrator panel contract drift, and thread bootstrap exact-optional-property drift. No Slice 4 workflow-specific type errors are reported before the existing `@orchestrate/web#typecheck` failure.
+
+`bun run test` still fails in `@orchestrate/web#test`, matching the existing broad web test-debt class. Representative failing files after Slice 4 remain:
+
+- `apps/web/src/components/SidebarSearchPalette.logic.test.ts`
+- `apps/web/src/components/OrchestratorPanel.logic.test.ts`
+- `apps/web/src/session-logic.test.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/composerSlashCommands.test.ts`
+- `apps/web/src/pinnedThreadsStore.test.ts`
+- `apps/web/src/wsNativeApi.test.ts`
+- `apps/web/src/wsTransport.test.ts`
+- `apps/web/src/lib/threadBootstrap.test.ts`
+- `apps/web/src/components/chat/MessagesTimeline.test.tsx`
+
+Running the focused `apps/web/src/wsNativeApi.test.ts` still fails on the existing context-menu desktop-bridge assertion:
+
+```text
+forwards context menu metadata to desktop bridge
+AssertionError: expected showContextMenu to have been called; Number of calls: 0
+```
+
+Classification: existing web native API test debt. The Slice 4 addition only adds `browser.workflow.*` methods to the native API shape and websocket transport; it does not touch context-menu routing.
+
+`bun run test:scenarios` still fails before scenario execution:
+
+```text
+Cannot connect to server on port 3774. Is 'bun run dev:server' running?
+```
+
+Classification: unchanged scenario harness dependency on a manually running server. Slice 4 adds a self-starting preview-to-workflow integration test, but the broad scenario runner still needs conversion to `preview.start`.

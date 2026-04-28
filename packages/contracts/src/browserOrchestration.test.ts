@@ -8,6 +8,7 @@ import {
   BrowserControlReleaseInput,
   BrowserPolicyDecision,
   BrowserAssertion,
+  BrowserWorkflowStartInput,
   BrowserWorkflowRun,
   DevServerInstance,
   EvidenceBundle,
@@ -26,6 +27,7 @@ const decodeReviewerDecision = Schema.decodeUnknownEffect(ReviewerDecision);
 const decodePreviewTarget = Schema.decodeUnknownEffect(PreviewTarget);
 const decodeBrowserPolicyDecision = Schema.decodeUnknownEffect(BrowserPolicyDecision);
 const decodeBrowserAssertion = Schema.decodeUnknownEffect(BrowserAssertion);
+const decodeBrowserWorkflowStartInput = Schema.decodeUnknownEffect(BrowserWorkflowStartInput);
 const decodeBrowserWorkflowRun = Schema.decodeUnknownEffect(BrowserWorkflowRun);
 const decodeBrowserControlAcquireInput = Schema.decodeUnknownEffect(BrowserControlAcquireInput);
 const decodeBrowserControlReleaseInput = Schema.decodeUnknownEffect(BrowserControlReleaseInput);
@@ -254,6 +256,44 @@ it.effect("decodes browser workflow assertions and workflow runs", () =>
 
     assert.strictEqual(workflow.status, "completed");
     assert.strictEqual(workflow.routes[0], "/");
+  }),
+);
+
+it.effect("decodes browser workflow start inputs with route plans and assertion ids", () =>
+  Effect.gen(function* () {
+    const target = yield* decodePreviewTarget({
+      id: "target-1",
+      version: 1,
+      sessionId: "session-1",
+      kind: "local-dev-server",
+      canonicalUrl: "http://127.0.0.1:5173/",
+      baseUrl: "http://127.0.0.1:5173/",
+      initialRoute: "/",
+      allowedOrigins: ["http://127.0.0.1:5173"],
+      deniedOrigins: [],
+      authMode: "none",
+      permissionTier: "isolated-local-preview",
+      viewports: [viewport],
+      readinessEvidenceRef: "artifact-ready",
+      serverLogRefs: ["artifact-log"],
+      createdAt: ISO,
+    });
+
+    const input = yield* decodeBrowserWorkflowStartInput({
+      sessionId: "session-1",
+      previewTarget: target,
+      purpose: "post-edit-verification",
+      routePlan: [{ route: "/", label: "home" }],
+      viewportPlan: [viewport],
+      assertions: [
+        { id: "url", type: "url-matches", pattern: "127.0.0.1" },
+        { id: "screenshot", type: "screenshot-captured", label: "home" },
+      ],
+      maxAttempts: 1,
+    });
+
+    assert.strictEqual(input.purpose, "post-edit-verification");
+    assert.strictEqual(input.assertions?.[0]?.id, "url");
   }),
 );
 

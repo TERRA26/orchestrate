@@ -87,6 +87,7 @@ import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
 import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
 import { BrowserRuntimeService } from "./browserRuntime/Services/BrowserRuntimeService.ts";
+import { BrowserWorkflowManager } from "./browserWorkflow/Services/BrowserWorkflowManager.ts";
 import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
 import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
 import { BrowserOrchestrationEvidenceRepository } from "./persistence/Services/BrowserOrchestrationEvidence.ts";
@@ -363,6 +364,7 @@ export type ServerRuntimeServices =
   | Open
   | AnalyticsService
   | BrowserRuntimeService
+  | BrowserWorkflowManager
   | BrowserAnnotationService
   | BrowserControlLeaseService
   | BrowserOrchestrationEvidenceRepository
@@ -466,6 +468,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerHealth = yield* ProviderHealth;
   const providerDiscoveryService = yield* ProviderDiscoveryService;
   const browserRuntime = yield* BrowserRuntimeService;
+  const browserWorkflows = yield* BrowserWorkflowManager;
   const browserAnnotations = yield* BrowserAnnotationService;
   const browserControlLeases = yield* BrowserControlLeaseService;
   const browserEvidenceRepository = yield* BrowserOrchestrationEvidenceRepository;
@@ -1271,6 +1274,31 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.browserListAnnotations: {
         const body = stripRequestTag(request.body);
         return yield* browserAnnotations.list(body);
+      }
+
+      case WS_METHODS.browserWorkflowStart: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.start(body);
+      }
+
+      case WS_METHODS.browserWorkflowStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.status(body);
+      }
+
+      case WS_METHODS.browserWorkflowGet: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.get(body);
+      }
+
+      case WS_METHODS.browserWorkflowCancel: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.cancel(body);
+      }
+
+      case WS_METHODS.browserWorkflowList: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.list(body);
       }
 
       case WS_METHODS.evidenceArtifactGet: {

@@ -491,6 +491,14 @@ export function createWsNativeApi(): NativeApi {
       },
       addAnnotation: (input) => transport.request(WS_METHODS.browserAddAnnotation, input),
       listAnnotations: (input) => transport.request(WS_METHODS.browserListAnnotations, input),
+      workflow: {
+        start: (input) =>
+          transport.request(WS_METHODS.browserWorkflowStart, input, { timeoutMs: 120_000 }),
+        status: (input) => transport.request(WS_METHODS.browserWorkflowStatus, input),
+        get: (input) => transport.request(WS_METHODS.browserWorkflowGet, input),
+        cancel: (input) => transport.request(WS_METHODS.browserWorkflowCancel, input),
+        list: (input = {}) => transport.request(WS_METHODS.browserWorkflowList, input),
+      },
       onState: (callback) => {
         if (window.desktopBridge) {
           return window.desktopBridge.browser.onState(callback);

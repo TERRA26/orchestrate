@@ -314,6 +314,15 @@ export const EvidenceArtifactKind = Schema.Literals([
   "browser-console-summary",
   "browser-network-summary",
   "browser-page-error-summary",
+  "browser-workflow-created",
+  "browser-workflow-status-changed",
+  "browser-workflow-route-started",
+  "browser-workflow-viewport-started",
+  "browser-workflow-observation-captured",
+  "browser-workflow-assertion-result",
+  "browser-workflow-completed",
+  "browser-workflow-failed",
+  "browser-workflow-cancelled",
   "screenshot",
   "screenshot-crop",
   "dom-snapshot",
@@ -502,55 +511,89 @@ export const BrowserWorkflowStatus = Schema.Literals([
 ]);
 export type BrowserWorkflowStatus = typeof BrowserWorkflowStatus.Type;
 
+export const BrowserWorkflowPurpose = Schema.Literals([
+  "initial-preview",
+  "post-edit-verification",
+  "comment-resolution",
+  "regression-check",
+  "manual-human-review",
+]);
+export type BrowserWorkflowPurpose = typeof BrowserWorkflowPurpose.Type;
+
 export const BrowserAssertion = Schema.Union([
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("url-matches"),
     pattern: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("text-visible"),
     text: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("selector-visible"),
     selector: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("selector-not-visible"),
     selector: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("no-console-errors"),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("no-page-errors"),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("no-network-failures"),
     allowPatterns: Schema.optional(
       Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH))),
     ),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("http-status-ok"),
     urlPattern: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("annotation-resolved"),
     annotationId: EntityId,
   }),
   Schema.Struct({
+    id: Schema.optional(EntityId),
     type: Schema.Literal("screenshot-captured"),
     label: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+  }),
+  Schema.Struct({
+    id: Schema.optional(EntityId),
+    type: Schema.Literal("claim-gate-passed"),
+    claim: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
   }),
 ]);
 export type BrowserAssertion = typeof BrowserAssertion.Type;
 
 export const BrowserAssertionResult = Schema.Struct({
   assertion: BrowserAssertion,
-  status: Schema.Literals(["pass", "fail", "not-evaluated"]),
+  status: Schema.Literals([
+    "pass",
+    "fail",
+    "warn",
+    "not-run",
+    "blocked",
+    "inconclusive",
+    "not-evaluated",
+  ]),
+  assertionId: Schema.optional(EntityId),
   evidenceRefs: Schema.Array(EvidenceArtifactId),
   message: Schema.String.check(Schema.isMaxLength(MAX_REASON_LENGTH)),
+  checkedAt: Schema.optional(IsoDateTime),
 });
 export type BrowserAssertionResult = typeof BrowserAssertionResult.Type;
 
@@ -571,8 +614,79 @@ export const BrowserWorkflowRun = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   evidenceBundleId: Schema.optional(EvidenceBundleId),
+  purpose: Schema.optional(BrowserWorkflowPurpose),
+  routePlan: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        route: Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH)),
+        label: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+      }),
+    ),
+  ),
+  viewportPlan: Schema.optional(Schema.Array(PreviewViewport)),
+  assertions: Schema.optional(Schema.Array(BrowserAssertion)),
+  maxAttempts: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  attempt: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  evidenceRefs: Schema.optional(Schema.Array(EvidenceArtifactId)),
+  observationRefs: Schema.optional(Schema.Array(EvidenceArtifactId)),
+  screenshotArtifactRefs: Schema.optional(Schema.Array(EvidenceArtifactId)),
+  assertionResults: Schema.optional(Schema.Array(BrowserAssertionResult)),
+  startedAt: Schema.optional(IsoDateTime),
+  completedAt: Schema.optional(IsoDateTime),
+  error: Schema.optional(
+    Schema.Struct({
+      code: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+      message: Schema.String.check(Schema.isMaxLength(MAX_REASON_LENGTH)),
+      details: Schema.optional(Schema.Unknown),
+    }),
+  ),
 });
 export type BrowserWorkflowRun = typeof BrowserWorkflowRun.Type;
+
+export const BrowserWorkflowRoutePlan = Schema.Struct({
+  route: Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH)),
+  label: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+});
+export type BrowserWorkflowRoutePlan = typeof BrowserWorkflowRoutePlan.Type;
+
+export const BrowserWorkflowStartInput = Schema.Struct({
+  sessionId: EntityId,
+  previewTarget: PreviewTarget,
+  taskSpecId: Schema.optional(TaskSpecId),
+  acceptanceCriteriaId: Schema.optional(AcceptanceCriteriaId),
+  permissionPolicyId: Schema.optional(PermissionPolicyId),
+  purpose: Schema.optional(BrowserWorkflowPurpose),
+  routePlan: Schema.optional(Schema.Array(BrowserWorkflowRoutePlan).check(Schema.isMinLength(1))),
+  viewportPlan: Schema.optional(Schema.Array(PreviewViewport).check(Schema.isMinLength(1))),
+  assertions: Schema.optional(Schema.Array(BrowserAssertion)),
+  maxAttempts: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+export type BrowserWorkflowStartInput = typeof BrowserWorkflowStartInput.Type;
+
+export const BrowserWorkflowRunInput = Schema.Struct({
+  workflowRunId: WorkflowRunId,
+});
+export type BrowserWorkflowRunInput = typeof BrowserWorkflowRunInput.Type;
+
+export const BrowserWorkflowListInput = Schema.Struct({
+  sessionId: Schema.optional(EntityId),
+});
+export type BrowserWorkflowListInput = typeof BrowserWorkflowListInput.Type;
+
+export const BrowserWorkflowRunResult = Schema.Struct({
+  workflow: Schema.optional(BrowserWorkflowRun),
+});
+export type BrowserWorkflowRunResult = typeof BrowserWorkflowRunResult.Type;
+
+export const BrowserWorkflowStartResult = Schema.Struct({
+  workflow: BrowserWorkflowRun,
+});
+export type BrowserWorkflowStartResult = typeof BrowserWorkflowStartResult.Type;
+
+export const BrowserWorkflowListResult = Schema.Struct({
+  workflows: Schema.Array(BrowserWorkflowRun),
+});
+export type BrowserWorkflowListResult = typeof BrowserWorkflowListResult.Type;
 
 export const BrowserObservationArtifactRefs = Schema.Struct({
   screenshot: Schema.optional(EvidenceArtifactId),
@@ -786,6 +900,15 @@ export const SessionEvent = Schema.Struct({
     "HumanControlAcquired",
     "HumanControlReleased",
     "BrowserCommentCreated",
+    "BrowserWorkflowCreated",
+    "BrowserWorkflowStatusChanged",
+    "BrowserWorkflowRouteStarted",
+    "BrowserWorkflowViewportStarted",
+    "BrowserWorkflowObservationCaptured",
+    "BrowserWorkflowAssertionResult",
+    "BrowserWorkflowCompleted",
+    "BrowserWorkflowFailed",
+    "BrowserWorkflowCancelled",
     "EvidenceBundleCreated",
     "ReviewerDecisionCreated",
     "UserAccepted",

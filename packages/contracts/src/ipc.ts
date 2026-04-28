@@ -67,6 +67,12 @@ import type {
 import type {
   EvidenceArtifactContentResult,
   EvidenceArtifactGetInput,
+  BrowserWorkflowListInput,
+  BrowserWorkflowListResult,
+  BrowserWorkflowRunInput,
+  BrowserWorkflowRunResult,
+  BrowserWorkflowStartInput,
+  BrowserWorkflowStartResult,
   PreviewDetectInput,
   PreviewDetectResult,
   PreviewInstanceInput,
@@ -338,6 +344,13 @@ export interface NativeApi {
     closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
     addAnnotation: (input: BrowserAddAnnotationInput) => Promise<BrowserAnnotationResult>;
     listAnnotations: (input: BrowserListAnnotationsInput) => Promise<BrowserAnnotationsResult>;
+    workflow: {
+      start: (input: BrowserWorkflowStartInput) => Promise<BrowserWorkflowStartResult>;
+      status: (input: BrowserWorkflowRunInput) => Promise<BrowserWorkflowRunResult>;
+      get: (input: BrowserWorkflowRunInput) => Promise<BrowserWorkflowRunResult>;
+      cancel: (input: BrowserWorkflowRunInput) => Promise<BrowserWorkflowRunResult>;
+      list: (input?: BrowserWorkflowListInput) => Promise<BrowserWorkflowListResult>;
+    };
     onState: (callback: (state: ThreadBrowserState) => void) => () => void;
     onObservation: (
       callback: (payload: {
