@@ -163,6 +163,15 @@ function browserObservationScreenshotDataUrl(
   );
 }
 
+function shortEvidenceRef(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.replace(/^artifact:\/\//, "").replace(/^evidence:\/\//, "");
+  return normalized.length > 18 ? `${normalized.slice(0, 18)}...` : normalized;
+}
+
 function findBrowserTargetAtPoint(
   targets: readonly BrowserObservedTarget[],
   x: number,
@@ -337,6 +346,12 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
         : fallbackScreenshotSession
           ? "Static screenshot evidence"
           : null;
+  const displayedEvidenceRef =
+    displayedFallbackAutomationObservation?.screenshotArtifactRef ??
+    displayedFallbackAutomationObservation?.runtimeTruth?.screenshotArtifactRef ??
+    fallbackScreenshotSession?.screenshotArtifactRef ??
+    null;
+  const displayedEvidenceLabel = shortEvidenceRef(displayedEvidenceRef);
   const activeBrowserUrl =
     displayedFallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
   const activeBrowserTitle =
@@ -1641,6 +1656,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                 fallbackAutomationSession?.lastActionSummary
                   ? ` · ${fallbackAutomationSession.lastActionSummary}`
                   : ""}
+                {displayedEvidenceLabel ? ` · evidence ${displayedEvidenceLabel}` : ""}
                 {fallbackAutomationBusy ? " · updating" : ""}
               </div>
             </div>
@@ -1658,6 +1674,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
                 {fallbackScreenshotSession.lastActionSummary
                   ? ` · ${fallbackScreenshotSession.lastActionSummary}`
                   : ""}
+                {displayedEvidenceLabel ? ` · evidence ${displayedEvidenceLabel}` : ""}
               </div>
             </div>
           ) : fallbackFrameUrl ? (

@@ -7,6 +7,7 @@ import {
   BrowserOrchestrationEvidenceRepository,
   type BrowserOrchestrationEvidenceRepositoryShape,
   BrowserSessionEventRow,
+  EvidenceArtifactContentRow,
   EvidenceArtifactRow,
   EvidenceBundleRow,
   GetEvidenceArtifactInput,
@@ -94,6 +95,36 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
           metadata_json AS "metadataJson",
           created_at AS "createdAt"
         FROM evidence_artifacts
+        WHERE artifact_id = ${artifactId}
+      `,
+  });
+
+  const writeEvidenceArtifactContentRow = SqlSchema.void({
+    Request: EvidenceArtifactContentRow,
+    execute: (row) =>
+      sql`
+        INSERT INTO evidence_artifact_contents (
+          artifact_id, content_text, created_at
+        )
+        VALUES (
+          ${row.artifactId}, ${row.contentText}, ${row.createdAt}
+        )
+        ON CONFLICT (artifact_id) DO UPDATE SET
+          content_text = excluded.content_text,
+          created_at = excluded.created_at
+      `,
+  });
+
+  const getEvidenceArtifactContentRow = SqlSchema.findOneOption({
+    Request: GetEvidenceArtifactInput,
+    Result: EvidenceArtifactContentRow,
+    execute: ({ artifactId }) =>
+      sql`
+        SELECT
+          artifact_id AS "artifactId",
+          content_text AS "contentText",
+          created_at AS "createdAt"
+        FROM evidence_artifact_contents
         WHERE artifact_id = ${artifactId}
       `,
   });
@@ -220,6 +251,26 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
       ),
     );
 
+  const writeEvidenceArtifactContent: BrowserOrchestrationEvidenceRepositoryShape["writeEvidenceArtifactContent"] =
+    (row) =>
+      writeEvidenceArtifactContentRow(row).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.writeEvidenceArtifactContent:query",
+          ),
+        ),
+      );
+
+  const getEvidenceArtifactContent: BrowserOrchestrationEvidenceRepositoryShape["getEvidenceArtifactContent"] =
+    (input) =>
+      getEvidenceArtifactContentRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.getEvidenceArtifactContent:query",
+          ),
+        ),
+      );
+
   const createEvidenceBundle: BrowserOrchestrationEvidenceRepositoryShape["createEvidenceBundle"] =
     (row) =>
       createEvidenceBundleRow(row).pipe(
@@ -263,6 +314,8 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
     getSessionEvents,
     writeEvidenceArtifact,
     getEvidenceArtifact,
+    writeEvidenceArtifactContent,
+    getEvidenceArtifactContent,
     createEvidenceBundle,
     getEvidenceBundle,
     createReviewerDecision,

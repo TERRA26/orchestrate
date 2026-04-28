@@ -113,6 +113,16 @@ describe("browserWorkLog", () => {
               targets: [],
               observedAt: "2026-04-27T00:01:00.000Z",
               screenshotDataUrl: "data:image/jpeg;base64,watch",
+              screenshotArtifactRef: "browser-screenshot-artifact-1",
+              evidenceRefs: ["browser-observation-record-1"],
+              runtimeTruth: {
+                runtimeKind: "playwright-headless",
+                surfaceMode: "headless-validation-mirror",
+                isUserVisibleSurface: false,
+                browserSessionId: "browser-session-1",
+                screenshotArtifactRef: "browser-screenshot-artifact-1",
+                evidenceRefs: ["browser-screenshot-artifact-1"],
+              },
             },
           }),
         },
@@ -127,6 +137,8 @@ describe("browserWorkLog", () => {
       sessionId: "browser-session-1",
       url: "https://www.youtube.com/watch?v=abc123",
       screenshotDataUrl: "data:image/jpeg;base64,watch",
+      screenshotArtifactRef: "browser-screenshot-artifact-1",
+      evidenceRefs: ["browser-screenshot-artifact-1", "browser-observation-record-1"],
     });
   });
 

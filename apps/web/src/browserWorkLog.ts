@@ -42,6 +42,12 @@ function readArray(value: unknown): ReadonlyArray<unknown> {
   return Array.isArray(value) ? value : [];
 }
 
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
 function parseJsonLikeString(value: string): unknown | null {
   const trimmed = value.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
@@ -251,6 +257,14 @@ export function embeddedBrowserSessionFromBrowserWorkEntry(
 
   const title = readString(observation.title)?.trim() || browserTitleFromUrl(url);
   const sessionId = readString(observation.sessionId)?.trim() ?? "";
+  const runtimeTruth = readRecord(observation.runtimeTruth);
+  const screenshotArtifactRef =
+    readString(runtimeTruth?.screenshotArtifactRef) ??
+    readString(observation.screenshotArtifactRef);
+  const evidenceRefs = [
+    ...readStringArray(runtimeTruth?.evidenceRefs),
+    ...readStringArray(observation.evidenceRefs),
+  ];
   return {
     kind: "automation",
     openedAt: workEntry.createdAt,
@@ -263,6 +277,8 @@ export function embeddedBrowserSessionFromBrowserWorkEntry(
     targetCount: readArray(observation.targets).length,
     textSummary: readString(observation.textSummary) ?? "",
     screenshotDataUrl: screenshot.fullDataUrl ?? screenshot.thumbnailDataUrl,
+    ...(screenshotArtifactRef ? { screenshotArtifactRef } : {}),
+    ...(evidenceRefs.length > 0 ? { evidenceRefs: Array.from(new Set(evidenceRefs)) } : {}),
     lastActionSummary: summarizeBrowserWorkEntry(workEntry),
   };
 }

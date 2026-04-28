@@ -15,6 +15,7 @@ import {
 import { Effect, Layer } from "effect";
 
 import { BrowserAutomation } from "../../browser/Services/BrowserAutomation.ts";
+import { BrowserEvidenceRecorder } from "../../browserEvidence/Services/BrowserEvidenceRecorder.ts";
 import { browserClaimGateForObservation } from "../BrowserClaimGate.ts";
 import { PlaywrightHeadlessBrowserRuntime } from "../PlaywrightHeadlessBrowserRuntime.ts";
 import {
@@ -134,12 +135,11 @@ function withRuntimeTruth(
   input: {
     readonly previewTarget: PreviewTarget;
     readonly visiblePanelUrl?: string;
+    readonly screenshotArtifactRef?: EvidenceArtifactId;
+    readonly evidenceRefs?: ReadonlyArray<EvidenceArtifactId>;
   },
 ): BrowserObservation {
   const screenshotDataUrl = screenshotDataUrlFor(observation);
-  const screenshotArtifactRef = screenshotDataUrl
-    ? syntheticArtifactId("screenshot", screenshotDataUrl)
-    : undefined;
   const truth: BrowserRuntimeTruth = {
     runtimeKind: RUNTIME_KIND,
     surfaceMode: SURFACE_MODE,
@@ -147,7 +147,8 @@ function withRuntimeTruth(
     browserSessionId: observation.sessionId,
     previewTargetId: input.previewTarget.id,
     observationId: `browser-observation-${randomUUID()}`,
-    ...(screenshotArtifactRef ? { screenshotArtifactRef } : {}),
+    ...(input.screenshotArtifactRef ? { screenshotArtifactRef: input.screenshotArtifactRef } : {}),
+    ...(input.evidenceRefs ? { evidenceRefs: [...input.evidenceRefs] } : {}),
     ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
     observedUrl: observation.url,
     ...(input.visiblePanelUrl ? { visiblePanelUrl: input.visiblePanelUrl } : {}),
@@ -159,6 +160,7 @@ function withRuntimeTruth(
     surfaceMode: truth.surfaceMode,
     isUserVisibleSurface: truth.isUserVisibleSurface,
     ...(truth.screenshotArtifactRef ? { screenshotArtifactRef: truth.screenshotArtifactRef } : {}),
+    ...(truth.evidenceRefs ? { evidenceRefs: truth.evidenceRefs } : {}),
     observedUrl: truth.observedUrl,
     ...(truth.visiblePanelUrl ? { visiblePanelUrl: truth.visiblePanelUrl } : {}),
     urlAgreement: truth.urlAgreement,
@@ -170,6 +172,7 @@ export const BrowserRuntimeServiceLive = Layer.effect(
   BrowserRuntimeService,
   Effect.gen(function* () {
     const browserAutomation = yield* BrowserAutomation;
+    const evidenceRecorder = yield* BrowserEvidenceRecorder;
     const runtime = new PlaywrightHeadlessBrowserRuntime(browserAutomation);
     const sessions = new Map<string, RuntimeSessionRecord>();
 
@@ -179,22 +182,70 @@ export const BrowserRuntimeServiceLive = Layer.effect(
           const previewTarget = createPreviewTarget(input);
           const session = await runtime.openSession({ previewTarget });
           sessions.set(session.browserSessionId, { previewTarget });
+          const sessionEvidence = await Effect.runPromise(
+            evidenceRecorder.recordSessionOpened({
+              browserSessionId: session.browserSessionId,
+              previewTarget,
+            }),
+          );
           const legacyResult = await Effect.runPromise(
             browserAutomation.act({
               sessionId: session.browserSessionId,
               action: { kind: "wait", ms: 0 },
             }),
           );
-          const enrichedObservation = withRuntimeTruth(legacyResult.observation, { previewTarget });
+          const provisionalObservation = withRuntimeTruth(legacyResult.observation, {
+            previewTarget,
+            evidenceRefs: sessionEvidence.evidenceRefs,
+          });
+          const observationEvidence = await Effect.runPromise(
+            evidenceRecorder.recordObservation({
+              browserSessionId: session.browserSessionId,
+              previewTarget,
+              observation: provisionalObservation,
+              runtimeTruth: provisionalObservation.runtimeTruth,
+            }),
+          );
+          const evidenceRefs = [
+            ...sessionEvidence.evidenceRefs,
+            ...observationEvidence.evidenceRefs,
+          ];
+          const enrichedObservation = withRuntimeTruth(legacyResult.observation, {
+            previewTarget,
+            ...(observationEvidence.screenshotArtifactRef
+              ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
+              : {}),
+            evidenceRefs,
+          });
           const runtimeTruth = enrichedObservation.runtimeTruth;
+          const claimGate = browserClaimGateForObservation({
+            observation: enrichedObservation,
+            runtimeTruth,
+          });
+          const claimGateEvidence = await Effect.runPromise(
+            evidenceRecorder.recordClaimGate({
+              browserSessionId: session.browserSessionId,
+              previewTarget,
+              observation: enrichedObservation,
+              reports: claimGate,
+            }),
+          );
+          const allEvidenceRefs = [...evidenceRefs, ...claimGateEvidence.evidenceRefs];
+          const finalObservation = withRuntimeTruth(legacyResult.observation, {
+            previewTarget,
+            ...(observationEvidence.screenshotArtifactRef
+              ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
+              : {}),
+            evidenceRefs: allEvidenceRefs,
+          });
           return {
             sessionId: session.browserSessionId,
-            observation: enrichedObservation,
-            ...(runtimeTruth ? { runtimeTruth } : {}),
-            claimGate: browserClaimGateForObservation({
-              observation: enrichedObservation,
-              runtimeTruth,
-            }),
+            observation: finalObservation,
+            ...(finalObservation.runtimeTruth
+              ? { runtimeTruth: finalObservation.runtimeTruth }
+              : {}),
+            evidenceRefs: allEvidenceRefs,
+            claimGate,
           } satisfies BrowserOpenSessionResult;
         },
         catch: (cause) => cause as never,
@@ -212,22 +263,78 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             action: input.action,
           });
           if (!result.ok) {
+            await Effect.runPromise(
+              evidenceRecorder.recordAction({
+                browserSessionId: input.sessionId,
+                previewTarget: session.previewTarget,
+                action: input.action,
+                policyDecision: result.policyDecision,
+              }),
+            );
             throw new Error(result.policyDecision.reason);
           }
+          const actionEvidence = await Effect.runPromise(
+            evidenceRecorder.recordAction({
+              browserSessionId: input.sessionId,
+              previewTarget: session.previewTarget,
+              action: input.action,
+              policyDecision: { outcome: "allow" },
+            }),
+          );
           const legacyResult = await Effect.runPromise(
             browserAutomation.act({
               sessionId: input.sessionId,
               action: { kind: "wait", ms: 0 },
             }),
           );
+          const provisionalObservation = withRuntimeTruth(legacyResult.observation, {
+            previewTarget: session.previewTarget,
+            evidenceRefs: actionEvidence.evidenceRefs,
+          });
+          const observationEvidence = await Effect.runPromise(
+            evidenceRecorder.recordObservation({
+              browserSessionId: input.sessionId,
+              previewTarget: session.previewTarget,
+              observation: provisionalObservation,
+              runtimeTruth: provisionalObservation.runtimeTruth,
+            }),
+          );
+          const evidenceRefs = [
+            ...actionEvidence.evidenceRefs,
+            ...observationEvidence.evidenceRefs,
+          ];
           const observation = withRuntimeTruth(legacyResult.observation, {
             previewTarget: session.previewTarget,
+            ...(observationEvidence.screenshotArtifactRef
+              ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
+              : {}),
+            evidenceRefs,
           });
           const runtimeTruth = observation.runtimeTruth;
+          const claimGate = browserClaimGateForObservation({ observation, runtimeTruth });
+          const claimGateEvidence = await Effect.runPromise(
+            evidenceRecorder.recordClaimGate({
+              browserSessionId: input.sessionId,
+              previewTarget: session.previewTarget,
+              observation,
+              reports: claimGate,
+            }),
+          );
+          const allEvidenceRefs = [...evidenceRefs, ...claimGateEvidence.evidenceRefs];
+          const finalObservation = withRuntimeTruth(legacyResult.observation, {
+            previewTarget: session.previewTarget,
+            ...(observationEvidence.screenshotArtifactRef
+              ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
+              : {}),
+            evidenceRefs: allEvidenceRefs,
+          });
           return {
-            observation,
-            ...(runtimeTruth ? { runtimeTruth } : {}),
-            claimGate: browserClaimGateForObservation({ observation, runtimeTruth }),
+            observation: finalObservation,
+            ...(finalObservation.runtimeTruth
+              ? { runtimeTruth: finalObservation.runtimeTruth }
+              : {}),
+            evidenceRefs: allEvidenceRefs,
+            claimGate,
           } satisfies BrowserActResult;
         },
         catch: (cause) => cause as never,

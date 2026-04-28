@@ -97,6 +97,9 @@ export const BrowserRuntimeTruth = Schema.Struct({
   previewTargetId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   observationId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   screenshotArtifactRef: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  evidenceRefs: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  ),
   screenshotDataUrl: Schema.optionalKey(
     Schema.String.check(Schema.isMaxLength(BROWSER_MAX_SCREENSHOT_DATA_URL_LENGTH)),
   ),
@@ -177,6 +180,9 @@ export const BrowserObservation = Schema.Struct({
   surfaceMode: Schema.optionalKey(BrowserSurfaceMode),
   isUserVisibleSurface: Schema.optionalKey(Schema.Boolean),
   screenshotArtifactRef: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  evidenceRefs: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  ),
   observedUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH))),
   visiblePanelUrl: Schema.optionalKey(
     Schema.String.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
@@ -203,6 +209,9 @@ export const BrowserOpenSessionResult = Schema.Struct({
   sessionId: BrowserSessionId,
   observation: BrowserObservation,
   runtimeTruth: Schema.optionalKey(BrowserRuntimeTruth),
+  evidenceRefs: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  ),
   claimGate: Schema.optionalKey(Schema.Array(BrowserClaimGateReport)),
 });
 export type BrowserOpenSessionResult = typeof BrowserOpenSessionResult.Type;
@@ -309,6 +318,9 @@ export type BrowserActInput = typeof BrowserActInput.Type;
 export const BrowserActResult = Schema.Struct({
   observation: BrowserObservation,
   runtimeTruth: Schema.optionalKey(BrowserRuntimeTruth),
+  evidenceRefs: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  ),
   claimGate: Schema.optionalKey(Schema.Array(BrowserClaimGateReport)),
 });
 export type BrowserActResult = typeof BrowserActResult.Type;

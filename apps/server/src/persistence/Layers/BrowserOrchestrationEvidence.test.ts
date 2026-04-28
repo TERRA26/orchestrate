@@ -53,6 +53,18 @@ layer("BrowserOrchestrationEvidenceRepository", (it) => {
       const persisted = Option.getOrThrow(result);
       assert.strictEqual(persisted.kind, "screenshot");
       assert.strictEqual(persisted.metadataJson, JSON.stringify({ label: "desktop" }));
+
+      yield* repo.writeEvidenceArtifactContent({
+        artifactId: EvidenceArtifactId.makeUnsafe("artifact-screenshot"),
+        contentText: "data:image/png;base64,abc",
+        createdAt: now,
+      });
+
+      const content = yield* repo.getEvidenceArtifactContent({
+        artifactId: EvidenceArtifactId.makeUnsafe("artifact-screenshot"),
+      });
+      assert.ok(Option.isSome(content));
+      assert.strictEqual(Option.getOrThrow(content).contentText, "data:image/png;base64,abc");
     }),
   );
 

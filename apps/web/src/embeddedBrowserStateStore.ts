@@ -23,6 +23,8 @@ export type EmbeddedBrowserSession =
       targetCount: number;
       textSummary: string;
       screenshotDataUrl?: string;
+      screenshotArtifactRef?: string;
+      evidenceRefs?: string[];
       lastActionSummary?: string;
     })
   | (EmbeddedBrowserSessionBase & {
@@ -80,6 +82,12 @@ export function createEmbeddedBrowserAutomationSession(input: {
     textSummary: input.observation.textSummary,
     ...(input.observation.screenshotDataUrl
       ? { screenshotDataUrl: input.observation.screenshotDataUrl }
+      : {}),
+    ...(input.observation.screenshotArtifactRef
+      ? { screenshotArtifactRef: input.observation.screenshotArtifactRef }
+      : {}),
+    ...(input.observation.evidenceRefs?.length
+      ? { evidenceRefs: [...input.observation.evidenceRefs] }
       : {}),
     ...(input.lastActionSummary?.trim()
       ? { lastActionSummary: input.lastActionSummary.trim() }

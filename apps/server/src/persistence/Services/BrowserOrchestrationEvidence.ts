@@ -51,6 +51,13 @@ export const EvidenceArtifactRow = Schema.Struct({
 });
 export type EvidenceArtifactRow = typeof EvidenceArtifactRow.Type;
 
+export const EvidenceArtifactContentRow = Schema.Struct({
+  artifactId: EvidenceArtifactId,
+  contentText: Schema.String,
+  createdAt: IsoDateTime,
+});
+export type EvidenceArtifactContentRow = typeof EvidenceArtifactContentRow.Type;
+
 export const EvidenceBundleRow = Schema.Struct({
   bundleId: EvidenceBundleId,
   sessionId: Schema.String,
@@ -116,6 +123,12 @@ export interface BrowserOrchestrationEvidenceRepositoryShape {
   readonly getEvidenceArtifact: (
     input: GetEvidenceArtifactInput,
   ) => Effect.Effect<Option.Option<EvidenceArtifactRow>, ProjectionRepositoryError>;
+  readonly writeEvidenceArtifactContent: (
+    row: EvidenceArtifactContentRow,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+  readonly getEvidenceArtifactContent: (
+    input: GetEvidenceArtifactInput,
+  ) => Effect.Effect<Option.Option<EvidenceArtifactContentRow>, ProjectionRepositoryError>;
   readonly createEvidenceBundle: (
     row: EvidenceBundleRow,
   ) => Effect.Effect<void, ProjectionRepositoryError>;

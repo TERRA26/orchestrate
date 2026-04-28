@@ -86,3 +86,53 @@ The following passed after Slice 1:
 - focused web browser evidence tests
 
 The browser-runtime source checks confirm that public browser routing is through `BrowserRuntimeService`; `BrowserAutomation` is now hidden behind the browser runtime stack rather than imported by public router or WebSocket browser handlers.
+
+## Slice 2 Verification Update - Durable Browser Evidence
+
+Commands rerun under Node `24.13.1` after Slice 2 durable evidence wiring:
+
+```sh
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun fmt
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun fmt:check
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun lint
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun typecheck
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun run test:contracts
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun run test
+PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH bun run test:scenarios
+```
+
+Slice 2 focused checks pass:
+
+- `bun fmt`
+- `bun fmt:check`
+- `bun lint` exits `0`
+- `bun run test:contracts`
+- focused server persistence/evidence/runtime/router/workflow tests
+- focused web browser work-log and embedded browser state tests
+
+`bun typecheck` still fails only in `@orchestrate/web#typecheck`, matching the existing web contract/type drift described above. No Slice 2 server/contracts typecheck failure was observed before the web package failed.
+
+`bun run test` still fails in `@orchestrate/web#test`, matching the existing web test-debt class described above. Representative failing files after Slice 2 are:
+
+- `apps/web/src/components/OrchestratorPanel.logic.test.ts`
+- `apps/web/src/session-logic.test.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/lib/threadBootstrap.test.ts`
+- `apps/web/src/composerDraftStore.test.ts`
+- `apps/web/src/composerSlashCommands.test.ts`
+- `apps/web/src/components/SidebarSearchPalette.logic.test.ts`
+- `apps/web/src/pinnedThreadsStore.test.ts`
+- `apps/web/src/wsNativeApi.test.ts`
+- `apps/web/src/wsTransport.test.ts`
+- `apps/web/src/components/chat/MessagesTimeline.test.tsx`
+- `apps/web/src/terminalStateStore.test.ts`
+
+Classification: still broad web test debt, not introduced by Slice 2 durable browser evidence. The new Slice 2 focused web tests passed.
+
+`bun run test:scenarios` still fails before scenario execution:
+
+```text
+Cannot connect to server on port 3774. Is 'bun run dev:server' running?
+```
+
+Classification: unchanged scenario harness dependency on a manually running server. This remains a follow-up for the `DevServerSupervisor` / `PreviewTarget` slice.

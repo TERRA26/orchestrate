@@ -48,6 +48,7 @@ import Migration0032 from "./Migrations/032_OrchestratorWorkerVisibility.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadTypeAndParent.ts";
 import Migration0034 from "./Migrations/034_BrowserOrchestrationEvidence.ts";
 import Migration0035 from "./Migrations/035_BrowserAnnotations.ts";
+import Migration0036 from "./Migrations/036_EvidenceArtifactContent.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -95,6 +96,7 @@ export const migrationEntries = [
   [33, "ProjectionThreadTypeAndParent", Migration0033],
   [34, "BrowserOrchestrationEvidence", Migration0034],
   [35, "BrowserAnnotations", Migration0035],
+  [36, "EvidenceArtifactContent", Migration0036],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

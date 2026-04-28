@@ -295,6 +295,15 @@ export const EvidenceAccess = Schema.Literals([
 export type EvidenceAccess = typeof EvidenceAccess.Type;
 
 export const EvidenceArtifactKind = Schema.Literals([
+  "browser-screenshot",
+  "browser-observation",
+  "browser-action",
+  "browser-session",
+  "browser-claim-gate",
+  "browser-url-agreement",
+  "browser-console-summary",
+  "browser-network-summary",
+  "browser-page-error-summary",
   "screenshot",
   "screenshot-crop",
   "dom-snapshot",
@@ -657,6 +666,10 @@ export const SessionEvent = Schema.Struct({
     "BrowserSessionCreated",
     "BrowserPageOpened",
     "BrowserSnapshotCaptured",
+    "BrowserObservationCaptured",
+    "BrowserActionRecorded",
+    "BrowserClaimGateEvaluated",
+    "BrowserPolicyDecisionRecorded",
     "BrowserToolCallStarted",
     "BrowserToolCallCompleted",
     "BrowserToolCallFailed",
