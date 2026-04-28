@@ -511,6 +511,18 @@ export function createWsNativeApi(): NativeApi {
       getArtifact: (input) =>
         transport.request(WS_METHODS.evidenceArtifactGet, input, { timeoutMs: 30_000 }),
     },
+    preview: {
+      detect: (input = {}) => transport.request(WS_METHODS.previewDetect, input),
+      start: (input = {}) =>
+        transport.request(WS_METHODS.previewStart, input, { timeoutMs: 120_000 }),
+      stop: (input) => transport.request(WS_METHODS.previewStop, input, { timeoutMs: 30_000 }),
+      restart: (input) =>
+        transport.request(WS_METHODS.previewRestart, input, { timeoutMs: 120_000 }),
+      status: (input) => transport.request(WS_METHODS.previewStatus, input),
+      logs: (input) => transport.request(WS_METHODS.previewLogs, input),
+      getTarget: (input) => transport.request(WS_METHODS.previewTargetGet, input),
+      listTargets: (input = {}) => transport.request(WS_METHODS.previewTargetList, input),
+    },
   };
 
   instance = { api, transport };

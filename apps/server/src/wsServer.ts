@@ -90,6 +90,7 @@ import { BrowserRuntimeService } from "./browserRuntime/Services/BrowserRuntimeS
 import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
 import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
 import { BrowserOrchestrationEvidenceRepository } from "./persistence/Services/BrowserOrchestrationEvidence.ts";
+import { PreviewService } from "./preview/Services/PreviewService.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -364,7 +365,8 @@ export type ServerRuntimeServices =
   | BrowserRuntimeService
   | BrowserAnnotationService
   | BrowserControlLeaseService
-  | BrowserOrchestrationEvidenceRepository;
+  | BrowserOrchestrationEvidenceRepository
+  | PreviewService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -467,6 +469,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const browserAnnotations = yield* BrowserAnnotationService;
   const browserControlLeases = yield* BrowserControlLeaseService;
   const browserEvidenceRepository = yield* BrowserOrchestrationEvidenceRepository;
+  const previewService = yield* PreviewService;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1294,6 +1297,46 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           artifact,
           contentText: contentOption.value.contentText,
         });
+      }
+
+      case WS_METHODS.previewDetect: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.detect(body);
+      }
+
+      case WS_METHODS.previewStart: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.start(body);
+      }
+
+      case WS_METHODS.previewStop: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.stop(body);
+      }
+
+      case WS_METHODS.previewRestart: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.restart(body);
+      }
+
+      case WS_METHODS.previewStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.status(body);
+      }
+
+      case WS_METHODS.previewLogs: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.logs(body);
+      }
+
+      case WS_METHODS.previewTargetGet: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.getTarget(body);
+      }
+
+      case WS_METHODS.previewTargetList: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.listTargets(body);
       }
 
       case WS_METHODS.providerGetComposerCapabilities: {

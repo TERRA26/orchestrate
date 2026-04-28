@@ -159,3 +159,56 @@ Slice 2B focused checks pass:
 - focused web artifact rendering, browser work-log, and embedded browser state tests
 
 `bun typecheck` still fails in `@orchestrate/web#typecheck`, matching the existing web contract/type drift described above. During Slice 2B verification, one new BrowserPanel optional NativeApi type error was found and fixed; the remaining errors are the same baseline class.
+
+## Slice 3 Verification Update - Preview APIs And PreviewTarget
+
+Commands rerun under Node `24.13.1` after exposing preview APIs and immutable `PreviewTarget` creation:
+
+```sh
+export PATH=/Users/christophe/.nvm/versions/node/v24.13.1/bin:$PATH
+bun fmt
+bun fmt:check
+bun lint
+bun typecheck
+bun run test:contracts
+cd apps/server && bun run test src/preview/DevServerSupervisor.test.ts src/preview/Layers/PreviewService.test.ts src/browserRuntime/Layers/BrowserRuntimeService.test.ts
+cd apps/web && bun run test src/browserEvidenceArtifacts.test.ts src/browserWorkLog.test.ts src/embeddedBrowserStateStore.test.ts
+bun run test:scenarios
+```
+
+Slice 3 focused checks pass:
+
+- `bun fmt`
+- `bun fmt:check`
+- `bun lint` exits `0`
+- `bun run test:contracts`
+- focused preview supervisor/service/runtime tests
+- focused web artifact/browser evidence tests
+- public browser routing source gate remains clean: `rg -n "BrowserAutomation" apps/server/src/orchestration apps/server/src/wsServer.ts apps/server/src/serverLayers.ts` returns no matches
+
+`bun typecheck` still fails in `@orchestrate/web#typecheck`, matching the existing web contract/type drift described above. Representative unchanged failures include missing `ServerProvider` / `ServerProviderModel` exports, benchmark select nullability, orchestrator panel contract drift, and thread bootstrap exact-optional-property drift.
+
+Running only the server package typecheck with `turbo --filter=orchestrate --only` still exposes the existing server `tsconfig` / integration-test debt class: integration harness files and scripts are included by `tsc --noEmit` without the package's runtime module-resolution settings. This predates Slice 3 and is separate from the new preview API implementation; focused preview/runtime tests pass under Vitest.
+
+`bun run test:scenarios` still fails before scenario execution:
+
+```text
+Cannot connect to server on port 3774. Is 'bun run dev:server' running?
+```
+
+Classification: unchanged scenario harness dependency on a manually running server. Slice 3 adds a focused self-starting preview service test that starts a fixture server, health-checks it, creates an immutable `PreviewTarget`, persists readiness evidence, reads durable log refs, and stops the process. Converting the full scenario runner to call `preview.start` remains follow-up work.
+
+`bun run test` still fails in `@orchestrate/web#test`, matching the existing broad web test-debt class. Representative failing files after Slice 3 are:
+
+- `apps/web/src/components/SidebarSearchPalette.logic.test.ts`
+- `apps/web/src/components/OrchestratorPanel.logic.test.ts`
+- `apps/web/src/session-logic.test.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/composerSlashCommands.test.ts`
+- `apps/web/src/pinnedThreadsStore.test.ts`
+- `apps/web/src/wsNativeApi.test.ts`
+- `apps/web/src/wsTransport.test.ts`
+- `apps/web/src/lib/threadBootstrap.test.ts`
+- `apps/web/src/components/chat/MessagesTimeline.test.tsx`
+
+Classification: still broad web test debt, not introduced by Slice 3 preview APIs. The new Slice 3 focused preview/runtime tests and the existing browser evidence UI tests passed.

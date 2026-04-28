@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { EvidenceArtifactId, PreviewTargetId, type PreviewTarget } from "@orchestrate/contracts";
 import { Effect, Layer, Option } from "effect";
 
 import { BrowserAutomation } from "../../browser/Services/BrowserAutomation.ts";
@@ -64,6 +65,46 @@ const layer = it.layer(
 );
 
 layer("BrowserRuntimeServiceLive", (it) => {
+  it.effect("opens a supplied PreviewTarget instead of synthesizing one from the URL", () =>
+    Effect.gen(function* () {
+      const runtime = yield* BrowserRuntimeService;
+
+      const previewTarget: PreviewTarget = {
+        id: PreviewTargetId.makeUnsafe("preview-target-runtime-service"),
+        version: 1,
+        sessionId: "thread-runtime-preview-target",
+        kind: "local-dev-server",
+        canonicalUrl: "http://127.0.0.1:5173/from-target",
+        baseUrl: "http://127.0.0.1:5173/",
+        initialRoute: "/from-target",
+        allowedOrigins: ["http://127.0.0.1:5173"],
+        deniedOrigins: [],
+        authMode: "none",
+        permissionTier: "isolated-local-preview",
+        viewports: [
+          {
+            id: "desktop",
+            label: "Desktop",
+            width: 1440,
+            height: 900,
+            deviceScaleFactor: 1,
+          },
+        ],
+        readinessEvidenceRef: EvidenceArtifactId.makeUnsafe("health-runtime-service"),
+        serverLogRefs: [EvidenceArtifactId.makeUnsafe("server-log-runtime-service")],
+        createdAt: "2026-04-28T00:00:00.000Z",
+      };
+
+      const openResult = yield* runtime.openSession({
+        url: previewTarget.canonicalUrl,
+        threadId: "thread-runtime-preview-target",
+        previewTarget,
+      });
+
+      assert.strictEqual(openResult.runtimeTruth?.previewTargetId, previewTarget.id);
+    }),
+  );
+
   it.effect("writes durable evidence for openSession and act", () =>
     Effect.gen(function* () {
       const runtime = yield* BrowserRuntimeService;

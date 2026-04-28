@@ -179,7 +179,8 @@ export const BrowserRuntimeServiceLive = Layer.effect(
     const openSession: BrowserRuntimeServiceShape["openSession"] = (input) =>
       Effect.tryPromise({
         try: async () => {
-          const previewTarget = createPreviewTarget(input);
+          const previewTarget =
+            (input.previewTarget as PreviewTarget | undefined) ?? createPreviewTarget(input);
           const session = await runtime.openSession({ previewTarget });
           sessions.set(session.browserSessionId, { previewTarget });
           const sessionEvidence = await Effect.runPromise(

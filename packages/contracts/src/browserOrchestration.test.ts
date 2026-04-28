@@ -12,7 +12,10 @@ import {
   DevServerInstance,
   EvidenceBundle,
   LaunchConfigFile,
+  PreviewDetectResult,
+  PreviewStartResult,
   PreviewTarget,
+  PreviewTargetListResult,
   ReviewerDecision,
 } from "./browserOrchestration";
 
@@ -29,6 +32,9 @@ const decodeBrowserControlReleaseInput = Schema.decodeUnknownEffect(BrowserContr
 const decodeBrowserControlLeaseResult = Schema.decodeUnknownEffect(BrowserControlLeaseResult);
 const decodeLaunchConfigFile = Schema.decodeUnknownEffect(LaunchConfigFile);
 const decodeDevServerInstance = Schema.decodeUnknownEffect(DevServerInstance);
+const decodePreviewDetectResult = Schema.decodeUnknownEffect(PreviewDetectResult);
+const decodePreviewStartResult = Schema.decodeUnknownEffect(PreviewStartResult);
+const decodePreviewTargetListResult = Schema.decodeUnknownEffect(PreviewTargetListResult);
 
 const viewport = {
   id: "desktop",
@@ -295,5 +301,75 @@ it.effect("decodes launch configs and dev server instances", () =>
     });
 
     assert.strictEqual(instance.status, "healthy");
+  }),
+);
+
+it.effect("decodes preview API results", () =>
+  Effect.gen(function* () {
+    const config = {
+      id: "web",
+      name: "Web",
+      cwd: ".",
+      runtimeExecutable: "bun",
+      runtimeArgs: ["run", "dev:web"],
+      autoPort: true,
+      defaultRoute: "/",
+      healthCheck: {
+        path: "/",
+        timeoutMs: 30_000,
+        expectedStatus: [200, 304],
+      },
+      autoVerify: true,
+    };
+    const instance = {
+      id: "server-1",
+      sessionId: "session-1",
+      launchConfigId: "web",
+      status: "healthy",
+      pid: 123,
+      cwd: "/tmp/orchestrate",
+      command: ["bun", "run", "dev:web"],
+      assignedPort: 5734,
+      baseUrl: "http://127.0.0.1:5734",
+      startedAt: ISO,
+      lastHealthCheckAt: ISO,
+      logStreamRef: "artifact-logs",
+      recentErrorRefs: [],
+    };
+    const target = {
+      id: "target-1",
+      version: 1,
+      sessionId: "session-1",
+      kind: "local-dev-server",
+      canonicalUrl: "http://127.0.0.1:5734/",
+      baseUrl: "http://127.0.0.1:5734",
+      initialRoute: "/",
+      devServerInstanceId: "server-1",
+      launchConfigId: "web",
+      allowedOrigins: ["http://127.0.0.1:5734"],
+      deniedOrigins: [],
+      authMode: "none",
+      permissionTier: "isolated-local-preview",
+      viewports: [viewport],
+      readinessEvidenceRef: "artifact-health",
+      serverLogRefs: ["artifact-logs"],
+      createdAt: ISO,
+    };
+
+    const detect = yield* decodePreviewDetectResult({
+      status: "detected",
+      configs: [config],
+    });
+    assert.strictEqual(detect.configs[0]?.id, "web");
+
+    const start = yield* decodePreviewStartResult({
+      status: "started",
+      instance,
+      previewTarget: target,
+    });
+    assert.strictEqual(start.previewTarget?.readinessEvidenceRef, "artifact-health");
+
+    const targets = yield* decodePreviewTargetListResult({ targets: [target] });
+    assert.strictEqual(targets.targets[0]?.id, "target-1");
   }),
 );

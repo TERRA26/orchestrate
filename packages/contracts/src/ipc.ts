@@ -67,6 +67,17 @@ import type {
 import type {
   EvidenceArtifactContentResult,
   EvidenceArtifactGetInput,
+  PreviewDetectInput,
+  PreviewDetectResult,
+  PreviewInstanceInput,
+  PreviewLogsResult,
+  PreviewStartInput,
+  PreviewStartResult,
+  PreviewStatusResult,
+  PreviewStopInput,
+  PreviewTargetGetInput,
+  PreviewTargetListInput,
+  PreviewTargetListResult,
 } from "./browserOrchestration";
 import type {
   ProviderComposerCapabilities,
@@ -338,5 +349,17 @@ export interface NativeApi {
   };
   evidence: {
     getArtifact: (input: EvidenceArtifactGetInput) => Promise<EvidenceArtifactContentResult>;
+  };
+  preview: {
+    detect: (input?: PreviewDetectInput) => Promise<PreviewDetectResult>;
+    start: (input?: PreviewStartInput) => Promise<PreviewStartResult>;
+    stop: (input: PreviewStopInput) => Promise<PreviewStatusResult>;
+    restart: (input: PreviewInstanceInput) => Promise<PreviewStartResult>;
+    status: (input: PreviewInstanceInput) => Promise<PreviewStatusResult>;
+    logs: (input: PreviewInstanceInput) => Promise<PreviewLogsResult>;
+    getTarget: (
+      input: PreviewTargetGetInput,
+    ) => Promise<PreviewTargetListResult["targets"][number] | null>;
+    listTargets: (input?: PreviewTargetListInput) => Promise<PreviewTargetListResult>;
   };
 }

@@ -52,6 +52,12 @@ import {
   BrowserControlAcquireInput,
   BrowserControlReleaseInput,
   EvidenceArtifactGetInput,
+  PreviewDetectInput,
+  PreviewInstanceInput,
+  PreviewStartInput,
+  PreviewStopInput,
+  PreviewTargetGetInput,
+  PreviewTargetListInput,
 } from "./browserOrchestration";
 import {
   ProviderListCommandsInput,
@@ -110,6 +116,14 @@ export const WS_METHODS = {
   browserAddAnnotation: "browser.addAnnotation",
   browserListAnnotations: "browser.listAnnotations",
   evidenceArtifactGet: "evidence.artifact.get",
+  previewDetect: "preview.detect",
+  previewStart: "preview.start",
+  previewStop: "preview.stop",
+  previewRestart: "preview.restart",
+  previewStatus: "preview.status",
+  previewLogs: "preview.logs",
+  previewTargetGet: "preview.target.get",
+  previewTargetList: "preview.target.list",
 
   // Provider discovery
   providerGetComposerCapabilities: "provider.getComposerCapabilities",
@@ -221,6 +235,14 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.browserAddAnnotation, BrowserAddAnnotationInput),
   tagRequestBody(WS_METHODS.browserListAnnotations, BrowserListAnnotationsInput),
   tagRequestBody(WS_METHODS.evidenceArtifactGet, EvidenceArtifactGetInput),
+  tagRequestBody(WS_METHODS.previewDetect, PreviewDetectInput),
+  tagRequestBody(WS_METHODS.previewStart, PreviewStartInput),
+  tagRequestBody(WS_METHODS.previewStop, PreviewStopInput),
+  tagRequestBody(WS_METHODS.previewRestart, PreviewInstanceInput),
+  tagRequestBody(WS_METHODS.previewStatus, PreviewInstanceInput),
+  tagRequestBody(WS_METHODS.previewLogs, PreviewInstanceInput),
+  tagRequestBody(WS_METHODS.previewTargetGet, PreviewTargetGetInput),
+  tagRequestBody(WS_METHODS.previewTargetList, PreviewTargetListInput),
 
   // Provider discovery
   tagRequestBody(WS_METHODS.providerGetComposerCapabilities, ProviderGetComposerCapabilitiesInput),

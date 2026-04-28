@@ -295,6 +295,16 @@ export const EvidenceAccess = Schema.Literals([
 export type EvidenceAccess = typeof EvidenceAccess.Type;
 
 export const EvidenceArtifactKind = Schema.Literals([
+  "preview-detect",
+  "launch-config-loaded",
+  "dev-server-start-requested",
+  "dev-server-process-spawned",
+  "dev-server-health-check",
+  "dev-server-stdout",
+  "dev-server-stderr",
+  "dev-server-crash",
+  "dev-server-stop",
+  "preview-target-created",
   "browser-screenshot",
   "browser-observation",
   "browser-action",
@@ -393,6 +403,79 @@ export const PreviewTarget = Schema.Struct({
   supersedesPreviewTargetId: Schema.optional(PreviewTargetId),
 });
 export type PreviewTarget = typeof PreviewTarget.Type;
+
+export const PreviewDetectInput = Schema.Struct({
+  sessionId: Schema.optional(EntityId),
+});
+export type PreviewDetectInput = typeof PreviewDetectInput.Type;
+
+export const PreviewDetectResult = Schema.Struct({
+  status: Schema.Literals(["detected", "none", "failed"]),
+  configs: Schema.Array(LaunchConfig),
+  warnings: Schema.optional(Schema.Array(Schema.String.check(Schema.isMaxLength(512)))),
+});
+export type PreviewDetectResult = typeof PreviewDetectResult.Type;
+
+export const PreviewStartInput = Schema.Struct({
+  sessionId: Schema.optional(EntityId),
+  launchConfigId: Schema.optional(LaunchConfigId),
+});
+export type PreviewStartInput = typeof PreviewStartInput.Type;
+
+export const PreviewError = Schema.Struct({
+  code: DevServerFailureReason,
+  message: Schema.String.check(Schema.isMaxLength(MAX_REASON_LENGTH)),
+  details: Schema.optional(Schema.Unknown),
+});
+export type PreviewError = typeof PreviewError.Type;
+
+export const PreviewStartResult = Schema.Struct({
+  status: Schema.Literals(["started", "already-running", "failed", "blocked"]),
+  instance: Schema.optional(DevServerInstance),
+  previewTarget: Schema.optional(PreviewTarget),
+  error: Schema.optional(PreviewError),
+});
+export type PreviewStartResult = typeof PreviewStartResult.Type;
+
+export const PreviewInstanceInput = Schema.Struct({
+  instanceId: DevServerInstanceId,
+});
+export type PreviewInstanceInput = typeof PreviewInstanceInput.Type;
+
+export const PreviewStopInput = Schema.Struct({
+  instanceId: DevServerInstanceId,
+  reason: Schema.optional(Schema.Literals(["stopped-by-user", "stopped-by-workflow"])),
+});
+export type PreviewStopInput = typeof PreviewStopInput.Type;
+
+export const PreviewStatusResult = Schema.Struct({
+  instance: Schema.optional(DevServerInstance),
+  previewTarget: Schema.optional(PreviewTarget),
+});
+export type PreviewStatusResult = typeof PreviewStatusResult.Type;
+
+export const PreviewLogsResult = Schema.Struct({
+  instanceId: DevServerInstanceId,
+  stdout: Schema.String.check(Schema.isMaxLength(64_000)),
+  stderr: Schema.String.check(Schema.isMaxLength(64_000)),
+  logRefs: Schema.Array(EvidenceArtifactId),
+});
+export type PreviewLogsResult = typeof PreviewLogsResult.Type;
+
+export const PreviewTargetGetInput = Schema.Struct({
+  previewTargetId: PreviewTargetId,
+});
+export type PreviewTargetGetInput = typeof PreviewTargetGetInput.Type;
+
+export const PreviewTargetListInput = Schema.Struct({
+  sessionId: Schema.optional(EntityId),
+});
+export type PreviewTargetListInput = typeof PreviewTargetListInput.Type;
+
+export const PreviewTargetListResult = Schema.Struct({
+  targets: Schema.Array(PreviewTarget),
+});
+export type PreviewTargetListResult = typeof PreviewTargetListResult.Type;
 
 export const BrowserRuntimeKind = Schema.Literals([
   "electron-visible",

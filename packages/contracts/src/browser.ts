@@ -89,6 +89,47 @@ export type BrowserSurfaceMode = typeof BrowserSurfaceMode.Type;
 export const BrowserUrlAgreement = Schema.Literals(["same", "different", "unknown"]);
 export type BrowserUrlAgreement = typeof BrowserUrlAgreement.Type;
 
+const BrowserOpenSessionPreviewViewport = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  label: Schema.String.check(Schema.isMaxLength(128)),
+  width: PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
+  height: PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_HEIGHT)),
+  deviceScaleFactor: Schema.optional(
+    Schema.Number.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(4)),
+  ),
+});
+
+const BrowserOpenSessionPreviewTarget = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  version: PositiveInt,
+  sessionId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  kind: Schema.Literals([
+    "local-dev-server",
+    "file-backed",
+    "public-unauthenticated",
+    "authenticated-extension",
+  ]),
+  canonicalUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  baseUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  initialRoute: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  devServerInstanceId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  launchConfigId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  allowedOrigins: Schema.Array(Schema.String.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH))),
+  deniedOrigins: Schema.Array(Schema.String.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH))),
+  authMode: Schema.Literals(["none", "isolated-preview", "real-browser-extension"]),
+  permissionTier: Schema.Literals([
+    "isolated-local-preview",
+    "approved-public",
+    "authenticated-browser",
+    "computer-use-fallback",
+  ]),
+  viewports: Schema.Array(BrowserOpenSessionPreviewViewport).check(Schema.isMinLength(1)),
+  readinessEvidenceRef: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  serverLogRefs: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  createdAt: IsoDateTime,
+  supersedesPreviewTargetId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+});
+
 export const BrowserRuntimeTruth = Schema.Struct({
   runtimeKind: BrowserRuntimeTruthKind,
   surfaceMode: BrowserSurfaceMode,
@@ -196,6 +237,7 @@ export type BrowserObservation = typeof BrowserObservation.Type;
 export const BrowserOpenSessionInput = Schema.Struct({
   threadId: Schema.optionalKey(ThreadId),
   url: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_MAX_URL_LENGTH)),
+  previewTarget: Schema.optionalKey(BrowserOpenSessionPreviewTarget),
   viewportWidth: Schema.optionalKey(
     PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
   ),

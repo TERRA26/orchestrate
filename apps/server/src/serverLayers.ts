@@ -51,6 +51,7 @@ import { BrowserControlLeaseServiceLive } from "./browserControl/Layers/BrowserC
 import { BrowserRuntimeStackLive } from "./browserRuntime/Layers/BrowserRuntimeStack.ts";
 import { BrowserOrchestrationEvidenceRepositoryLive } from "./persistence/Layers/BrowserOrchestrationEvidence.ts";
 import { BrowserAnnotationRepositoryLive } from "./persistence/Layers/BrowserAnnotations.ts";
+import { PreviewServiceLive } from "./preview/Layers/PreviewService.ts";
 
 type RuntimePtyAdapterLoader = {
   layer: Layer.Layer<PtyAdapter, never, FileSystem.FileSystem | Path.Path>;
@@ -184,11 +185,15 @@ export function makeServerRuntimeServicesLayer() {
   const browserAnnotationServiceLayer = BrowserAnnotationServiceLive.pipe(
     Layer.provide(BrowserAnnotationRepositoryLive),
   );
+  const previewServiceLayer = PreviewServiceLive.pipe(
+    Layer.provide(BrowserOrchestrationEvidenceRepositoryLive),
+  );
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
     browserRuntimeLayer,
     BrowserOrchestrationEvidenceRepositoryLive,
+    previewServiceLayer,
     browserAnnotationServiceLayer,
     BrowserControlLeaseServiceLive,
     workspacePathsLayer,
