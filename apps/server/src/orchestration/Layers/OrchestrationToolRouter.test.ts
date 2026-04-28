@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { Effect, Layer, Stream } from "effect";
 
 import { BrowserAutomation } from "../../browser/Services/BrowserAutomation.ts";
+import { BrowserRuntimeServiceLive } from "../../browserRuntime/Layers/BrowserRuntimeService.ts";
 import { OrchestrationToolRouterLive } from "./OrchestrationToolRouter.ts";
 import { OrchestrationToolRouterService } from "../Services/OrchestrationToolRouter.ts";
 import {
@@ -136,11 +137,12 @@ function makeBrowserAutomation() {
 }
 
 describe("OrchestrationToolRouter", () => {
-  it("executes browser open-session tools through browser automation so screenshots reach the thread", async () => {
+  it("executes browser open-session tools through browser runtime so screenshots reach the thread with runtime truth", async () => {
     const browser = makeBrowserAutomation();
+    const browserRuntimeLayer = BrowserRuntimeServiceLive.pipe(Layer.provide(browser.layer));
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), [])),
-      Layer.provide(browser.layer),
+      Layer.provide(browserRuntimeLayer),
     );
 
     const result = await Effect.runPromise(
@@ -155,27 +157,48 @@ describe("OrchestrationToolRouter", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    expect(browser.calls).toEqual([{ name: "openSession", input: { url: "https://example.com" } }]);
+    expect(browser.calls).toEqual([
+      {
+        name: "openSession",
+        input: { url: "https://example.com", viewportHeight: 900, viewportWidth: 1440 },
+      },
+      { name: "act", input: { sessionId: "browser-session-1", action: { kind: "wait", ms: 0 } } },
+    ]);
     expect(result).toMatchObject({
       sessionId: "browser-session-1",
+      runtimeTruth: {
+        runtimeKind: "playwright-headless",
+        surfaceMode: "headless-validation-mirror",
+        isUserVisibleSurface: false,
+      },
       observation: {
-        url: "https://example.com",
-        screenshotDataUrl: "data:image/jpeg;base64,abc",
-        previewScreenshotDataUrl: "data:image/jpeg;base64,preview",
+        url: "https://example.com/next",
+        runtimeKind: "playwright-headless",
+        surfaceMode: "headless-validation-mirror",
+        isUserVisibleSurface: false,
+        screenshotDataUrl: "data:image/jpeg;base64,next",
+        previewScreenshotDataUrl: "data:image/jpeg;base64,next-preview",
       },
     });
   });
 
-  it("executes browser action tools through the active browser automation session", async () => {
+  it("executes browser action tools through the active browser runtime session", async () => {
     const browser = makeBrowserAutomation();
+    const browserRuntimeLayer = BrowserRuntimeServiceLive.pipe(Layer.provide(browser.layer));
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(makeReadModel(), [])),
-      Layer.provide(browser.layer),
+      Layer.provide(browserRuntimeLayer),
     );
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* OrchestrationToolRouterService;
+        yield* router.executeTool({
+          toolName: "orchestrate_browser_open_session",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { url: "https://example.com" },
+        });
         return yield* router.executeTool({
           toolName: "orchestrate_browser_act",
           threadId: THREAD_ID,
@@ -190,16 +213,29 @@ describe("OrchestrationToolRouter", () => {
 
     expect(browser.calls).toEqual([
       {
+        name: "openSession",
+        input: { url: "https://example.com", viewportHeight: 900, viewportWidth: 1440 },
+      },
+      { name: "act", input: { sessionId: "browser-session-1", action: { kind: "wait", ms: 0 } } },
+      {
         name: "act",
         input: {
           sessionId: "browser-session-1",
           action: { kind: "navigate", url: "https://example.com/next" },
         },
       },
+      { name: "act", input: { sessionId: "browser-session-1", action: { kind: "wait", ms: 0 } } },
     ]);
     expect(result).toMatchObject({
+      runtimeTruth: {
+        runtimeKind: "playwright-headless",
+        surfaceMode: "headless-validation-mirror",
+        isUserVisibleSurface: false,
+      },
       observation: {
         url: "https://example.com/next",
+        runtimeKind: "playwright-headless",
+        surfaceMode: "headless-validation-mirror",
         screenshotDataUrl: "data:image/jpeg;base64,next",
         previewScreenshotDataUrl: "data:image/jpeg;base64,next-preview",
       },

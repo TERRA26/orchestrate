@@ -21,7 +21,7 @@ import {
 import { Effect } from "effect";
 
 import type { BrowserOrchestrationEvidenceRepositoryShape } from "../persistence/Services/BrowserOrchestrationEvidence.ts";
-import type { BrowserRuntime } from "../browserRuntime/PlaywrightHeadlessBrowserRuntime.ts";
+import type { BrowserRuntime } from "../browserRuntime/BrowserRuntime.ts";
 
 export type BrowserWorkflowStartInput = {
   readonly sessionId: string;

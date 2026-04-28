@@ -11,7 +11,7 @@ import {
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
-import type { BrowserRuntime } from "../browserRuntime/PlaywrightHeadlessBrowserRuntime.ts";
+import type { BrowserRuntime } from "../browserRuntime/BrowserRuntime.ts";
 import { makePreviewTarget } from "../browserRuntime/testFixtures.ts";
 import type {
   BrowserOrchestrationEvidenceRepositoryShape,

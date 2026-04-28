@@ -1,55 +1,24 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  type BrowserAction,
   type BrowserObservation,
   type BrowserRuntimeKind,
   type BrowserSnapshot,
-  type BrowserSessionId,
   EvidenceArtifactId,
   type PreviewTarget,
-  type PreviewViewport,
 } from "@orchestrate/contracts";
 import { Effect } from "effect";
 
 import type { BrowserAutomationShape } from "../browser/Services/BrowserAutomation.ts";
+import type {
+  BrowserRuntime,
+  BrowserRuntimeActInput,
+  BrowserRuntimeActResult,
+  BrowserRuntimeObserveInput,
+  BrowserRuntimeOpenSessionInput,
+  BrowserRuntimeSession,
+} from "./BrowserRuntime.ts";
 import { BrowserActionPolicy } from "./BrowserActionPolicy.ts";
-
-export type BrowserRuntimeSession = {
-  readonly browserSessionId: BrowserSessionId;
-  readonly previewTarget: PreviewTarget;
-  readonly runtimeKind: BrowserRuntimeKind;
-  readonly lastSnapshot?: BrowserSnapshot;
-};
-
-export type BrowserRuntimeOpenSessionInput = {
-  readonly previewTarget: PreviewTarget;
-  readonly viewport?: PreviewViewport;
-};
-
-export type BrowserRuntimeActInput = {
-  readonly browserSessionId: BrowserSessionId;
-  readonly action: BrowserAction;
-};
-
-export type BrowserRuntimeObserveInput = {
-  readonly browserSessionId: BrowserSessionId;
-};
-
-export type BrowserRuntimeActResult =
-  | { readonly ok: true; readonly snapshot: BrowserSnapshot }
-  | {
-      readonly ok: false;
-      readonly policyDecision: ReturnType<typeof BrowserActionPolicy.validate>;
-    };
-
-export interface BrowserRuntime {
-  readonly openSession: (input: BrowserRuntimeOpenSessionInput) => Promise<BrowserRuntimeSession>;
-  readonly observe: (input: BrowserRuntimeObserveInput) => Promise<BrowserSnapshot>;
-  readonly act: (input: BrowserRuntimeActInput) => Promise<BrowserRuntimeActResult>;
-  readonly captureSnapshot: (input: BrowserRuntimeObserveInput) => Promise<BrowserSnapshot>;
-  readonly closeSession: (input: BrowserRuntimeObserveInput) => Promise<void>;
-}
 
 export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
   private readonly sessions = new Map<string, BrowserRuntimeSession>();

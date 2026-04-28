@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "~/lib/utils";
-import { browserScreenshotDataUrls } from "~/browserWorkLog";
+import { browserRuntimeTruthLabel, browserScreenshotDataUrls } from "~/browserWorkLog";
 import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { InlineEmbeddedBrowserCard } from "~/components/EmbeddedBrowserPane";
@@ -376,6 +376,7 @@ function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
   const rawToolName = workEntry.toolName?.replace(/^mcp__orchestrate__/, "");
   const isOrchTool = rawToolName?.startsWith("orchestrate_") ?? false;
   const screenshot = browserScreenshotDataUrls(workEntry);
+  const runtimeTruthLabel = browserRuntimeTruthLabel(workEntry);
 
   const label = (() => {
     if (rawToolName === "orchestrate_open_browser_preview") {
@@ -456,6 +457,11 @@ function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
           </span>
         ) : null}
       </div>
+      {runtimeTruthLabel ? (
+        <div className="px-3 pb-1 font-mono text-[10px] leading-[1.4] text-muted-foreground/45">
+          {runtimeTruthLabel}
+        </div>
+      ) : null}
       {screenshot ? <BrowserScreenshotThumb screenshot={screenshot} /> : null}
     </div>
   );

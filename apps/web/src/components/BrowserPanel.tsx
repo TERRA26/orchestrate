@@ -331,11 +331,11 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const browserSurfaceModeLabel = usesNativeBrowserSurface
     ? "Live shared browser"
     : showStaticThreadEvidence
-      ? "Screenshot evidence"
+      ? "Static screenshot evidence"
       : fallbackAutomationScreenshotDataUrl
         ? "Headless validation mirror"
         : fallbackScreenshotSession
-          ? "Screenshot evidence"
+          ? "Static screenshot evidence"
           : null;
   const activeBrowserUrl =
     displayedFallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;

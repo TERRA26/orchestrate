@@ -25,7 +25,7 @@ import * as ToolSchemas from "@orchestrate/contracts";
 import { Effect, Layer, Option, Schema, Stream } from "effect";
 import crypto from "node:crypto";
 
-import { BrowserAutomation } from "../../browser/Services/BrowserAutomation.ts";
+import { BrowserRuntimeService } from "../../browserRuntime/Services/BrowserRuntimeService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationToolRouterService,
@@ -1191,7 +1191,7 @@ function handleWaitAll(
 
 const makeOrchestrationToolRouter = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
-  const browserAutomation = yield* Effect.serviceOption(BrowserAutomation);
+  const browserRuntime = yield* Effect.serviceOption(BrowserRuntimeService);
 
   const isOrchestrationTool: OrchestrationToolRouterShape["isOrchestrationTool"] = (toolName) =>
     ORCHESTRATION_TOOL_NAMES.has(toolName);
@@ -1215,25 +1215,25 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
         case "orchestrate_collapse_panel":
           return yield* handleCollapsePanel(readModel, engine.dispatch, toolInput);
         case "orchestrate_browser_open_session": {
-          if (browserAutomation._tag === "None") {
+          if (browserRuntime._tag === "None") {
             return browserAutomationUnavailable(toolName);
           }
           const body = yield* decodeInput(ToolSchemas.BrowserOpenSessionInput, toolInput);
-          return yield* browserAutomation.value.openSession(body);
+          return yield* browserRuntime.value.openSession(body);
         }
         case "orchestrate_browser_act": {
-          if (browserAutomation._tag === "None") {
+          if (browserRuntime._tag === "None") {
             return browserAutomationUnavailable(toolName);
           }
           const body = yield* decodeInput(ToolSchemas.BrowserActInput, toolInput);
-          return yield* browserAutomation.value.act(body);
+          return yield* browserRuntime.value.act(body);
         }
         case "orchestrate_browser_close_session": {
-          if (browserAutomation._tag === "None") {
+          if (browserRuntime._tag === "None") {
             return browserAutomationUnavailable(toolName);
           }
           const body = yield* decodeInput(ToolSchemas.BrowserCloseSessionInput, toolInput);
-          yield* browserAutomation.value.closeSession(body);
+          yield* browserRuntime.value.closeSession(body);
           return { success: true, closed: true, sessionId: body.sessionId };
         }
         default:

@@ -9,6 +9,13 @@ export interface BrowserScreenshotDataUrls {
   fullDataUrl?: string;
 }
 
+export interface BrowserRuntimeTruthSummary {
+  runtimeKind: string;
+  surfaceMode: string;
+  isUserVisibleSurface: boolean;
+  urlAgreement?: string;
+}
+
 export function stripOrchestrationToolPrefix(toolName: string | undefined): string | null {
   if (!toolName) return null;
   const trimmed = toolName.replace(/^mcp__orchestrate__/, "");
@@ -25,6 +32,10 @@ function readDataUrl(value: unknown): string | null {
 
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function readArray(value: unknown): ReadonlyArray<unknown> {
@@ -177,6 +188,54 @@ export function browserScreenshotDataUrls(
     thumbnailDataUrl,
     ...(fullDataUrl ? { fullDataUrl } : {}),
   };
+}
+
+export function browserRuntimeTruthSummary(
+  workEntry: WorkLogEntry,
+): BrowserRuntimeTruthSummary | null {
+  const observation = parseBrowserToolObservation(workEntry);
+  if (!observation) {
+    return null;
+  }
+  const runtimeTruth = readRecord(observation.runtimeTruth);
+  const runtimeKind = readString(runtimeTruth?.runtimeKind) ?? readString(observation.runtimeKind);
+  const surfaceMode = readString(runtimeTruth?.surfaceMode) ?? readString(observation.surfaceMode);
+  const isUserVisibleSurface =
+    readBoolean(runtimeTruth?.isUserVisibleSurface) ??
+    readBoolean(observation.isUserVisibleSurface);
+  if (!runtimeKind || !surfaceMode || isUserVisibleSurface === null) {
+    return null;
+  }
+  return {
+    runtimeKind,
+    surfaceMode,
+    isUserVisibleSurface,
+    ...((readString(runtimeTruth?.urlAgreement) ?? readString(observation.urlAgreement))
+      ? {
+          urlAgreement:
+            readString(runtimeTruth?.urlAgreement) ?? readString(observation.urlAgreement)!,
+        }
+      : {}),
+  };
+}
+
+export function browserRuntimeTruthLabel(workEntry: WorkLogEntry): string | null {
+  const truth = browserRuntimeTruthSummary(workEntry);
+  if (!truth) {
+    return null;
+  }
+  const surface =
+    truth.surfaceMode === "live-shared-browser"
+      ? "Live shared browser"
+      : truth.surfaceMode === "headless-validation-mirror"
+        ? "Headless validation mirror"
+        : truth.surfaceMode === "static-screenshot-evidence"
+          ? "Static screenshot evidence"
+          : truth.surfaceMode;
+  const visibility = truth.isUserVisibleSurface ? "same surface" : "not the visible browser";
+  const agreement =
+    truth.urlAgreement && truth.urlAgreement !== "unknown" ? ` · URL ${truth.urlAgreement}` : "";
+  return `${surface} · ${truth.runtimeKind} · ${visibility}${agreement}`;
 }
 
 export function embeddedBrowserSessionFromBrowserWorkEntry(

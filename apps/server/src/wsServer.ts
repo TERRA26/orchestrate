@@ -84,7 +84,7 @@ import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
 import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
-import { BrowserAutomation } from "./browser/Services/BrowserAutomation.ts";
+import { BrowserRuntimeService } from "./browserRuntime/Services/BrowserRuntimeService.ts";
 import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
 import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
 
@@ -308,7 +308,7 @@ export type ServerRuntimeServices =
   | Keybindings
   | Open
   | AnalyticsService
-  | BrowserAutomation
+  | BrowserRuntimeService
   | BrowserAnnotationService
   | BrowserControlLeaseService;
 
@@ -409,7 +409,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
   const providerDiscoveryService = yield* ProviderDiscoveryService;
-  const browserAutomation = yield* BrowserAutomation;
+  const browserRuntime = yield* BrowserRuntimeService;
   const browserAnnotations = yield* BrowserAnnotationService;
   const browserControlLeases = yield* BrowserControlLeaseService;
   const git = yield* GitCore;
@@ -1163,7 +1163,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.browserOpenSession: {
         const body = stripRequestTag(request.body);
-        const result = yield* browserAutomation.openSession(body);
+        const result = yield* browserRuntime.openSession(body);
         const threadId = body.threadId ?? browserPreviewThreadBySocket.get(ws);
         if (threadId) {
           yield* pushBus.publishAll(WS_CHANNELS.browserObservationCaptured, {
@@ -1177,7 +1177,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.browserAct: {
         const body = stripRequestTag(request.body);
-        const result = yield* browserAutomation.act(body);
+        const result = yield* browserRuntime.act(body);
         const threadId = body.threadId ?? browserPreviewThreadBySocket.get(ws);
         if (threadId) {
           yield* pushBus.publishAll(WS_CHANNELS.browserObservationCaptured, {
@@ -1191,7 +1191,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.browserCloseSession: {
         const body = stripRequestTag(request.body);
-        yield* browserAutomation.closeSession(body);
+        yield* browserRuntime.closeSession(body);
         return { closed: true, sessionId: body.sessionId };
       }
 

@@ -1,7 +1,11 @@
 import { memo, useState } from "react";
 
 import type { WorkLogEntry } from "../../session-logic";
-import { browserScreenshotDataUrls, stripOrchestrationToolPrefix } from "~/browserWorkLog";
+import {
+  browserRuntimeTruthLabel,
+  browserScreenshotDataUrls,
+  stripOrchestrationToolPrefix,
+} from "~/browserWorkLog";
 import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
 import { cn } from "~/lib/utils";
 import { normalizeCompactToolLabel } from "./MessagesTimeline.logic";
@@ -487,9 +491,13 @@ export const WorkEntryRow = memo(function WorkEntryRow({
     const browserLabel = browserToolCallLabel(baseTool, workEntry.detail, isLoading);
     if (browserLabel) {
       const screenshot = browserScreenshotDataUrls(workEntry);
+      const runtimeTruthLabel = browserRuntimeTruthLabel(workEntry);
       return wrap(
         <div>
           <OrchThinkRow label={browserLabel} isLoading={isLoading} />
+          {runtimeTruthLabel ? (
+            <div className="mt-1 text-xs text-muted-foreground/70">{runtimeTruthLabel}</div>
+          ) : null}
           {screenshot ? <BrowserScreenshotPreview screenshot={screenshot} /> : null}
         </div>,
       );
