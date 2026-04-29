@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `f0b45544` (`harden browser runtime defaults`) — Bundle 17B Sub-scope A (Hardening) reviewed; ACCEPTED with one required follow-up before Sub-scope B (see §10 iteration log).
-**Active bundle:** **Bundle 17B Sub-scope B — Annotation → Focused Rework Task** (gated on completing one small follow-up from Sub-scope A: unknown-label leaks at `browserWorkLog.ts:963` and `WorkEntryRow.tsx:201`).
+**Latest reviewed commit:** `7870b4bf` (`fix web browser runtime labels`) — Bundle 17B Sub-scope A complete (Hardening + C-3 follow-up), ACCEPTED.
+**Active bundle:** **Bundle 17B Sub-scope B — Annotation → Focused Rework Task** (GREENLIT, no preconditions remaining). Spec is in §"Active Bundle: Bundle 17B" → "Sub-scope B" above.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -847,3 +847,50 @@ This is the small required C-3 follow-up from the Bundle 17B Sub-scope A review.
 ### Next
 
 Bundle 17B Sub-scope B is still next: annotation creation before-evidence, `rework_tasks` persistence/state machine, `start-agent-run` spawning, submit-time after-evidence, and before/after UI preview.
+
+---
+
+### Reviewer Scrutiny — 2026-04-29 — Bundle 17B C-3 Follow-up
+
+**Verdict: ACCEPTED. Bundle 17B Sub-scope A is now complete. Sub-scope B is GREENLIT with no preconditions remaining.**
+
+#### What I verified
+
+- `git diff b5b9bbcb..7870b4bf` — 7 files, +100/−4 lines, all in scope.
+- Production diff is exactly the requested shape:
+  - [`orchestratorPresentation.ts:22`](apps/web/src/orchestratorPresentation.ts:22) — `browserRuntimeKindLabel(kind: string)` mapping the four explicit cases plus stale-data fallthrough. Confirmed.
+  - [`browserWorkLog.ts:961`](apps/web/src/browserWorkLog.ts:961) — interpolation now reads `${runtime}` (the labeled value), not `${truth.runtimeKind}`. Confirmed.
+  - [`WorkEntryRow.tsx:202`](apps/web/src/components/chat/WorkEntryRow.tsx:202) — `<span>{browserRuntimeKindLabel(summary.runtimeKind)}</span>`. Confirmed.
+- **Re-grepped for any other user-visible raw runtimeKind/surfaceMode paths.** Of all remaining matches in `apps/web/src` and `apps/desktop/src`:
+  - Type definitions and internal data flow (`browserWorkLog.ts:25,26,35,36,934,935,939,943,944,975-979,1015,1016`) — not rendered.
+  - The disjoint pane-layout `surfaceMode: "single" | "split"` in `ChatView.tsx`/`ChatHeader.tsx`/`_chat.$threadId.tsx` — different namespace entirely.
+  - `browserManager.ts:981,982,1017,1018` — source code that *produces* runtimeTruth, not display.
+  - Every renderable use of `summary.runtimeKind`, `truth.runtimeKind`, `summary.surfaceMode`, `truth.surfaceMode` now goes through `browserRuntimeKindLabel` or `browserSurfaceModeLabel`.
+  - The two indirect renderers `WorkEntryRow.tsx:1071` and `OrchestratorMessages.tsx:462` both render `browserRuntimeTruthLabel(workEntry)` output — itself labeled at [`browserWorkLog.ts:960-961`](apps/web/src/browserWorkLog.ts:960).
+  - **No remaining leak paths.** C-3 is fully closed.
+- Tests reviewed and re-run on my machine:
+  - Mapper unit test — covers all four explicit kinds plus stale fallthrough. Good.
+  - `browserWorkLog.test.ts:104-122` — drives `runtimeTruthLabel` with `runtimeKind: "unknown"`, asserts the full label is `"Browser runtime unknown · Runtime unknown · not the visible browser"`. Good integration coverage.
+  - `WorkEntryRow.test.tsx:92-119` — renders the component with `runtimeKind: "unknown"` and asserts the markup contains the labeled strings AND **does not contain `>unknown<`**. The negative assertion is the right shape: any future regression that re-introduces a raw render anywhere as element text content is caught. Excellent.
+  - `bun run test` for the three files: 38/38 PASS.
+  - `bun lint`: 0 errors, 131 pre-existing warnings (unchanged).
+
+#### Answers to your three scrutiny questions
+
+1. **Are the callsite tests sufficient to close C-3?** Yes. The mapper has its own coverage; both leaking callsites have direct integration tests. The `>unknown<` negative assertion in the WorkEntryRow render test is a particularly good catch — it generalizes to any future raw-render regression in that component.
+
+2. **Are the chosen labels acceptable?** Yes. `"Electron desktop"` / `"Playwright headless"` / `"Chrome extension"` / `"Runtime unknown"` are clear and consistent. They diverge slightly from the surface-mode labels (`"Live shared browser"` etc.) but that's appropriate — they describe different concepts (the runtime engine vs. the surface mode the user sees), and rendering both side-by-side makes the distinction useful rather than redundant.
+
+3. **Does any other user-visible raw runtimeKind path remain?** No. I exhaustively grepped `apps/web/src` and `apps/desktop/src` for `runtimeKind` and `surfaceMode` references and classified each. The remaining matches are type definitions, internal data flow, the disjoint pane-layout `surfaceMode` enum, or source code that produces runtimeTruth values. All renderable paths route through a labeler.
+
+#### Bundle 17B Sub-scope B is GREENLIT
+
+No preconditions remaining. Spec is in the "Active Bundle: Bundle 17B" → "Sub-scope B" section above (unchanged). Two reminders worth restating before you start:
+
+- **Verify `OrchestrationEngineService` (or whatever your codebase actually exposes) before assuming an interface.** Look at how `orchestrate_spawn_agent` is wired in [`OrchestrationToolRouter.ts`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts) and follow the call. Don't stuff orchestration logic into `ReviewerDecisionService`.
+- **Before-evidence is captured at *annotation creation*, not at `startRework`.** Wire it in `BrowserAnnotationService.create`, persist the artifact refs onto the annotation row, and have `loadAnnotationReworkTargetsByIds` attach them to `BrowserAnnotationReworkTarget.beforeScreenshotArtifactRef` / `beforeDomArtifactRef`.
+
+#### Iteration log update
+
+- **2026-04-29 — Agent Report — Bundle 17B C-3 Follow-up** — implemented; pushed at `7870b4bf`.
+- **2026-04-29 — Reviewer Scrutiny — Bundle 17B C-3 Follow-up** — accepted; Sub-scope A complete; Sub-scope B greenlit with no preconditions.
