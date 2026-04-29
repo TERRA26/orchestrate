@@ -2058,6 +2058,32 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
       }
 
       yield* sql`
+        INSERT INTO browser_annotations (
+          annotation_id, thread_id, session_id, status, annotation_json,
+          target_json, geometry_context_json, created_at, updated_at,
+          resolved_at, reopened_at
+        )
+        VALUES (
+          'browser-annotation-rework-accepted',
+          'thread-rework-lifecycle',
+          NULL,
+          'open',
+          ${JSON.stringify({
+            id: "browser-annotation-rework-accepted",
+            comment: "Before annotation",
+            beforeScreenshotArtifactRef: "browser-screenshot-before-submit",
+            beforeDomArtifactRef: "browser-dom-before-submit",
+          })},
+          NULL,
+          NULL,
+          ${createdAt},
+          ${createdAt},
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
         INSERT INTO rework_tasks (
           rework_task_id, thread_id, orchestrator_task_id, status,
           annotation_targets_json, evidence_refs_json, before_evidence_refs_json,
@@ -2066,7 +2092,9 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         VALUES
           (
             'rework-task-accepted', 'thread-rework-lifecycle',
-            ${acceptedTaskId}, 'assigned', '[]', '[]', '[]', '[]',
+            ${acceptedTaskId}, 'assigned',
+            ${JSON.stringify([{ annotationId: "browser-annotation-rework-accepted" }])},
+            '[]', '[]', '[]',
             'accepted path', ${createdAt}, ${createdAt}
           ),
           (
@@ -2109,6 +2137,8 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         filesWritten: ["apps/web/src/Settings.tsx"],
         testsRun: [{ name: "Settings layout", passed: true }],
         notes: "Visual alignment checked.",
+        browserAfterScreenshotRef: "browser-screenshot-after-submit",
+        browserAfterDomRef: "browser-dom-after-submit",
         createdAt: submittedAt,
       });
 
@@ -2130,15 +2160,32 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         | string[]
         | unknown;
       assert.ok(Array.isArray(afterEvidenceRefs));
-      assert.strictEqual(afterEvidenceRefs.length, 1);
-      assert.match(afterEvidenceRefs[0] ?? "", /^rework-after-/);
+      assert.strictEqual(afterEvidenceRefs.length, 3);
+      assert.strictEqual(afterEvidenceRefs[0], "browser-screenshot-after-submit");
+      assert.strictEqual(afterEvidenceRefs[1], "browser-dom-after-submit");
+      assert.match(afterEvidenceRefs[2] ?? "", /^rework-after-/);
 
       const evidenceRows = yield* sql<{ readonly kind: string }>`
         SELECT kind
         FROM evidence_artifacts
-        WHERE artifact_id = ${afterEvidenceRefs[0]}
+        WHERE artifact_id = ${afterEvidenceRefs[2]}
       `;
       assert.deepEqual(evidenceRows, [{ kind: "browser-comment" }]);
+
+      const annotationRows = yield* sql<{ readonly annotationJson: string }>`
+        SELECT annotation_json AS "annotationJson"
+        FROM browser_annotations
+        WHERE annotation_id = 'browser-annotation-rework-accepted'
+      `;
+      const annotationJson = JSON.parse(annotationRows[0]?.annotationJson ?? "{}") as {
+        readonly afterScreenshotArtifactRef?: string;
+        readonly afterDomArtifactRef?: string;
+      };
+      assert.strictEqual(
+        annotationJson.afterScreenshotArtifactRef,
+        "browser-screenshot-after-submit",
+      );
+      assert.strictEqual(annotationJson.afterDomArtifactRef, "browser-dom-after-submit");
 
       yield* engine.dispatch({
         type: "orchestrator.task.accept",

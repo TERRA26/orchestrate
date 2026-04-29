@@ -1158,6 +1158,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.filesWritten !== undefined ? { filesWritten: command.filesWritten } : {}),
           ...(command.testsRun !== undefined ? { testsRun: command.testsRun } : {}),
           ...(command.notes !== undefined ? { notes: command.notes } : {}),
+          ...(command.browserAfterScreenshotRef !== undefined
+            ? { browserAfterScreenshotRef: command.browserAfterScreenshotRef }
+            : {}),
+          ...(command.browserAfterDomRef !== undefined
+            ? { browserAfterDomRef: command.browserAfterDomRef }
+            : {}),
           submittedAt: command.createdAt,
         },
       };

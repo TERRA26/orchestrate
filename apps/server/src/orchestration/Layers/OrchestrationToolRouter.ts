@@ -15,6 +15,8 @@ import {
   ORCHESTRATION_TOOL_NAMES,
   READ_ONLY_TOOLS,
   UI_DIRECTIVE_TOOLS,
+  CommandId,
+  type BrowserSessionId,
   type OrchestrationReadModel,
   type OrchestrationThread,
   type OrchestratorTaskId,
@@ -25,7 +27,10 @@ import * as ToolSchemas from "@orchestrate/contracts";
 import { Effect, Layer, Option, Schema, Stream } from "effect";
 import crypto from "node:crypto";
 
-import { BrowserRuntimeService } from "../../browserRuntime/Services/BrowserRuntimeService.ts";
+import {
+  BrowserRuntimeService,
+  type BrowserRuntimeServiceShape,
+} from "../../browserRuntime/Services/BrowserRuntimeService.ts";
 import { workerKickoffMessage } from "../reportProtocol.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -908,29 +913,73 @@ function handleSendToAgent(
 function handleAcceptWork(
   dispatch: OrchestrationEngineService["Type"]["dispatch"],
   readModel: OrchestrationReadModel,
+  browserRuntime: Option.Option<BrowserRuntimeServiceShape>,
   input: unknown,
 ): Effect.Effect<unknown, Error> {
   return Effect.gen(function* () {
     const decoded = yield* decodeInput(ToolSchemas.AcceptWorkInput, input);
-    const taskId =
-      decoded.taskId ??
-      readModel.orchestratorWorkers.find(
-        (w) => w.workerId === (decoded.agentId as unknown as OrchestratorWorkerId),
-      )?.activeTaskId;
+    const raw = asObject(input) ?? {};
+    const worker = readModel.orchestratorWorkers.find(
+      (w) => w.workerId === (decoded.agentId as unknown as OrchestratorWorkerId),
+    );
+    const taskId = decoded.taskId ?? worker?.activeTaskId;
 
     if (!taskId) {
       return { error: `No active task found for agent: ${decoded.agentId}` };
     }
 
+    const task = readModel.orchestratorTasks.find((candidate) => candidate.taskId === taskId);
+    const browserSessionId =
+      decoded.browserSessionId ??
+      readOptionalString(raw, "browserSessionId", "browser_session_id") ??
+      worker?.workspace.browserSessionId;
+    let browserAfterScreenshotRef: string | undefined;
+    let browserAfterDomRef: string | undefined;
+
+    if (task && (task.status === "assigned" || task.status === "running")) {
+      if (browserSessionId && Option.isSome(browserRuntime)) {
+        const observed = yield* browserRuntime.value.observe({
+          sessionId: browserSessionId as unknown as BrowserSessionId,
+        });
+        browserAfterScreenshotRef =
+          observed.runtimeTruth?.screenshotArtifactRef ??
+          observed.observation?.runtimeTruth?.screenshotArtifactRef ??
+          observed.observation?.screenshotArtifactRef;
+        browserAfterDomRef = observed.evidenceRefs.find(
+          (ref) => ref !== browserAfterScreenshotRef && !ref.includes("url-agreement"),
+        );
+      }
+
+      yield* dispatch({
+        type: "orchestrator.task.submit" as const,
+        commandId: CommandId.makeUnsafe(uuid()),
+        taskId: taskId as OrchestratorTaskId,
+        workerId: decoded.agentId as unknown as OrchestratorWorkerId,
+        summary: decoded.notes,
+        ...(browserAfterScreenshotRef
+          ? { browserAfterScreenshotRef: browserAfterScreenshotRef as unknown as string }
+          : {}),
+        ...(browserAfterDomRef
+          ? { browserAfterDomRef: browserAfterDomRef as unknown as string }
+          : {}),
+        createdAt: now(),
+      }).pipe(Effect.mapError((e) => new Error(`Dispatch failed: ${e.message}`)));
+    }
+
     yield* dispatch({
       type: "orchestrator.task.accept" as const,
-      commandId: uuid() as any,
+      commandId: CommandId.makeUnsafe(uuid()),
       taskId: taskId as OrchestratorTaskId,
       summary: decoded.notes,
-      createdAt: now() as any,
+      createdAt: now(),
     }).pipe(Effect.mapError((e) => new Error(`Dispatch failed: ${e.message}`)));
 
-    return { accepted: true, taskId };
+    return {
+      accepted: true,
+      taskId,
+      ...(browserAfterScreenshotRef ? { browserAfterScreenshotRef } : {}),
+      ...(browserAfterDomRef ? { browserAfterDomRef } : {}),
+    };
   });
 }
 
@@ -1265,7 +1314,7 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
         case "orchestrate_send_to_agent":
           return yield* handleSendToAgent(engine.dispatch, readModel, toolInput);
         case "orchestrate_accept_work":
-          return yield* handleAcceptWork(engine.dispatch, readModel, toolInput);
+          return yield* handleAcceptWork(engine.dispatch, readModel, browserRuntime, toolInput);
         case "orchestrate_reject_work":
           return yield* handleRejectWork(engine.dispatch, readModel, toolInput);
         case "orchestrate_wait_agent":

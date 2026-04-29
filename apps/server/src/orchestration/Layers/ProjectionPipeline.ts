@@ -73,6 +73,20 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function parseJsonArray(value: string | null | undefined): unknown[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function uniqueStrings(values: ReadonlyArray<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
 interface ProjectorDefinition {
   readonly name: ProjectorName;
   readonly apply: (
@@ -1326,9 +1340,16 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             filesWritten: event.payload.filesWritten ?? [],
             testsRun: event.payload.testsRun ?? [],
             notes: event.payload.notes ?? null,
+            browserAfterScreenshotRef: event.payload.browserAfterScreenshotRef ?? null,
+            browserAfterDomRef: event.payload.browserAfterDomRef ?? null,
             capturedAt: event.payload.submittedAt,
           });
           const afterEvidenceRef = `rework-after-${sha256(afterEvidenceContent).slice(0, 24)}`;
+          const afterEvidenceRefs = uniqueStrings([
+            event.payload.browserAfterScreenshotRef,
+            event.payload.browserAfterDomRef,
+            afterEvidenceRef,
+          ]);
           yield* sql`
             INSERT INTO evidence_artifacts (
               artifact_id, schema_version, kind, sha256, byte_size,
@@ -1352,15 +1373,58 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               content_text = excluded.content_text,
               created_at = excluded.created_at
           `;
+          const reworkRows = yield* sql<{
+            readonly annotationTargetsJson: string;
+          }>`
+            SELECT annotation_targets_json AS "annotationTargetsJson"
+            FROM rework_tasks
+            WHERE orchestrator_task_id = ${event.payload.taskId}
+          `;
           yield* sql`
             UPDATE rework_tasks
             SET
               status = 'submitted',
-              after_evidence_refs_json = ${JSON.stringify([afterEvidenceRef])},
+              after_evidence_refs_json = ${JSON.stringify(afterEvidenceRefs)},
               submitted_at = ${event.payload.submittedAt},
               updated_at = ${event.payload.submittedAt}
             WHERE orchestrator_task_id = ${event.payload.taskId}
           `;
+          if (event.payload.browserAfterScreenshotRef || event.payload.browserAfterDomRef) {
+            for (const row of reworkRows) {
+              for (const target of parseJsonArray(row.annotationTargetsJson)) {
+                if (!target || typeof target !== "object") continue;
+                const annotationId = (target as { annotationId?: unknown }).annotationId;
+                if (typeof annotationId !== "string" || !annotationId) continue;
+                const annotationRows = yield* sql<{ readonly annotationJson: string }>`
+                  SELECT annotation_json AS "annotationJson"
+                  FROM browser_annotations
+                  WHERE annotation_id = ${annotationId}
+                `;
+                const annotationRow = annotationRows[0];
+                if (!annotationRow) continue;
+                let annotation: Record<string, unknown>;
+                try {
+                  const parsed = JSON.parse(annotationRow.annotationJson);
+                  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+                  annotation = parsed as Record<string, unknown>;
+                } catch {
+                  continue;
+                }
+                if (event.payload.browserAfterScreenshotRef) {
+                  annotation.afterScreenshotArtifactRef = event.payload.browserAfterScreenshotRef;
+                }
+                if (event.payload.browserAfterDomRef) {
+                  annotation.afterDomArtifactRef = event.payload.browserAfterDomRef;
+                }
+                yield* sql`
+                  UPDATE browser_annotations
+                  SET annotation_json = ${JSON.stringify(annotation)},
+                      updated_at = ${event.payload.submittedAt}
+                  WHERE annotation_id = ${annotationId}
+                `;
+              }
+            }
+          }
           return;
         }
 

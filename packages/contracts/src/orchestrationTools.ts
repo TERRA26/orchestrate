@@ -368,7 +368,8 @@ export const RunTestsOutput = Schema.Struct({
 
 export const AcceptWorkInput = Schema.Struct({
   agentId: AgentId,
-  taskId: TaskId,
+  taskId: Schema.optional(TaskId),
+  browserSessionId: Schema.optional(Schema.String),
   notes: Schema.optional(Schema.String),
 });
 export const AcceptWorkOutput = Schema.Struct({

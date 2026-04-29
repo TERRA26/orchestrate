@@ -12,6 +12,8 @@ export const reportProtocolReminder = [
   "    passed: true",
   "notes: anything surprising, deferred cleanup, unresolved questions",
   "hasChanges: true if you wrote files, false if inspection-only",
+  "browserAfterScreenshotRef: evidence artifact id for fresh after screenshot, if browser work changed UI",
+  "browserAfterDomRef: evidence artifact id for fresh after DOM snapshot, if browser work changed UI",
   "",
   "The orchestrator reads this REPORT to decide accept vs reject. Omit it and",
   "you will be rejected with a resubmit instruction.",

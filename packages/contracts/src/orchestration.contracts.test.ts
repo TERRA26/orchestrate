@@ -240,12 +240,16 @@ it.effect("decodes OrchestratorTaskSubmitCommand", () =>
       taskId: "task-1",
       workerId: "worker-1",
       summary: "Completed refactoring",
+      browserAfterScreenshotRef: "browser-screenshot-after-1",
+      browserAfterDomRef: "browser-dom-after-1",
       createdAt: ISO,
     });
     assert.strictEqual(parsed.type, "orchestrator.task.submit");
     assert.strictEqual(parsed.taskId, "task-1");
     assert.strictEqual(parsed.workerId, "worker-1");
     assert.strictEqual(parsed.summary, "Completed refactoring");
+    assert.strictEqual(parsed.browserAfterScreenshotRef, "browser-screenshot-after-1");
+    assert.strictEqual(parsed.browserAfterDomRef, "browser-dom-after-1");
   }),
 );
 

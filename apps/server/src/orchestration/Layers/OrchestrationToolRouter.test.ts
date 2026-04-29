@@ -179,6 +179,62 @@ function makeBrowserRuntime() {
           },
         };
       }),
+    observe: (input) =>
+      Effect.sync(() => {
+        calls.push({ name: "observe", input });
+        return {
+          actionId: "browser-observe-after",
+          status: "ok" as const,
+          observation: {
+            sessionId: input.sessionId,
+            url: "https://example.com/after",
+            title: "After",
+            readyState: "complete",
+            textSummary: "After page",
+            screenshotDataUrl: "data:image/jpeg;base64,after",
+            targets: [],
+            screenshotArtifactRef: "screenshot-after",
+            runtimeTruth: {
+              runtimeKind: "electron-visible" as const,
+              surfaceMode: "live-shared-browser" as const,
+              isUserVisibleSurface: true,
+              browserSessionId: input.sessionId,
+              screenshotArtifactRef: "screenshot-after",
+              evidenceRefs: [
+                "screenshot-after",
+                "browser-observation-after",
+                "browser-url-agreement-after",
+              ],
+            },
+            evidenceRefs: [
+              "screenshot-after",
+              "browser-observation-after",
+              "browser-url-agreement-after",
+            ],
+            observedAt: NOW,
+          },
+          runtimeTruth: {
+            runtimeKind: "electron-visible" as const,
+            surfaceMode: "live-shared-browser" as const,
+            isUserVisibleSurface: true,
+            browserSessionId: input.sessionId,
+            screenshotArtifactRef: "screenshot-after",
+            evidenceRefs: [
+              "screenshot-after",
+              "browser-observation-after",
+              "browser-url-agreement-after",
+            ],
+          },
+          evidenceRefs: [
+            "screenshot-after",
+            "browser-observation-after",
+            "browser-url-agreement-after",
+          ],
+        };
+      }),
+    inspect: () => Effect.fail(new Error("inspect not used in router tests")),
+    resolveAnnotationTargetAtPoint: () =>
+      Effect.fail(new Error("resolveAnnotationTargetAtPoint not used in router tests")),
     closeSession: (input) =>
       Effect.sync(() => {
         calls.push({ name: "closeSession", input });
@@ -417,6 +473,102 @@ describe("OrchestrationToolRouter", () => {
     expect(result.filesWritten).toEqual(["server/src/app.ts", "server/src/app.test.ts"]);
     expect(result.testsRun).toEqual([{ name: "POST then GET roundtrip", passed: true }]);
     expect(result.submitNotes).toBe("CORS pinned to :5173");
+  });
+
+  it("orchestrate_accept_work auto-submits running work with fresh browser after-evidence", async () => {
+    const browser = makeBrowserRuntime();
+    const commands: OrchestrationCommand[] = [];
+    const workerId = "worker-browser-submit";
+    const taskId = "task-browser-submit";
+    const threadId = ThreadId.makeUnsafe("thread-browser-submit");
+    const readModel = makeReadModel({
+      threads: [makeThread(), { ...makeThread(), id: threadId }],
+      orchestratorTasks: [
+        {
+          taskId,
+          runId: "run-1",
+          title: "Fix annotated UI",
+          objective: "Fix the browser annotation.",
+          status: "running",
+          ownerKind: "worker",
+          assignedWorkerId: workerId,
+          acceptanceCriteria: [],
+          checklist: [],
+          iteration: 1,
+          maxIterations: 3,
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId,
+          status: "running",
+          visibility: "foreground",
+          activeTaskId: taskId,
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: {
+            mode: "local",
+            cwd: "/tmp",
+            terminalIds: [],
+            browserSessionId: "electron-visible-after",
+          },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, commands)),
+      Layer.provide(browser.layer),
+    );
+
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_accept_work",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId, notes: "Looks fixed." },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as {
+      accepted: boolean;
+      browserAfterScreenshotRef?: string;
+      browserAfterDomRef?: string;
+    };
+
+    expect(browser.calls).toContainEqual({
+      name: "observe",
+      input: { sessionId: "electron-visible-after" },
+    });
+    expect(commands.map((command) => command.type)).toEqual([
+      "orchestrator.task.submit",
+      "orchestrator.task.accept",
+    ]);
+    expect(commands[0]).toMatchObject({
+      type: "orchestrator.task.submit",
+      taskId,
+      workerId,
+      summary: "Looks fixed.",
+      browserAfterScreenshotRef: "screenshot-after",
+      browserAfterDomRef: "browser-observation-after",
+    });
+    expect(result).toMatchObject({
+      accepted: true,
+      browserAfterScreenshotRef: "screenshot-after",
+      browserAfterDomRef: "browser-observation-after",
+    });
   });
 
   it("orchestrate_send_to_agent rejects when target worker is terminated (Gap K)", async () => {

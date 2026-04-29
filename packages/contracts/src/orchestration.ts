@@ -16,6 +16,8 @@ import {
   TurnId,
 } from "./baseSchemas";
 
+const OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
@@ -1933,6 +1935,8 @@ export const OrchestratorTaskSubmitCommand = Schema.Struct({
   filesWritten: Schema.optional(Schema.Array(Schema.String)),
   testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
   notes: Schema.optional(Schema.String),
+  browserAfterScreenshotRef: Schema.optional(OrchestratorEvidenceArtifactId),
+  browserAfterDomRef: Schema.optional(OrchestratorEvidenceArtifactId),
   createdAt: IsoDateTime,
 });
 
@@ -2194,6 +2198,8 @@ export const OrchestratorTaskSubmittedPayload = Schema.Struct({
   filesWritten: Schema.optional(Schema.Array(Schema.String)),
   testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
   notes: Schema.optional(Schema.String),
+  browserAfterScreenshotRef: Schema.optional(OrchestratorEvidenceArtifactId),
+  browserAfterDomRef: Schema.optional(OrchestratorEvidenceArtifactId),
   submittedAt: IsoDateTime,
 });
 

@@ -330,12 +330,21 @@ describe("orchestrator decider — task lifecycle", () => {
       taskId,
       workerId,
       summary: "Endpoints implemented",
+      browserAfterScreenshotRef: "browser-screenshot-after-submit",
+      browserAfterDomRef: "browser-dom-after-submit",
       createdAt: later,
     });
 
     expect(submitEvents).toHaveLength(1);
     expect(submitEvents[0]!.type).toBe("orchestrator.task.submitted");
     expect((submitEvents[0]!.payload as { workerId: string }).workerId).toBe(workerId);
+    expect(
+      (submitEvents[0]!.payload as { browserAfterScreenshotRef?: string })
+        .browserAfterScreenshotRef,
+    ).toBe("browser-screenshot-after-submit");
+    expect((submitEvents[0]!.payload as { browserAfterDomRef?: string }).browserAfterDomRef).toBe(
+      "browser-dom-after-submit",
+    );
 
     // Project submit event, then accept
     const afterSubmit = await applyCommands(model, [
@@ -399,6 +408,8 @@ describe("orchestrator decider — task lifecycle", () => {
           { name: "POST returns 400 on empty", passed: true },
         ],
         notes: "CORS set to 5173; in-memory Map store.",
+        browserAfterScreenshotRef: "browser-screenshot-after-submit",
+        browserAfterDomRef: "browser-dom-after-submit",
         createdAt: later,
       } as any,
     ]);
@@ -416,6 +427,8 @@ describe("orchestrator decider — task lifecycle", () => {
       { name: "POST returns 400 on empty", passed: true },
     ]);
     expect(task?.submitNotes).toBe("CORS set to 5173; in-memory Map store.");
+    const submittedEvent = model.orchestratorTasks.find((t) => t.taskId === taskId);
+    expect(submittedEvent).toBeDefined();
   });
 
   it("rejects accept when submitted task has hasChanges=false and accept lacks allowNoOp (Gap 5+6)", async () => {

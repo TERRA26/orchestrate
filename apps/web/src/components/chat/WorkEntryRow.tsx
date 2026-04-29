@@ -132,6 +132,84 @@ function BrowserScreenshotPreview({
   );
 }
 
+function BrowserArtifactScreenshotPreview({ artifactRef }: { artifactRef: string }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDataUrl(null);
+    setFailed(false);
+    void fetchEvidenceArtifactImageDataUrl(ensureNativeApi(), artifactRef)
+      .then((nextDataUrl) => {
+        if (cancelled) return;
+        if (!nextDataUrl) {
+          setFailed(true);
+          return;
+        }
+        setDataUrl(nextDataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactRef]);
+
+  if (dataUrl) {
+    return (
+      <BrowserScreenshotPreview screenshot={{ thumbnailDataUrl: dataUrl, fullDataUrl: dataUrl }} />
+    );
+  }
+  return (
+    <div className="mt-2 text-muted-foreground/70">
+      {failed ? "Preview unavailable" : "Loading preview..."}
+    </div>
+  );
+}
+
+function BrowserBeforeAfterEvidence({
+  beforeScreenshotRef,
+  beforeDomRef,
+  afterScreenshotRef,
+  afterDomRef,
+}: {
+  beforeScreenshotRef: string;
+  beforeDomRef?: string;
+  afterScreenshotRef: string;
+  afterDomRef?: string;
+}) {
+  return (
+    <div className="mt-2 grid gap-2 border-t border-emerald-500/15 pt-2 sm:grid-cols-2">
+      <div className="min-w-0 rounded border border-border/45 px-2 py-1">
+        <div className="font-medium text-foreground/85">Before</div>
+        <BrowserArtifactScreenshotPreview artifactRef={beforeScreenshotRef} />
+        <div className="mt-1 truncate text-muted-foreground/70" title={beforeScreenshotRef}>
+          Screenshot {beforeScreenshotRef}
+        </div>
+        {beforeDomRef ? (
+          <div className="truncate text-muted-foreground/70" title={beforeDomRef}>
+            DOM {beforeDomRef}
+          </div>
+        ) : null}
+      </div>
+      <div className="min-w-0 rounded border border-border/45 px-2 py-1">
+        <div className="font-medium text-foreground/85">After</div>
+        <BrowserArtifactScreenshotPreview artifactRef={afterScreenshotRef} />
+        <div className="mt-1 truncate text-muted-foreground/70" title={afterScreenshotRef}>
+          Screenshot {afterScreenshotRef}
+        </div>
+        {afterDomRef ? (
+          <div className="truncate text-muted-foreground/70" title={afterDomRef}>
+            DOM {afterDomRef}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function BrowserEvidenceCard({
   summary,
 }: {
@@ -595,42 +673,12 @@ function BrowserAnnotationCard({
         {summary.cropArtifactRef ? <span>Crop {summary.cropArtifactRef}</span> : null}
       </div>
       {summary.beforeScreenshotArtifactRef && summary.afterScreenshotArtifactRef ? (
-        <div className="mt-2 grid gap-2 border-t border-emerald-500/15 pt-2 sm:grid-cols-2">
-          <div className="min-w-0 rounded border border-border/45 px-2 py-1">
-            <div className="font-medium text-foreground/85">Before</div>
-            <div
-              className="truncate text-muted-foreground/70"
-              title={summary.beforeScreenshotArtifactRef}
-            >
-              Screenshot {summary.beforeScreenshotArtifactRef}
-            </div>
-            {summary.beforeDomArtifactRef ? (
-              <div
-                className="truncate text-muted-foreground/70"
-                title={summary.beforeDomArtifactRef}
-              >
-                DOM {summary.beforeDomArtifactRef}
-              </div>
-            ) : null}
-          </div>
-          <div className="min-w-0 rounded border border-border/45 px-2 py-1">
-            <div className="font-medium text-foreground/85">After</div>
-            <div
-              className="truncate text-muted-foreground/70"
-              title={summary.afterScreenshotArtifactRef}
-            >
-              Screenshot {summary.afterScreenshotArtifactRef}
-            </div>
-            {summary.afterDomArtifactRef ? (
-              <div
-                className="truncate text-muted-foreground/70"
-                title={summary.afterDomArtifactRef}
-              >
-                DOM {summary.afterDomArtifactRef}
-              </div>
-            ) : null}
-          </div>
-        </div>
+        <BrowserBeforeAfterEvidence
+          beforeScreenshotRef={summary.beforeScreenshotArtifactRef}
+          afterScreenshotRef={summary.afterScreenshotArtifactRef}
+          {...(summary.beforeDomArtifactRef ? { beforeDomRef: summary.beforeDomArtifactRef } : {})}
+          {...(summary.afterDomArtifactRef ? { afterDomRef: summary.afterDomArtifactRef } : {})}
+        />
       ) : null}
       {summary.annotationId ? (
         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-emerald-500/15 pt-2">

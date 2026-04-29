@@ -1180,6 +1180,7 @@ The schema slot, projection routing, and UI scaffold are in place; what's missin
    - UI renders paired `BrowserScreenshotPreview` when both refs exist; falls back to text labels when only metadata is present.
 
 **Out of scope for 17B-F-3:**
+
 - Bundle 17C (non-browser semantic phases) — still queued.
 - Bundle 17D (CDP attach) — still queued.
 - Renaming the `"browser-comment"` artifact kind to `"rework-submission"` — cosmetic; do opportunistically.
@@ -1197,3 +1198,44 @@ The schema slot, projection routing, and UI scaffold are in place; what's missin
 
 - **2026-04-29 — Agent Report — Bundle 17B Sub-scope B re-do** — implemented; pushed at `bb458ed1`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17B Sub-scope B re-do** — accepted. F-1 and F-2 closed. Bundle 17B complete. Bundle 17B-F-3 (visual after-evidence) becomes active.
+
+---
+
+## Agent Report — 2026-04-29T19:53:00-04:00 — Bundle 17B-F-3
+
+Implemented visual after-evidence at the task submit boundary. The integration point is the supervisor submit handler in `orchestrate_accept_work`: if the task is still `assigned` or `running`, the server first auto-submits it; when a browser session is available from the worker workspace or explicit tool input, it calls `BrowserRuntimeService.observe` immediately before dispatching `orchestrator.task.submit`.
+
+### Changes
+
+- Extended `orchestrator.task.submit` command and submitted-event payload with optional `browserAfterScreenshotRef` and `browserAfterDomRef` fields: [`packages/contracts/src/orchestration.ts:1938`](packages/contracts/src/orchestration.ts:1938), [`packages/contracts/src/orchestration.ts:2201`](packages/contracts/src/orchestration.ts:2201).
+- Added `orchestrate_accept_work.browserSessionId` / Claude tool `browser_session_id`, and fixed `AcceptWorkInput.taskId` to be optional to match the existing active-task fallback path: [`packages/contracts/src/orchestrationTools.ts:368`](packages/contracts/src/orchestrationTools.ts:368), [`apps/server/src/provider/Layers/ClaudeAdapter.ts:789`](apps/server/src/provider/Layers/ClaudeAdapter.ts:789).
+- Wired fresh after-evidence capture into `handleAcceptWork`: for assigned/running tasks, observe the browser session, take the screenshot ref from runtime truth/observation, take the DOM-like ref from the durable observation artifact, then dispatch `orchestrator.task.submit` before `orchestrator.task.accept`: [`apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:911`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:911).
+- Kept `ReviewerDecisionService` untouched. Capture belongs at submit/accept orchestration-tool boundary, not in the reviewer decision service.
+- Projection now stores the explicit visual refs in `rework_tasks.after_evidence_refs_json`, keeps the existing `rework-after-*` JSON artifact as supplemental submit metadata, and writes `afterScreenshotArtifactRef` / `afterDomArtifactRef` back onto linked `browser_annotations.annotation_json`: [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1335`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1335), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1383`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1383), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1392`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1392).
+- `WorkEntryRow.tsx` now renders side-by-side before/after screenshot previews by loading evidence artifacts and passing them through the existing `BrowserScreenshotPreview`; the text labels remain as fallback/metadata: [`apps/web/src/components/chat/WorkEntryRow.tsx:135`](apps/web/src/components/chat/WorkEntryRow.tsx:135), [`apps/web/src/components/chat/WorkEntryRow.tsx:675`](apps/web/src/components/chat/WorkEntryRow.tsx:675).
+- Updated the worker REPORT reminder so workers can surface the after refs when they have them: [`apps/server/src/orchestration/reportProtocol.ts:3`](apps/server/src/orchestration/reportProtocol.ts:3).
+
+### Tests
+
+- Contract event-shape test covers the two new submit fields: [`packages/contracts/src/orchestration.contracts.test.ts:238`](packages/contracts/src/orchestration.contracts.test.ts:238).
+- Decider test verifies `orchestrator.task.submit` carries the refs into `orchestrator.task.submitted`: [`apps/server/src/orchestration/decider.orchestrator.test.ts:328`](apps/server/src/orchestration/decider.orchestrator.test.ts:328).
+- Router test verifies `orchestrate_accept_work` auto-submits running work, calls `BrowserRuntimeService.observe`, and includes the fresh screenshot/observation refs in the submit command: [`apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts:388`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts:388).
+- Projection lifecycle test verifies `after_evidence_refs_json` contains screenshot + observation + `rework-after-*`, and that the linked browser annotation row receives the after screenshot/DOM refs: [`apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts:2000`](apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts:2000).
+- Existing WorkEntryRow browser annotation test now exercises the paired before/after preview path and the text fallback labels: [`apps/web/src/components/chat/WorkEntryRow.test.tsx:154`](apps/web/src/components/chat/WorkEntryRow.test.tsx:154).
+
+### Verification
+
+- PASS: `cd packages/contracts && bun run test src/orchestration.contracts.test.ts` (18 tests).
+- PASS: `cd apps/server && bun run test src/orchestration/decider.orchestrator.test.ts` (14 tests).
+- PASS: `cd apps/server && bun run test src/orchestration/Layers/OrchestrationToolRouter.test.ts` (15 tests).
+- PASS: `cd apps/server && bun run test src/orchestration/Layers/ProjectionPipeline.test.ts -t "projects rework task lifecycle transitions and submit evidence"` (1 targeted, 18 skipped by filter).
+- PASS: `cd apps/web && bun run test src/components/chat/WorkEntryRow.test.tsx` (12 tests).
+- PASS: `bun fmt`.
+- PASS: `bun lint` (exit 0; 131 pre-existing warnings, 0 errors).
+- PASS: `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` (10/10 tasks). The plain `bun typecheck` still fails in this shell because default Node is v20.19.6 and Astro requires >=22.12.0; Node 24 is the working repo runtime.
+
+### Notes for Reviewer
+
+- I did not implement a parser for the worker's final REPORT block because this codebase still intentionally has workers submit through supervisor/orchestrator tooling. The capture now happens at the same durable boundary that creates the submit event.
+- `browserAfterDomRef` is the durable browser observation artifact returned by `BrowserRuntimeService.observe`. The current recorder does not emit a separately named DOM snapshot artifact for this path; the observation artifact is the closest durable DOM/page-state ref available without changing the evidence recorder taxonomy.
+- I did not rename the supplemental `browser-comment` submit artifact kind; that was explicitly out of scope/cosmetic.

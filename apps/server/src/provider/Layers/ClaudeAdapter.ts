@@ -789,6 +789,7 @@ const ORCHESTRATION_TOOL_INPUT_SCHEMAS: Readonly<
   orchestrate_accept_work: {
     agent_id: zAgentId,
     task_id: zTaskId.optional().describe("Task to accept."),
+    browser_session_id: z.string().optional().describe("Browser session to observe before submit."),
     notes: z.string().optional().describe("Acceptance notes."),
   },
   orchestrate_reject_work: {
