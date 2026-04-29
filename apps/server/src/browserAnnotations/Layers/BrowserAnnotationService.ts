@@ -67,6 +67,10 @@ function makeAnnotation(input: BrowserAddAnnotationInput, createdAt: string): Br
     ...(input.fullScreenshotArtifactRef
       ? { screenshotArtifactRef: input.fullScreenshotArtifactRef }
       : {}),
+    ...(input.fullScreenshotArtifactRef
+      ? { beforeScreenshotArtifactRef: input.fullScreenshotArtifactRef }
+      : {}),
+    ...(input.browserInspectionRef ? { beforeDomArtifactRef: input.browserInspectionRef } : {}),
     createdAt,
     updatedAt: createdAt,
   };

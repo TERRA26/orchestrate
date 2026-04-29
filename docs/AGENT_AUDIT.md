@@ -864,7 +864,7 @@ Bundle 17B Sub-scope B is still next: annotation creation before-evidence, `rewo
 - **Re-grepped for any other user-visible raw runtimeKind/surfaceMode paths.** Of all remaining matches in `apps/web/src` and `apps/desktop/src`:
   - Type definitions and internal data flow (`browserWorkLog.ts:25,26,35,36,934,935,939,943,944,975-979,1015,1016`) — not rendered.
   - The disjoint pane-layout `surfaceMode: "single" | "split"` in `ChatView.tsx`/`ChatHeader.tsx`/`_chat.$threadId.tsx` — different namespace entirely.
-  - `browserManager.ts:981,982,1017,1018` — source code that *produces* runtimeTruth, not display.
+  - `browserManager.ts:981,982,1017,1018` — source code that _produces_ runtimeTruth, not display.
   - Every renderable use of `summary.runtimeKind`, `truth.runtimeKind`, `summary.surfaceMode`, `truth.surfaceMode` now goes through `browserRuntimeKindLabel` or `browserSurfaceModeLabel`.
   - The two indirect renderers `WorkEntryRow.tsx:1071` and `OrchestratorMessages.tsx:462` both render `browserRuntimeTruthLabel(workEntry)` output — itself labeled at [`browserWorkLog.ts:960-961`](apps/web/src/browserWorkLog.ts:960).
   - **No remaining leak paths.** C-3 is fully closed.
@@ -888,9 +888,38 @@ Bundle 17B Sub-scope B is still next: annotation creation before-evidence, `rewo
 No preconditions remaining. Spec is in the "Active Bundle: Bundle 17B" → "Sub-scope B" section above (unchanged). Two reminders worth restating before you start:
 
 - **Verify `OrchestrationEngineService` (or whatever your codebase actually exposes) before assuming an interface.** Look at how `orchestrate_spawn_agent` is wired in [`OrchestrationToolRouter.ts`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts) and follow the call. Don't stuff orchestration logic into `ReviewerDecisionService`.
-- **Before-evidence is captured at *annotation creation*, not at `startRework`.** Wire it in `BrowserAnnotationService.create`, persist the artifact refs onto the annotation row, and have `loadAnnotationReworkTargetsByIds` attach them to `BrowserAnnotationReworkTarget.beforeScreenshotArtifactRef` / `beforeDomArtifactRef`.
+- **Before-evidence is captured at _annotation creation_, not at `startRework`.** Wire it in `BrowserAnnotationService.create`, persist the artifact refs onto the annotation row, and have `loadAnnotationReworkTargetsByIds` attach them to `BrowserAnnotationReworkTarget.beforeScreenshotArtifactRef` / `beforeDomArtifactRef`.
 
 #### Iteration log update
 
 - **2026-04-29 — Agent Report — Bundle 17B C-3 Follow-up** — implemented; pushed at `7870b4bf`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17B C-3 Follow-up** — accepted; Sub-scope A complete; Sub-scope B greenlit with no preconditions.
+
+## Agent Report — 2026-04-29T18:36:00-04:00 — Bundle 17B Sub-scope B
+
+This push implements the first durable annotation→focused-rework path. Note: the migration is numbered `045_ReworkTasks` because this branch already has production migrations `040` through `044`; I did not rewrite existing migration history.
+
+### Changes
+
+- Extended `BrowserAnnotationReworkTarget` with optional before/after screenshot and DOM refs: [`packages/contracts/src/browserOrchestration.ts:1024`](packages/contracts/src/browserOrchestration.ts:1024).
+- Persisted before-evidence refs directly on annotation creation from the existing full-screenshot and browser-inspection inputs: [`apps/server/src/browserAnnotations/Layers/BrowserAnnotationService.ts:70`](apps/server/src/browserAnnotations/Layers/BrowserAnnotationService.ts:70).
+- `loadAnnotationReworkTargetsByIds` now carries before/after refs into reviewer rework targets and includes them in `artifactRefs`: [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1192`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1192), [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1203`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1203).
+- Added migration `045_ReworkTasks` for `rework_tasks`, including parent-decision, orchestrator-task, and status indexes: [`apps/server/src/persistence/Migrations/045_ReworkTasks.ts:7`](apps/server/src/persistence/Migrations/045_ReworkTasks.ts:7), [`apps/server/src/persistence/Migrations/045_ReworkTasks.ts:28`](apps/server/src/persistence/Migrations/045_ReworkTasks.ts:28).
+- `ReviewerDecisionService.startRework` now uses `OrchestrationEngineService` for `mode === "start-agent-run"` instead of embedding orchestration logic in reviewer storage: it creates an orchestrator run, task, worker thread, and worker spawn: [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1575`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1575), [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1600`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1600), [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1610`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1610), [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1624`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1624), [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1639`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1639).
+- `startRework` persists a `rework_tasks` row with annotation targets, evidence refs, before-evidence refs, and draft/assigned status: [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1661`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1661), [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1670`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1670).
+- Rework task state now follows orchestration projection updates: worker spawn marks running, submit writes submit-time after evidence and marks submitted, accept marks accepted, reject marks needs-review: [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1319`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1319), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1353`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1353), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1377`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1377), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1400`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1400), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1474`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1474).
+- The web annotation work summary and card now carry before/after refs and render a paired before/after preview when both screenshot refs exist: [`apps/web/src/browserWorkLog.ts:105`](apps/web/src/browserWorkLog.ts:105), [`apps/web/src/browserWorkLog.ts:839`](apps/web/src/browserWorkLog.ts:839), [`apps/web/src/components/chat/WorkEntryRow.tsx:597`](apps/web/src/components/chat/WorkEntryRow.tsx:597).
+
+### Verification
+
+- PASS: `cd apps/server && PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/persistence/Migrations/045_ReworkTasks.test.ts src/reviewer/Layers/ReviewerDecisionService.test.ts` (15 tests).
+- PASS: `cd apps/web && bun run test src/browserWorkLog.test.ts src/components/chat/WorkEntryRow.test.tsx` (35 tests).
+- PASS: `cd packages/contracts && bun run test src/browserOrchestration.test.ts` (17 tests).
+- PASS: `bun fmt`.
+- PASS: `bun lint` exits 0 with the existing 131 warnings.
+- PASS: `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` (10/10 tasks).
+
+### Known Reviewer Focus
+
+- The migration number differs from the original audit text because `040_ReviewerDecisionActionPacket` already exists and has shipped. I treated preserving migration history as the safer invariant.
+- Submit-time after evidence is currently a durable JSON summary artifact of the worker submission. It is intentionally captured on submit, not accept. A later enhancement can replace or supplement this with fresh browser screenshot/DOM captures once a concrete browser session is associated with the worker submission.

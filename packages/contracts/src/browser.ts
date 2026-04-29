@@ -771,6 +771,14 @@ export const BrowserAnnotation = Schema.Struct({
   cropArtifactRef: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   domSnippetArtifactRef: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   styleSummaryArtifactRef: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  beforeScreenshotArtifactRef: Schema.optionalKey(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  ),
+  beforeDomArtifactRef: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  afterScreenshotArtifactRef: Schema.optionalKey(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  ),
+  afterDomArtifactRef: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   createdAt: IsoDateTime,
   updatedAt: Schema.optional(IsoDateTime),
   resolvedAt: Schema.optional(IsoDateTime),

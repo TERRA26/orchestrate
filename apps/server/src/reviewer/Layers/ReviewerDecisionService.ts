@@ -5,6 +5,7 @@ import {
   BROWSER_ORCHESTRATION_SCHEMA_VERSION,
   BrowserAnnotationId,
   BrowserSessionId,
+  CommandId,
   type BrowserAssertionResult,
   type BrowserWorkflowRun,
   type CodeStateRef,
@@ -27,13 +28,18 @@ import {
   ReworkPacketId,
   SessionEventId,
   ThreadId,
+  OrchestratorRunId,
+  OrchestratorTaskId,
+  OrchestratorWorkerId,
   WorkflowRunId,
   type AcceptanceCriterionResult,
   type BrowserAnnotationReworkTarget,
 } from "@orchestrate/contracts";
 import { Effect, Layer, Option, Schema } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { BrowserWorkflowManager } from "../../browserWorkflow/Services/BrowserWorkflowManager.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { BrowserAnnotationRepository } from "../../persistence/Services/BrowserAnnotations.ts";
 import { BrowserOrchestrationEvidenceRepository } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
 import type {
@@ -59,6 +65,10 @@ function artifactId(kind: EvidenceArtifactKind, seed: string): EvidenceArtifactI
 
 function eventId(): SessionEventId {
   return SessionEventId.makeUnsafe(`reviewer-event-${randomUUID()}`);
+}
+
+function commandId(): CommandId {
+  return CommandId.makeUnsafe(`reviewer-rework:${randomUUID()}`);
 }
 
 function errorFromUnknown(cause: unknown): Error {
@@ -721,6 +731,8 @@ export const ReviewerDecisionServiceLive = Layer.effect(
     const repository = yield* BrowserOrchestrationEvidenceRepository;
     const workflows = yield* BrowserWorkflowManager;
     const annotationRepository = yield* BrowserAnnotationRepository;
+    const orchestrationEngine = yield* Effect.serviceOption(OrchestrationEngineService);
+    const sqlOption = yield* Effect.serviceOption(SqlClient.SqlClient);
     const evidenceBundles = new Map<string, EvidenceBundle>();
     const decisions = new Map<string, ReviewerDecision>();
 
@@ -1177,6 +1189,10 @@ export const ReviewerDecisionServiceLive = Layer.effect(
             cropArtifactRef?: string;
             domSnippetArtifactRef?: string;
             styleSummaryArtifactRef?: string;
+            beforeScreenshotArtifactRef?: string;
+            beforeDomArtifactRef?: string;
+            afterScreenshotArtifactRef?: string;
+            afterDomArtifactRef?: string;
             artifactRefs?: string[];
           };
           const artifactRefs = [
@@ -1184,6 +1200,10 @@ export const ReviewerDecisionServiceLive = Layer.effect(
             annotation.cropArtifactRef,
             annotation.domSnippetArtifactRef,
             annotation.styleSummaryArtifactRef,
+            annotation.beforeScreenshotArtifactRef,
+            annotation.beforeDomArtifactRef,
+            annotation.afterScreenshotArtifactRef,
+            annotation.afterDomArtifactRef,
           ].filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
           targets.push({
             annotationId: rawId,
@@ -1214,6 +1234,34 @@ export const ReviewerDecisionServiceLive = Layer.effect(
               ? {
                   styleSummaryArtifactRef: EvidenceArtifactId.makeUnsafe(
                     annotation.styleSummaryArtifactRef,
+                  ),
+                }
+              : {}),
+            ...(annotation.beforeScreenshotArtifactRef
+              ? {
+                  beforeScreenshotArtifactRef: EvidenceArtifactId.makeUnsafe(
+                    annotation.beforeScreenshotArtifactRef,
+                  ),
+                }
+              : {}),
+            ...(annotation.beforeDomArtifactRef
+              ? {
+                  beforeDomArtifactRef: EvidenceArtifactId.makeUnsafe(
+                    annotation.beforeDomArtifactRef,
+                  ),
+                }
+              : {}),
+            ...(annotation.afterScreenshotArtifactRef
+              ? {
+                  afterScreenshotArtifactRef: EvidenceArtifactId.makeUnsafe(
+                    annotation.afterScreenshotArtifactRef,
+                  ),
+                }
+              : {}),
+            ...(annotation.afterDomArtifactRef
+              ? {
+                  afterDomArtifactRef: EvidenceArtifactId.makeUnsafe(
+                    annotation.afterDomArtifactRef,
                   ),
                 }
               : {}),
@@ -1521,15 +1569,125 @@ export const ReviewerDecisionServiceLive = Layer.effect(
             ),
             "Use the attached crop, DOM snippet, style summary, route, target, and geometry evidence. Acceptance requires the comment to be resolved or the reviewer comments-addressed gate to pass.",
           ].join("\n");
+        const reworkTaskId = `reviewer-rework-task-${randomUUID()}`;
+        let spawnedTaskId: string | null = null;
+        let spawnedWorkerId: string | null = null;
+        if (input.mode === "start-agent-run") {
+          if (Option.isNone(orchestrationEngine)) {
+            return yield* Effect.fail(
+              new Error("reviewer.decision.rework.start requires OrchestrationEngineService."),
+            );
+          }
+          const readModel = yield* orchestrationEngine.value.getReadModel();
+          const callingThread = readModel.threads.find((thread) => thread.id === threadId);
+          if (!callingThread) {
+            return yield* Effect.fail(
+              new Error(`reviewer.decision.rework.start thread not found: ${threadId}`),
+            );
+          }
+          const spawnBudget = {
+            maxDepth: 1,
+            maxChildren: 1,
+            maxConcurrentWriters: 1,
+            maxTotalWorkers: 1,
+            allowedTools: [],
+            writeScope: [],
+          };
+          const runId = OrchestratorRunId.makeUnsafe(randomUUID());
+          spawnedTaskId = randomUUID();
+          spawnedWorkerId = randomUUID();
+          const workerThreadId = randomUUID();
+          yield* orchestrationEngine.value.dispatch({
+            type: "orchestrator.run.create",
+            commandId: commandId(),
+            runId,
+            projectId: callingThread.projectId,
+            userRequest: "Focused browser annotation rework",
+            goals: uniqueTargets.map((target) => target.comment),
+            spawnBudget,
+            createdAt: now(),
+          });
+          yield* orchestrationEngine.value.dispatch({
+            type: "orchestrator.task.create",
+            commandId: commandId(),
+            taskId: OrchestratorTaskId.makeUnsafe(spawnedTaskId),
+            runId,
+            title: "Focused browser annotation rework",
+            objective: instruction,
+            acceptanceCriteria: [
+              "Resolve the referenced browser annotation comments.",
+              "Submit evidence that the before/after UI state was reviewed.",
+            ],
+            maxIterations: 3,
+            createdAt: now(),
+          });
+          yield* orchestrationEngine.value.dispatch({
+            type: "thread.create",
+            commandId: commandId(),
+            threadId: ThreadId.makeUnsafe(workerThreadId),
+            projectId: callingThread.projectId,
+            title: "Browser annotation rework",
+            modelSelection: callingThread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            threadType: "agent",
+            parentThreadId: threadId,
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          });
+          yield* orchestrationEngine.value.dispatch({
+            type: "orchestrator.worker.spawn",
+            commandId: commandId(),
+            workerId: OrchestratorWorkerId.makeUnsafe(spawnedWorkerId),
+            runId,
+            taskId: OrchestratorTaskId.makeUnsafe(spawnedTaskId),
+            threadId: ThreadId.makeUnsafe(workerThreadId),
+            spawnBudget,
+            workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
+            createdAt: now(),
+          });
+        }
+        const startedAt = now();
         const result: ReviewerReworkStartResult = {
-          reworkTaskId: `reviewer-rework-task-${randomUUID()}`,
+          reworkTaskId,
           threadId,
           ...(parentDecisionId ? { parentDecisionId } : {}),
           annotationTargets: uniqueTargets,
           evidenceRefs,
-          status: "drafted",
+          status: input.mode === "start-agent-run" ? "started" : "drafted",
           instruction,
         };
+        const beforeEvidenceRefs = uniqueRefs(
+          uniqueTargets.flatMap((target) =>
+            [target.beforeScreenshotArtifactRef, target.beforeDomArtifactRef].filter(
+              (ref): ref is EvidenceArtifactId => ref !== undefined,
+            ),
+          ),
+        );
+        if (Option.isSome(sqlOption)) {
+          const sql = sqlOption.value;
+          yield* sql`
+            INSERT INTO rework_tasks (
+              rework_task_id, parent_decision_id, workflow_run_id, thread_id,
+              orchestrator_task_id, worker_id, status, annotation_targets_json,
+              evidence_refs_json, before_evidence_refs_json, after_evidence_refs_json,
+              instruction, created_at, updated_at
+            )
+            VALUES (
+              ${reworkTaskId}, ${parentDecisionId ?? null},
+              ${input.workflowRunId ?? parentWorkflowRunId ?? null}, ${threadId},
+              ${spawnedTaskId}, ${spawnedWorkerId},
+              ${result.status === "started" ? "assigned" : "drafted"},
+              ${JSON.stringify(uniqueTargets)}, ${JSON.stringify(evidenceRefs)},
+              ${JSON.stringify(beforeEvidenceRefs)}, ${JSON.stringify([])},
+              ${instruction}, ${startedAt}, ${startedAt}
+            )
+            ON CONFLICT (rework_task_id) DO UPDATE SET
+              status = excluded.status,
+              updated_at = excluded.updated_at
+          `;
+        }
         yield* appendEvent(
           threadId,
           input.workflowRunId ?? parentWorkflowRunId ?? null,

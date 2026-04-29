@@ -214,6 +214,10 @@ describe("WorkEntryRow browser evidence", () => {
                 targetLabel: "Save button",
                 artifactRefs: ["browser-comment-1", "screenshot-crop-1"],
                 cropArtifactRef: "screenshot-crop-1",
+                beforeScreenshotArtifactRef: "before-shot-1",
+                beforeDomArtifactRef: "before-dom-1",
+                afterScreenshotArtifactRef: "after-shot-1",
+                afterDomArtifactRef: "after-dom-1",
               },
             }),
           }),
@@ -226,6 +230,12 @@ describe("WorkEntryRow browser evidence", () => {
     expect(markup).toContain("Target: Save button");
     expect(markup).toContain("Loading crop");
     expect(markup).toContain("2 evidence ref(s)");
+    expect(markup).toContain("Before");
+    expect(markup).toContain("Screenshot before-shot-1");
+    expect(markup).toContain("DOM before-dom-1");
+    expect(markup).toContain("After");
+    expect(markup).toContain("Screenshot after-shot-1");
+    expect(markup).toContain("DOM after-dom-1");
     expect(markup).toContain("Resolve");
     expect(markup).toContain("Start rework");
   });

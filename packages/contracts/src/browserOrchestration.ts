@@ -1021,6 +1021,10 @@ export const BrowserAnnotationReworkTarget = Schema.Struct({
   cropArtifactRef: Schema.optional(EvidenceArtifactId),
   domSnippetArtifactRef: Schema.optional(EvidenceArtifactId),
   styleSummaryArtifactRef: Schema.optional(EvidenceArtifactId),
+  beforeScreenshotArtifactRef: Schema.optional(EvidenceArtifactId),
+  beforeDomArtifactRef: Schema.optional(EvidenceArtifactId),
+  afterScreenshotArtifactRef: Schema.optional(EvidenceArtifactId),
+  afterDomArtifactRef: Schema.optional(EvidenceArtifactId),
   artifactRefs: Schema.Array(EvidenceArtifactId),
 });
 export type BrowserAnnotationReworkTarget = typeof BrowserAnnotationReworkTarget.Type;

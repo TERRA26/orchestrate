@@ -594,6 +594,44 @@ function BrowserAnnotationCard({
         <span>{summary.evidenceRefs.length} evidence ref(s)</span>
         {summary.cropArtifactRef ? <span>Crop {summary.cropArtifactRef}</span> : null}
       </div>
+      {summary.beforeScreenshotArtifactRef && summary.afterScreenshotArtifactRef ? (
+        <div className="mt-2 grid gap-2 border-t border-emerald-500/15 pt-2 sm:grid-cols-2">
+          <div className="min-w-0 rounded border border-border/45 px-2 py-1">
+            <div className="font-medium text-foreground/85">Before</div>
+            <div
+              className="truncate text-muted-foreground/70"
+              title={summary.beforeScreenshotArtifactRef}
+            >
+              Screenshot {summary.beforeScreenshotArtifactRef}
+            </div>
+            {summary.beforeDomArtifactRef ? (
+              <div
+                className="truncate text-muted-foreground/70"
+                title={summary.beforeDomArtifactRef}
+              >
+                DOM {summary.beforeDomArtifactRef}
+              </div>
+            ) : null}
+          </div>
+          <div className="min-w-0 rounded border border-border/45 px-2 py-1">
+            <div className="font-medium text-foreground/85">After</div>
+            <div
+              className="truncate text-muted-foreground/70"
+              title={summary.afterScreenshotArtifactRef}
+            >
+              Screenshot {summary.afterScreenshotArtifactRef}
+            </div>
+            {summary.afterDomArtifactRef ? (
+              <div
+                className="truncate text-muted-foreground/70"
+                title={summary.afterDomArtifactRef}
+              >
+                DOM {summary.afterDomArtifactRef}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {summary.annotationId ? (
         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-emerald-500/15 pt-2">
           {summary.status === "resolved" ? (

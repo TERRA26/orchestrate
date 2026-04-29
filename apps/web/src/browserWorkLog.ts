@@ -102,6 +102,10 @@ export interface BrowserAnnotationWorkSummary {
   targetLabel?: string;
   status?: string;
   cropArtifactRef?: string;
+  beforeScreenshotArtifactRef?: string;
+  beforeDomArtifactRef?: string;
+  afterScreenshotArtifactRef?: string;
+  afterDomArtifactRef?: string;
   evidenceRefs: string[];
 }
 
@@ -832,6 +836,10 @@ export function browserAnnotationWorkSummary(
   const cropArtifactRef =
     readString(annotation?.cropArtifactRef) ??
     evidenceRefs.find((ref) => ref.includes("screenshot-crop"));
+  const beforeScreenshotArtifactRef = readString(annotation?.beforeScreenshotArtifactRef);
+  const beforeDomArtifactRef = readString(annotation?.beforeDomArtifactRef);
+  const afterScreenshotArtifactRef = readString(annotation?.afterScreenshotArtifactRef);
+  const afterDomArtifactRef = readString(annotation?.afterDomArtifactRef);
   const annotationId = readString(annotation?.id) ?? readString(candidate?.annotationId);
   const comment = readString(annotation?.comment);
   const url = readString(annotation?.url);
@@ -844,6 +852,10 @@ export function browserAnnotationWorkSummary(
     ...(targetLabel ? { targetLabel } : {}),
     ...(status ? { status } : {}),
     ...(cropArtifactRef ? { cropArtifactRef } : {}),
+    ...(beforeScreenshotArtifactRef ? { beforeScreenshotArtifactRef } : {}),
+    ...(beforeDomArtifactRef ? { beforeDomArtifactRef } : {}),
+    ...(afterScreenshotArtifactRef ? { afterScreenshotArtifactRef } : {}),
+    ...(afterDomArtifactRef ? { afterDomArtifactRef } : {}),
     evidenceRefs,
   };
 }

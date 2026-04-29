@@ -1,11 +1,13 @@
 import {
   ApprovalRequestId,
+  BROWSER_ORCHESTRATION_SCHEMA_VERSION,
   type ChatAttachment,
   type OrchestrationEvent,
 } from "@orchestrate/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { createHash } from "node:crypto";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
@@ -66,6 +68,10 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 interface ProjectorDefinition {
   readonly name: ProjectorName;
@@ -1290,6 +1296,11 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             assignedWorkerId: event.payload.assigneeId ?? null,
             updatedAt: event.payload.assignedAt,
           });
+          yield* sql`
+            UPDATE rework_tasks
+            SET status = 'running', updated_at = ${event.payload.assignedAt}
+            WHERE orchestrator_task_id = ${event.payload.taskId}
+          `;
           return;
         }
 
@@ -1305,6 +1316,49 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             updatedAt: event.payload.submittedAt,
             submittedAt: event.payload.submittedAt,
           });
+          const afterEvidenceContent = JSON.stringify({
+            type: "rework-task-submit",
+            taskId: event.payload.taskId,
+            workerId: event.payload.workerId,
+            summary: event.payload.summary ?? null,
+            filesWritten: event.payload.filesWritten ?? [],
+            testsRun: event.payload.testsRun ?? [],
+            notes: event.payload.notes ?? null,
+            capturedAt: event.payload.submittedAt,
+          });
+          const afterEvidenceRef = `rework-after-${sha256(afterEvidenceContent).slice(0, 24)}`;
+          yield* sql`
+            INSERT INTO evidence_artifacts (
+              artifact_id, schema_version, kind, sha256, byte_size,
+              content_type, storage_uri, sensitivity, access,
+              redacted_artifact_id, superseded_by_artifact_id, metadata_json, created_at
+            )
+            VALUES (
+              ${afterEvidenceRef}, ${BROWSER_ORCHESTRATION_SCHEMA_VERSION}, 'browser-comment',
+              ${sha256(afterEvidenceContent)}, ${Buffer.byteLength(afterEvidenceContent)},
+              'application/json', ${`sqlite://evidence_artifact_contents/${afterEvidenceRef}`},
+              'workspace-internal', 'safe-for-user-report', NULL, NULL,
+              ${JSON.stringify({ type: "rework-task-submit", taskId: event.payload.taskId })},
+              ${event.payload.submittedAt}
+            )
+            ON CONFLICT (artifact_id) DO NOTHING
+          `;
+          yield* sql`
+            INSERT INTO evidence_artifact_contents (artifact_id, content_text, created_at)
+            VALUES (${afterEvidenceRef}, ${afterEvidenceContent}, ${event.payload.submittedAt})
+            ON CONFLICT (artifact_id) DO UPDATE SET
+              content_text = excluded.content_text,
+              created_at = excluded.created_at
+          `;
+          yield* sql`
+            UPDATE rework_tasks
+            SET
+              status = 'submitted',
+              after_evidence_refs_json = ${JSON.stringify([afterEvidenceRef])},
+              submitted_at = ${event.payload.submittedAt},
+              updated_at = ${event.payload.submittedAt}
+            WHERE orchestrator_task_id = ${event.payload.taskId}
+          `;
           return;
         }
 
@@ -1320,6 +1374,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             updatedAt: event.payload.acceptedAt,
             acceptedAt: event.payload.acceptedAt,
           });
+          yield* sql`
+            UPDATE rework_tasks
+            SET
+              status = 'accepted',
+              reviewed_at = ${event.payload.acceptedAt},
+              updated_at = ${event.payload.acceptedAt}
+            WHERE orchestrator_task_id = ${event.payload.taskId}
+          `;
           return;
         }
 
@@ -1335,6 +1397,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             iteration: existingTask.iteration + 1,
             updatedAt: event.payload.rejectedAt,
           });
+          yield* sql`
+            UPDATE rework_tasks
+            SET
+              status = 'needs-review',
+              reviewed_at = ${event.payload.rejectedAt},
+              updated_at = ${event.payload.rejectedAt}
+            WHERE orchestrator_task_id = ${event.payload.taskId}
+          `;
           return;
         }
 
@@ -1401,6 +1471,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             terminatedAt: null,
             terminationReason: null,
           });
+          yield* sql`
+            UPDATE rework_tasks
+            SET
+              status = 'running',
+              worker_id = ${event.payload.workerId},
+              updated_at = ${event.payload.spawnedAt}
+            WHERE orchestrator_task_id = ${event.payload.taskId}
+          `;
           return;
 
         case "orchestrator.worker.terminated": {

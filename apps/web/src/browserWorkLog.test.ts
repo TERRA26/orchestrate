@@ -211,6 +211,10 @@ describe("browserWorkLog", () => {
             targetLabel: "Save button",
             artifactRefs: ["browser-comment-1", "screenshot-crop-1"],
             cropArtifactRef: "screenshot-crop-1",
+            beforeScreenshotArtifactRef: "before-shot-1",
+            beforeDomArtifactRef: "before-dom-1",
+            afterScreenshotArtifactRef: "after-shot-1",
+            afterDomArtifactRef: "after-dom-1",
           },
         }),
       }),
@@ -222,6 +226,10 @@ describe("browserWorkLog", () => {
       comment: "Move the save button down",
       targetLabel: "Save button",
       cropArtifactRef: "screenshot-crop-1",
+      beforeScreenshotArtifactRef: "before-shot-1",
+      beforeDomArtifactRef: "before-dom-1",
+      afterScreenshotArtifactRef: "after-shot-1",
+      afterDomArtifactRef: "after-dom-1",
       evidenceRefs: ["browser-comment-1", "screenshot-crop-1"],
     });
   });
