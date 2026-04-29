@@ -1219,7 +1219,10 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
             return browserAutomationUnavailable(toolName);
           }
           const body = yield* decodeInput(ToolSchemas.BrowserOpenSessionInput, toolInput);
-          return yield* browserRuntime.value.openSession(body);
+          return yield* browserRuntime.value.openSession({
+            ...body,
+            preferredRuntimeKind: body.preferredRuntimeKind ?? "electron-visible",
+          });
         }
         case "orchestrate_browser_act": {
           if (browserRuntime._tag === "None") {

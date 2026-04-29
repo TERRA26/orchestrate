@@ -210,7 +210,7 @@ describe("OrchestrationToolRouter", () => {
     expect(browser.calls).toEqual([
       {
         name: "openSession",
-        input: { url: "https://example.com" },
+        input: { url: "https://example.com", preferredRuntimeKind: "electron-visible" },
       },
     ]);
     expect(result).toMatchObject({
@@ -262,7 +262,7 @@ describe("OrchestrationToolRouter", () => {
     expect(browser.calls).toEqual([
       {
         name: "openSession",
-        input: { url: "https://example.com" },
+        input: { url: "https://example.com", preferredRuntimeKind: "electron-visible" },
       },
       {
         name: "act",

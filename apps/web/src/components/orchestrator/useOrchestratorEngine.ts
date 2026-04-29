@@ -1021,7 +1021,10 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
 
       let sessionId: string | null = null;
       try {
-        const opened = (await api.browser.openSession({ url: absolutePreviewUrl })) as any;
+        const opened = (await api.browser.openSession({
+          url: absolutePreviewUrl,
+          preferredRuntimeKind: "electron-visible",
+        })) as any;
         sessionId = opened.sessionId;
         let observation = opened.observation;
         addProgressMessage(

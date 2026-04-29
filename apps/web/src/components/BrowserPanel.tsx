@@ -969,6 +969,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
           : (
               await api.browser.openSession({
                 url,
+                preferredRuntimeKind: "electron-visible",
                 viewportWidth: viewportSize.width,
                 viewportHeight: viewportSize.height,
               })

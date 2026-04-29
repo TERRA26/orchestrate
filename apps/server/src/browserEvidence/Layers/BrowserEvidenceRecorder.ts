@@ -71,9 +71,8 @@ function observationSummary(input: {
   const { observation, runtimeTruth } = input;
   return {
     browserSessionId: observation.sessionId,
-    runtimeKind: runtimeTruth?.runtimeKind ?? observation.runtimeKind ?? "playwright-headless",
-    surfaceMode:
-      runtimeTruth?.surfaceMode ?? observation.surfaceMode ?? "headless-validation-mirror",
+    runtimeKind: runtimeTruth?.runtimeKind ?? observation.runtimeKind ?? "unknown",
+    surfaceMode: runtimeTruth?.surfaceMode ?? observation.surfaceMode ?? "unknown",
     isUserVisibleSurface:
       runtimeTruth?.isUserVisibleSurface ?? observation.isUserVisibleSurface ?? false,
     observedUrl: runtimeTruth?.observedUrl ?? observation.observedUrl ?? observation.url,
@@ -185,8 +184,8 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
           {
             browserSessionId: context.browserSessionId,
             previewTargetId: context.previewTarget.id,
-            runtimeKind: context.runtimeTruth?.runtimeKind ?? "playwright-headless",
-            surfaceMode: context.runtimeTruth?.surfaceMode ?? "headless-validation-mirror",
+            runtimeKind: context.runtimeTruth?.runtimeKind ?? "unknown",
+            surfaceMode: context.runtimeTruth?.surfaceMode ?? "unknown",
             isUserVisibleSurface: context.runtimeTruth?.isUserVisibleSurface ?? false,
             observedUrl: context.runtimeTruth?.observedUrl ?? null,
             visiblePanelUrl: context.runtimeTruth?.visiblePanelUrl ?? null,

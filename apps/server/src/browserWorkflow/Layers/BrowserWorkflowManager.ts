@@ -395,6 +395,7 @@ export const BrowserWorkflowManagerLive = Layer.effect(
         const screenshotArtifactRefs = new Set<string>();
         const assertionResults: BrowserAssertionResult[] = [];
         let browserSessionId: BrowserSessionId | undefined;
+        const runtimeKind = input.preferredRuntimeKind ?? "electron-visible";
 
         try {
           workflow = yield* updateStatus(workflow, "resolving-preview-target");
@@ -403,9 +404,7 @@ export const BrowserWorkflowManagerLive = Layer.effect(
             threadId: ThreadId.makeUnsafe(input.sessionId),
             url: input.previewTarget.canonicalUrl,
             previewTarget: input.previewTarget,
-            ...(input.preferredRuntimeKind
-              ? { preferredRuntimeKind: input.preferredRuntimeKind }
-              : {}),
+            preferredRuntimeKind: runtimeKind,
           });
           browserSessionId = opened.sessionId;
           workflow = {
@@ -502,7 +501,7 @@ export const BrowserWorkflowManagerLive = Layer.effect(
               { workflowRunId: workflow.id, viewport },
             );
             evidenceRefs.add(String(viewportArtifact));
-            if (input.preferredRuntimeKind !== "electron-visible") {
+            if (runtimeKind !== "electron-visible") {
               const resized = yield* browserRuntime.act({
                 threadId: ThreadId.makeUnsafe(input.sessionId),
                 sessionId: opened.sessionId,

@@ -46,10 +46,15 @@ import { DesktopBrowserBridge } from "../Services/DesktopBrowserBridge.ts";
 
 const RUNTIME_KIND: BrowserRuntimeTruthKind = "playwright-headless";
 const SURFACE_MODE: BrowserSurfaceMode = "headless-validation-mirror";
+const USER_FACING_DEFAULT_RUNTIME_KIND: BrowserRuntimeTruthKind = "electron-visible";
 
 type RuntimeSessionRecord = {
   readonly previewTarget: PreviewTarget;
 };
+
+function requestedRuntimeKind(input: Pick<BrowserOpenSessionInput, "preferredRuntimeKind">) {
+  return input.preferredRuntimeKind ?? USER_FACING_DEFAULT_RUNTIME_KIND;
+}
 
 function now() {
   return new Date().toISOString();
@@ -702,7 +707,8 @@ export const BrowserRuntimeServiceLive = Layer.effect(
         try: async () => {
           const previewTarget =
             (input.previewTarget as PreviewTarget | undefined) ?? createPreviewTarget(input);
-          if (input.preferredRuntimeKind === "electron-visible") {
+          const runtimeKind = requestedRuntimeKind(input);
+          if (runtimeKind === "electron-visible") {
             const rawObservation = await Effect.runPromise(desktopBridge.openSession(input));
             sessions.set(rawObservation.sessionId, { previewTarget });
             const openedObservation = electronVisibleObservation(rawObservation, { previewTarget });
@@ -727,6 +733,9 @@ export const BrowserRuntimeServiceLive = Layer.effect(
               evidenceRefs: recorded.evidenceRefs,
               claimGate: recorded.claimGate,
             } satisfies BrowserOpenSessionResult;
+          }
+          if (runtimeKind !== "playwright-headless") {
+            throw new Error(`Unsupported browser runtime kind: ${runtimeKind}`);
           }
           const session = await runtime.openSession({ previewTarget });
           sessions.set(session.browserSessionId, { previewTarget });

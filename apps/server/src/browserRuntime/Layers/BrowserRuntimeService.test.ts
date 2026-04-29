@@ -118,6 +118,7 @@ layer("BrowserRuntimeServiceLive", (it) => {
         url: previewTarget.canonicalUrl,
         threadId: "thread-runtime-preview-target",
         previewTarget,
+        preferredRuntimeKind: "playwright-headless",
       });
 
       assert.strictEqual(openResult.runtimeTruth?.previewTargetId, previewTarget.id);
@@ -132,6 +133,7 @@ layer("BrowserRuntimeServiceLive", (it) => {
       const openResult = yield* runtime.openSession({
         url: "http://127.0.0.1:5173/",
         threadId: "thread-runtime-service",
+        preferredRuntimeKind: "playwright-headless",
       });
       assert.ok(openResult.runtimeTruth?.screenshotArtifactRef);
       assert.ok(openResult.evidenceRefs && openResult.evidenceRefs.length > 0);
@@ -165,6 +167,7 @@ layer("BrowserRuntimeServiceLive", (it) => {
       const openResult = yield* runtime.openSession({
         url: "http://127.0.0.1:5173/",
         threadId: "thread-runtime-observe-fresh",
+        preferredRuntimeKind: "playwright-headless",
       });
 
       const observed = yield* runtime.observe({ sessionId: openResult.sessionId });
@@ -188,6 +191,7 @@ layer("BrowserRuntimeServiceLive", (it) => {
       const openResult = yield* runtime.openSession({
         url: "https://example.com/",
         threadId: "thread-runtime-denied",
+        preferredRuntimeKind: "playwright-headless",
       });
 
       const exit = yield* Effect.exit(
@@ -203,7 +207,7 @@ layer("BrowserRuntimeServiceLive", (it) => {
     }),
   );
 
-  it.effect("refuses requested electron-visible sessions instead of falling back to headless", () =>
+  it.effect("refuses default electron-visible sessions instead of falling back to headless", () =>
     Effect.gen(function* () {
       const runtime = yield* BrowserRuntimeService;
 
@@ -211,7 +215,6 @@ layer("BrowserRuntimeServiceLive", (it) => {
         runtime.openSession({
           url: "http://127.0.0.1:5173/",
           threadId: "thread-runtime-electron-visible",
-          preferredRuntimeKind: "electron-visible",
         }),
       );
 
@@ -481,6 +484,22 @@ function actionHash(action: BrowserAction): string {
 let electronBridgeActCount = 0;
 
 electronLayer("BrowserRuntimeServiceLive electron-visible bridge", (it) => {
+  it.effect("defaults omitted openSession runtime preference to electron-visible", () =>
+    Effect.gen(function* () {
+      const runtime = yield* BrowserRuntimeService;
+
+      const result = yield* runtime.openSession({
+        url: "http://127.0.0.1:5173/",
+        threadId: "thread-runtime-electron-visible-default",
+      });
+
+      assert.strictEqual(result.runtimeTruth?.runtimeKind, "electron-visible");
+      assert.strictEqual(result.runtimeTruth?.surfaceMode, "live-shared-browser");
+      assert.strictEqual(result.runtimeTruth?.isUserVisibleSurface, true);
+      assert.match(String(result.sessionId), /^electron-visible-/);
+    }),
+  );
+
   it.effect("records durable same-surface evidence for electron-visible openSession", () =>
     Effect.gen(function* () {
       const runtime = yield* BrowserRuntimeService;

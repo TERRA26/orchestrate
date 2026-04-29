@@ -7,6 +7,12 @@ import type {
   EmbeddedBrowserSession,
   EmbeddedBrowserSessionSource,
 } from "./embeddedBrowserStateStore";
+import {
+  browserActionStatusLabel as presentBrowserActionStatusLabel,
+  browserObservationTitle,
+  browserRuntimeEvidenceLabel,
+  browserSurfaceModeLabel,
+} from "./orchestratorPresentation";
 import type { WorkLogEntry } from "./session-logic";
 
 export interface BrowserScreenshotDataUrls {
@@ -950,38 +956,11 @@ export function browserRuntimeTruthLabel(workEntry: WorkLogEntry): string | null
   if (!truth) {
     return null;
   }
-  const surface =
-    truth.surfaceMode === "live-shared-browser"
-      ? "Live shared browser"
-      : truth.surfaceMode === "headless-validation-mirror"
-        ? "Headless validation mirror"
-        : truth.surfaceMode === "static-screenshot-evidence"
-          ? "Static screenshot evidence"
-          : truth.surfaceMode;
+  const surface = browserSurfaceModeLabel(truth.surfaceMode);
   const visibility = truth.isUserVisibleSurface ? "same surface" : "not the visible browser";
   const agreement =
     truth.urlAgreement && truth.urlAgreement !== "unknown" ? ` · URL ${truth.urlAgreement}` : "";
   return `${surface} · ${truth.runtimeKind} · ${visibility}${agreement}`;
-}
-
-function browserSurfaceLabel(surfaceMode: string): string {
-  if (surfaceMode === "live-shared-browser") return "Live shared browser";
-  if (surfaceMode === "headless-validation-mirror") return "Headless validation mirror";
-  if (surfaceMode === "static-screenshot-evidence") return "Static screenshot evidence";
-  return surfaceMode;
-}
-
-function browserActionStatusLabel(workEntry: WorkLogEntry, hasScreenshot: boolean): string {
-  const raw = `${workEntry.label} ${workEntry.toolTitle ?? ""} ${workEntry.detail ?? ""}`;
-  if (/approval required|requires-approval/i.test(raw)) return "Approval required";
-  if (/blocked/i.test(raw)) return "Action blocked";
-  if (/navigate|opened browser session/i.test(raw)) return "Navigated";
-  if (/click/i.test(raw)) return "Clicked";
-  if (/type|fill/i.test(raw)) return "Typed";
-  if (/scroll/i.test(raw)) return "Scrolled";
-  if (/wait/i.test(raw)) return "Waiting for page";
-  if (/press|key/i.test(raw)) return "Pressed key";
-  return hasScreenshot ? "Screenshot captured" : "Observation captured";
 }
 
 export function browserEvidenceWorkSummary(
@@ -1020,17 +999,16 @@ export function browserEvidenceWorkSummary(
     ]),
   );
   const isDurable = evidenceRefs.length > 0 || Boolean(screenshotArtifactRef);
-  const surfaceLabel = browserSurfaceLabel(surfaceMode);
-  const runtimeLabel =
-    surfaceMode === "live-shared-browser" && !isDurable
-      ? "Live local browser · not recorded"
-      : surfaceMode === "live-shared-browser"
-        ? "Live shared browser · evidence captured"
-        : surfaceLabel;
+  const runtimeLabel = browserRuntimeEvidenceLabel({ surfaceMode, isDurable });
   const hasScreenshot = Boolean(screenshotArtifactRef || browserScreenshotDataUrls(workEntry));
   return {
-    title: workEntry.tone === "thinking" ? "Checking browser" : "Browser evidence",
-    statusLabel: browserActionStatusLabel(workEntry, hasScreenshot),
+    title: browserObservationTitle({ isChecking: workEntry.tone === "thinking" }),
+    statusLabel: presentBrowserActionStatusLabel({
+      label: workEntry.label,
+      toolTitle: workEntry.toolTitle,
+      detail: workEntry.detail,
+      hasScreenshot,
+    }),
     runtimeLabel,
     runtimeKind,
     surfaceMode,

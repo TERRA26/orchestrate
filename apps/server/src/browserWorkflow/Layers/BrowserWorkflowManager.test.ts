@@ -124,6 +124,7 @@ function makeBrowserRuntimeLayer(
     readonly consoleError?: boolean;
     readonly runtimeKind?: "electron-visible" | "playwright-headless";
     readonly actCalls?: string[];
+    readonly openRuntimeKinds?: Array<"electron-visible" | "playwright-headless" | undefined>;
   } = {},
 ) {
   const sessionId = BrowserSessionId.makeUnsafe("browser-session-workflow");
@@ -132,8 +133,9 @@ function makeBrowserRuntimeLayer(
     runtimeKind === "electron-visible" ? "live-shared-browser" : "headless-validation-mirror";
   const isUserVisibleSurface = runtimeKind === "electron-visible";
   return Layer.succeed(BrowserRuntimeService, {
-    openSession: () =>
-      Effect.succeed({
+    openSession: (input) => {
+      options.openRuntimeKinds?.push(input.preferredRuntimeKind);
+      return Effect.succeed({
         sessionId,
         observation: {
           ...makeObservation({ sessionId }),
@@ -158,7 +160,8 @@ function makeBrowserRuntimeLayer(
           urlAgreement: "same",
         },
         evidenceRefs: [EvidenceArtifactId.makeUnsafe("open-evidence-workflow")],
-      }),
+      });
+    },
     act: (input) => {
       options.actCalls?.push(input.action.kind);
       return Effect.succeed({
@@ -283,89 +286,114 @@ makeLayer({ consoleError: true })("BrowserWorkflowManagerLive assertion failures
 });
 
 const observeOnlyActCalls: string[] = [];
+const observeOnlyOpenRuntimeKinds: Array<"electron-visible" | "playwright-headless" | undefined> =
+  [];
 
-makeLayer({ runtimeKind: "electron-visible", actCalls: observeOnlyActCalls })(
-  "BrowserWorkflowManagerLive observe-only current-page mode",
-  (it) => {
-    it.effect("captures assertions without unsupported route or viewport actions", () =>
+makeLayer({
+  runtimeKind: "electron-visible",
+  actCalls: observeOnlyActCalls,
+  openRuntimeKinds: observeOnlyOpenRuntimeKinds,
+})("BrowserWorkflowManagerLive observe-only current-page mode", (it) => {
+  it.effect("defaults omitted workflow runtime preference to electron-visible", () =>
+    Effect.gen(function* () {
+      observeOnlyOpenRuntimeKinds.length = 0;
+      const workflows = yield* BrowserWorkflowManager;
+      const repository = yield* BrowserOrchestrationEvidenceRepository;
+      yield* seedScreenshotArtifact(
+        repository,
+        EvidenceArtifactId.makeUnsafe("screenshot-workflow"),
+      );
+
+      const result = yield* workflows.start({
+        sessionId: "workflow-session",
+        previewTarget,
+        controlMode: "observe-only-current-page",
+        assertions: [{ id: "screenshot", type: "screenshot-captured" }],
+      });
+
+      assert.strictEqual(result.workflow.status, "completed");
+      assert.deepStrictEqual(observeOnlyOpenRuntimeKinds, ["electron-visible"]);
+    }),
+  );
+
+  it.effect("captures assertions without unsupported route or viewport actions", () =>
+    Effect.gen(function* () {
+      observeOnlyActCalls.length = 0;
+      const workflows = yield* BrowserWorkflowManager;
+      const repository = yield* BrowserOrchestrationEvidenceRepository;
+      yield* seedScreenshotArtifact(
+        repository,
+        EvidenceArtifactId.makeUnsafe("screenshot-workflow"),
+      );
+
+      const result = yield* workflows.start({
+        sessionId: "workflow-session",
+        previewTarget,
+        preferredRuntimeKind: "electron-visible",
+        controlMode: "observe-only-current-page",
+        routePlan: [{ route: "/settings", label: "settings should not be navigated" }],
+        viewportPlan: [
+          {
+            id: "mobile",
+            label: "Mobile should not resize",
+            width: 390,
+            height: 844,
+            deviceScaleFactor: 2,
+          },
+        ],
+        assertions: [
+          { id: "url", type: "url-matches", pattern: "127.0.0.1" },
+          { id: "screenshot", type: "screenshot-captured" },
+        ],
+      });
+
+      assert.strictEqual(result.workflow.status, "completed");
+      assert.deepStrictEqual(observeOnlyActCalls, []);
+      assert.deepStrictEqual(result.workflow.routes, ["http://127.0.0.1:5173/"]);
+      assert.deepStrictEqual(
+        result.workflow.viewports.map((viewport) => viewport.id),
+        ["desktop"],
+      );
+      assert.ok(
+        result.workflow.assertionResults?.some(
+          (assertion) => assertion.assertionId === "screenshot" && assertion.status === "pass",
+        ),
+      );
+      assert.ok(result.workflow.screenshotArtifactRefs?.includes("screenshot-workflow"));
+    }),
+  );
+
+  it.effect(
+    "runs limited full-control route checks without resizing electron-visible runtime",
+    () =>
       Effect.gen(function* () {
         observeOnlyActCalls.length = 0;
         const workflows = yield* BrowserWorkflowManager;
         const repository = yield* BrowserOrchestrationEvidenceRepository;
         yield* seedScreenshotArtifact(
           repository,
-          EvidenceArtifactId.makeUnsafe("screenshot-workflow"),
+          EvidenceArtifactId.makeUnsafe("screenshot-navigate"),
         );
 
         const result = yield* workflows.start({
           sessionId: "workflow-session",
           previewTarget,
           preferredRuntimeKind: "electron-visible",
-          controlMode: "observe-only-current-page",
-          routePlan: [{ route: "/settings", label: "settings should not be navigated" }],
-          viewportPlan: [
-            {
-              id: "mobile",
-              label: "Mobile should not resize",
-              width: 390,
-              height: 844,
-              deviceScaleFactor: 2,
-            },
-          ],
+          controlMode: "full-control",
+          routePlan: [{ route: "/settings", label: "settings" }],
           assertions: [
-            { id: "url", type: "url-matches", pattern: "127.0.0.1" },
+            { id: "url", type: "url-matches", pattern: "/settings" },
             { id: "screenshot", type: "screenshot-captured" },
           ],
         });
 
         assert.strictEqual(result.workflow.status, "completed");
-        assert.deepStrictEqual(observeOnlyActCalls, []);
-        assert.deepStrictEqual(result.workflow.routes, ["http://127.0.0.1:5173/"]);
-        assert.deepStrictEqual(
-          result.workflow.viewports.map((viewport) => viewport.id),
-          ["desktop"],
-        );
+        assert.deepStrictEqual(observeOnlyActCalls, ["navigate"]);
         assert.ok(
           result.workflow.assertionResults?.some(
             (assertion) => assertion.assertionId === "screenshot" && assertion.status === "pass",
           ),
         );
-        assert.ok(result.workflow.screenshotArtifactRefs?.includes("screenshot-workflow"));
       }),
-    );
-
-    it.effect(
-      "runs limited full-control route checks without resizing electron-visible runtime",
-      () =>
-        Effect.gen(function* () {
-          observeOnlyActCalls.length = 0;
-          const workflows = yield* BrowserWorkflowManager;
-          const repository = yield* BrowserOrchestrationEvidenceRepository;
-          yield* seedScreenshotArtifact(
-            repository,
-            EvidenceArtifactId.makeUnsafe("screenshot-navigate"),
-          );
-
-          const result = yield* workflows.start({
-            sessionId: "workflow-session",
-            previewTarget,
-            preferredRuntimeKind: "electron-visible",
-            controlMode: "full-control",
-            routePlan: [{ route: "/settings", label: "settings" }],
-            assertions: [
-              { id: "url", type: "url-matches", pattern: "/settings" },
-              { id: "screenshot", type: "screenshot-captured" },
-            ],
-          });
-
-          assert.strictEqual(result.workflow.status, "completed");
-          assert.deepStrictEqual(observeOnlyActCalls, ["navigate"]);
-          assert.ok(
-            result.workflow.assertionResults?.some(
-              (assertion) => assertion.assertionId === "screenshot" && assertion.status === "pass",
-            ),
-          );
-        }),
-    );
-  },
-);
+  );
+});
