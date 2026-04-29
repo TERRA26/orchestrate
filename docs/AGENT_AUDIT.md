@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `832426f8` (`fix browser runtime default routing`)
-**Active bundle:** **Bundle 17B — Hardening + Annotation→Rework** (see §10 iteration log for the full spec)
+**Latest reviewed commit:** `f0b45544` (`harden browser runtime defaults`) — Bundle 17B Sub-scope A (Hardening) reviewed; ACCEPTED with one required follow-up before Sub-scope B (see §10 iteration log).
+**Active bundle:** **Bundle 17B Sub-scope B — Annotation → Focused Rework Task** (gated on completing one small follow-up from Sub-scope A: unknown-label leaks at `browserWorkLog.ts:963` and `WorkEntryRow.tsx:201`).
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -747,3 +747,79 @@ This is an independent hardening push for Bundle 17B Sub-scope A only. I did not
 ### Remaining Bundle 17B Work
 
 Sub-scope B remains open: annotation creation before-evidence, `rework_tasks` persistence/state machine, `start-agent-run` spawning, submit-time after-evidence, and before/after UI preview.
+
+---
+
+### Reviewer Scrutiny — 2026-04-29 — Bundle 17B Sub-scope A (Hardening)
+
+**Verdict: ACCEPTED with one required follow-up before Sub-scope B starts.** All five conditions C-1..C-5 are technically satisfied, but the C-3 "no `unknown` leaks to user-visible surfaces" requirement is incomplete: two callsites still render the raw `runtimeKind` literal. Fix those, push, then Sub-scope B is green.
+
+#### What I verified directly
+
+- `git diff 94851690..f0b45544` — 8 files, +296/−107 lines, all in scope.
+- Each cited file:line read against the diff:
+  - **C-1 (logWarning when default applied).** [`BrowserRuntimeService.ts:710-720`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:710) emits `Effect.logWarning` with `threadId` and `url` when `input.preferredRuntimeKind === undefined`. [`BrowserEvidenceRecorder.ts:84-103`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:84) defines `missingRuntimeTruthWarnings` and calls it from both `recordSessionOpened` ([:201](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:201)) and `recordObservation` ([:291](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:291)). Confirmed.
+  - **C-2 (Match.exhaustive).** [`BrowserRuntimeService.ts:723-820`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:723) is now a `Match.value(runtimeKind).pipe(Match.when("electron-visible", ...), Match.when("playwright-headless", ...), Match.when("chrome-extension", ...), Match.exhaustive)`. Adding a fourth runtime kind to the schema would now be a compile error here. Confirmed.
+  - **C-3 (UI explicit "unknown" labels).** [`orchestratorPresentation.ts:18,32`](apps/web/src/orchestratorPresentation.ts:18) maps `surfaceMode === "unknown"` to "Browser runtime unknown" / "Browser runtime unknown · evidence incomplete". Tests added at [`orchestratorPresentation.test.ts:25-30`](apps/web/src/orchestratorPresentation.test.ts:25). **PARTIAL — see follow-up below.**
+  - **C-4 (WS-boundary integration test).** [`wsServer.test.ts:619`](apps/server/src/wsServer.test.ts:619) — `"opens browser sessions through the WS boundary with electron-visible default"` — mocks `BrowserRuntimeService` to capture what `preferredRuntimeKind` arrives at the service, sends a `WS_METHODS.browserOpenSession` request **omitting the field**, and asserts the captured value is `"electron-visible"` and the returned truth is `electron-visible` / `live-shared-browser`. This is the regression test for the user-observed call path. I ran it: PASS.
+  - **C-5 (test-debt refresh).** [`docs/baseline-test-debt-2026-04-28.md`](docs/baseline-test-debt-2026-04-28.md) appended a new "Bundle 17B Hardening Baseline Refresh - 2026-04-29" section listing the current web failure set and the game-platform tic-tac-toe timeout I observed. Confirmed.
+- Verification I re-ran on my machine:
+  - `bun lint` — exit 0, 131 pre-existing warnings.
+  - `bun typecheck` — 10/10 packages PASS.
+  - Targeted server tests `BrowserRuntimeService` + `BrowserEvidenceRecorder` — 25/25 PASS.
+  - Targeted WS-boundary test — PASS.
+  - Targeted web tests `orchestratorPresentation` + `browserWorkLog` — 24/24 PASS.
+
+#### Required follow-up (C-3 leak): unknown still reaches users
+
+The agent updated `orchestratorPresentation.ts` to label `surfaceMode === "unknown"`, but **two callsites bypass the labeler and render the raw `runtimeKind` value to the user**:
+
+- [`apps/web/src/browserWorkLog.ts:963`](apps/web/src/browserWorkLog.ts:963) — template literal `` `${surface} · ${truth.runtimeKind} · ${visibility}${agreement}` ``. When `runtimeKind === "unknown"` the user reads "… · unknown · …".
+- [`apps/web/src/components/chat/WorkEntryRow.tsx:201`](apps/web/src/components/chat/WorkEntryRow.tsx:201) — `<span>{summary.runtimeKind}</span>`. Same problem; renders the literal word "unknown" inline.
+
+There is no `runtimeKind` labeler in `orchestratorPresentation.ts`. Only `surfaceMode` is mapped.
+
+**Fix (before Sub-scope B):**
+
+1. In [`apps/web/src/orchestratorPresentation.ts`](apps/web/src/orchestratorPresentation.ts), add a `browserRuntimeKindLabel(kind: string): string` mapping:
+   - `"electron-visible"` → `"Electron desktop"` (or `"Live shared browser"` if you prefer to align with the surface label — pick one and be consistent)
+   - `"playwright-headless"` → `"Playwright headless"`
+   - `"chrome-extension"` → `"Chrome extension"`
+   - `"unknown"` → `"Runtime unknown"`
+   - any other value → return as-is (so stale data from older sessions still renders something)
+2. Update [`browserWorkLog.ts:963`](apps/web/src/browserWorkLog.ts:963) and [`WorkEntryRow.tsx:201`](apps/web/src/components/chat/WorkEntryRow.tsx:201) to use the labeler instead of the raw value.
+3. Add a unit test in `orchestratorPresentation.test.ts` covering the four explicit cases plus the fallthrough.
+4. Update `browserWorkLog.test.ts` if any snapshot expectations now contain the new label.
+
+This is ~10 lines of code plus tests. Push as a small commit titled e.g. `fix(web): map raw browser runtime kind to user-facing label`. Once that's in, Sub-scope B is greenlit without further review.
+
+#### Answers to your two specific scrutiny questions
+
+1. **WS-boundary enrichment in `wsServer.ts` in addition to the service backstop — acceptable?**
+   **Yes, accepted.** Defense in depth is the right call here. The wsServer now expresses the intent at the boundary that actually receives the user's call; the service-level default is a true backstop that fires its `logWarning` only when *some other path* failed to enrich. The shape is correct.
+
+   One small suggestion (NOT required, NOT a blocker): the literal `"electron-visible"` is now in three places — [`wsServer.ts:1354`](apps/server/src/wsServer.ts:1354), [`OrchestrationToolRouter.ts:1224`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:1224), and `BrowserRuntimeService.ts:USER_FACING_DEFAULT_RUNTIME_KIND`. Consider exporting `USER_FACING_DEFAULT_RUNTIME_KIND` (or moving it to `apps/server/src/browserRuntime/constants.ts` or `packages/shared/src/browser/`) and importing it at the other two sites. If the runtime-default policy ever changes, one edit instead of three. Do this opportunistically, not as a blocker.
+
+2. **Does "unknown"-label handling cover every user-visible path?**
+   **No.** Two leaks remain at `browserWorkLog.ts:963` and `WorkEntryRow.tsx:201` (see "Required follow-up" above). Once those are fixed and a regression test exists, the answer is yes.
+
+#### Things I checked that are clean
+
+- No new silent-fallback patterns introduced (`?? "playwright-headless"`, `?? "headless-validation-mirror"`, conditional spreads in workflow code, `Layer.orElse` between non-substitutable services). Clean.
+- No `as any`, `// @ts-expect-error`, or `// eslint-disable` added to make gates pass.
+- No tests deleted or `.skip`'d.
+- The `Match.exhaustive` is a real one — the `chrome-extension` branch throws inside `Match.when` (caught by the outer `Effect.tryPromise.catch`). It would be more idiomatic to return `Effect.fail(new Error(...))` from the branch and avoid `throw`, but the current implementation works correctly. Optional polish, not a blocker.
+- `Effect.runPromise(Effect.logWarning(...))` is used inside the `Effect.tryPromise.try` callback rather than `yield* Effect.logWarning(...)` from a generator. This works but is awkward; the existing file uses the same pattern throughout, so the choice is consistent. Optional polish.
+
+#### Sub-scope B status
+
+Sub-scope B (annotation → focused rework task) is **conditionally greenlit**: ship the C-3 follow-up first (small, ~10 LOC), then proceed with the rework loop work as previously specified in §"Active Bundle: Bundle 17B" → "Sub-scope B". The Sub-scope B spec, gates, and out-of-scope list are unchanged from the original Bundle 17B definition above.
+
+For Sub-scope B specifically, two reminders that may not be obvious until you start:
+- **Verify `OrchestrationEngineService` (or whatever your codebase calls it) before assuming an interface.** The audit named that service as a likely target; in practice, look at how `orchestrate_spawn_agent` is wired in [`OrchestrationToolRouter.ts`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts) and follow the call. If the engine doesn't expose a clean `spawnTask({ focusedRoutes, focusedViewports, evidenceRefs, parentDecisionId })` API, file that as a sub-task and either extend it or expose a thin wrapper. **Do not** stuff orchestration logic into `ReviewerDecisionService`.
+- **Before-evidence is captured at *annotation creation*, not at `startRework`.** This is in the spec, but worth re-emphasizing because it changes where you wire it. The `BrowserAnnotationService.create` path is where you call `BrowserEvidenceRecorder.recordObservation` (or a new `recordAnnotationBefore` variant) and persist the resulting artifact refs onto the annotation row, so `loadAnnotationReworkTargetsByIds` can attach them to `BrowserAnnotationReworkTarget.beforeScreenshotArtifactRef` / `beforeDomArtifactRef` later.
+
+#### Iteration log update
+
+- **2026-04-29 — Agent Report — Bundle 17B Sub-scope A (Hardening)** — implemented; pushed at `f0b45544`.
+- **2026-04-29 — Reviewer Scrutiny — Bundle 17B Sub-scope A** — accepted with one required follow-up (the unknown-label leaks at `browserWorkLog.ts:963` and `WorkEntryRow.tsx:201`); Sub-scope B conditionally greenlit.
