@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `27e8514b` (`feat: persist browser annotation rework tasks`) — Bundle 17B Sub-scope B reviewed; **BLOCKED on two required fixes (F-1, F-2)**. See §10 iteration log → "Reviewer Scrutiny — 2026-04-29 — Bundle 17B Sub-scope B".
-**Active bundle:** **Bundle 17B Sub-scope B (re-do, focused fixes)** — F-1 dispatch `thread.turn.start`, F-2 add tests for start-agent-run + four state transitions. F-3 (visual after-evidence) deferred to a follow-up bundle.
+**Latest reviewed commit:** `bb458ed1` (`fix(reviewer): kick off rework worker turns`) — Bundle 17B Sub-scope B re-do reviewed; **ACCEPTED**. Bundle 17B as a whole (Hardening + Annotation→Rework) is now complete.
+**Active bundle:** **Bundle 17B-F-3 — Visual after-evidence at submit** (deferred from Sub-scope B; see iteration log for spec). Bundles 17C (non-browser semantic phases) and 17D (CDP attach) remain queued.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -1113,3 +1113,87 @@ This follow-up addresses the two blocking reviewer findings from `91d8eb38`: F-1
 
 - The projection lifecycle test initially exposed that task submit/accept/reject rework updates were gated behind an existing-task lookup that can miss for task-scoped events. I fixed that rather than only adjusting the test, because the durable `rework_tasks` row should follow the event payload.
 - I have not changed the deferred F-3 visual after-evidence behavior.
+
+---
+
+### Reviewer Scrutiny — 2026-04-29 — Bundle 17B Sub-scope B re-do
+
+**Verdict: ACCEPTED.** F-1 and F-2 are both closed. Bundle 17B as a whole is now complete. The deferred F-3 (visual after-evidence at submit) becomes the next active bundle.
+
+#### What I verified directly
+
+- `git diff 91d8eb38..bb458ed1` — 7 files, +535/−55 lines. Most weight in tests (+217 projection, +208 reviewer). All in scope.
+- **F-1: shared `reportProtocol` helper.**
+  - [`apps/server/src/orchestration/reportProtocol.ts:1`](apps/server/src/orchestration/reportProtocol.ts:1) exports `reportProtocolReminder` (the same multi-line REPORT block) and `workerKickoffMessage(objective)`. The function preserves the existing fallback "Begin working on the assigned task." behavior.
+  - [`OrchestrationToolRouter.ts:603`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:603) replaces the inline 22-line block with a single `workerKickoffMessage(normalizedObjective)` call. No text drift — diff is a clean removal-plus-import.
+  - [`ReviewerDecisionService.ts:1652`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1652) dispatches `thread.turn.start` after `worker.spawn`, with `text: workerKickoffMessage(instruction)`, and forwards the caller's `modelSelection`, `runtimeMode: "full-access"`, `interactionMode: "default"`. The dispatched event shape matches the router's pattern.
+- **F-2: tests for start-agent-run + four projection transitions.**
+  - [`ReviewerDecisionService.test.ts`](apps/server/src/reviewer/Layers/ReviewerDecisionService.test.ts:438) — new test "spawns and kicks off a focused rework worker turn." Asserts the **five** commands dispatched in order: `["orchestrator.run.create", "orchestrator.task.create", "thread.create", "orchestrator.worker.spawn", "thread.turn.start"]`. Asserts `turnStart.message.text.includes("Align the save button")` (objective threaded through) AND `turnStart.message.text.includes(reportProtocolReminder)` (the shared reminder text is in the kickoff). Asserts `modelSelection`/`runtimeMode` forwarded correctly. Queries `rework_tasks` row, asserts `status: "assigned"`, `orchestrator_task_id` and `worker_id` set, and `before_evidence_refs_json` contains the seeded refs.
+  - [`ProjectionPipeline.test.ts`](apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts:2000) — new test "projects rework task lifecycle transitions and submit evidence." Drives **both accept and reject paths** through synthetic events. For the accept path: `worker.spawn` → asserts `status: "running"`, `worker_id` set; `task.submit` → asserts `status: "submitted"`, `submitted_at` set, `after_evidence_refs_json[0]` matches `^rework-after-`, **and the `evidence_artifacts` row exists with `kind: "browser-comment"`**; `task.accept` → asserts `status: "accepted"`, `reviewed_at` set. For the reject path: same spawn+submit, then `task.reject` → asserts `status: "needs-review"`, `reviewed_at` set.
+- **Bonus latent-bug fix.** [`ProjectionPipeline.ts:1289,1312,1371,1395`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1289) replaces `if (!existingTask) return;` with `if (existingTask) { ... }` (no early return) so the `rework_tasks` SQL update fires even when the regular `orchestrator_tasks` row lookup misses. This was a real bug — the agent caught it while writing the projection test (per their note). Same fix applied to all four lifecycle branches.
+
+#### Verification I re-ran on my machine
+
+- `bun lint`: exit 0, 131 pre-existing warnings, 0 errors.
+- `bun typecheck`: 10/10 packages PASS.
+- New rework lifecycle test in ProjectionPipeline: PASS (1 targeted, 18 skipped by `-t` filter).
+- New start-agent-run test in ReviewerDecisionService: PASS (1 targeted, 14 skipped).
+- `045_ReworkTasks` migration test: PASS.
+- Two pre-existing failures in `ProjectionPipeline.test.ts` (`does not persist attachment files when projector transaction rolls back`, `persists worker visibility changes from promote and demote events`). I confirmed both fail identically on the parent commit `91d8eb38` — **not introduced by this re-do**. They predate the rework loop work and should be tracked separately in `baseline-test-debt-2026-04-28.md` if not already.
+
+#### What's clean
+
+- No silent fallbacks. `Option.isNone(orchestrationEngine)` still fails closed when the engine is unavailable.
+- No `as any`, no `// @ts-expect-error`, no `// eslint-disable` introduced (re-greped the production diff — clean).
+- The `workerKickoffMessage` helper preserves the empty-objective fallback (`"Begin working on the assigned task."`) — no behavior change for the original spawn-agent path.
+- The kickoff-message-content assertion (`includes(reportProtocolReminder)`) is the right shape: any future commit that strips the reminder will fail this test.
+- The projection test exercising both accept and reject paths in one block is more efficient than two separate tests and exercises the same code path with different terminal events.
+
+#### Bundle 17B status — COMPLETE
+
+All 17B gates from the original spec are now satisfied:
+
+- [x] `BrowserAnnotationReworkTarget` schema has the four optional before/after refs.
+- [x] Migration `045_ReworkTasks.ts` exists; `rework_tasks` table created; indexes in place.
+- [x] `BrowserAnnotationService.create` captures and stores before-evidence artifact refs (via reuse of existing creation-time captures).
+- [x] `ReviewerDecisionService.startRework` with `mode === "start-agent-run"` spawns an orchestrator task and persists a `rework_tasks` row, **and now dispatches `thread.turn.start`**.
+- [x] State machine transitions persisted on each event; `running → submitted → needs-review → accepted` test passes.
+- [x] After-evidence is captured at task **submit**, not at accept (as a JSON metadata artifact — F-3 will upgrade to visual).
+- [x] UI renders before/after paired preview when both refs exist on an annotation rework target (renders refs as text labels — F-3 will upgrade to actual screenshot previews).
+- [x] All `bun fmt && bun lint && bun typecheck` pass for in-scope packages. Targeted tests pass.
+- [x] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [x] Hardening conditions C-1 through C-5 from Sub-scope A all closed.
+
+#### Active Bundle: **Bundle 17B-F-3 — Visual after-evidence at submit**
+
+The schema slot, projection routing, and UI scaffold are in place; what's missing is the actual screenshot+DOM artifact at submit time and a UI that renders them visually rather than as text.
+
+**Scope:**
+
+1. **Worker self-captures before submitting.** When a rework worker is about to emit its REPORT block, it should call `BrowserRuntimeService.observe` (with the same `previewTarget` and route as the rework annotation) to capture a fresh screenshot and DOM snapshot. The resulting artifact refs become part of the worker's submission.
+2. **Extend `orchestrator.task.submit` event payload** with optional fields: `browserAfterScreenshotRef?: EvidenceArtifactId` and `browserAfterDomRef?: EvidenceArtifactId`. (Or a generic `submissionEvidenceRefs?: ReadonlyArray<EvidenceArtifactId>` — pick one; recommendation: explicit fields so the projection can route them to specific schema slots.)
+3. **Projection updates at submit.** In [`ProjectionPipeline.ts:1320-1351`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1320), when the new fields are present, write them through to `rework_tasks.after_evidence_refs_json` AND to `BrowserAnnotationReworkTarget.afterScreenshotArtifactRef` / `afterDomArtifactRef` on the corresponding annotation row. Keep the existing JSON metadata artifact as supplemental — it's still useful as a structured submission record.
+4. **UI renders actual previews.** In [`WorkEntryRow.tsx:597-632`](apps/web/src/components/chat/WorkEntryRow.tsx:597), when the after-screenshot ref is present, render `BrowserScreenshotPreview` (already imported in the same file) for both before and after, side by side. When only the metadata JSON is present (legacy/fallback), keep the current text-label rendering.
+5. **Tests.**
+   - Worker submission protocol carries through the new ref fields (event-shape test).
+   - Projection writes the refs to both `rework_tasks` and the annotation row.
+   - UI renders paired `BrowserScreenshotPreview` when both refs exist; falls back to text labels when only metadata is present.
+
+**Out of scope for 17B-F-3:**
+- Bundle 17C (non-browser semantic phases) — still queued.
+- Bundle 17D (CDP attach) — still queued.
+- Renaming the `"browser-comment"` artifact kind to `"rework-submission"` — cosmetic; do opportunistically.
+
+**Acceptance gates** (file:line citations required as usual):
+
+- [ ] `orchestrator.task.submit` event payload extended with optional after-screenshot and after-DOM ref fields. Schema test passes.
+- [ ] Worker code path captures a fresh screenshot + DOM via `BrowserRuntimeService.observe` before emitting REPORT, includes the refs in the submit event. (Verify the worker integration point first — could be in the agent's MCP tool surface, the supervisor's submit handler, or a worker-side helper. Don't stuff this into `ReviewerDecisionService`.)
+- [ ] Projection writes the refs to `rework_tasks.after_evidence_refs_json` and to `BrowserAnnotation.afterScreenshotArtifactRef` / `afterDomArtifactRef` so they propagate to `BrowserAnnotationReworkTarget` on subsequent reads.
+- [ ] `WorkEntryRow.tsx` renders `BrowserScreenshotPreview` for the before/after pair when both refs are screenshot-shaped; falls back to the current text rendering otherwise.
+- [ ] `bun fmt && bun lint && bun typecheck` pass; new tests pass; no `as any`/skips.
+- [ ] Existing pre-existing failures in `ProjectionPipeline.test.ts` (`does not persist attachment files when projector transaction rolls back`, `persists worker visibility changes from promote and demote events`) — refresh `baseline-test-debt-2026-04-28.md` if they're not already documented there. Don't fix them in this bundle; just track.
+
+#### Iteration log update
+
+- **2026-04-29 — Agent Report — Bundle 17B Sub-scope B re-do** — implemented; pushed at `bb458ed1`.
+- **2026-04-29 — Reviewer Scrutiny — Bundle 17B Sub-scope B re-do** — accepted. F-1 and F-2 closed. Bundle 17B complete. Bundle 17B-F-3 (visual after-evidence) becomes active.
