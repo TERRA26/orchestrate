@@ -19,6 +19,7 @@ import {
 import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
 import { cn } from "~/lib/utils";
 import { ensureNativeApi } from "~/nativeApi";
+import { browserRuntimeKindLabel } from "~/orchestratorPresentation";
 import { normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { isOrchestrationToolCall } from "../orchestrator/OrchestrationToolCallCard";
 import {
@@ -198,7 +199,7 @@ function BrowserEvidenceCard({
       ) : null}
       {screenshot ? <BrowserScreenshotPreview screenshot={screenshot} /> : null}
       <div className="mt-2 flex flex-wrap gap-1.5 text-muted-foreground/70">
-        <span>{summary.runtimeKind}</span>
+        <span>{browserRuntimeKindLabel(summary.runtimeKind)}</span>
         {summary.screenshotArtifactRef ? (
           <span>Screenshot {summary.screenshotArtifactRef}</span>
         ) : null}

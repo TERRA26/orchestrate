@@ -19,6 +19,14 @@ export function browserSurfaceModeLabel(surfaceMode: BrowserSurfaceMode): string
   return surfaceMode;
 }
 
+export function browserRuntimeKindLabel(kind: string): string {
+  if (kind === "electron-visible") return "Electron desktop";
+  if (kind === "playwright-headless") return "Playwright headless";
+  if (kind === "chrome-extension") return "Chrome extension";
+  if (kind === "unknown") return "Runtime unknown";
+  return kind;
+}
+
 export function browserRuntimeEvidenceLabel(input: {
   readonly surfaceMode: BrowserSurfaceMode;
   readonly isDurable: boolean;

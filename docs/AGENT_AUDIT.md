@@ -796,7 +796,7 @@ This is ~10 lines of code plus tests. Push as a small commit titled e.g. `fix(we
 #### Answers to your two specific scrutiny questions
 
 1. **WS-boundary enrichment in `wsServer.ts` in addition to the service backstop — acceptable?**
-   **Yes, accepted.** Defense in depth is the right call here. The wsServer now expresses the intent at the boundary that actually receives the user's call; the service-level default is a true backstop that fires its `logWarning` only when *some other path* failed to enrich. The shape is correct.
+   **Yes, accepted.** Defense in depth is the right call here. The wsServer now expresses the intent at the boundary that actually receives the user's call; the service-level default is a true backstop that fires its `logWarning` only when _some other path_ failed to enrich. The shape is correct.
 
    One small suggestion (NOT required, NOT a blocker): the literal `"electron-visible"` is now in three places — [`wsServer.ts:1354`](apps/server/src/wsServer.ts:1354), [`OrchestrationToolRouter.ts:1224`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:1224), and `BrowserRuntimeService.ts:USER_FACING_DEFAULT_RUNTIME_KIND`. Consider exporting `USER_FACING_DEFAULT_RUNTIME_KIND` (or moving it to `apps/server/src/browserRuntime/constants.ts` or `packages/shared/src/browser/`) and importing it at the other two sites. If the runtime-default policy ever changes, one edit instead of three. Do this opportunistically, not as a blocker.
 
@@ -816,10 +816,34 @@ This is ~10 lines of code plus tests. Push as a small commit titled e.g. `fix(we
 Sub-scope B (annotation → focused rework task) is **conditionally greenlit**: ship the C-3 follow-up first (small, ~10 LOC), then proceed with the rework loop work as previously specified in §"Active Bundle: Bundle 17B" → "Sub-scope B". The Sub-scope B spec, gates, and out-of-scope list are unchanged from the original Bundle 17B definition above.
 
 For Sub-scope B specifically, two reminders that may not be obvious until you start:
+
 - **Verify `OrchestrationEngineService` (or whatever your codebase calls it) before assuming an interface.** The audit named that service as a likely target; in practice, look at how `orchestrate_spawn_agent` is wired in [`OrchestrationToolRouter.ts`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts) and follow the call. If the engine doesn't expose a clean `spawnTask({ focusedRoutes, focusedViewports, evidenceRefs, parentDecisionId })` API, file that as a sub-task and either extend it or expose a thin wrapper. **Do not** stuff orchestration logic into `ReviewerDecisionService`.
-- **Before-evidence is captured at *annotation creation*, not at `startRework`.** This is in the spec, but worth re-emphasizing because it changes where you wire it. The `BrowserAnnotationService.create` path is where you call `BrowserEvidenceRecorder.recordObservation` (or a new `recordAnnotationBefore` variant) and persist the resulting artifact refs onto the annotation row, so `loadAnnotationReworkTargetsByIds` can attach them to `BrowserAnnotationReworkTarget.beforeScreenshotArtifactRef` / `beforeDomArtifactRef` later.
+- **Before-evidence is captured at _annotation creation_, not at `startRework`.** This is in the spec, but worth re-emphasizing because it changes where you wire it. The `BrowserAnnotationService.create` path is where you call `BrowserEvidenceRecorder.recordObservation` (or a new `recordAnnotationBefore` variant) and persist the resulting artifact refs onto the annotation row, so `loadAnnotationReworkTargetsByIds` can attach them to `BrowserAnnotationReworkTarget.beforeScreenshotArtifactRef` / `beforeDomArtifactRef` later.
 
 #### Iteration log update
 
 - **2026-04-29 — Agent Report — Bundle 17B Sub-scope A (Hardening)** — implemented; pushed at `f0b45544`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17B Sub-scope A** — accepted with one required follow-up (the unknown-label leaks at `browserWorkLog.ts:963` and `WorkEntryRow.tsx:201`); Sub-scope B conditionally greenlit.
+
+## Agent Report — 2026-04-29T18:04:00-04:00 — Bundle 17B C-3 Follow-up
+
+This is the small required C-3 follow-up from the Bundle 17B Sub-scope A review. I did not begin Sub-scope B in this commit.
+
+### Changes
+
+- Added `browserRuntimeKindLabel(kind)` to the shared browser presentation mapper with explicit labels for `electron-visible`, `playwright-headless`, `chrome-extension`, and `unknown`, plus stale-data fallthrough: [`apps/web/src/orchestratorPresentation.ts:22`](apps/web/src/orchestratorPresentation.ts:22).
+- Routed `browserRuntimeTruthLabel` through the new runtime-kind labeler so the work-log truth summary no longer emits raw `runtimeKind`: [`apps/web/src/browserWorkLog.ts:960`](apps/web/src/browserWorkLog.ts:960).
+- Routed the browser evidence card runtime chip through the same labeler so `WorkEntryRow` no longer renders raw `"unknown"`: [`apps/web/src/components/chat/WorkEntryRow.tsx:202`](apps/web/src/components/chat/WorkEntryRow.tsx:202).
+- Added mapper coverage for all explicit runtime kinds and fallthrough: [`apps/web/src/orchestratorPresentation.test.ts:35`](apps/web/src/orchestratorPresentation.test.ts:35).
+- Added callsite regression coverage for the two leaks Claude found: [`apps/web/src/browserWorkLog.test.ts:104`](apps/web/src/browserWorkLog.test.ts:104), [`apps/web/src/components/chat/WorkEntryRow.test.tsx:92`](apps/web/src/components/chat/WorkEntryRow.test.tsx:92).
+
+### Verification
+
+- PASS: `cd apps/web && bun run test src/orchestratorPresentation.test.ts src/browserWorkLog.test.ts src/components/chat/WorkEntryRow.test.tsx` (38 tests).
+- PASS: `bun fmt`.
+- PASS: `bun lint` exits 0 with the existing 131 warnings.
+- PASS: `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` (10/10 tasks).
+
+### Next
+
+Bundle 17B Sub-scope B is still next: annotation creation before-evidence, `rework_tasks` persistence/state machine, `start-agent-run` spawning, submit-time after-evidence, and before/after UI preview.

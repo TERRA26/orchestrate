@@ -4,6 +4,7 @@ import {
   browserActionStatusLabel,
   browserObservationTitle,
   browserRuntimeEvidenceLabel,
+  browserRuntimeKindLabel,
   browserSurfaceModeLabel,
 } from "./orchestratorPresentation";
 
@@ -29,6 +30,14 @@ describe("orchestratorPresentation", () => {
         isDurable: true,
       }),
     ).toBe("Browser runtime unknown · evidence incomplete");
+  });
+
+  it("maps browser runtime kinds to user-facing labels", () => {
+    expect(browserRuntimeKindLabel("electron-visible")).toBe("Electron desktop");
+    expect(browserRuntimeKindLabel("playwright-headless")).toBe("Playwright headless");
+    expect(browserRuntimeKindLabel("chrome-extension")).toBe("Chrome extension");
+    expect(browserRuntimeKindLabel("unknown")).toBe("Runtime unknown");
+    expect(browserRuntimeKindLabel("legacy-runtime")).toBe("legacy-runtime");
   });
 
   it("maps raw browser work into semantic progress phrases", () => {

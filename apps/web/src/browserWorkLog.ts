@@ -11,6 +11,7 @@ import {
   browserActionStatusLabel as presentBrowserActionStatusLabel,
   browserObservationTitle,
   browserRuntimeEvidenceLabel,
+  browserRuntimeKindLabel,
   browserSurfaceModeLabel,
 } from "./orchestratorPresentation";
 import type { WorkLogEntry } from "./session-logic";
@@ -957,10 +958,11 @@ export function browserRuntimeTruthLabel(workEntry: WorkLogEntry): string | null
     return null;
   }
   const surface = browserSurfaceModeLabel(truth.surfaceMode);
+  const runtime = browserRuntimeKindLabel(truth.runtimeKind);
   const visibility = truth.isUserVisibleSurface ? "same surface" : "not the visible browser";
   const agreement =
     truth.urlAgreement && truth.urlAgreement !== "unknown" ? ` · URL ${truth.urlAgreement}` : "";
-  return `${surface} · ${truth.runtimeKind} · ${visibility}${agreement}`;
+  return `${surface} · ${runtime} · ${visibility}${agreement}`;
 }
 
 export function browserEvidenceWorkSummary(

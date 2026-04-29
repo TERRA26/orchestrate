@@ -6,6 +6,7 @@ import {
   browserAnnotationWorkSummary,
   browserControlWorkSummary,
   browserEvidenceWorkSummary,
+  browserRuntimeTruthLabel,
   browserScreenshotDataUrls,
   browserTargetedActionWorkSummary,
   latestEmbeddedBrowserSessionFromBrowserWorkEntries,
@@ -98,6 +99,27 @@ describe("browserWorkLog", () => {
       screenshotArtifactRef: "browser-screenshot-electron",
       evidenceRefs: ["browser-screenshot-electron", "browser-observation-electron"],
     });
+  });
+
+  it("labels unknown browser runtime truth without exposing the raw runtime kind", () => {
+    const entry: WorkLogEntry = {
+      ...BASE_WORK_ENTRY,
+      output: JSON.stringify({
+        observation: {
+          sessionId: "browser-session-unknown",
+          url: "http://127.0.0.1:5173/",
+          runtimeTruth: {
+            runtimeKind: "unknown",
+            surfaceMode: "unknown",
+            isUserVisibleSurface: false,
+          },
+        },
+      }),
+    };
+
+    expect(browserRuntimeTruthLabel(entry)).toBe(
+      "Browser runtime unknown · Runtime unknown · not the visible browser",
+    );
   });
 
   it("summarizes targeted browser action cards", () => {

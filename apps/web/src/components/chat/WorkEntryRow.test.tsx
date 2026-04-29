@@ -89,6 +89,36 @@ describe("WorkEntryRow browser evidence", () => {
     expect(markup).toContain("Not recorded as durable evidence");
   });
 
+  it("labels unknown browser runtime metadata without exposing raw unknown text", () => {
+    const markup = renderToStaticMarkup(
+      <WorkEntryRow
+        workEntry={{
+          ...BASE_WORK_ENTRY,
+          output: JSON.stringify({
+            observation: {
+              sessionId: "browser-session-unknown",
+              url: "http://127.0.0.1:5173/",
+              title: "Home",
+              readyState: "complete",
+              textSummary: "Home page",
+              targets: [],
+              observedAt: "2026-04-29T00:00:00.000Z",
+              runtimeTruth: {
+                runtimeKind: "unknown",
+                surfaceMode: "unknown",
+                isUserVisibleSurface: false,
+              },
+            },
+          }),
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Browser runtime unknown · evidence incomplete");
+    expect(markup).toContain("Runtime unknown");
+    expect(markup).not.toContain(">unknown<");
+  });
+
   it("renders approval-required browser results as thread approval cards", () => {
     const markup = renderToStaticMarkup(
       <WorkEntryRow
