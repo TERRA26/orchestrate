@@ -9,6 +9,8 @@ import type {
   ReviewerDecisionGetResult,
   ReviewerDecisionListInput,
   ReviewerDecisionListResult,
+  ReviewerReworkStartInput,
+  ReviewerReworkStartResult,
 } from "@orchestrate/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -29,6 +31,9 @@ export interface ReviewerDecisionServiceShape {
   readonly listDecisions: (
     input: ReviewerDecisionListInput,
   ) => Effect.Effect<ReviewerDecisionListResult, Error>;
+  readonly startRework: (
+    input: ReviewerReworkStartInput,
+  ) => Effect.Effect<ReviewerReworkStartResult, Error>;
 }
 
 export class ReviewerDecisionService extends ServiceMap.Service<

@@ -49,6 +49,14 @@ import Migration0033 from "./Migrations/033_ProjectionThreadTypeAndParent.ts";
 import Migration0034 from "./Migrations/034_BrowserOrchestrationEvidence.ts";
 import Migration0035 from "./Migrations/035_BrowserAnnotations.ts";
 import Migration0036 from "./Migrations/036_EvidenceArtifactContent.ts";
+import Migration0037 from "./Migrations/037_ReviewerDecisionGates.ts";
+import Migration0038 from "./Migrations/038_EvidenceBundleSnapshot.ts";
+import Migration0039 from "./Migrations/039_EvidenceBundleOptionalBrowserSession.ts";
+import Migration0040 from "./Migrations/040_ReviewerDecisionActionPacket.ts";
+import Migration0041 from "./Migrations/041_BrowserControlStateAndApprovals.ts";
+import Migration0042 from "./Migrations/042_BrowserApprovalContext.ts";
+import Migration0043 from "./Migrations/043_BrowserApprovalConsumedLifecycle.ts";
+import Migration0044 from "./Migrations/044_BrowserApprovalTargetContext.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -97,6 +105,14 @@ export const migrationEntries = [
   [34, "BrowserOrchestrationEvidence", Migration0034],
   [35, "BrowserAnnotations", Migration0035],
   [36, "EvidenceArtifactContent", Migration0036],
+  [37, "ReviewerDecisionGates", Migration0037],
+  [38, "EvidenceBundleSnapshot", Migration0038],
+  [39, "EvidenceBundleOptionalBrowserSession", Migration0039],
+  [40, "ReviewerDecisionActionPacket", Migration0040],
+  [41, "BrowserControlStateAndApprovals", Migration0041],
+  [42, "BrowserApprovalContext", Migration0042],
+  [43, "BrowserApprovalConsumedLifecycle", Migration0043],
+  [44, "BrowserApprovalTargetContext", Migration0044],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

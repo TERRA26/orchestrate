@@ -96,6 +96,7 @@ function makeRepository(): BrowserOrchestrationEvidenceRepositoryShape & {
     getEvidenceBundle: () => Effect.succeed(Option.none()),
     createReviewerDecision: () => Effect.void,
     getReviewerDecision: () => Effect.succeed(Option.none()),
+    listReviewerDecisions: () => Effect.succeed([]),
   };
 }
 

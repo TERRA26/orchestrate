@@ -117,7 +117,6 @@ export function OrchestratorComposer({
     providerCommandsQueryOptions({
       provider: selectedProvider,
       cwd: null,
-      threadId: undefined,
       query: isSlashTrigger ? (composerTrigger?.query ?? "") : "",
       enabled: isSlashTrigger && supportsNativeSlashCommandDiscovery(capabilitiesQuery.data),
     }),
@@ -126,7 +125,6 @@ export function OrchestratorComposer({
     providerSkillsQueryOptions({
       provider: selectedProvider,
       cwd: null,
-      threadId: undefined,
       query: composerTrigger?.query ?? "",
       enabled: true,
     }),
@@ -135,7 +133,6 @@ export function OrchestratorComposer({
     providerPluginsQueryOptions({
       provider: selectedProvider,
       cwd: null,
-      threadId: undefined,
       enabled: true,
     }),
   );

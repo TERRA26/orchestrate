@@ -2,6 +2,7 @@ import {
   type ThreadId,
   type ThreadBrowserState,
   type BrowserObservationCapturedPayload,
+  type BrowserSessionEventPushPayload,
   type BrowserOpenPreviewRequestedPayload,
   type GitActionProgressEvent,
   type TerminalEvent,
@@ -30,8 +31,24 @@ const browserOpenRequestedListeners = new Set<
 const browserObservationCapturedListeners = new Set<
   (payload: BrowserObservationCapturedPayload) => void
 >();
+const browserSessionEventListeners = new Set<(payload: BrowserSessionEventPushPayload) => void>();
 const fallbackBrowserStateListeners = new Set<(state: ThreadBrowserState) => void>();
 const fallbackBrowserStates = new Map<ThreadId, ThreadBrowserState>();
+const reportedHumanInputEvents = new Set<string>();
+
+function reportHumanInputFromState(transport: WsTransport, state: ThreadBrowserState): void {
+  const humanInput = state.lastHumanInput;
+  if (!humanInput) return;
+  const eventKey = `${humanInput.browserSessionId}:${humanInput.occurredAt}:${humanInput.kind}`;
+  if (reportedHumanInputEvents.has(eventKey)) return;
+  reportedHumanInputEvents.add(eventKey);
+  void transport.request(WS_METHODS.browserControlHumanInput, {
+    browserSessionId: humanInput.browserSessionId,
+    kind: humanInput.kind,
+    ...(humanInput.url ? { url: humanInput.url } : {}),
+    occurredAt: humanInput.occurredAt,
+  });
+}
 
 function defaultBrowserState(threadId: ThreadId): ThreadBrowserState {
   return {
@@ -264,6 +281,16 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
+  transport.subscribe(WS_CHANNELS.browserSessionEvent, (message) => {
+    const payload = message.data;
+    for (const listener of browserSessionEventListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+  });
 
   const api: NativeApi = {
     dialogs: {
@@ -291,6 +318,7 @@ export function createWsNativeApi(): NativeApi {
     },
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
+      readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
     },
     shell: {
@@ -339,11 +367,20 @@ export function createWsNativeApi(): NativeApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
+        if (window.desktopBridge?.showContextMenu) {
+          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+        }
         return showContextMenuFallback(items, position);
       },
     },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+      refreshProviders: async () => {
+        await transport.request(WS_METHODS.serverGetConfig);
+      },
+      updateSettings: async () => {
+        throw new Error("Server settings updates are not available over websocket yet.");
+      },
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
     provider: {
@@ -356,6 +393,9 @@ export function createWsNativeApi(): NativeApi {
       listModels: (input) => transport.request(WS_METHODS.providerListModels, input),
     },
     orchestration: {
+      complete: async () => {
+        throw new Error("Orchestrator completion is not available over websocket yet.");
+      },
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>
         transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
@@ -485,12 +525,35 @@ export function createWsNativeApi(): NativeApi {
       },
       openSession: (input) =>
         transport.request(WS_METHODS.browserOpenSession, input, { timeoutMs: 90_000 }),
+      inspect: (input) =>
+        transport.request(WS_METHODS.browserInspect, input, { timeoutMs: 90_000 }),
       act: (input) => transport.request(WS_METHODS.browserAct, input, { timeoutMs: 90_000 }),
       closeSession: async (input) => {
         await transport.request(WS_METHODS.browserCloseSession, input, { timeoutMs: 30_000 });
       },
       addAnnotation: (input) => transport.request(WS_METHODS.browserAddAnnotation, input),
+      resolveAnnotationTargetAtPoint: (input) =>
+        transport.request(WS_METHODS.browserResolveAnnotationTargetAtPoint, input, {
+          timeoutMs: 90_000,
+        }),
       listAnnotations: (input) => transport.request(WS_METHODS.browserListAnnotations, input),
+      getAnnotation: (input) => transport.request(WS_METHODS.browserGetAnnotation, input),
+      resolveAnnotation: (input) => transport.request(WS_METHODS.browserResolveAnnotation, input),
+      reopenAnnotation: (input) => transport.request(WS_METHODS.browserReopenAnnotation, input),
+      control: {
+        status: (input) => transport.request(WS_METHODS.browserControlStatus, input),
+        take: (input) => transport.request(WS_METHODS.browserControlTake, input),
+        release: (input) => transport.request(WS_METHODS.browserControlRelease, input),
+        pauseAgent: (input) => transport.request(WS_METHODS.browserControlPauseAgent, input),
+        resumeAgent: (input) => transport.request(WS_METHODS.browserControlResumeAgent, input),
+        observeFresh: (input) => transport.request(WS_METHODS.browserControlObserveFresh, input),
+        humanInput: (input) => transport.request(WS_METHODS.browserControlHumanInput, input),
+      },
+      approval: {
+        get: (input) => transport.request(WS_METHODS.browserApprovalGet, input),
+        list: (input = {}) => transport.request(WS_METHODS.browserApprovalList, input),
+        respond: (input) => transport.request(WS_METHODS.browserApprovalRespond, input),
+      },
       workflow: {
         start: (input) =>
           transport.request(WS_METHODS.browserWorkflowStart, input, { timeoutMs: 120_000 }),
@@ -501,7 +564,10 @@ export function createWsNativeApi(): NativeApi {
       },
       onState: (callback) => {
         if (window.desktopBridge) {
-          return window.desktopBridge.browser.onState(callback);
+          return window.desktopBridge.browser.onState((state) => {
+            reportHumanInputFromState(transport, state);
+            callback(state);
+          });
         }
         fallbackBrowserStateListeners.add(callback);
         return () => {
@@ -512,6 +578,12 @@ export function createWsNativeApi(): NativeApi {
         browserObservationCapturedListeners.add(callback);
         return () => {
           browserObservationCapturedListeners.delete(callback);
+        };
+      },
+      onSessionEvent: (callback) => {
+        browserSessionEventListeners.add(callback);
+        return () => {
+          browserSessionEventListeners.delete(callback);
         };
       },
     },
@@ -528,6 +600,7 @@ export function createWsNativeApi(): NativeApi {
         create: (input) => transport.request(WS_METHODS.reviewerDecisionCreate, input),
         get: (input) => transport.request(WS_METHODS.reviewerDecisionGet, input),
         list: (input = {}) => transport.request(WS_METHODS.reviewerDecisionList, input),
+        startRework: (input) => transport.request(WS_METHODS.reviewerDecisionReworkStart, input),
       },
     },
     preview: {

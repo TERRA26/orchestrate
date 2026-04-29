@@ -1,14 +1,19 @@
 import {
   BrowserOrchestrationSchemaVersion,
+  BrowserApprovalId,
+  BrowserApprovalRisk,
+  BrowserApprovalStatus,
   BrowserSessionId,
   EvidenceAccess,
   EvidenceArtifactId,
   EvidenceArtifactKind,
   EvidenceBundleId,
   EvidenceSensitivity,
+  HumanControlLeaseId,
   IsoDateTime,
   PreviewTargetId,
   ReviewerDecisionId,
+  ReviewerDecisionPurpose,
   ReviewerOutcome,
   SessionEventActor,
   SessionEventId,
@@ -66,10 +71,11 @@ export const EvidenceBundleRow = Schema.Struct({
   taskSpecId: TaskSpecId,
   acceptanceCriteriaId: AcceptanceCriteriaId,
   permissionPolicyId: PermissionPolicyId,
-  browserSessionId: BrowserSessionId,
+  browserSessionId: Schema.NullOr(BrowserSessionId),
   codeStateJson: Schema.String,
   artifactRefsJson: Schema.String,
   eventRefsJson: Schema.String,
+  bundleSnapshotJson: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
 });
 export type EvidenceBundleRow = typeof EvidenceBundleRow.Type;
@@ -79,16 +85,58 @@ export const ReviewerDecisionRow = Schema.Struct({
   sessionId: Schema.String,
   workflowRunId: WorkflowRunId,
   evidenceBundleId: EvidenceBundleId,
+  purpose: ReviewerDecisionPurpose,
   outcome: ReviewerOutcome,
   confidence: Schema.Literals(["high", "medium", "low"]),
+  gatesJson: Schema.String,
   criteriaJson: Schema.String,
   findingsJson: Schema.String,
   unresolvedCriteriaJson: Schema.String,
   reworkPacketJson: Schema.NullOr(Schema.String),
+  actionPacketJson: Schema.NullOr(Schema.String),
   userVisibleSummaryRef: EvidenceArtifactId,
   createdAt: IsoDateTime,
 });
 export type ReviewerDecisionRow = typeof ReviewerDecisionRow.Type;
+
+export const BrowserControlStateRow = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+  sessionId: Schema.String,
+  leaseId: Schema.NullOr(HumanControlLeaseId),
+  holder: Schema.Literals(["human", "agent", "none"]),
+  state: Schema.Literals(["human-control", "agent-control", "paused", "approval-required"]),
+  reason: Schema.String,
+  lastObservationRef: Schema.NullOr(EvidenceArtifactId),
+  snapshotAfterReleaseRef: Schema.NullOr(EvidenceArtifactId),
+  freshObservationRequired: Schema.Union([Schema.Boolean, Schema.Number]),
+  desktopClientId: Schema.NullOr(Schema.String),
+  updatedAt: IsoDateTime,
+});
+export type BrowserControlStateRow = typeof BrowserControlStateRow.Type;
+
+export const BrowserApprovalRequestRow = Schema.Struct({
+  approvalId: BrowserApprovalId,
+  browserSessionId: BrowserSessionId,
+  sessionId: Schema.String,
+  desktopClientId: Schema.NullOr(Schema.String),
+  actionJson: Schema.String,
+  targetContextJson: Schema.NullOr(Schema.String),
+  actionHash: Schema.String,
+  reason: Schema.String,
+  risk: BrowserApprovalRisk,
+  preApprovalObservationRef: Schema.NullOr(EvidenceArtifactId),
+  observedUrl: Schema.NullOr(Schema.String),
+  origin: Schema.NullOr(Schema.String),
+  status: BrowserApprovalStatus,
+  evidenceRefsJson: Schema.String,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  expiresAt: Schema.NullOr(IsoDateTime),
+  consumedAt: Schema.NullOr(IsoDateTime),
+  executedActionRef: Schema.NullOr(EvidenceArtifactId),
+  decisionReason: Schema.NullOr(Schema.String),
+});
+export type BrowserApprovalRequestRow = typeof BrowserApprovalRequestRow.Type;
 
 export const GetSessionEventsInput = Schema.Struct({
   sessionId: Schema.String,
@@ -109,6 +157,38 @@ export const GetReviewerDecisionInput = Schema.Struct({
   decisionId: ReviewerDecisionId,
 });
 export type GetReviewerDecisionInput = typeof GetReviewerDecisionInput.Type;
+
+export const ListReviewerDecisionsInput = Schema.Struct({
+  sessionId: Schema.optional(Schema.String),
+  workflowRunId: Schema.optional(WorkflowRunId),
+});
+export type ListReviewerDecisionsInput = typeof ListReviewerDecisionsInput.Type;
+
+export const GetBrowserControlStateInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+});
+export type GetBrowserControlStateInput = typeof GetBrowserControlStateInput.Type;
+
+export const GetBrowserApprovalRequestInput = Schema.Struct({
+  approvalId: BrowserApprovalId,
+});
+export type GetBrowserApprovalRequestInput = typeof GetBrowserApprovalRequestInput.Type;
+
+export const ListBrowserApprovalRequestsInput = Schema.Struct({
+  browserSessionId: Schema.optional(BrowserSessionId),
+  status: Schema.optional(BrowserApprovalStatus),
+});
+export type ListBrowserApprovalRequestsInput = typeof ListBrowserApprovalRequestsInput.Type;
+
+export const UpdateBrowserApprovalStatusInput = Schema.Struct({
+  approvalId: BrowserApprovalId,
+  status: BrowserApprovalStatus,
+  updatedAt: IsoDateTime,
+  decisionReason: Schema.optional(Schema.String),
+  consumedAt: Schema.optional(IsoDateTime),
+  executedActionRef: Schema.optional(EvidenceArtifactId),
+});
+export type UpdateBrowserApprovalStatusInput = typeof UpdateBrowserApprovalStatusInput.Type;
 
 export interface BrowserOrchestrationEvidenceRepositoryShape {
   readonly appendSessionEvent: (
@@ -141,6 +221,27 @@ export interface BrowserOrchestrationEvidenceRepositoryShape {
   readonly getReviewerDecision: (
     input: GetReviewerDecisionInput,
   ) => Effect.Effect<Option.Option<ReviewerDecisionRow>, ProjectionRepositoryError>;
+  readonly listReviewerDecisions: (
+    input: ListReviewerDecisionsInput,
+  ) => Effect.Effect<ReadonlyArray<ReviewerDecisionRow>, ProjectionRepositoryError>;
+  readonly upsertBrowserControlState: (
+    row: BrowserControlStateRow,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+  readonly getBrowserControlState: (
+    input: GetBrowserControlStateInput,
+  ) => Effect.Effect<Option.Option<BrowserControlStateRow>, ProjectionRepositoryError>;
+  readonly createBrowserApprovalRequest: (
+    row: BrowserApprovalRequestRow,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+  readonly getBrowserApprovalRequest: (
+    input: GetBrowserApprovalRequestInput,
+  ) => Effect.Effect<Option.Option<BrowserApprovalRequestRow>, ProjectionRepositoryError>;
+  readonly listBrowserApprovalRequests: (
+    input: ListBrowserApprovalRequestsInput,
+  ) => Effect.Effect<ReadonlyArray<BrowserApprovalRequestRow>, ProjectionRepositoryError>;
+  readonly updateBrowserApprovalStatus: (
+    input: UpdateBrowserApprovalStatusInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
 export class BrowserOrchestrationEvidenceRepository extends ServiceMap.Service<

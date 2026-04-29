@@ -23,9 +23,12 @@ import type {
   GitStatusInput,
   GitStatusResult,
 } from "./git";
+import type { BrowserSessionEventPushPayload } from "./ws";
 import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
@@ -40,7 +43,12 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
+import type {
+  ServerUpdateSettingsInput,
+  ServerUpdateSettingsResult,
+  ServerUpsertKeybindingInput,
+  ServerUpsertKeybindingResult,
+} from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -56,13 +64,21 @@ import type {
   BrowserActInput,
   BrowserActResult,
   BrowserAddAnnotationInput,
+  BrowserAnnotationResolveTargetAtPointInput,
+  BrowserAnnotationResolveTargetAtPointResult,
+  BrowserAnnotationInput,
   BrowserAnnotationResult,
   BrowserAnnotationsResult,
   BrowserCloseSessionInput,
+  BrowserInspectSessionInput,
+  BrowserInspectResult,
+  BrowserObserveSessionInput,
   BrowserListAnnotationsInput,
   BrowserObservation,
   BrowserOpenSessionInput,
   BrowserOpenSessionResult,
+  BrowserResolveTargetSessionInput,
+  BrowserResolveTargetSessionResult,
 } from "./browser";
 import type {
   EvidenceArtifactContentResult,
@@ -71,6 +87,14 @@ import type {
   EvidenceBundleCreateResult,
   EvidenceBundleGetInput,
   EvidenceBundleGetResult,
+  BrowserControlObserveFreshInput,
+  BrowserControlHumanInputInput,
+  BrowserControlPauseInput,
+  BrowserControlReleaseInput,
+  BrowserControlSessionInput,
+  BrowserControlStatusResult,
+  BrowserControlTakeInput,
+  BrowserControlLeaseResult,
   BrowserWorkflowListInput,
   BrowserWorkflowListResult,
   BrowserWorkflowRunInput,
@@ -94,6 +118,13 @@ import type {
   ReviewerDecisionGetResult,
   ReviewerDecisionListInput,
   ReviewerDecisionListResult,
+  ReviewerReworkStartInput,
+  ReviewerReworkStartResult,
+  BrowserApprovalGetInput,
+  BrowserApprovalListInput,
+  BrowserApprovalListResult,
+  BrowserApprovalRespondInput,
+  BrowserApprovalResult,
 } from "./browserOrchestration";
 import type {
   ProviderComposerCapabilities,
@@ -174,8 +205,18 @@ export interface ThreadBrowserState {
   threadId: ThreadId;
   open: boolean;
   activeTabId: string | null;
+  activeBrowserSessionId?: string | null;
+  activeDesktopClientId?: string | null;
   tabs: BrowserTabState[];
   lastError: string | null;
+  lastHumanInput?: BrowserHumanInputEvent;
+}
+
+export interface BrowserHumanInputEvent {
+  browserSessionId: string;
+  kind: "mouse" | "keyboard" | "navigation" | "focus" | "manual";
+  url?: string;
+  occurredAt: string;
 }
 
 export interface BrowserOpenInput {
@@ -256,6 +297,17 @@ export interface DesktopBridge {
     closeTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     openDevTools: (input: BrowserTabInput) => Promise<void>;
+    openSession: (input: BrowserOpenSessionInput) => Promise<BrowserOpenSessionResult>;
+    observeSession: (input: BrowserObserveSessionInput) => Promise<BrowserObservation>;
+    inspectSession: (input: BrowserInspectSessionInput) => Promise<BrowserInspectResult>;
+    resolveTargetSession: (
+      input: BrowserResolveTargetSessionInput,
+    ) => Promise<BrowserResolveTargetSessionResult>;
+    resolveAnnotationTargetAtPoint: (
+      input: BrowserAnnotationResolveTargetAtPointInput,
+    ) => Promise<BrowserAnnotationResolveTargetAtPointResult>;
+    actSession: (input: BrowserActInput) => Promise<BrowserObservation>;
+    closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
     onState: (listener: (state: ThreadBrowserState) => void) => () => void;
     onObservation: () => () => void;
   };
@@ -277,6 +329,7 @@ export interface NativeApi {
   };
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   shell: {
@@ -313,6 +366,8 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    refreshProviders: () => Promise<void>;
+    updateSettings: (input: ServerUpdateSettingsInput) => Promise<ServerUpdateSettingsResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   provider: {
@@ -326,6 +381,13 @@ export interface NativeApi {
     listModels: (input: ProviderListModelsInput) => Promise<ProviderListModelsResult>;
   };
   orchestration: {
+    complete: (input: {
+      provider: string;
+      model: string;
+      modelOptions?: unknown;
+      cwd?: string;
+      messages: ReadonlyArray<{ role: "system" | "user" | "assistant"; content: string }>;
+    }) => Promise<{ text: string }>;
     getSnapshot: () => Promise<OrchestrationReadModel>;
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
     getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
@@ -350,10 +412,31 @@ export interface NativeApi {
     selectTab: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     openDevTools: (input: BrowserTabInput) => Promise<void>;
     openSession: (input: BrowserOpenSessionInput) => Promise<BrowserOpenSessionResult>;
+    inspect: (input: BrowserInspectSessionInput) => Promise<BrowserInspectResult>;
+    resolveAnnotationTargetAtPoint: (
+      input: BrowserAnnotationResolveTargetAtPointInput,
+    ) => Promise<BrowserAnnotationResolveTargetAtPointResult>;
     act: (input: BrowserActInput) => Promise<BrowserActResult>;
     closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
     addAnnotation: (input: BrowserAddAnnotationInput) => Promise<BrowserAnnotationResult>;
     listAnnotations: (input: BrowserListAnnotationsInput) => Promise<BrowserAnnotationsResult>;
+    getAnnotation: (input: BrowserAnnotationInput) => Promise<BrowserAnnotationResult>;
+    resolveAnnotation: (input: BrowserAnnotationInput) => Promise<BrowserAnnotationResult>;
+    reopenAnnotation: (input: BrowserAnnotationInput) => Promise<BrowserAnnotationResult>;
+    control: {
+      status: (input: BrowserControlSessionInput) => Promise<BrowserControlStatusResult>;
+      take: (input: BrowserControlTakeInput) => Promise<BrowserControlLeaseResult>;
+      release: (input: BrowserControlReleaseInput) => Promise<BrowserControlLeaseResult>;
+      pauseAgent: (input: BrowserControlPauseInput) => Promise<BrowserControlLeaseResult>;
+      resumeAgent: (input: BrowserControlSessionInput) => Promise<BrowserControlStatusResult>;
+      observeFresh: (input: BrowserControlObserveFreshInput) => Promise<BrowserControlLeaseResult>;
+      humanInput: (input: BrowserControlHumanInputInput) => Promise<BrowserControlLeaseResult>;
+    };
+    approval: {
+      get: (input: BrowserApprovalGetInput) => Promise<BrowserApprovalResult>;
+      list: (input?: BrowserApprovalListInput) => Promise<BrowserApprovalListResult>;
+      respond: (input: BrowserApprovalRespondInput) => Promise<BrowserApprovalResult>;
+    };
     workflow: {
       start: (input: BrowserWorkflowStartInput) => Promise<BrowserWorkflowStartResult>;
       status: (input: BrowserWorkflowRunInput) => Promise<BrowserWorkflowRunResult>;
@@ -369,6 +452,7 @@ export interface NativeApi {
         actionSummary: string;
       }) => void,
     ) => () => void;
+    onSessionEvent: (callback: (event: BrowserSessionEventPushPayload) => void) => () => void;
   };
   evidence: {
     getArtifact: (input: EvidenceArtifactGetInput) => Promise<EvidenceArtifactContentResult>;
@@ -382,6 +466,7 @@ export interface NativeApi {
       create: (input: ReviewerDecisionCreateInput) => Promise<ReviewerDecisionCreateResult>;
       get: (input: ReviewerDecisionGetInput) => Promise<ReviewerDecisionGetResult>;
       list: (input?: ReviewerDecisionListInput) => Promise<ReviewerDecisionListResult>;
+      startRework: (input: ReviewerReworkStartInput) => Promise<ReviewerReworkStartResult>;
     };
   };
   preview: {

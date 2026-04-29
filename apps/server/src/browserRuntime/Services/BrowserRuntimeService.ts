@@ -1,7 +1,12 @@
 import {
   type BrowserActInput,
   type BrowserActResult,
+  type BrowserAnnotationResolveTargetAtPointInput,
+  type BrowserAnnotationResolveTargetAtPointResult,
   type BrowserCloseSessionInput,
+  type BrowserInspectResult,
+  type BrowserInspectSessionInput,
+  type BrowserObserveSessionInput,
   type BrowserOpenSessionInput,
   type BrowserOpenSessionResult,
 } from "@orchestrate/contracts";
@@ -20,6 +25,18 @@ export interface BrowserRuntimeServiceShape {
   readonly closeSession: (
     input: BrowserCloseSessionInput,
   ) => Effect.Effect<void, BrowserAutomationServiceError>;
+  readonly observe: (
+    input: BrowserObserveSessionInput,
+  ) => Effect.Effect<BrowserActResult, BrowserAutomationServiceError | Error>;
+  readonly inspect: (
+    input: BrowserInspectSessionInput,
+  ) => Effect.Effect<BrowserInspectResult, BrowserAutomationServiceError | Error>;
+  readonly resolveAnnotationTargetAtPoint: (
+    input: BrowserAnnotationResolveTargetAtPointInput,
+  ) => Effect.Effect<
+    BrowserAnnotationResolveTargetAtPointResult,
+    BrowserAutomationServiceError | Error
+  >;
 }
 
 export class BrowserRuntimeService extends ServiceMap.Service<

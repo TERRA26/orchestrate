@@ -9,6 +9,7 @@ import {
   type BrowserWorkflowRun,
   BrowserSessionId,
   EvidenceBundleId,
+  type EvidenceBundle,
   type EvidenceArtifactId,
   SessionEventId,
   type CodeStateRef,
@@ -89,7 +90,10 @@ export class BrowserWorkflowManager {
                 assertion: { type: "url-matches", pattern: route },
                 status: "fail",
                 evidenceRefs: [],
-                message: actResult.policyDecision.reason,
+                message:
+                  actResult.policyDecision.outcome === "allow"
+                    ? "Browser action was not allowed."
+                    : actResult.policyDecision.reason,
               });
               continue;
             }
@@ -118,7 +122,7 @@ export class BrowserWorkflowManager {
       const artifactRefs = uniqueEvidenceRefs(snapshots.flatMap(collectSnapshotEvidenceRefs));
       const eventRefs = await this.createEvidenceBundle(input, evidenceBundleId, {
         artifactRefs,
-        browserSessionId: snapshots[0]?.browserSessionId ?? BrowserSessionId.makeUnsafe("none"),
+        browserSessionId: snapshots[0]?.browserSessionId,
       });
       const criterionResults = buildCriterionResults(input, assertionResults, artifactRefs);
       const updatedAt = new Date().toISOString();
@@ -192,7 +196,7 @@ export class BrowserWorkflowManager {
     evidenceBundleId: EvidenceBundleId,
     refs: {
       readonly artifactRefs: ReadonlyArray<EvidenceArtifactId>;
-      readonly browserSessionId: BrowserSessionId;
+      readonly browserSessionId?: BrowserSessionId | undefined;
     },
   ): Promise<ReadonlyArray<SessionEventId>> {
     if (!this.evidenceRepository) {
@@ -206,6 +210,47 @@ export class BrowserWorkflowManager {
       .filter((event) => event.workflowRunId === input.workflowRunId)
       .map((event) => event.eventId);
 
+    const createdAt = new Date().toISOString();
+    const bundle: EvidenceBundle = {
+      id: evidenceBundleId,
+      sessionId: input.sessionId,
+      workflowRunId: input.workflowRunId,
+      previewTargetId: input.previewTarget.id,
+      taskSpecId: input.taskSpecId,
+      acceptanceCriteriaId: input.acceptanceCriteria.id,
+      permissionPolicyId: input.permissionPolicyId,
+      ...(refs.browserSessionId ? { browserSessionId: refs.browserSessionId } : {}),
+      codeState: input.codeState,
+      artifactRefs: [...refs.artifactRefs],
+      eventRefs,
+      preview: {
+        ...(input.previewTarget.readinessEvidenceRef
+          ? { readinessEvidenceRef: input.previewTarget.readinessEvidenceRef }
+          : {}),
+        serverLogRefs: input.previewTarget.serverLogRefs,
+        healthEvidenceRefs: input.previewTarget.readinessEvidenceRef
+          ? [input.previewTarget.readinessEvidenceRef]
+          : [],
+      },
+      ...(refs.browserSessionId
+        ? {
+            browser: {
+              observationRefs: [],
+              screenshotArtifactRefs: [...refs.artifactRefs],
+              consoleSummaryRefs: [],
+              networkSummaryRefs: [],
+              pageErrorRefs: [],
+            },
+          }
+        : {}),
+      workflow: {
+        workflowRunRef: input.workflowRunId,
+        assertionResultRefs: [],
+        statusEventRefs: [],
+      },
+      createdAt,
+    };
+
     await Effect.runPromise(
       this.evidenceRepository.createEvidenceBundle({
         bundleId: evidenceBundleId,
@@ -215,11 +260,12 @@ export class BrowserWorkflowManager {
         taskSpecId: input.taskSpecId,
         acceptanceCriteriaId: input.acceptanceCriteria.id,
         permissionPolicyId: input.permissionPolicyId,
-        browserSessionId: refs.browserSessionId,
+        browserSessionId: refs.browserSessionId ?? null,
         codeStateJson: JSON.stringify(input.codeState),
         artifactRefsJson: JSON.stringify(refs.artifactRefs),
         eventRefsJson: JSON.stringify(eventRefs),
-        createdAt: new Date().toISOString(),
+        bundleSnapshotJson: JSON.stringify(bundle),
+        createdAt,
       }),
     );
 
@@ -347,6 +393,14 @@ function evaluateAssertion(
         status: "not-evaluated",
         evidenceRefs,
         message: `${assertion.type} requires DOM/network/comment evidence that is not yet materialized in the snapshot contract.`,
+      };
+
+    default:
+      return {
+        assertion,
+        status: "not-evaluated",
+        evidenceRefs,
+        message: `${assertion.type} is not supported by this workflow manager.`,
       };
   }
 }

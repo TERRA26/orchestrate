@@ -1,11 +1,31 @@
 import * as Crypto from "node:crypto";
 
 import { BrowserWindow, shell, WebContentsView } from "electron";
+import type { WebContents } from "electron";
+import { BrowserSessionId } from "@orchestrate/contracts";
 import type {
+  BrowserCloseSessionInput,
+  BrowserActInput,
+  BrowserAnnotationResolveTargetAtPointInput,
+  BrowserAnnotationResolveTargetAtPointResult,
+  BrowserElementSummary,
+  BrowserResolvedElementDomSnippet,
+  BrowserResolvedElementStyleSummary,
+  BrowserTargetResolution,
+  BrowserInspectResult,
+  BrowserInspectSessionInput,
+  BrowserHumanInputEvent,
+  BrowserObserveSessionInput,
   BrowserNavigateInput,
   BrowserNewTabInput,
+  BrowserObservation,
   BrowserOpenInput,
+  BrowserOpenSessionInput,
+  BrowserOpenSessionResult,
+  BrowserResolveTargetSessionInput,
+  BrowserResolveTargetSessionResult,
   BrowserPanelBounds,
+  BrowserRuntimeTruth,
   BrowserSetPanelBoundsInput,
   BrowserTabInput,
   BrowserTabState,
@@ -13,12 +33,20 @@ import type {
   ThreadBrowserState,
   ThreadId,
 } from "@orchestrate/contracts";
+import {
+  collectVisibleElementsCallScript,
+  focusAndSelectTargetScript,
+  highlightTargetScript,
+  resolveTargetScript,
+} from "./browser/domInspectionScripts";
+import { clickResolvedTarget, fillResolvedTarget } from "./browser/targetActions";
 
 const ABOUT_BLANK_URL = "about:blank";
 const BROWSER_SESSION_PARTITION = "persist:orchestrate-browser";
 const BROWSER_THREAD_SUSPEND_DELAY_MS = 30_000;
 const BROWSER_ERROR_ABORTED = -3;
 const SEARCH_URL_PREFIX = "https://www.google.com/search?q=";
+const DESKTOP_CLIENT_ID = `desktop-browser-${Crypto.randomUUID()}`;
 
 type BrowserStateListener = (state: ThreadBrowserState) => void;
 
@@ -49,6 +77,8 @@ function defaultThreadBrowserState(threadId: ThreadId): ThreadBrowserState {
     threadId,
     open: false,
     activeTabId: null,
+    activeBrowserSessionId: null,
+    activeDesktopClientId: null,
     tabs: [],
     lastError: null,
   };
@@ -57,6 +87,7 @@ function defaultThreadBrowserState(threadId: ThreadId): ThreadBrowserState {
 function cloneThreadState(state: ThreadBrowserState): ThreadBrowserState {
   return {
     ...state,
+    ...(state.lastHumanInput ? { lastHumanInput: { ...state.lastHumanInput } } : {}),
     tabs: state.tabs.map((tab) => ({ ...tab })),
   };
 }
@@ -174,6 +205,67 @@ function mapBrowserLoadError(errorCode: number): string {
   }
 }
 
+function numberMetric(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : fallback;
+}
+
+function isBrowserElementSummary(value: unknown): value is BrowserElementSummary {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || record.id.length === 0) return false;
+  if (record.visible !== true && record.visible !== false) return false;
+  if (!record.box || typeof record.box !== "object") return true;
+  const box = record.box as Record<string, unknown>;
+  return (
+    typeof box.x === "number" &&
+    typeof box.y === "number" &&
+    typeof box.width === "number" &&
+    typeof box.height === "number" &&
+    box.coordinateSpace === "css-pixels"
+  );
+}
+
+function isDomSnippet(value: unknown): value is BrowserResolvedElementDomSnippet {
+  return typeof value === "object" && value !== null && "outerHTMLPreview" in value;
+}
+
+function isComputedStyle(value: unknown): value is BrowserResolvedElementStyleSummary {
+  return typeof value === "object" && value !== null;
+}
+
+class BrowserTargetResolutionError extends Error {
+  constructor(readonly targetResolution: BrowserTargetResolution) {
+    super(targetResolution.reason ?? "Browser target could not be resolved.");
+    this.name = "BrowserTargetResolutionError";
+    Object.assign(this, {
+      code:
+        targetResolution.status === "not-actionable"
+          ? "target-not-actionable"
+          : targetResolution.status === "ambiguous"
+            ? "target-ambiguous"
+            : "target-not-found",
+      details: { targetResolution },
+    });
+  }
+}
+
+export function browserTargetResolutionFailureDetails(error: unknown): unknown {
+  if (error instanceof BrowserTargetResolutionError) {
+    return {
+      code:
+        error.targetResolution.status === "not-actionable"
+          ? "target-not-actionable"
+          : error.targetResolution.status === "ambiguous"
+            ? "target-ambiguous"
+            : "target-not-found",
+      targetResolution: error.targetResolution,
+    };
+  }
+  return undefined;
+}
+
 function buildRuntimeKey(threadId: ThreadId, tabId: string): string {
   return `${threadId}:${tabId}`;
 }
@@ -185,6 +277,11 @@ export class DesktopBrowserManager {
   private attachedRuntimeKey: string | null = null;
   private readonly states = new Map<ThreadId, ThreadBrowserState>();
   private readonly runtimes = new Map<string, LiveTabRuntime>();
+  private readonly runtimeSessions = new Map<
+    BrowserSessionId,
+    { threadId: ThreadId; tabId: string }
+  >();
+  private readonly agentControlledSessions = new Set<BrowserSessionId>();
   private readonly listeners = new Set<BrowserStateListener>();
   private readonly suspendTimers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
 
@@ -442,6 +539,310 @@ export class DesktopBrowserManager {
     runtime.view.webContents.openDevTools({ mode: "detach" });
   }
 
+  async openSession(input: BrowserOpenSessionInput): Promise<BrowserOpenSessionResult> {
+    if (input.preferredRuntimeKind && input.preferredRuntimeKind !== "electron-visible") {
+      throw new Error(`Desktop browser can only open electron-visible sessions.`);
+    }
+    if (!input.threadId) {
+      throw new Error("Electron visible browser sessions require a threadId.");
+    }
+
+    this.open({ threadId: input.threadId, initialUrl: input.url });
+    const activeTab = this.getActiveTab(this.getOrCreateState(input.threadId));
+    if (!activeTab) {
+      throw new Error("Electron visible browser did not create an active tab.");
+    }
+    if (activeTab.url !== input.url) {
+      this.navigate({ threadId: input.threadId, tabId: activeTab.id, url: input.url });
+    }
+    if (this.activeBounds) {
+      this.activateThread(input.threadId, this.activeBounds);
+    }
+
+    const sessionId = BrowserSessionId.makeUnsafe(`electron-visible-${Crypto.randomUUID()}`);
+    this.runtimeSessions.set(sessionId, { threadId: input.threadId, tabId: activeTab.id });
+    const state = this.getOrCreateState(input.threadId);
+    state.activeBrowserSessionId = sessionId;
+    state.activeDesktopClientId = DESKTOP_CLIENT_ID;
+    this.emitState(input.threadId);
+    const observation = await this.observeVisibleRuntime(sessionId);
+    return {
+      sessionId,
+      observation,
+      ...(observation.runtimeTruth ? { runtimeTruth: observation.runtimeTruth } : {}),
+      evidenceRefs: [],
+    };
+  }
+
+  async observeSession(input: BrowserObserveSessionInput): Promise<BrowserObservation> {
+    return this.observeVisibleRuntime(input.sessionId);
+  }
+
+  async inspectSession(input: BrowserInspectSessionInput): Promise<BrowserInspectResult> {
+    const observation = await this.observeVisibleRuntime(input.sessionId);
+    return {
+      browserSessionId: input.sessionId,
+      runtimeTruth: observation.runtimeTruth!,
+      url: observation.url,
+      title: observation.title,
+      elements: observation.elements ?? [],
+      ...(observation.screenshotArtifactRef
+        ? { screenshotArtifactRef: observation.screenshotArtifactRef }
+        : {}),
+      evidenceRefs: observation.evidenceRefs ?? [],
+    };
+  }
+
+  async resolveTargetSession(
+    input: BrowserResolveTargetSessionInput,
+  ): Promise<BrowserResolveTargetSessionResult> {
+    const session = this.runtimeSessions.get(input.sessionId);
+    if (!session) {
+      throw new Error(`Unknown Electron visible browser session: ${input.sessionId}`);
+    }
+    const runtime = this.runtimes.get(buildRuntimeKey(session.threadId, session.tabId));
+    if (!runtime || runtime.view.webContents.isDestroyed()) {
+      throw new Error(`Electron visible browser runtime is unavailable: ${input.sessionId}`);
+    }
+    let resolved: {
+      target: BrowserElementSummary;
+      targetResolution: BrowserTargetResolution;
+      domSnippet?: BrowserResolvedElementDomSnippet;
+      computedStyle?: BrowserResolvedElementStyleSummary;
+    };
+    try {
+      resolved = await this.resolveVisibleTarget(runtime.view.webContents, input.target, {
+        fillableOnly: input.actionKind === "fillTarget",
+      });
+    } catch (error) {
+      if (error instanceof BrowserTargetResolutionError) {
+        return {
+          browserSessionId: input.sessionId,
+          targetResolution: error.targetResolution,
+        };
+      }
+      throw error;
+    }
+    return {
+      browserSessionId: input.sessionId,
+      resolvedTarget: resolved.target,
+      targetResolution: resolved.targetResolution,
+      ...(resolved.domSnippet ? { domSnippet: resolved.domSnippet } : {}),
+      ...(resolved.computedStyle ? { computedStyle: resolved.computedStyle } : {}),
+    };
+  }
+
+  async resolveAnnotationTargetAtPoint(
+    input: BrowserAnnotationResolveTargetAtPointInput,
+  ): Promise<BrowserAnnotationResolveTargetAtPointResult> {
+    const runtime = this.runtimeForSession(input.browserSessionId);
+    const observation = await this.observeVisibleRuntime(input.browserSessionId);
+    let resolved: Awaited<ReturnType<typeof this.resolveVisibleTarget>> | null = null;
+    try {
+      resolved = await this.resolveVisibleTarget(
+        runtime.view.webContents,
+        { kind: "point", x: input.point.x, y: input.point.y },
+        {
+          includeDomSnippet: input.includeDomSnippet !== false,
+          includeComputedStyle: input.includeComputedStyle !== false,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof BrowserTargetResolutionError)) throw error;
+      return {
+        browserSessionId: input.browserSessionId,
+        runtimeTruth: observation.runtimeTruth!,
+        url: observation.url,
+        targetResolution: error.targetResolution,
+        geometry: {
+          coordinateSpace: "css-pixels",
+          point: input.point,
+          viewport: input.geometryContext.viewport,
+          scroll: input.geometryContext.scroll,
+          ...(input.geometryContext.screenshotPixelSize
+            ? { screenshotPixelSize: input.geometryContext.screenshotPixelSize }
+            : {}),
+        },
+        ...(observation.screenshotArtifactRef
+          ? { screenshotArtifactRef: observation.screenshotArtifactRef }
+          : {}),
+        evidenceRefs: observation.evidenceRefs ?? [],
+      };
+    }
+    return {
+      browserSessionId: input.browserSessionId,
+      runtimeTruth: observation.runtimeTruth!,
+      url: observation.url,
+      targetResolution: resolved.targetResolution,
+      element: resolved.target,
+      geometry: {
+        coordinateSpace: "css-pixels",
+        point: input.point,
+        ...(resolved.target.box
+          ? {
+              rect: {
+                x: resolved.target.box.x,
+                y: resolved.target.box.y,
+                width: resolved.target.box.width,
+                height: resolved.target.box.height,
+              },
+            }
+          : {}),
+        viewport: input.geometryContext.viewport,
+        scroll: input.geometryContext.scroll,
+        ...(input.geometryContext.screenshotPixelSize
+          ? { screenshotPixelSize: input.geometryContext.screenshotPixelSize }
+          : {}),
+      },
+      ...(observation.screenshotArtifactRef
+        ? { screenshotArtifactRef: observation.screenshotArtifactRef }
+        : {}),
+      evidenceRefs: observation.evidenceRefs ?? [],
+      ...(resolved.domSnippet ? { domSnippet: resolved.domSnippet } : {}),
+      ...(resolved.computedStyle ? { computedStyle: resolved.computedStyle } : {}),
+    };
+  }
+
+  async actSession(input: BrowserActInput): Promise<BrowserObservation> {
+    const session = this.runtimeSessions.get(input.sessionId);
+    if (!session) {
+      throw new Error(`Unknown Electron visible browser session: ${input.sessionId}`);
+    }
+    const runtime = this.runtimes.get(buildRuntimeKey(session.threadId, session.tabId));
+    if (!runtime || runtime.view.webContents.isDestroyed()) {
+      throw new Error(`Electron visible browser runtime is unavailable: ${input.sessionId}`);
+    }
+
+    const webContents = runtime.view.webContents;
+    const action = input.action;
+    this.agentControlledSessions.add(input.sessionId);
+    try {
+      switch (action.kind) {
+        case "navigate":
+          await webContents.loadURL(action.url).catch((error: unknown) => {
+            if (!isAbortedNavigationError(error)) throw error;
+          });
+          break;
+        case "clickAt":
+          webContents.sendInputEvent({
+            type: "mouseDown",
+            button: "left",
+            x: action.x,
+            y: action.y,
+          });
+          webContents.sendInputEvent({ type: "mouseUp", button: "left", x: action.x, y: action.y });
+          break;
+        case "clickTargetOrAt":
+          webContents.sendInputEvent({
+            type: "mouseDown",
+            button: "left",
+            x: action.x,
+            y: action.y,
+          });
+          webContents.sendInputEvent({ type: "mouseUp", button: "left", x: action.x, y: action.y });
+          break;
+        case "clickTarget": {
+          const resolved = await this.resolveVisibleTarget(webContents, action.target);
+          await this.highlightVisibleTarget(webContents, resolved.target.id);
+          clickResolvedTarget(webContents, resolved.target);
+          const observation = await this.observeVisibleRuntime(input.sessionId);
+          return {
+            ...observation,
+            resolvedTarget: resolved.target,
+            targetResolution: resolved.targetResolution,
+          };
+        }
+        case "fillTarget": {
+          const resolved = await this.resolveVisibleTarget(webContents, action.target, {
+            fillableOnly: true,
+          });
+          await this.highlightVisibleTarget(webContents, resolved.target.id);
+          await fillResolvedTarget(webContents, {
+            target: resolved.target,
+            value: action.value,
+            clearFirst: action.clearFirst,
+            focusScript: focusAndSelectTargetScript({
+              elementId: resolved.target.id,
+              clearFirst: action.clearFirst,
+            }),
+          });
+          const observation = await this.observeVisibleRuntime(input.sessionId);
+          return {
+            ...observation,
+            resolvedTarget: resolved.target,
+            targetResolution: resolved.targetResolution,
+          };
+        }
+        case "typeFocused":
+          webContents.insertText(action.text);
+          break;
+        case "press":
+          webContents.sendInputEvent({ type: "keyDown", keyCode: action.key });
+          webContents.sendInputEvent({ type: "keyUp", keyCode: action.key });
+          break;
+        case "scroll":
+          webContents.sendInputEvent({
+            type: "mouseWheel",
+            x: 1,
+            y: 1,
+            deltaY: action.direction === "down" ? action.amount : -action.amount,
+            deltaX: 0,
+          });
+          break;
+        case "wait":
+          if (action.ms > 0) {
+            await new Promise((resolve) => setTimeout(resolve, action.ms));
+          }
+          break;
+        case "waitFor":
+          await this.waitForVisibleRuntime(webContents, action);
+          break;
+        default:
+          throw new Error(`Electron visible browser action is not implemented: ${action.kind}`);
+      }
+    } finally {
+      this.agentControlledSessions.delete(input.sessionId);
+    }
+
+    return this.observeVisibleRuntime(input.sessionId);
+  }
+
+  closeSession(input: BrowserCloseSessionInput): void {
+    const session = this.runtimeSessions.get(input.sessionId);
+    if (session) {
+      const state = this.states.get(session.threadId);
+      if (state?.activeBrowserSessionId === input.sessionId) {
+        state.activeBrowserSessionId = null;
+        state.activeDesktopClientId = null;
+        this.emitState(session.threadId);
+      }
+    }
+    this.runtimeSessions.delete(input.sessionId);
+  }
+
+  private async waitForVisibleRuntime(
+    webContents: WebContents,
+    action: Extract<BrowserActInput["action"], { kind: "waitFor" }>,
+  ): Promise<void> {
+    const deadline = Date.now() + (action.timeout ?? 5_000);
+    while (Date.now() <= deadline) {
+      const matched = await webContents
+        .executeJavaScript(
+          `(() => {
+            const text = document.body?.innerText || "";
+            const want = ${JSON.stringify(action.text ?? null)};
+            const gone = ${JSON.stringify(action.textGone ?? null)};
+            return (want === null || text.includes(want)) && (gone === null || !text.includes(gone));
+          })()`,
+          true,
+        )
+        .catch(() => false);
+      if (matched === true) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("Timed out waiting for visible browser condition.");
+  }
+
   private activateThread(threadId: ThreadId, bounds: BrowserPanelBounds): void {
     if (this.activeThreadId && this.activeThreadId !== threadId) {
       this.scheduleThreadSuspend(this.activeThreadId);
@@ -530,6 +931,164 @@ export class DesktopBrowserManager {
     } else {
       this.syncRuntimeState(threadId, activeTab.id);
     }
+  }
+
+  private runtimeForSession(sessionId: BrowserSessionId): LiveTabRuntime {
+    const session = this.runtimeSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown Electron visible browser session: ${sessionId}`);
+    }
+
+    const runtime = this.runtimes.get(buildRuntimeKey(session.threadId, session.tabId));
+    if (!runtime || runtime.view.webContents.isDestroyed()) {
+      throw new Error(`Electron visible browser runtime is unavailable: ${sessionId}`);
+    }
+    return runtime;
+  }
+
+  private async observeVisibleRuntime(sessionId: BrowserSessionId): Promise<BrowserObservation> {
+    const runtime = this.runtimeForSession(sessionId);
+    const webContents = runtime.view.webContents;
+    const bounds = runtime.view.getBounds();
+    const screenshot = await webContents.capturePage();
+    const metrics = await webContents
+      .executeJavaScript(
+        `(() => {
+          const headings = Array.from(document.querySelectorAll("h1,h2,h3"))
+            .slice(0, 16)
+            .map((node) => (node.textContent || "").trim())
+            .filter(Boolean);
+          return {
+            text: (document.body?.innerText || "").slice(0, 12000),
+            readyState: document.readyState,
+            scrollTop: Math.max(0, Math.floor(window.scrollY || document.documentElement.scrollTop || 0)),
+            scrollHeight: Math.max(0, Math.floor(document.documentElement.scrollHeight || 0)),
+            viewportWidth: Math.max(0, Math.floor(window.innerWidth || 0)),
+            viewportHeight: Math.max(0, Math.floor(window.innerHeight || 0)),
+            totalLinks: document.links.length,
+            totalInputs: document.querySelectorAll("input,textarea,select,button").length,
+            totalImages: document.images.length,
+            totalInteractiveElements: document.querySelectorAll("a,button,input,textarea,select,[role=button],[tabindex]").length,
+            headings,
+          };
+        })()`,
+        true,
+      )
+      .catch(() => null);
+    const url = webContents.getURL() || ABOUT_BLANK_URL;
+    const title = webContents.getTitle() || defaultTitleForUrl(url);
+    const runtimeTruth: BrowserRuntimeTruth = {
+      runtimeKind: "electron-visible",
+      surfaceMode: "live-shared-browser",
+      isUserVisibleSurface: true,
+      browserSessionId: sessionId,
+      observationId: `electron-visible-observation-${Crypto.randomUUID()}`,
+      observedUrl: url,
+      visiblePanelUrl: url,
+      urlAgreement: "same",
+      screenshotDataUrl: screenshot.toDataURL(),
+    };
+
+    return {
+      sessionId,
+      url,
+      title,
+      readyState:
+        typeof metrics?.readyState === "string" && metrics.readyState.length > 0
+          ? metrics.readyState
+          : "unknown",
+      textSummary: typeof metrics?.text === "string" ? metrics.text : "",
+      screenshotDataUrl: runtimeTruth.screenshotDataUrl,
+      targets: [],
+      elements: await this.inspectVisibleRuntimeElements(webContents),
+      pageMetrics: {
+        totalInteractiveElements: numberMetric(metrics?.totalInteractiveElements),
+        totalImages: numberMetric(metrics?.totalImages),
+        totalLinks: numberMetric(metrics?.totalLinks),
+        totalInputs: numberMetric(metrics?.totalInputs),
+        headings: Array.isArray(metrics?.headings)
+          ? metrics.headings.filter((value: unknown): value is string => typeof value === "string")
+          : [],
+        viewportWidth: numberMetric(metrics?.viewportWidth, bounds.width),
+        viewportHeight: numberMetric(metrics?.viewportHeight, bounds.height),
+        scrollHeight: numberMetric(metrics?.scrollHeight, bounds.height),
+        scrollTop: numberMetric(metrics?.scrollTop),
+      },
+      runtimeKind: runtimeTruth.runtimeKind,
+      surfaceMode: runtimeTruth.surfaceMode,
+      isUserVisibleSurface: runtimeTruth.isUserVisibleSurface,
+      observedUrl: url,
+      visiblePanelUrl: url,
+      urlAgreement: "same",
+      runtimeTruth,
+      observedAt: new Date().toISOString(),
+    };
+  }
+
+  private async resolveVisibleTarget(
+    webContents: WebContents,
+    target: Extract<BrowserActInput["action"], { kind: "clickTarget" | "fillTarget" }>["target"],
+    options: {
+      fillableOnly?: boolean;
+      includeDomSnippet?: boolean;
+      includeComputedStyle?: boolean;
+    } = {},
+  ): Promise<{
+    target: BrowserElementSummary;
+    targetResolution: BrowserTargetResolution;
+    domSnippet?: BrowserResolvedElementDomSnippet;
+    computedStyle?: BrowserResolvedElementStyleSummary;
+  }> {
+    const result = await webContents.executeJavaScript(
+      resolveTargetScript({
+        target,
+        ...(options.fillableOnly === undefined ? {} : { fillableOnly: options.fillableOnly }),
+        ...(options.includeDomSnippet === undefined
+          ? {}
+          : { includeDomSnippet: options.includeDomSnippet }),
+        ...(options.includeComputedStyle === undefined
+          ? {}
+          : { includeComputedStyle: options.includeComputedStyle }),
+      }),
+      true,
+    );
+    const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+    const resolvedTarget = record.resolvedTarget;
+    const targetResolution = record.targetResolution as BrowserTargetResolution | undefined;
+    if (!isBrowserElementSummary(resolvedTarget) || !resolvedTarget.box) {
+      throw new BrowserTargetResolutionError(
+        targetResolution ?? {
+          requested: target,
+          status: "not-found",
+          reason: options.fillableOnly
+            ? "Target is not a visible fillable element."
+            : "Target element was not found.",
+        },
+      );
+    }
+    return {
+      target: resolvedTarget,
+      targetResolution: targetResolution ?? {
+        requested: target,
+        status: "resolved",
+        candidates: [resolvedTarget],
+      },
+      ...(isDomSnippet(record.domSnippet) ? { domSnippet: record.domSnippet } : {}),
+      ...(isComputedStyle(record.computedStyle) ? { computedStyle: record.computedStyle } : {}),
+    };
+  }
+
+  private async highlightVisibleTarget(webContents: WebContents, elementId: string): Promise<void> {
+    await webContents.executeJavaScript(highlightTargetScript(elementId), true).catch(() => false);
+  }
+
+  private async inspectVisibleRuntimeElements(
+    webContents: WebContents,
+  ): Promise<BrowserElementSummary[]> {
+    const elements = await webContents
+      .executeJavaScript(collectVisibleElementsCallScript(), true)
+      .catch(() => []);
+    return Array.isArray(elements) ? elements.filter(isBrowserElementSummary) : [];
   }
 
   private attachRuntime(runtime: LiveTabRuntime, bounds: BrowserPanelBounds): void {
@@ -629,10 +1188,18 @@ export class DesktopBrowserManager {
       this.syncRuntimeState(threadId, tabId);
     });
     webContents.on("did-navigate", () => {
+      this.markHumanInput(threadId, tabId, "navigation");
       this.syncRuntimeState(threadId, tabId);
     });
     webContents.on("did-navigate-in-page", () => {
+      this.markHumanInput(threadId, tabId, "navigation");
       this.syncRuntimeState(threadId, tabId);
+    });
+    webContents.on("before-input-event", () => {
+      this.markHumanInput(threadId, tabId, "keyboard");
+    });
+    webContents.on("focus", () => {
+      this.markHumanInput(threadId, tabId, "focus");
     });
     webContents.on(
       "did-fail-load",
@@ -819,6 +1386,28 @@ export class DesktopBrowserManager {
 
   private getTab(state: ThreadBrowserState, tabId: string): BrowserTabState | null {
     return state.tabs.find((tab) => tab.id === tabId) ?? null;
+  }
+
+  private markHumanInput(
+    threadId: ThreadId,
+    tabId: string,
+    kind: BrowserHumanInputEvent["kind"],
+  ): void {
+    const state = this.states.get(threadId);
+    const tab = state ? this.getTab(state, tabId) : null;
+    if (!state || !tab) return;
+    const browserSessionId = [...this.runtimeSessions.entries()].find(
+      ([, session]) => session.threadId === threadId && session.tabId === tabId,
+    )?.[0];
+    if (!browserSessionId) return;
+    if (this.agentControlledSessions.has(browserSessionId)) return;
+    state.lastHumanInput = {
+      browserSessionId,
+      kind,
+      url: tab.lastCommittedUrl ?? tab.url,
+      occurredAt: new Date().toISOString(),
+    };
+    this.emitState(threadId);
   }
 
   private emitState(threadId: ThreadId): void {

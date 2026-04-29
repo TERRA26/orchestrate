@@ -138,6 +138,50 @@ it.effect("accepts server.providersUpdated push envelopes", () =>
   }),
 );
 
+it.effect("accepts desktop browser bridge request pushes", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWsResponse({
+      type: "push",
+      sequence: 5,
+      channel: WS_CHANNELS.desktopBrowserBridgeRequest,
+      data: {
+        requestId: "desktop-browser-request-1",
+        kind: "observeSession",
+        input: {
+          sessionId: "electron-visible-thread-1-tab-main",
+          include: ["screenshot"],
+        },
+        timeoutMs: 30_000,
+      },
+    });
+
+    if (!("type" in parsed) || parsed.type !== "push") {
+      assert.fail("expected websocket response to decode as a push envelope");
+    }
+
+    assert.strictEqual(parsed.channel, WS_CHANNELS.desktopBrowserBridgeRequest);
+  }),
+);
+
+it.effect("accepts desktop browser bridge response requests", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWebSocketRequest({
+      id: "req-desktop-response-1",
+      body: {
+        _tag: WS_METHODS.desktopBrowserBridgeResponse,
+        requestId: "desktop-browser-request-1",
+        status: "error",
+        error: {
+          code: "desktop-bridge-unavailable",
+          message: "Desktop browser bridge is unavailable in this client.",
+        },
+      },
+    });
+
+    assert.strictEqual(parsed.body._tag, WS_METHODS.desktopBrowserBridgeResponse);
+  }),
+);
+
 it.effect("rejects push envelopes when channel payload does not match the channel schema", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(

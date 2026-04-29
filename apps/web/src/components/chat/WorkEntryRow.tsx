@@ -1,13 +1,24 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 import type { WorkLogEntry } from "../../session-logic";
 import {
+  fetchEvidenceArtifactImageDataUrl,
+  fetchReviewerUserVisibleSummary,
+} from "~/browserEvidenceArtifacts";
+import {
+  browserEvidenceWorkSummary,
+  browserApprovalWorkSummary,
+  browserAnnotationWorkSummary,
+  browserControlWorkSummary,
   browserRuntimeTruthLabel,
   browserScreenshotDataUrls,
+  browserTargetedActionWorkSummary,
+  reviewerDecisionWorkSummary,
   stripOrchestrationToolPrefix,
 } from "~/browserWorkLog";
 import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
 import { cn } from "~/lib/utils";
+import { ensureNativeApi } from "~/nativeApi";
 import { normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { isOrchestrationToolCall } from "../orchestrator/OrchestrationToolCallCard";
 import {
@@ -117,6 +128,539 @@ function BrowserScreenshotPreview({
       {...(screenshot.fullDataUrl ? { fullDataUrl: screenshot.fullDataUrl } : {})}
       className="mt-2 h-28 w-44"
     />
+  );
+}
+
+function BrowserEvidenceCard({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof browserEvidenceWorkSummary>>;
+}) {
+  const [artifactPreviewUrl, setArtifactPreviewUrl] = useState<string | null>(null);
+  const [artifactFetchFailed, setArtifactFetchFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setArtifactPreviewUrl(null);
+    setArtifactFetchFailed(false);
+    if (!summary.screenshotArtifactRef) return;
+
+    void fetchEvidenceArtifactImageDataUrl(ensureNativeApi(), summary.screenshotArtifactRef)
+      .then((dataUrl) => {
+        if (cancelled) return;
+        if (!dataUrl) {
+          setArtifactFetchFailed(true);
+          return;
+        }
+        setArtifactPreviewUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setArtifactFetchFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [summary.screenshotArtifactRef]);
+
+  const screenshot = artifactPreviewUrl
+    ? { thumbnailDataUrl: artifactPreviewUrl, fullDataUrl: artifactPreviewUrl }
+    : summary.screenshot;
+
+  return (
+    <div className="rounded-md border border-border/45 bg-background/45 px-3 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground/90">{summary.title}</span>
+        <span
+          className={cn(
+            "rounded border px-1.5 py-0.5",
+            summary.isDurable
+              ? "border-emerald-500/25 text-emerald-300"
+              : "border-amber-500/30 text-amber-300",
+          )}
+        >
+          {summary.runtimeLabel}
+        </span>
+      </div>
+      <div className="mt-1 text-muted-foreground">{summary.statusLabel}</div>
+      {summary.observedUrl ? (
+        <div className="mt-2 truncate text-muted-foreground/80" title={summary.observedUrl}>
+          URL {summary.observedUrl}
+        </div>
+      ) : null}
+      {summary.visiblePanelUrl && summary.visiblePanelUrl !== summary.observedUrl ? (
+        <div className="mt-1 truncate text-muted-foreground/70" title={summary.visiblePanelUrl}>
+          Visible {summary.visiblePanelUrl}
+        </div>
+      ) : null}
+      {summary.urlAgreement && summary.urlAgreement !== "unknown" ? (
+        <div className="mt-1 text-muted-foreground/70">URL {summary.urlAgreement}</div>
+      ) : null}
+      {screenshot ? <BrowserScreenshotPreview screenshot={screenshot} /> : null}
+      <div className="mt-2 flex flex-wrap gap-1.5 text-muted-foreground/70">
+        <span>{summary.runtimeKind}</span>
+        {summary.screenshotArtifactRef ? (
+          <span>Screenshot {summary.screenshotArtifactRef}</span>
+        ) : null}
+        {artifactFetchFailed ? <span>Artifact preview unavailable</span> : null}
+        {summary.evidenceRefs.length > 0 ? (
+          <span>{summary.evidenceRefs.length} evidence ref(s)</span>
+        ) : (
+          <span>Not recorded as durable evidence</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReviewerDecisionCard({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof reviewerDecisionWorkSummary>>;
+}) {
+  const [artifactSummary, setArtifactSummary] = useState<{
+    readonly outcome?: string;
+    readonly confidence?: string;
+    readonly failedGateCount: number;
+    readonly findingCount: number;
+    readonly nextActions: ReadonlyArray<string>;
+  } | null>(null);
+  const [artifactFetchFailed, setArtifactFetchFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setArtifactSummary(null);
+    setArtifactFetchFailed(false);
+    if (!summary.userVisibleSummaryRef) return;
+
+    void fetchReviewerUserVisibleSummary(ensureNativeApi(), summary.userVisibleSummaryRef)
+      .then((next) => {
+        if (cancelled) return;
+        if (!next) {
+          setArtifactFetchFailed(true);
+          return;
+        }
+        setArtifactSummary({
+          outcome: next.outcome,
+          confidence: next.confidence,
+          failedGateCount: next.gates.filter((gate) => gate.status === "fail").length,
+          findingCount: next.findings.length,
+          nextActions: next.actionPacket?.recommendedNextActions ?? [],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setArtifactFetchFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [summary.userVisibleSummaryRef]);
+
+  const failedGates = summary.gates.filter((gate) => gate.status === "fail");
+  const warningGates = summary.gates.filter((gate) => gate.status === "warn");
+  const badgeLabel = (artifactSummary?.outcome ?? summary.outcome).replaceAll("-", " ");
+  const nextActions =
+    artifactSummary?.nextActions.length && artifactSummary.nextActions.length > 0
+      ? artifactSummary.nextActions
+      : (summary.actionPacket?.recommendedNextActions ?? []);
+  return (
+    <div className="rounded-md border border-border/45 bg-background/45 px-3 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium capitalize text-foreground/90">{badgeLabel}</span>
+        {summary.purpose ? (
+          <span className="rounded border border-border/50 px-1.5 py-0.5 text-muted-foreground">
+            {summary.purpose}
+          </span>
+        ) : null}
+        {summary.confidence ? (
+          <span className="text-muted-foreground">confidence {summary.confidence}</span>
+        ) : null}
+      </div>
+      {artifactSummary ? (
+        <div className="mt-2 space-y-1 text-muted-foreground">
+          <div className="font-medium text-foreground/85">Artifact-backed reviewer summary</div>
+          <p>
+            {artifactSummary.failedGateCount} failed gate
+            {artifactSummary.failedGateCount === 1 ? "" : "s"} · {artifactSummary.findingCount}{" "}
+            finding{artifactSummary.findingCount === 1 ? "" : "s"}
+            {artifactSummary.confidence ? ` · confidence ${artifactSummary.confidence}` : ""}
+          </p>
+        </div>
+      ) : null}
+      {summary.gates.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {summary.gates.slice(0, 8).map((gate) => (
+            <span
+              key={gate.name}
+              className={cn(
+                "rounded border px-1.5 py-0.5",
+                gate.status === "pass"
+                  ? "border-emerald-500/25 text-emerald-300"
+                  : gate.status === "fail"
+                    ? "border-rose-500/30 text-rose-300"
+                    : "border-amber-500/30 text-amber-300",
+              )}
+              title={gate.message}
+            >
+              {gate.name}: {gate.status}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {nextActions.length > 0 ? (
+        <div className="mt-2 border-t border-border/35 pt-2">
+          <div className="font-medium text-foreground/80">
+            Next actions
+            {summary.actionPacket ? ` · ${summary.actionPacket.kind}` : ""}
+          </div>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-muted-foreground">
+            {nextActions.slice(0, 4).map((action) => (
+              <li key={action}>{action}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {failedGates.length > 0 || warningGates.length > 0 || summary.findings.length > 0 ? (
+        <div className="mt-2 text-muted-foreground">
+          {failedGates.length} failed gate{failedGates.length === 1 ? "" : "s"}
+          {warningGates.length > 0 ? ` · ${warningGates.length} warning gate(s)` : ""}
+          {summary.findings.length > 0 ? ` · ${summary.findings.length} finding(s)` : ""}
+        </div>
+      ) : null}
+      <div className="mt-2 truncate text-muted-foreground/70">
+        {summary.userVisibleSummaryRef ? `Summary ${summary.userVisibleSummaryRef}` : null}
+        {summary.evidenceBundleId ? ` · Bundle ${summary.evidenceBundleId}` : null}
+        {artifactFetchFailed ? " · embedded fallback" : null}
+      </div>
+    </div>
+  );
+}
+
+function actionTargetSummary(
+  action: NonNullable<ReturnType<typeof browserApprovalWorkSummary>>["action"] | undefined,
+) {
+  if (!action) return "Approval details unavailable";
+  if (action.kind === "navigate") return action.url;
+  if ("targetId" in action && typeof action.targetId === "string") return action.targetId;
+  if ("text" in action && typeof action.text === "string")
+    return `${action.kind} · ${action.text.slice(0, 48)}`;
+  if ("key" in action && typeof action.key === "string") return `${action.kind} · ${action.key}`;
+  return action.kind;
+}
+
+function BrowserApprovalCard({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof browserApprovalWorkSummary>>;
+}) {
+  const [approval, setApproval] = useState(summary);
+  const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
+
+  const respond = async (decision: "approved" | "rejected") => {
+    setBusy(decision);
+    try {
+      const result = await ensureNativeApi().browser.approval.respond({
+        approvalId: summary.approvalId,
+        decision,
+      });
+      setApproval({
+        approvalId: result.approval.id,
+        browserSessionId: result.approval.browserSessionId,
+        action: result.approval.action,
+        actionHash: result.approval.actionHash,
+        risk: result.approval.risk,
+        reason: result.approval.reason,
+        status: result.approval.status,
+        evidenceRefs: [...result.approval.evidenceRefs],
+        ...(result.approval.origin ? { origin: result.approval.origin } : {}),
+        ...(result.approval.observedUrl ? { observedUrl: result.approval.observedUrl } : {}),
+        ...(result.approval.resolvedTarget
+          ? {
+              targetLabel:
+                result.approval.resolvedTarget.role && result.approval.resolvedTarget.name
+                  ? `${result.approval.resolvedTarget.role} ${result.approval.resolvedTarget.name}`
+                  : (result.approval.resolvedTarget.name ??
+                    result.approval.resolvedTarget.text ??
+                    result.approval.resolvedTarget.testId),
+            }
+          : {}),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const isPending = approval.status === "pending";
+  const heading =
+    approval.status === "approved"
+      ? "Approved"
+      : approval.status === "rejected"
+        ? "Rejected"
+        : approval.status === "expired"
+          ? "Approval expired"
+          : approval.status === "consumed"
+            ? "Approved action executed"
+            : "Approval required";
+  return (
+    <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground/90">{heading}</span>
+        <span className="rounded border border-amber-500/35 px-1.5 py-0.5 text-amber-300">
+          {approval.status}
+        </span>
+        <span className="text-muted-foreground">Risk: {approval.risk}</span>
+      </div>
+      <div
+        className="mt-1 truncate text-muted-foreground/85"
+        title={actionTargetSummary(approval.action)}
+      >
+        {approval.action ? (
+          <>
+            Action: {approval.action.kind} · {actionTargetSummary(approval.action)}
+          </>
+        ) : (
+          "Approval details unavailable"
+        )}
+      </div>
+      {approval.targetLabel ? (
+        <div className="mt-1 truncate text-muted-foreground/85" title={approval.targetLabel}>
+          Target: {approval.targetLabel}
+        </div>
+      ) : null}
+      {!approval.browserSessionId ? (
+        <div className="mt-1 text-muted-foreground/70">Browser session unavailable</div>
+      ) : null}
+      {approval.origin || approval.observedUrl ? (
+        <div
+          className="mt-1 truncate text-muted-foreground/70"
+          title={approval.origin ?? approval.observedUrl}
+        >
+          {approval.origin ?? approval.observedUrl}
+        </div>
+      ) : null}
+      {approval.reason ? (
+        <div className="mt-1 text-muted-foreground/80">{approval.reason}</div>
+      ) : null}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-muted-foreground/70">
+        <span>{approval.evidenceRefs.length} evidence ref(s)</span>
+        {approval.actionHash ? <span>Action {approval.actionHash.slice(0, 10)}</span> : null}
+      </div>
+      {isPending ? (
+        <div className="mt-2 flex gap-2">
+          <button
+            type="button"
+            className="rounded border border-emerald-500/35 px-2 py-1 text-emerald-300 disabled:opacity-50"
+            disabled={busy !== null}
+            onClick={() => void respond("approved")}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            className="rounded border border-rose-500/35 px-2 py-1 text-rose-300 disabled:opacity-50"
+            disabled={busy !== null}
+            onClick={() => void respond("rejected")}
+          >
+            Reject
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BrowserControlCard({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof browserControlWorkSummary>>;
+}) {
+  return (
+    <div className="rounded-md border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground/90">{summary.label}</span>
+        <span className="rounded border border-sky-500/35 px-1.5 py-0.5 text-sky-300">
+          {summary.eventType}
+        </span>
+      </div>
+      {summary.browserSessionId ? (
+        <div className="mt-1 truncate text-muted-foreground/85" title={summary.browserSessionId}>
+          Session: {summary.browserSessionId}
+        </div>
+      ) : null}
+      {summary.reason ? (
+        <div className="mt-1 text-muted-foreground/80">{summary.reason}</div>
+      ) : null}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-muted-foreground/70">
+        <span>{summary.evidenceRefs.length} evidence ref(s)</span>
+      </div>
+    </div>
+  );
+}
+
+function BrowserAnnotationCard({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof browserAnnotationWorkSummary>>;
+}) {
+  const [cropDataUrl, setCropDataUrl] = useState<string | null>(null);
+  const [cropFailed, setCropFailed] = useState(false);
+  const [actionState, setActionState] = useState<
+    "idle" | "busy" | "done" | "failed" | "rework-drafted" | "rework-started"
+  >("idle");
+
+  useEffect(() => {
+    let cancelled = false;
+    setCropDataUrl(null);
+    setCropFailed(false);
+    if (!summary.cropArtifactRef) return;
+    void fetchEvidenceArtifactImageDataUrl(ensureNativeApi(), summary.cropArtifactRef)
+      .then((dataUrl) => {
+        if (cancelled) return;
+        if (dataUrl) setCropDataUrl(dataUrl);
+        else setCropFailed(true);
+      })
+      .catch(() => {
+        if (!cancelled) setCropFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [summary.cropArtifactRef]);
+
+  const updateAnnotationStatus = (action: "resolve" | "reopen") => {
+    if (!summary.annotationId) return;
+    setActionState("busy");
+    const api = ensureNativeApi();
+    const request =
+      action === "resolve"
+        ? api.browser.resolveAnnotation({ annotationId: summary.annotationId })
+        : api.browser.reopenAnnotation({ annotationId: summary.annotationId });
+    void request.then(() => setActionState("done")).catch(() => setActionState("failed"));
+  };
+
+  const startRework = () => {
+    if (!summary.annotationId) return;
+    setActionState("busy");
+    void ensureNativeApi()
+      .reviewer.decision.startRework({
+        annotationIds: [summary.annotationId],
+        mode: "draft-task",
+      })
+      .then((result) => {
+        setActionState(result.status === "started" ? "rework-started" : "rework-drafted");
+      })
+      .catch(() => setActionState("failed"));
+  };
+
+  return (
+    <div className="rounded-md border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground/90">{summary.label}</span>
+        {summary.status ? (
+          <span className="rounded border border-emerald-500/35 px-1.5 py-0.5 text-emerald-300">
+            {summary.status}
+          </span>
+        ) : null}
+      </div>
+      {summary.targetLabel ? (
+        <div className="mt-1 truncate text-muted-foreground/85" title={summary.targetLabel}>
+          Target: {summary.targetLabel}
+        </div>
+      ) : null}
+      {summary.url ? (
+        <div className="mt-1 truncate text-muted-foreground/70" title={summary.url}>
+          {summary.url}
+        </div>
+      ) : null}
+      {summary.comment ? (
+        <div className="mt-1 text-muted-foreground/90">{summary.comment}</div>
+      ) : null}
+      {cropDataUrl ? (
+        <img
+          src={cropDataUrl}
+          alt="Browser comment crop"
+          className="mt-2 max-h-40 rounded border border-emerald-500/20 object-contain"
+        />
+      ) : summary.cropArtifactRef ? (
+        <div className="mt-2 text-muted-foreground/70">
+          {cropFailed ? "Crop unavailable" : "Loading crop..."}
+        </div>
+      ) : (
+        <div className="mt-2 text-muted-foreground/70">No crop captured</div>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-muted-foreground/70">
+        <span>{summary.evidenceRefs.length} evidence ref(s)</span>
+        {summary.cropArtifactRef ? <span>Crop {summary.cropArtifactRef}</span> : null}
+      </div>
+      {summary.annotationId ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-emerald-500/15 pt-2">
+          {summary.status === "resolved" ? (
+            <button
+              type="button"
+              className="rounded border border-emerald-500/35 px-2 py-1 text-emerald-200 disabled:opacity-60"
+              disabled={actionState === "busy"}
+              onClick={() => updateAnnotationStatus("reopen")}
+            >
+              Reopen
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="rounded border border-emerald-500/35 px-2 py-1 text-emerald-200 disabled:opacity-60"
+                disabled={actionState === "busy"}
+                onClick={() => updateAnnotationStatus("resolve")}
+              >
+                Resolve
+              </button>
+              <button
+                type="button"
+                className="rounded border border-border/45 px-2 py-1 text-muted-foreground disabled:opacity-60"
+                disabled={actionState === "busy"}
+                onClick={startRework}
+              >
+                Start rework
+              </button>
+            </>
+          )}
+          {actionState === "done" ? (
+            <span className="text-emerald-300">Updated</span>
+          ) : actionState === "failed" ? (
+            <span className="text-rose-300">Update failed</span>
+          ) : actionState === "rework-drafted" ? (
+            <span className="text-emerald-300">Rework task drafted</span>
+          ) : actionState === "rework-started" ? (
+            <span className="text-emerald-300">Rework task started</span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BrowserTargetedActionCard({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof browserTargetedActionWorkSummary>>;
+}) {
+  return (
+    <div className="rounded-md border border-blue-500/25 bg-blue-500/5 px-3 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground/90">{summary.title}</span>
+        <span className="rounded border border-blue-500/35 px-1.5 py-0.5 text-blue-300">
+          {summary.actionKind}
+        </span>
+        <span className="text-muted-foreground">Target: {summary.targetLabel}</span>
+      </div>
+      {summary.reason ? (
+        <div className="mt-1 text-muted-foreground/80">{summary.reason}</div>
+      ) : null}
+      <div className="mt-2 text-muted-foreground/70">
+        {summary.evidenceRefs.length} evidence ref(s)
+        {summary.evidenceRefs.length > 0 ? " · Screenshot captured" : ""}
+      </div>
+    </div>
   );
 }
 
@@ -414,6 +958,11 @@ export const WorkEntryRow = memo(function WorkEntryRow({
 }: WorkEntryRowProps) {
   const isLoading = workEntry.tone === "thinking";
   const orchTool = stripOrchestrationToolPrefix(workEntry.toolName);
+  const reviewerSummary = reviewerDecisionWorkSummary(workEntry);
+  const annotationSummary = browserAnnotationWorkSummary(workEntry);
+  const approvalSummary = browserApprovalWorkSummary(workEntry);
+  const controlSummary = browserControlWorkSummary(workEntry);
+  const targetedActionSummary = browserTargetedActionWorkSummary(workEntry);
   const handleOpenWorker = () => {
     if (!onOpenWorkerPanel) return;
     onOpenWorkerPanel({
@@ -431,6 +980,24 @@ export const WorkEntryRow = memo(function WorkEntryRow({
       {node}
     </div>
   );
+
+  if (reviewerSummary) {
+    return wrap(<ReviewerDecisionCard summary={reviewerSummary} />);
+  }
+
+  if (annotationSummary) {
+    return wrap(<BrowserAnnotationCard summary={annotationSummary} />);
+  }
+
+  if (approvalSummary) {
+    return wrap(<BrowserApprovalCard summary={approvalSummary} />);
+  }
+  if (controlSummary) {
+    return wrap(<BrowserControlCard summary={controlSummary} />);
+  }
+  if (targetedActionSummary) {
+    return wrap(<BrowserTargetedActionCard summary={targetedActionSummary} />);
+  }
 
   // ---------------- Orchestration tool calls — render as design cards ---------------- //
   if (orchTool || (workEntry.toolName && isOrchestrationToolCall(workEntry.toolName))) {
@@ -490,6 +1057,10 @@ export const WorkEntryRow = memo(function WorkEntryRow({
     }
     const browserLabel = browserToolCallLabel(baseTool, workEntry.detail, isLoading);
     if (browserLabel) {
+      const evidenceSummary = browserEvidenceWorkSummary(workEntry);
+      if (evidenceSummary) {
+        return wrap(<BrowserEvidenceCard summary={evidenceSummary} />);
+      }
       const screenshot = browserScreenshotDataUrls(workEntry);
       const runtimeTruthLabel = browserRuntimeTruthLabel(workEntry);
       return wrap(

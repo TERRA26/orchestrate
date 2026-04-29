@@ -1,10 +1,19 @@
 import {
+  type BrowserCloseSessionInput,
+  type BrowserActInput,
+  type BrowserAnnotationResolveTargetAtPointInput,
+  type BrowserInspectSessionInput,
+  type BrowserObserveSessionInput,
+  type BrowserOpenSessionInput,
+  type BrowserResolveTargetSessionInput,
   type WsPush,
   type WsPushChannel,
   type WsPushMessage,
   WebSocketResponse,
   type WsResponse as WsResponseMessage,
   WsResponse as WsResponseSchema,
+  WS_CHANNELS,
+  WS_METHODS,
 } from "@orchestrate/contracts";
 import { decodeUnknownJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
 import { Result, Schema } from "effect";
@@ -262,6 +271,9 @@ export class WsTransport {
     const message = result.success;
     if (isWsPushMessage(message)) {
       this.latestPushByChannel.set(message.channel, message);
+      if (message.channel === WS_CHANNELS.desktopBrowserBridgeRequest) {
+        void this.handleDesktopBrowserBridgeRequest(message.data);
+      }
       const channelListeners = this.listeners.get(message.channel);
       if (channelListeners) {
         for (const listener of channelListeners) {
@@ -307,6 +319,64 @@ export class WsTransport {
       this.flushQueue();
     } catch {
       // Swallow: flushQueue has queued the message for retry on reconnect
+    }
+  }
+
+  private async handleDesktopBrowserBridgeRequest(
+    request: WsPushMessage<typeof WS_CHANNELS.desktopBrowserBridgeRequest>["data"],
+  ) {
+    const bridge = window.desktopBridge?.browser;
+    if (!bridge) {
+      await this.request(WS_METHODS.desktopBrowserBridgeResponse, {
+        requestId: request.requestId,
+        status: "error",
+        error: {
+          code: "desktop-bridge-unavailable",
+          message: "Desktop browser bridge is unavailable in this client.",
+        },
+      });
+      return;
+    }
+
+    try {
+      const result =
+        request.kind === "openSession"
+          ? await bridge.openSession(request.input as BrowserOpenSessionInput)
+          : request.kind === "observeSession"
+            ? await bridge.observeSession(request.input as BrowserObserveSessionInput)
+            : request.kind === "inspectSession"
+              ? await bridge.inspectSession(request.input as BrowserInspectSessionInput)
+              : request.kind === "resolveTargetSession"
+                ? await bridge.resolveTargetSession(
+                    request.input as BrowserResolveTargetSessionInput,
+                  )
+                : request.kind === "resolveAnnotationTargetAtPoint"
+                  ? await bridge.resolveAnnotationTargetAtPoint(
+                      request.input as BrowserAnnotationResolveTargetAtPointInput,
+                    )
+                  : request.kind === "actSession"
+                    ? await bridge.actSession(request.input as BrowserActInput)
+                    : await bridge.closeSession(request.input as BrowserCloseSessionInput);
+      await this.request(WS_METHODS.desktopBrowserBridgeResponse, {
+        requestId: request.requestId,
+        status: "ok",
+        ...(result === undefined ? {} : { result }),
+      });
+    } catch (error) {
+      await this.request(WS_METHODS.desktopBrowserBridgeResponse, {
+        requestId: request.requestId,
+        status: "error",
+        error: {
+          code:
+            typeof (error as { code?: unknown }).code === "string"
+              ? (error as { code: string }).code
+              : "desktop-bridge-error",
+          message: error instanceof Error ? error.message : String(error),
+          ...((error as { details?: unknown }).details !== undefined
+            ? { details: (error as { details?: unknown }).details }
+            : {}),
+        },
+      });
     }
   }
 

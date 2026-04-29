@@ -77,7 +77,7 @@ export class DevServerSupervisor {
     const filePath = Path.join(this.repoRoot, ".orchestrate", "launch.json");
     const raw = await readFile(filePath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    return Schema.decodeUnknownSync(LaunchConfigFile)(parsed).configurations;
+    return [...Schema.decodeUnknownSync(LaunchConfigFile)(parsed).configurations];
   }
 
   async detectLaunchConfigs(): Promise<LaunchConfig[]> {
@@ -428,8 +428,8 @@ function normalizeExpectedStatus(
   expected: NonNullable<LaunchConfig["healthCheck"]>["expectedStatus"],
 ): Set<number> {
   if (expected === undefined) return new Set([200]);
-  if (Array.isArray(expected)) return new Set(expected);
-  return new Set([expected]);
+  if (typeof expected === "number") return new Set([expected]);
+  return new Set(expected);
 }
 
 async function reserveAvailablePort(): Promise<number> {

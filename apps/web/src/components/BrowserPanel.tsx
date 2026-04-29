@@ -16,8 +16,12 @@ import {
 } from "react";
 import { useStore } from "zustand";
 import {
+  EvidenceArtifactId,
   type BrowserAction,
   type BrowserAnnotation,
+  type BrowserElementSummary,
+  type BrowserApprovalRequest,
+  type HumanControlLease,
   type BrowserObservation,
   type BrowserObservedTarget,
   type ThreadBrowserState,
@@ -29,6 +33,9 @@ import {
   ExternalLinkIcon,
   GlobeIcon,
   LoaderCircleIcon,
+  LockIcon,
+  LockOpenIcon,
+  PlayIcon,
   PlusIcon,
   RefreshCwIcon,
   SquarePenIcon,
@@ -79,10 +86,223 @@ interface BrowserPanelAutomationSession {
 }
 
 interface BrowserAnnotationDraft {
+  kind?: "point" | "rect";
   x: number;
   y: number;
+  width?: number;
+  height?: number;
   targetId?: string;
   targetLabel?: string;
+  targetElement?: BrowserElementSummary;
+}
+
+export function browserPanelControlStatusLabel(input: {
+  usesNativeBrowserSurface: boolean;
+  activeBrowserSessionId: string | null;
+  controlSessionIdIsServerKnown: boolean;
+  controlLease: HumanControlLease | null;
+}): string {
+  if (input.usesNativeBrowserSurface && !input.activeBrowserSessionId) {
+    return "Control unavailable";
+  }
+  if (input.activeBrowserSessionId && !input.controlSessionIdIsServerKnown) {
+    return "Control unavailable";
+  }
+  if (input.controlLease?.holder === "human") {
+    return "Human control active";
+  }
+  if (input.controlLease?.state === "paused") {
+    return "Agent paused";
+  }
+  if (
+    input.controlLease?.requiredSnapshotAfterRelease &&
+    !input.controlLease.snapshotAfterReleaseRef
+  ) {
+    return "Fresh observation required";
+  }
+  if (input.controlLease?.holder === "agent") {
+    return "Agent control active";
+  }
+  return "Agent ready";
+}
+
+export function BrowserPanelApprovalList({
+  approvals,
+  approvalBusyId,
+  onRespond,
+}: {
+  approvals: readonly BrowserApprovalRequest[];
+  approvalBusyId: string | null;
+  onRespond: (approvalId: string, decision: "approved" | "rejected") => void;
+}) {
+  if (approvals.length === 0) return null;
+  return (
+    <>
+      {approvals.slice(0, 2).map((approval) => {
+        const isPending = approval.status === "pending";
+        const heading =
+          approval.status === "approved"
+            ? "Approved"
+            : approval.status === "rejected"
+              ? "Rejected"
+              : approval.status === "expired"
+                ? "Approval expired"
+                : approval.status === "consumed"
+                  ? "Approved action executed"
+                  : "Approval required";
+        return (
+          <div key={approval.id} className="space-y-2 border-b border-border/40 py-2 last:border-0">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-foreground">{heading}</span>
+              <span className="rounded border border-border/60 px-1.5 py-0.5 text-muted-foreground">
+                {approval.status}
+              </span>
+            </div>
+            <div className="text-muted-foreground">
+              Risk: {approval.risk}
+              {approval.origin ? ` · ${approval.origin}` : ""}
+            </div>
+            <div className="truncate text-muted-foreground" title={JSON.stringify(approval.action)}>
+              Action {approval.action.kind} · {approval.actionHash.slice(0, 10)}
+            </div>
+            <div className="truncate text-muted-foreground/75">
+              {approval.evidenceRefs.length} evidence ref(s)
+            </div>
+            {isPending ? (
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={approvalBusyId === approval.id}
+                  onClick={() => onRespond(approval.id, "approved")}
+                >
+                  Approve
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={approvalBusyId === approval.id}
+                  onClick={() => onRespond(approval.id, "rejected")}
+                >
+                  Reject
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+export function shouldRefreshBrowserPanelForEvent(
+  event: unknown,
+  activeBrowserSessionId: string | null,
+): "approval" | "control" | "annotation" | null {
+  if (!activeBrowserSessionId) return null;
+  const eventRecord =
+    event && typeof event === "object" ? (event as Record<string, unknown>) : null;
+  const payload =
+    eventRecord?.payload && typeof eventRecord.payload === "object"
+      ? (eventRecord.payload as Record<string, unknown>)
+      : eventRecord?.payloadJson && typeof eventRecord.payloadJson === "string"
+        ? (() => {
+            try {
+              return JSON.parse(eventRecord.payloadJson as string) as Record<string, unknown>;
+            } catch {
+              return null;
+            }
+          })()
+        : eventRecord;
+  const type =
+    (typeof eventRecord?.type === "string" ? eventRecord.type : null) ??
+    (typeof eventRecord?.eventType === "string" ? eventRecord.eventType : null);
+  const sessionId =
+    (typeof payload?.browserSessionId === "string" ? payload.browserSessionId : null) ??
+    (payload?.lease &&
+    typeof payload.lease === "object" &&
+    typeof (payload.lease as Record<string, unknown>).browserSessionId === "string"
+      ? ((payload.lease as Record<string, unknown>).browserSessionId as string)
+      : null) ??
+    (payload?.approval &&
+    typeof payload.approval === "object" &&
+    typeof (payload.approval as Record<string, unknown>).browserSessionId === "string"
+      ? ((payload.approval as Record<string, unknown>).browserSessionId as string)
+      : null) ??
+    (payload?.annotation &&
+    typeof payload.annotation === "object" &&
+    typeof (payload.annotation as Record<string, unknown>).browserSessionId === "string"
+      ? ((payload.annotation as Record<string, unknown>).browserSessionId as string)
+      : null);
+  if (sessionId && sessionId !== activeBrowserSessionId) return null;
+  if (type?.startsWith("BrowserApproval")) return "approval";
+  if (type?.startsWith("BrowserControl")) return "control";
+  if (type?.startsWith("BrowserAnnotation")) return "annotation";
+  return null;
+}
+
+export function browserPanelHumanInputRequest(input: {
+  browserSessionId: string | null;
+  kind: "manual" | "mouse" | "keyboard" | "focus" | "navigation";
+  url: string;
+  now?: () => string;
+}) {
+  if (!input.browserSessionId) return null;
+  return {
+    browserSessionId: input.browserSessionId,
+    kind: input.kind,
+    url: input.url,
+    occurredAt: input.now?.() ?? new Date().toISOString(),
+  };
+}
+
+export function browserPanelApprovalResponseRequest(
+  approvalId: string,
+  decision: "approved" | "rejected",
+) {
+  return { approvalId, decision };
+}
+
+export function browserPanelControlRequest(input: {
+  browserSessionId: string | null;
+  action: "release" | "pauseAgent" | "resumeAgent" | "observeFresh";
+  leaseId?: HumanControlLease["id"];
+  snapshotAfterReleaseRef?: string | null;
+}) {
+  if (!input.browserSessionId) return null;
+  if (input.action === "release") {
+    if (!input.leaseId) return null;
+    return {
+      action: input.action,
+      input: {
+        browserSessionId: input.browserSessionId,
+        leaseId: input.leaseId,
+        ...(input.snapshotAfterReleaseRef
+          ? {
+              snapshotAfterReleaseRef: EvidenceArtifactId.makeUnsafe(input.snapshotAfterReleaseRef),
+            }
+          : {}),
+      },
+    };
+  }
+  if (input.action === "pauseAgent") {
+    return {
+      action: input.action,
+      input: {
+        browserSessionId: input.browserSessionId,
+        reason: "manual-pause" as const,
+      },
+    };
+  }
+  return {
+    action: input.action,
+    input: {
+      browserSessionId: input.browserSessionId,
+    },
+  };
 }
 
 function closeButtonClassName(isActive: boolean) {
@@ -283,6 +503,13 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const [annotationMode, setAnnotationMode] = useState(false);
   const [annotationDraft, setAnnotationDraft] = useState<BrowserAnnotationDraft | null>(null);
   const [annotationComment, setAnnotationComment] = useState("");
+  const [annotationDragStart, setAnnotationDragStart] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [controlLease, setControlLease] = useState<HumanControlLease | null>(null);
+  const [controlBusy, setControlBusy] = useState(false);
+  const [approvalRequests, setApprovalRequests] = useState<BrowserApprovalRequest[]>([]);
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
   const activeTab =
     threadBrowserState?.tabs.find((tab) => tab.id === threadBrowserState.activeTabId) ??
     threadBrowserState?.tabs[0] ??
@@ -301,6 +528,10 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const usesNativeBrowserSurface =
     typeof window !== "undefined" && window.desktopBridge !== undefined;
   const activeTabUrl = activeTab?.lastCommittedUrl ?? activeTab?.url ?? "";
+  const activeElectronBrowserSessionId = usesNativeBrowserSurface
+    ? (threadBrowserState?.activeBrowserSessionId ?? null)
+    : null;
+  const controlSessionIdIsServerKnown = Boolean(threadBrowserState?.activeBrowserSessionId);
   const restorableAutomationUrl = threadAutomationBrowserSession?.url ?? "";
   const prefersThreadAutomationSession = threadAutomationBrowserSession?.source === "orchestrator";
   const orchestratorAutomationSessionId =
@@ -373,8 +604,111 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
         ? `artifact unavailable ${displayedEvidenceLabel}`
         : `artifact loading ${displayedEvidenceLabel}`
     : "legacy screenshot";
+
+  const refreshControlStatus = useCallback(async () => {
+    if (!api || !activeElectronBrowserSessionId) {
+      setControlLease(null);
+      return;
+    }
+    try {
+      const result = await api.browser.control.status({
+        browserSessionId: activeElectronBrowserSessionId,
+      });
+      setControlLease(result.lease);
+    } catch {
+      setControlLease(null);
+    }
+  }, [activeElectronBrowserSessionId, api]);
+
+  const refreshApprovalRequests = useCallback(async () => {
+    if (!api || !activeElectronBrowserSessionId) {
+      setApprovalRequests([]);
+      return;
+    }
+    try {
+      const result = await api.browser.approval.list({
+        browserSessionId: activeElectronBrowserSessionId,
+      });
+      setApprovalRequests(result.approvals.toReversed());
+    } catch {
+      setApprovalRequests([]);
+    }
+  }, [activeElectronBrowserSessionId, api]);
+
+  useEffect(() => {
+    void refreshControlStatus();
+  }, [refreshControlStatus]);
+
+  useEffect(() => {
+    void refreshApprovalRequests();
+  }, [refreshApprovalRequests]);
+
+  const runControlAction = useCallback(
+    async (action: () => Promise<unknown>) => {
+      if (!api || !activeElectronBrowserSessionId) return;
+      setControlBusy(true);
+      setLocalError(null);
+      try {
+        await action();
+        await refreshControlStatus();
+        await refreshApprovalRequests();
+      } catch (error) {
+        setLocalError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setControlBusy(false);
+      }
+    },
+    [activeElectronBrowserSessionId, api, refreshApprovalRequests, refreshControlStatus],
+  );
+
+  const respondToApproval = useCallback(
+    async (approvalId: string, decision: "approved" | "rejected") => {
+      if (!api) return;
+      setApprovalBusyId(approvalId);
+      setLocalError(null);
+      try {
+        await api.browser.approval.respond(
+          browserPanelApprovalResponseRequest(approvalId, decision),
+        );
+        await refreshApprovalRequests();
+      } catch (error) {
+        setLocalError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setApprovalBusyId(null);
+      }
+    },
+    [api, refreshApprovalRequests],
+  );
+
+  const controlStatusLabel = browserPanelControlStatusLabel({
+    usesNativeBrowserSurface,
+    activeBrowserSessionId: activeElectronBrowserSessionId,
+    controlSessionIdIsServerKnown,
+    controlLease,
+  });
   const activeBrowserUrl =
     displayedFallbackAutomationObservation?.url ?? fallbackScreenshotSession?.url ?? activeTabUrl;
+  const reportPointerHumanInput = useCallback(() => {
+    if (!api || !activeElectronBrowserSessionId || !controlSessionIdIsServerKnown) return;
+    const request = browserPanelHumanInputRequest({
+      browserSessionId: activeElectronBrowserSessionId,
+      kind: "mouse",
+      url: activeBrowserUrl,
+    });
+    if (!request) return;
+    void api.browser.control
+      .humanInput(request)
+      .then(() => {
+        void refreshControlStatus();
+      })
+      .catch(() => undefined);
+  }, [
+    activeBrowserUrl,
+    activeElectronBrowserSessionId,
+    api,
+    controlSessionIdIsServerKnown,
+    refreshControlStatus,
+  ]);
   const activeBrowserTitle =
     displayedFallbackAutomationObservation?.title ??
     fallbackScreenshotSession?.title ??
@@ -383,6 +717,18 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   const visibleBrowserAnnotations = browserAnnotations.filter((annotation) =>
     browserUrlsLikelyMatch(annotation.url, activeBrowserUrl),
   );
+
+  useEffect(() => {
+    if (!api || !activeElectronBrowserSessionId) return;
+    return api.browser.onSessionEvent((event) => {
+      const refreshKind = shouldRefreshBrowserPanelForEvent(event, activeElectronBrowserSessionId);
+      if (refreshKind === "approval") {
+        void refreshApprovalRequests();
+      } else if (refreshKind === "control") {
+        void refreshControlStatus();
+      }
+    });
+  }, [activeElectronBrowserSessionId, api, refreshApprovalRequests, refreshControlStatus]);
 
   useEffect(() => {
     if (!displayedEvidenceRef) {
@@ -445,6 +791,16 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       // Annotation state should never block the browser itself.
     }
   }, [api, threadId]);
+
+  useEffect(() => {
+    if (!api || !activeElectronBrowserSessionId) return;
+    return api.browser.onSessionEvent((event) => {
+      const refreshKind = shouldRefreshBrowserPanelForEvent(event, activeElectronBrowserSessionId);
+      if (refreshKind === "annotation") {
+        void refreshBrowserAnnotations();
+      }
+    });
+  }, [activeElectronBrowserSessionId, api, refreshBrowserAnnotations]);
 
   const getFallbackAutomationViewportSize = useCallback(() => {
     const element = fallbackAutomationViewportRef.current ?? browserPanelFrameRef.current;
@@ -645,14 +1001,79 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       return;
     }
     const observation = fallbackAutomationSession?.observation;
+    const viewportWidth =
+      observation?.pageMetrics?.viewportWidth ??
+      Math.round(browserPanelFrameRef.current?.getBoundingClientRect().width ?? 0);
+    const viewportHeight =
+      observation?.pageMetrics?.viewportHeight ??
+      Math.round(browserPanelFrameRef.current?.getBoundingClientRect().height ?? 0);
+    const point = {
+      x: Math.round(annotationDraft.x * Math.max(1, viewportWidth)),
+      y: Math.round(annotationDraft.y * Math.max(1, viewportHeight)),
+    };
+    const rect =
+      annotationDraft.kind === "rect" &&
+      annotationDraft.width !== undefined &&
+      annotationDraft.height !== undefined
+        ? {
+            x: Math.round(annotationDraft.x * Math.max(1, viewportWidth)),
+            y: Math.round(annotationDraft.y * Math.max(1, viewportHeight)),
+            width: Math.round(annotationDraft.width * Math.max(1, viewportWidth)),
+            height: Math.round(annotationDraft.height * Math.max(1, viewportHeight)),
+          }
+        : undefined;
+    const screenshotPixelSize =
+      viewportWidth > 0 && viewportHeight > 0
+        ? {
+            width: Math.round(viewportWidth * (window.devicePixelRatio || 1)),
+            height: Math.round(viewportHeight * (window.devicePixelRatio || 1)),
+          }
+        : undefined;
+    const geometry = {
+      coordinateSpace: "css-pixels" as const,
+      ...(rect ? { rect } : { point }),
+      viewport: {
+        width: viewportWidth,
+        height: viewportHeight,
+        deviceScaleFactor: window.devicePixelRatio || 1,
+      },
+      scroll: {
+        x: 0,
+        y: observation?.pageMetrics?.scrollTop ?? 0,
+      },
+      ...(screenshotPixelSize ? { screenshotPixelSize } : {}),
+    };
     try {
+      const resolvedTarget =
+        !rect && activeElectronBrowserSessionId
+          ? await api.browser
+              .resolveAnnotationTargetAtPoint({
+                browserSessionId: activeElectronBrowserSessionId,
+                point,
+                geometryContext: {
+                  viewport: geometry.viewport,
+                  scroll: geometry.scroll,
+                  ...(screenshotPixelSize ? { screenshotPixelSize } : {}),
+                },
+                includeDomSnippet: true,
+                includeComputedStyle: true,
+              })
+              .catch(() => null)
+          : null;
+      const targetElement = resolvedTarget?.element ?? annotationDraft.targetElement;
+      const targetResolution = resolvedTarget?.targetResolution;
+      const targetGeometry = resolvedTarget?.geometry ?? geometry;
+      const targetKind = targetElement ? "element" : rect ? "region" : "point";
       const result = await api.browser.addAnnotation({
         threadId,
         ...(observation?.sessionId ? { sessionId: observation.sessionId } : {}),
+        ...((activeElectronBrowserSessionId ?? observation?.sessionId)
+          ? { browserSessionId: activeElectronBrowserSessionId ?? observation?.sessionId }
+          : {}),
         url: activeBrowserUrl,
         title: activeBrowserTitle,
         comment,
-        kind: "point",
+        kind: rect ? "rect" : "point",
         x: annotationDraft.x,
         y: annotationDraft.y,
         ...(observation?.pageMetrics?.viewportWidth !== undefined
@@ -666,6 +1087,20 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
           : {}),
         ...(annotationDraft.targetId ? { targetId: annotationDraft.targetId } : {}),
         ...(annotationDraft.targetLabel ? { targetLabel: annotationDraft.targetLabel } : {}),
+        target: {
+          kind: targetKind,
+          ...(targetElement ? { element: targetElement } : {}),
+          ...(targetResolution ? { targetResolution } : {}),
+          geometry: targetGeometry,
+          ...(resolvedTarget?.domSnippet ? { domSnippet: resolvedTarget.domSnippet } : {}),
+          ...(resolvedTarget?.computedStyle ? { computedStyle: resolvedTarget.computedStyle } : {}),
+        },
+        ...(resolvedTarget?.screenshotArtifactRef
+          ? { fullScreenshotArtifactRef: resolvedTarget.screenshotArtifactRef }
+          : {}),
+        ...(resolvedTarget?.evidenceRefs?.[0]
+          ? { browserInspectionRef: resolvedTarget.evidenceRefs[0] }
+          : {}),
         ...(observation?.previewScreenshotDataUrl
           ? { screenshotDataUrl: observation.previewScreenshotDataUrl }
           : {}),
@@ -673,6 +1108,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
       setBrowserAnnotations([...result.annotations]);
       setAnnotationDraft(null);
       setAnnotationComment("");
+      setAnnotationDragStart(null);
       setAnnotationMode(false);
     } catch (error) {
       setLocalError(formatBrowserActionError(error));
@@ -680,6 +1116,7 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
   }, [
     activeBrowserTitle,
     activeBrowserUrl,
+    activeElectronBrowserSessionId,
     annotationComment,
     annotationDraft,
     api,
@@ -687,21 +1124,48 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
     threadId,
   ]);
 
-  const onBrowserAnnotationOverlayClick = useCallback(
+  const annotationPointFromEvent = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    };
+  }, []);
+
+  const onBrowserAnnotationPointerDown = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
-      if (!annotationMode || event.target !== event.currentTarget) {
-        return;
-      }
-      const rect = event.currentTarget.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) {
-        return;
-      }
-      const unitX = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-      const unitY = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
-      beginAnnotationAtPoint({ x: unitX, y: unitY });
+      if (!annotationMode || event.target !== event.currentTarget) return;
+      const point = annotationPointFromEvent(event);
+      if (!point) return;
+      setAnnotationDragStart(point);
+      beginAnnotationAtPoint({ kind: "point", ...point });
     },
-    [annotationMode, beginAnnotationAtPoint],
+    [annotationMode, annotationPointFromEvent, beginAnnotationAtPoint],
   );
+
+  const onBrowserAnnotationPointerMove = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!annotationMode || !annotationDragStart || event.target !== event.currentTarget) return;
+      const point = annotationPointFromEvent(event);
+      if (!point) return;
+      const width = Math.abs(point.x - annotationDragStart.x);
+      const height = Math.abs(point.y - annotationDragStart.y);
+      if (width < 0.01 && height < 0.01) return;
+      setAnnotationDraft({
+        kind: "rect",
+        x: Math.min(point.x, annotationDragStart.x),
+        y: Math.min(point.y, annotationDragStart.y),
+        width,
+        height,
+      });
+    },
+    [annotationDragStart, annotationMode, annotationPointFromEvent],
+  );
+
+  const onBrowserAnnotationPointerUp = useCallback(() => {
+    setAnnotationDragStart(null);
+  }, []);
 
   useEffect(() => {
     if (!api) {
@@ -1286,6 +1750,26 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
           y: Math.min(1, Math.max(0, viewportY / viewportHeight)),
           ...(target ? { targetId: target.id } : {}),
           ...(targetLabel ? { targetLabel } : {}),
+          ...(target
+            ? {
+                targetElement: {
+                  id: target.id,
+                  tagName: target.tagName,
+                  role: target.role,
+                  ...(targetLabel ? { name: targetLabel } : {}),
+                  ...(target.text ? { text: target.text } : {}),
+                  visible: true,
+                  enabled: !target.disabled,
+                  box: {
+                    x: target.x,
+                    y: target.y,
+                    width: target.width,
+                    height: target.height,
+                    coordinateSpace: "css-pixels",
+                  },
+                },
+              }
+            : {}),
         });
         return;
       }
@@ -1502,6 +1986,131 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
             {browserSurfaceModeLabel}
           </span>
         ) : null}
+        {activeElectronBrowserSessionId ? (
+          <div className="hidden shrink-0 items-center gap-1 md:flex">
+            <span className="max-w-36 truncate rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground">
+              {controlStatusLabel}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7 shrink-0"
+              disabled={controlBusy || !controlSessionIdIsServerKnown}
+              onClick={() =>
+                void runControlAction(() => {
+                  const request = browserPanelHumanInputRequest({
+                    browserSessionId: activeElectronBrowserSessionId,
+                    kind: "manual",
+                    url: activeBrowserUrl,
+                  });
+                  if (!request) return Promise.resolve(null);
+                  return api!.browser.control.humanInput(request);
+                })
+              }
+              title="Take browser control"
+            >
+              <LockIcon className="size-3.5" />
+              <span className="sr-only">Take control</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7 shrink-0"
+              disabled={controlBusy || !controlSessionIdIsServerKnown || !controlLease}
+              onClick={() => {
+                if (!controlLease) return;
+                void runControlAction(() => {
+                  const request = browserPanelControlRequest({
+                    browserSessionId: activeElectronBrowserSessionId,
+                    action: "release",
+                    leaseId: controlLease.id,
+                    snapshotAfterReleaseRef: displayedEvidenceRef,
+                  });
+                  if (!request || request.action !== "release") return Promise.resolve(null);
+                  return api!.browser.control.release(request.input);
+                });
+              }}
+              title="Release browser control"
+            >
+              <LockOpenIcon className="size-3.5" />
+              <span className="sr-only">Release control</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7 shrink-0"
+              disabled={controlBusy || !controlSessionIdIsServerKnown}
+              onClick={() =>
+                void runControlAction(() => {
+                  const request = browserPanelControlRequest({
+                    browserSessionId: activeElectronBrowserSessionId,
+                    action: "pauseAgent",
+                  });
+                  if (!request || request.action !== "pauseAgent") return Promise.resolve(null);
+                  return api!.browser.control.pauseAgent(request.input);
+                })
+              }
+              title="Pause agent"
+            >
+              <LockIcon className="size-3.5" />
+              <span className="sr-only">Pause agent</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7 shrink-0"
+              disabled={controlBusy || !controlSessionIdIsServerKnown}
+              onClick={() =>
+                void runControlAction(() => {
+                  const request = browserPanelControlRequest({
+                    browserSessionId: activeElectronBrowserSessionId,
+                    action: "resumeAgent",
+                  });
+                  if (!request || request.action !== "resumeAgent") return Promise.resolve(null);
+                  return api!.browser.control.resumeAgent(request.input);
+                })
+              }
+              title="Resume agent"
+            >
+              <PlayIcon className="size-3.5" />
+              <span className="sr-only">Resume agent</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7 shrink-0"
+              disabled={controlBusy || !controlSessionIdIsServerKnown}
+              onClick={() => {
+                void runControlAction(() => {
+                  const request = browserPanelControlRequest({
+                    browserSessionId: activeElectronBrowserSessionId,
+                    action: "observeFresh",
+                  });
+                  if (!request || request.action !== "observeFresh") return Promise.resolve(null);
+                  return api!.browser.control.observeFresh(request.input);
+                });
+              }}
+              title="Refresh observation"
+            >
+              <RefreshCwIcon className="size-3.5" />
+              <span className="sr-only">Refresh observation</span>
+            </Button>
+          </div>
+        ) : null}
+        {activeElectronBrowserSessionId && approvalRequests.length > 0 ? (
+          <div className="absolute right-2 top-[calc(100%+6px)] z-30 w-80 rounded-md border border-border bg-popover p-3 text-xs shadow-lg">
+            <BrowserPanelApprovalList
+              approvals={approvalRequests}
+              approvalBusyId={approvalBusyId}
+              onRespond={(approvalId, decision) => void respondToApproval(approvalId, decision)}
+            />
+          </div>
+        ) : null}
         {showBrowserAddressSuggestions ? (
           <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
             <div className="max-h-64 overflow-auto p-1">
@@ -1685,7 +2294,11 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
             </div>
           ) : null}
           {usesNativeBrowserSurface ? (
-            <div ref={browserViewportRef} className="absolute inset-0">
+            <div
+              ref={browserViewportRef}
+              className="absolute inset-0"
+              onPointerDown={reportPointerHumanInput}
+            >
               {browserSurfaceModeLabel ? (
                 <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
                   {browserSurfaceModeLabel}
@@ -1763,56 +2376,77 @@ export function BrowserPanel({ mode, threadId, onClosePanel }: BrowserPanelProps
           {annotationMode ? (
             <div
               className="absolute inset-0 z-30 cursor-crosshair bg-primary/5"
-              onClick={onBrowserAnnotationOverlayClick}
+              onMouseDown={onBrowserAnnotationPointerDown}
+              onMouseMove={onBrowserAnnotationPointerMove}
+              onMouseUp={onBrowserAnnotationPointerUp}
             >
               {!annotationDraft ? (
                 <div className="absolute left-3 top-3 rounded-md border border-primary/30 bg-background/95 px-3 py-2 text-xs text-foreground shadow-lg">
                   Click the page to leave precise feedback for the orchestrator.
                 </div>
               ) : (
-                <div
-                  className="absolute w-72 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border border-border bg-background p-2 shadow-xl"
-                  style={{
-                    left: `${annotationDraft.x * 100}%`,
-                    top: `min(calc(${annotationDraft.y * 100}% + 14px), calc(100% - 9rem))`,
-                  }}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <div className="mb-2 text-xs font-medium text-foreground">Browser annotation</div>
-                  {annotationDraft.targetLabel ? (
-                    <div className="mb-2 truncate rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-                      Target: {annotationDraft.targetLabel}
-                    </div>
-                  ) : null}
-                  <textarea
-                    value={annotationComment}
-                    onChange={(event) => setAnnotationComment(event.target.value)}
-                    className="min-h-20 w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/50"
-                    placeholder="Tell the orchestrator what to inspect or change here..."
-                    autoFocus
-                  />
-                  <div className="mt-2 flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setAnnotationDraft(null);
-                        setAnnotationComment("");
+                <>
+                  {annotationDraft.kind === "rect" ? (
+                    <div
+                      className="pointer-events-none absolute rounded border border-primary bg-primary/10"
+                      style={{
+                        left: `${annotationDraft.x * 100}%`,
+                        top: `${annotationDraft.y * 100}%`,
+                        width: `${(annotationDraft.width ?? 0) * 100}%`,
+                        height: `${(annotationDraft.height ?? 0) * 100}%`,
                       }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={annotationComment.trim().length === 0}
-                      onClick={() => void submitBrowserAnnotation()}
-                    >
-                      Send note
-                    </Button>
+                    />
+                  ) : null}
+                  <div
+                    className="absolute w-72 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border border-border bg-background p-2 shadow-xl"
+                    style={{
+                      left: `${annotationDraft.x * 100}%`,
+                      top: `min(calc(${annotationDraft.y * 100}% + ${(annotationDraft.height ?? 0) * 100}% + 14px), calc(100% - 9rem))`,
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="mb-2 text-xs font-medium text-foreground">
+                      Browser annotation
+                    </div>
+                    {annotationDraft.targetLabel ? (
+                      <div className="mb-2 truncate rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                        Target: {annotationDraft.targetLabel}
+                      </div>
+                    ) : annotationDraft.kind === "rect" ? (
+                      <div className="mb-2 truncate rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                        Region comment
+                      </div>
+                    ) : null}
+                    <textarea
+                      value={annotationComment}
+                      onChange={(event) => setAnnotationComment(event.target.value)}
+                      className="min-h-20 w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+                      placeholder="Tell the orchestrator what to inspect or change here..."
+                      autoFocus
+                    />
+                    <div className="mt-2 flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAnnotationDraft(null);
+                          setAnnotationComment("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={annotationComment.trim().length === 0}
+                        onClick={() => void submitBrowserAnnotation()}
+                      >
+                        Send note
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                </>
               )}
             </div>
           ) : null}

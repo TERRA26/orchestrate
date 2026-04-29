@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -6,15 +6,22 @@ import { toPersistenceSqlError } from "../Errors.ts";
 import {
   BrowserOrchestrationEvidenceRepository,
   type BrowserOrchestrationEvidenceRepositoryShape,
+  BrowserApprovalRequestRow,
+  BrowserControlStateRow,
   BrowserSessionEventRow,
   EvidenceArtifactContentRow,
   EvidenceArtifactRow,
   EvidenceBundleRow,
+  GetBrowserApprovalRequestInput,
+  GetBrowserControlStateInput,
   GetEvidenceArtifactInput,
   GetEvidenceBundleInput,
   GetReviewerDecisionInput,
   GetSessionEventsInput,
+  ListBrowserApprovalRequestsInput,
+  ListReviewerDecisionsInput,
   ReviewerDecisionRow,
+  UpdateBrowserApprovalStatusInput,
 } from "../Services/BrowserOrchestrationEvidence.ts";
 
 const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
@@ -137,13 +144,13 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
           bundle_id, session_id, workflow_run_id, preview_target_id,
           task_spec_id, acceptance_criteria_id, permission_policy_id,
           browser_session_id, code_state_json, artifact_refs_json,
-          event_refs_json, created_at
+          event_refs_json, bundle_snapshot_json, created_at
         )
         VALUES (
           ${row.bundleId}, ${row.sessionId}, ${row.workflowRunId}, ${row.previewTargetId},
           ${row.taskSpecId}, ${row.acceptanceCriteriaId}, ${row.permissionPolicyId},
           ${row.browserSessionId}, ${row.codeStateJson}, ${row.artifactRefsJson},
-          ${row.eventRefsJson}, ${row.createdAt}
+          ${row.eventRefsJson}, ${row.bundleSnapshotJson}, ${row.createdAt}
         )
         ON CONFLICT (bundle_id) DO NOTHING
       `,
@@ -166,6 +173,7 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
           code_state_json AS "codeStateJson",
           artifact_refs_json AS "artifactRefsJson",
           event_refs_json AS "eventRefsJson",
+          bundle_snapshot_json AS "bundleSnapshotJson",
           created_at AS "createdAt"
         FROM evidence_bundles
         WHERE bundle_id = ${bundleId}
@@ -178,14 +186,15 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
       sql`
         INSERT INTO browser_reviewer_decisions (
           decision_id, session_id, workflow_run_id, evidence_bundle_id,
-          outcome, confidence, criteria_json, findings_json,
-          unresolved_criteria_json, rework_packet_json, user_visible_summary_ref, created_at
+          purpose, outcome, confidence, gates_json, criteria_json, findings_json,
+          unresolved_criteria_json, rework_packet_json, action_packet_json,
+          user_visible_summary_ref, created_at
         )
         VALUES (
           ${row.decisionId}, ${row.sessionId}, ${row.workflowRunId}, ${row.evidenceBundleId},
-          ${row.outcome}, ${row.confidence}, ${row.criteriaJson}, ${row.findingsJson},
-          ${row.unresolvedCriteriaJson}, ${row.reworkPacketJson}, ${row.userVisibleSummaryRef},
-          ${row.createdAt}
+          ${row.purpose}, ${row.outcome}, ${row.confidence}, ${row.gatesJson}, ${row.criteriaJson},
+          ${row.findingsJson}, ${row.unresolvedCriteriaJson}, ${row.reworkPacketJson},
+          ${row.actionPacketJson}, ${row.userVisibleSummaryRef}, ${row.createdAt}
         )
         ON CONFLICT (decision_id) DO NOTHING
       `,
@@ -201,16 +210,212 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
           session_id AS "sessionId",
           workflow_run_id AS "workflowRunId",
           evidence_bundle_id AS "evidenceBundleId",
+          COALESCE(purpose, 'manual-review') AS purpose,
           outcome,
           confidence,
+          gates_json AS "gatesJson",
           criteria_json AS "criteriaJson",
           findings_json AS "findingsJson",
           unresolved_criteria_json AS "unresolvedCriteriaJson",
           rework_packet_json AS "reworkPacketJson",
+          action_packet_json AS "actionPacketJson",
           user_visible_summary_ref AS "userVisibleSummaryRef",
           created_at AS "createdAt"
         FROM browser_reviewer_decisions
         WHERE decision_id = ${decisionId}
+      `,
+  });
+
+  const listReviewerDecisionRows = SqlSchema.findAll({
+    Request: ListReviewerDecisionsInput,
+    Result: ReviewerDecisionRow,
+    execute: ({ sessionId, workflowRunId }) => {
+      const hasFilter = sessionId !== undefined || workflowRunId !== undefined;
+      return sql`
+        SELECT
+          decision_id AS "decisionId",
+          session_id AS "sessionId",
+          workflow_run_id AS "workflowRunId",
+          evidence_bundle_id AS "evidenceBundleId",
+          COALESCE(purpose, 'manual-review') AS purpose,
+          outcome,
+          confidence,
+          gates_json AS "gatesJson",
+          criteria_json AS "criteriaJson",
+          findings_json AS "findingsJson",
+          unresolved_criteria_json AS "unresolvedCriteriaJson",
+          rework_packet_json AS "reworkPacketJson",
+          action_packet_json AS "actionPacketJson",
+          user_visible_summary_ref AS "userVisibleSummaryRef",
+          created_at AS "createdAt"
+        FROM browser_reviewer_decisions
+        WHERE ${hasFilter ? 1 : 0} = 1
+          AND (${sessionId ?? null} IS NULL OR session_id = ${sessionId ?? null})
+          AND (${workflowRunId ?? null} IS NULL OR workflow_run_id = ${workflowRunId ?? null})
+        ORDER BY created_at ASC, decision_id ASC
+      `;
+    },
+  });
+
+  const upsertBrowserControlStateRow = SqlSchema.void({
+    Request: BrowserControlStateRow,
+    execute: (row) =>
+      sql`
+        INSERT INTO browser_control_states (
+          browser_session_id, session_id, lease_id, holder, state, reason,
+          last_observation_ref, snapshot_after_release_ref, fresh_observation_required,
+          desktop_client_id, updated_at
+        )
+        VALUES (
+          ${row.browserSessionId}, ${row.sessionId}, ${row.leaseId}, ${row.holder}, ${row.state},
+          ${row.reason}, ${row.lastObservationRef}, ${row.snapshotAfterReleaseRef},
+          ${row.freshObservationRequired ? 1 : 0}, ${row.desktopClientId}, ${row.updatedAt}
+        )
+        ON CONFLICT (browser_session_id) DO UPDATE SET
+          session_id = excluded.session_id,
+          lease_id = excluded.lease_id,
+          holder = excluded.holder,
+          state = excluded.state,
+          reason = excluded.reason,
+          last_observation_ref = excluded.last_observation_ref,
+          snapshot_after_release_ref = excluded.snapshot_after_release_ref,
+          fresh_observation_required = excluded.fresh_observation_required,
+          desktop_client_id = excluded.desktop_client_id,
+          updated_at = excluded.updated_at
+      `,
+  });
+
+  const getBrowserControlStateRow = SqlSchema.findOneOption({
+    Request: GetBrowserControlStateInput,
+    Result: BrowserControlStateRow,
+    execute: ({ browserSessionId }) =>
+      sql`
+        SELECT
+          browser_session_id AS "browserSessionId",
+          session_id AS "sessionId",
+          lease_id AS "leaseId",
+          holder,
+          state,
+          reason,
+          last_observation_ref AS "lastObservationRef",
+          snapshot_after_release_ref AS "snapshotAfterReleaseRef",
+          CASE WHEN fresh_observation_required = 1 THEN TRUE ELSE FALSE END AS "freshObservationRequired",
+          desktop_client_id AS "desktopClientId",
+          updated_at AS "updatedAt"
+        FROM browser_control_states
+        WHERE browser_session_id = ${browserSessionId}
+      `,
+  });
+
+  const createBrowserApprovalRequestRow = SqlSchema.void({
+    Request: BrowserApprovalRequestRow,
+    execute: (row) =>
+      sql`
+        INSERT INTO browser_approval_requests (
+          approval_id, browser_session_id, session_id, desktop_client_id, action_json, target_context_json,
+          action_hash, reason, risk, pre_approval_observation_ref, observed_url, origin, status,
+          evidence_refs_json, created_at, updated_at, expires_at, consumed_at,
+          executed_action_ref, decision_reason
+        )
+        VALUES (
+          ${row.approvalId}, ${row.browserSessionId}, ${row.sessionId}, ${row.desktopClientId},
+          ${row.actionJson}, ${row.targetContextJson}, ${row.actionHash}, ${row.reason}, ${row.risk},
+          ${row.preApprovalObservationRef}, ${row.observedUrl}, ${row.origin}, ${row.status},
+          ${row.evidenceRefsJson}, ${row.createdAt}, ${row.updatedAt}, ${row.expiresAt},
+          ${row.consumedAt}, ${row.executedActionRef}, ${row.decisionReason}
+        )
+        ON CONFLICT (approval_id) DO NOTHING
+      `,
+  });
+
+  const getBrowserApprovalRequestRow = SqlSchema.findOneOption({
+    Request: GetBrowserApprovalRequestInput,
+    Result: BrowserApprovalRequestRow,
+    execute: ({ approvalId }) =>
+      sql`
+        SELECT
+          approval_id AS "approvalId",
+          browser_session_id AS "browserSessionId",
+          session_id AS "sessionId",
+          desktop_client_id AS "desktopClientId",
+          action_json AS "actionJson",
+          target_context_json AS "targetContextJson",
+          COALESCE(action_hash, '') AS "actionHash",
+          reason,
+          risk,
+          pre_approval_observation_ref AS "preApprovalObservationRef",
+          observed_url AS "observedUrl",
+          origin,
+          status,
+          evidence_refs_json AS "evidenceRefsJson",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          expires_at AS "expiresAt",
+          consumed_at AS "consumedAt",
+          executed_action_ref AS "executedActionRef",
+          decision_reason AS "decisionReason"
+        FROM browser_approval_requests
+        WHERE approval_id = ${approvalId}
+      `,
+  });
+
+  const listBrowserApprovalRequestRows = SqlSchema.findAll({
+    Request: ListBrowserApprovalRequestsInput,
+    Result: BrowserApprovalRequestRow,
+    execute: ({ browserSessionId, status }) =>
+      sql`
+        SELECT
+          approval_id AS "approvalId",
+          browser_session_id AS "browserSessionId",
+          session_id AS "sessionId",
+          desktop_client_id AS "desktopClientId",
+          action_json AS "actionJson",
+          target_context_json AS "targetContextJson",
+          COALESCE(action_hash, '') AS "actionHash",
+          reason,
+          risk,
+          pre_approval_observation_ref AS "preApprovalObservationRef",
+          observed_url AS "observedUrl",
+          origin,
+          status,
+          evidence_refs_json AS "evidenceRefsJson",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          expires_at AS "expiresAt",
+          consumed_at AS "consumedAt",
+          executed_action_ref AS "executedActionRef",
+          decision_reason AS "decisionReason"
+        FROM browser_approval_requests
+        WHERE (${browserSessionId ?? null} IS NULL OR browser_session_id = ${browserSessionId ?? null})
+          AND (${status ?? null} IS NULL OR status = ${status ?? null})
+        ORDER BY created_at ASC, approval_id ASC
+      `,
+  });
+
+  const updateBrowserApprovalStatusRow = SqlSchema.void({
+    Request: UpdateBrowserApprovalStatusInput,
+    execute: (input) =>
+      sql`
+        UPDATE browser_approval_requests
+        SET
+          status = CASE
+            WHEN status = 'consumed' THEN status
+            WHEN status = 'expired' AND ${input.status} = 'approved' THEN status
+            ELSE ${input.status}
+          END,
+          updated_at = CASE
+            WHEN status = 'consumed' THEN updated_at
+            WHEN status = 'expired' AND ${input.status} = 'approved' THEN updated_at
+            ELSE ${input.updatedAt}
+          END,
+          consumed_at = COALESCE(${input.consumedAt ?? null}, consumed_at),
+          executed_action_ref = COALESCE(${input.executedActionRef ?? null}, executed_action_ref),
+          decision_reason = CASE
+            WHEN status = 'consumed' THEN decision_reason
+            WHEN status = 'expired' AND ${input.status} = 'approved' THEN decision_reason
+            ELSE COALESCE(${input.decisionReason ?? null}, decision_reason)
+          END
+        WHERE approval_id = ${input.approvalId}
       `,
   });
 
@@ -309,6 +514,82 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
       ),
     );
 
+  const listReviewerDecisions: BrowserOrchestrationEvidenceRepositoryShape["listReviewerDecisions"] =
+    (input) =>
+      listReviewerDecisionRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.listReviewerDecisions:query",
+          ),
+        ),
+      );
+
+  const upsertBrowserControlState: BrowserOrchestrationEvidenceRepositoryShape["upsertBrowserControlState"] =
+    (row) =>
+      upsertBrowserControlStateRow(row).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.upsertBrowserControlState:query",
+          ),
+        ),
+      );
+
+  const getBrowserControlState: BrowserOrchestrationEvidenceRepositoryShape["getBrowserControlState"] =
+    (input) =>
+      getBrowserControlStateRow(input).pipe(
+        Effect.map((row) =>
+          Option.map(row, (value) => ({
+            ...value,
+            freshObservationRequired: Boolean(value.freshObservationRequired),
+          })),
+        ),
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.getBrowserControlState:query",
+          ),
+        ),
+      );
+
+  const createBrowserApprovalRequest: BrowserOrchestrationEvidenceRepositoryShape["createBrowserApprovalRequest"] =
+    (row) =>
+      createBrowserApprovalRequestRow(row).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.createBrowserApprovalRequest:query",
+          ),
+        ),
+      );
+
+  const getBrowserApprovalRequest: BrowserOrchestrationEvidenceRepositoryShape["getBrowserApprovalRequest"] =
+    (input) =>
+      getBrowserApprovalRequestRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.getBrowserApprovalRequest:query",
+          ),
+        ),
+      );
+
+  const listBrowserApprovalRequests: BrowserOrchestrationEvidenceRepositoryShape["listBrowserApprovalRequests"] =
+    (input) =>
+      listBrowserApprovalRequestRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.listBrowserApprovalRequests:query",
+          ),
+        ),
+      );
+
+  const updateBrowserApprovalStatus: BrowserOrchestrationEvidenceRepositoryShape["updateBrowserApprovalStatus"] =
+    (input) =>
+      updateBrowserApprovalStatusRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "BrowserOrchestrationEvidenceRepository.updateBrowserApprovalStatus:query",
+          ),
+        ),
+      );
+
   return {
     appendSessionEvent,
     getSessionEvents,
@@ -320,6 +601,13 @@ const makeBrowserOrchestrationEvidenceRepository = Effect.gen(function* () {
     getEvidenceBundle,
     createReviewerDecision,
     getReviewerDecision,
+    listReviewerDecisions,
+    upsertBrowserControlState,
+    getBrowserControlState,
+    createBrowserApprovalRequest,
+    getBrowserApprovalRequest,
+    listBrowserApprovalRequests,
+    updateBrowserApprovalStatus,
   } satisfies BrowserOrchestrationEvidenceRepositoryShape;
 });
 

@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import {
   type BrowserObservation,
+  BrowserPageId,
   type BrowserRuntimeKind,
   type BrowserSnapshot,
+  BrowserSessionId,
   EvidenceArtifactId,
   type PreviewTarget,
 } from "@orchestrate/contracts";
@@ -131,7 +133,7 @@ function toBrowserSnapshot(input: {
     permissionTier: input.previewTarget.permissionTier,
     previewTargetId: input.previewTarget.id,
     browserSessionId: input.observation.sessionId,
-    pageId: `page-${input.observation.sessionId}`,
+    pageId: BrowserPageId.makeUnsafe(`page-${input.observation.sessionId}`),
     url: input.observation.url,
     title: input.observation.title,
     viewport: {

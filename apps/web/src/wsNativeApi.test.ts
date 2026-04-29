@@ -311,6 +311,34 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards browser session event pushes", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const listener = vi.fn();
+    api.browser.onSessionEvent(listener);
+
+    const event = {
+      eventId: "browser-session-event-1",
+      sessionId: "electron-visible-session",
+      workflowRunId: null,
+      type: "BrowserControlFreshObservationSatisfied",
+      actor: "agent",
+      artifactRefs: ["browser-screenshot-fresh"],
+      payload: {
+        lease: {
+          browserSessionId: "electron-visible-session",
+        },
+        observationRef: "browser-screenshot-fresh",
+      },
+      occurredAt: "2026-04-29T00:00:00.000Z",
+    } as const;
+    emitPush(WS_CHANNELS.browserSessionEvent, event);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(event);
+  });
+
   it("wraps orchestration dispatch commands in the command envelope", async () => {
     requestMock.mockResolvedValue(undefined);
     const { createWsNativeApi } = await import("./wsNativeApi");

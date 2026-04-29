@@ -37,20 +37,33 @@ import {
   TerminalWriteInput,
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
-import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import { ProjectReadFileInput, ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload } from "./server";
 import {
   BrowserActInput,
   BrowserAddAnnotationInput,
+  BrowserAnnotationResolveTargetAtPointInput,
+  BrowserAnnotationInput,
   BrowserCloseSessionInput,
+  BrowserInspectSessionInput,
   BrowserListAnnotationsInput,
   BrowserObservation,
+  BrowserObserveSessionInput,
   BrowserOpenSessionInput,
+  BrowserResolveTargetSessionInput,
 } from "./browser";
 import {
   BrowserControlAcquireInput,
+  BrowserApprovalGetInput,
+  BrowserApprovalListInput,
+  BrowserApprovalRespondInput,
+  BrowserControlHumanInputInput,
+  BrowserControlObserveFreshInput,
+  BrowserControlPauseInput,
   BrowserControlReleaseInput,
+  BrowserControlSessionInput,
+  BrowserControlTakeInput,
   EvidenceArtifactGetInput,
   BrowserWorkflowListInput,
   BrowserWorkflowRunInput,
@@ -66,6 +79,7 @@ import {
   ReviewerDecisionCreateInput,
   ReviewerDecisionGetInput,
   ReviewerDecisionListInput,
+  ReviewerReworkStartInput,
 } from "./browserOrchestration";
 import {
   ProviderListCommandsInput,
@@ -85,6 +99,7 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsReadFile: "projects.readFile",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -117,12 +132,27 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   browserOpenPreview: "browser.openPreview",
   browserOpenSession: "browser.openSession",
+  browserInspect: "browser.inspect",
   browserAct: "browser.act",
   browserCloseSession: "browser.closeSession",
+  desktopBrowserBridgeResponse: "desktop.browser.response",
   browserControlAcquire: "browser.control.acquire",
   browserControlRelease: "browser.control.release",
+  browserControlStatus: "browser.control.status",
+  browserControlTake: "browser.control.take",
+  browserControlPauseAgent: "browser.control.pauseAgent",
+  browserControlResumeAgent: "browser.control.resumeAgent",
+  browserControlObserveFresh: "browser.control.observeFresh",
+  browserControlHumanInput: "browser.control.humanInput",
+  browserApprovalGet: "browser.approval.get",
+  browserApprovalList: "browser.approval.list",
+  browserApprovalRespond: "browser.approval.respond",
   browserAddAnnotation: "browser.addAnnotation",
+  browserResolveAnnotationTargetAtPoint: "browser.annotation.resolveTargetAtPoint",
   browserListAnnotations: "browser.listAnnotations",
+  browserGetAnnotation: "browser.annotation.get",
+  browserResolveAnnotation: "browser.annotation.resolve",
+  browserReopenAnnotation: "browser.annotation.reopen",
   browserWorkflowStart: "browser.workflow.start",
   browserWorkflowStatus: "browser.workflow.status",
   browserWorkflowGet: "browser.workflow.get",
@@ -134,6 +164,7 @@ export const WS_METHODS = {
   reviewerDecisionCreate: "reviewer.decision.create",
   reviewerDecisionGet: "reviewer.decision.get",
   reviewerDecisionList: "reviewer.decision.list",
+  reviewerDecisionReworkStart: "reviewer.decision.rework.start",
   previewDetect: "preview.detect",
   previewStart: "preview.start",
   previewStop: "preview.stop",
@@ -162,6 +193,8 @@ export const WS_CHANNELS = {
   serverProvidersUpdated: "server.providersUpdated",
   browserOpenRequested: "browser.openRequested",
   browserObservationCaptured: "browser.observationCaptured",
+  browserSessionEvent: "browser.session.event",
+  desktopBrowserBridgeRequest: "desktop.browser.request",
 } as const;
 
 export const BrowserOpenPreviewInput = Schema.Struct({
@@ -182,6 +215,59 @@ export const BrowserObservationCapturedPayload = Schema.Struct({
   actionSummary: Schema.String.check(Schema.isMaxLength(256)),
 });
 export type BrowserObservationCapturedPayload = typeof BrowserObservationCapturedPayload.Type;
+
+export const BrowserSessionEventPushPayload = Schema.Struct({
+  eventId: TrimmedNonEmptyString,
+  sessionId: TrimmedNonEmptyString,
+  workflowRunId: Schema.NullOr(TrimmedNonEmptyString),
+  type: TrimmedNonEmptyString,
+  actor: Schema.Literals(["system", "agent", "human", "reviewer"]),
+  artifactRefs: Schema.Array(TrimmedNonEmptyString),
+  payload: Schema.Unknown,
+  occurredAt: TrimmedNonEmptyString,
+});
+export type BrowserSessionEventPushPayload = typeof BrowserSessionEventPushPayload.Type;
+
+export const DesktopBrowserBridgeRequestKind = Schema.Literals([
+  "openSession",
+  "observeSession",
+  "inspectSession",
+  "resolveTargetSession",
+  "resolveAnnotationTargetAtPoint",
+  "actSession",
+  "closeSession",
+]);
+export type DesktopBrowserBridgeRequestKind = typeof DesktopBrowserBridgeRequestKind.Type;
+
+export const DesktopBrowserBridgeRequestPayload = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  kind: DesktopBrowserBridgeRequestKind,
+  input: Schema.Union([
+    BrowserOpenSessionInput,
+    BrowserObserveSessionInput,
+    BrowserInspectSessionInput,
+    BrowserResolveTargetSessionInput,
+    BrowserAnnotationResolveTargetAtPointInput,
+    BrowserActInput,
+    BrowserCloseSessionInput,
+  ]),
+  timeoutMs: NonNegativeInt,
+});
+export type DesktopBrowserBridgeRequestPayload = typeof DesktopBrowserBridgeRequestPayload.Type;
+
+export const DesktopBrowserBridgeResponseInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  status: Schema.Literals(["ok", "error"]),
+  result: Schema.optional(Schema.Unknown),
+  error: Schema.optional(
+    Schema.Struct({
+      code: TrimmedNonEmptyString,
+      message: TrimmedNonEmptyString,
+      details: Schema.optional(Schema.Unknown),
+    }),
+  ),
+});
+export type DesktopBrowserBridgeResponseInput = typeof DesktopBrowserBridgeResponseInput.Type;
 
 export const ServerProvidersUpdatedPayload = Schema.Struct({
   providers: Schema.Array(Schema.Unknown),
@@ -214,6 +300,7 @@ const WebSocketRequestBody = Schema.Union([
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.projectsReadFile, ProjectReadFileInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
@@ -246,12 +333,30 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
   tagRequestBody(WS_METHODS.browserOpenPreview, BrowserOpenPreviewInput),
   tagRequestBody(WS_METHODS.browserOpenSession, BrowserOpenSessionInput),
+  tagRequestBody(WS_METHODS.browserInspect, BrowserInspectSessionInput),
   tagRequestBody(WS_METHODS.browserAct, BrowserActInput),
   tagRequestBody(WS_METHODS.browserCloseSession, BrowserCloseSessionInput),
+  tagRequestBody(WS_METHODS.desktopBrowserBridgeResponse, DesktopBrowserBridgeResponseInput),
   tagRequestBody(WS_METHODS.browserControlAcquire, BrowserControlAcquireInput),
   tagRequestBody(WS_METHODS.browserControlRelease, BrowserControlReleaseInput),
+  tagRequestBody(WS_METHODS.browserControlStatus, BrowserControlSessionInput),
+  tagRequestBody(WS_METHODS.browserControlTake, BrowserControlTakeInput),
+  tagRequestBody(WS_METHODS.browserControlPauseAgent, BrowserControlPauseInput),
+  tagRequestBody(WS_METHODS.browserControlResumeAgent, BrowserControlSessionInput),
+  tagRequestBody(WS_METHODS.browserControlObserveFresh, BrowserControlObserveFreshInput),
+  tagRequestBody(WS_METHODS.browserControlHumanInput, BrowserControlHumanInputInput),
+  tagRequestBody(WS_METHODS.browserApprovalGet, BrowserApprovalGetInput),
+  tagRequestBody(WS_METHODS.browserApprovalList, BrowserApprovalListInput),
+  tagRequestBody(WS_METHODS.browserApprovalRespond, BrowserApprovalRespondInput),
   tagRequestBody(WS_METHODS.browserAddAnnotation, BrowserAddAnnotationInput),
+  tagRequestBody(
+    WS_METHODS.browserResolveAnnotationTargetAtPoint,
+    BrowserAnnotationResolveTargetAtPointInput,
+  ),
   tagRequestBody(WS_METHODS.browserListAnnotations, BrowserListAnnotationsInput),
+  tagRequestBody(WS_METHODS.browserGetAnnotation, BrowserAnnotationInput),
+  tagRequestBody(WS_METHODS.browserResolveAnnotation, BrowserAnnotationInput),
+  tagRequestBody(WS_METHODS.browserReopenAnnotation, BrowserAnnotationInput),
   tagRequestBody(WS_METHODS.browserWorkflowStart, BrowserWorkflowStartInput),
   tagRequestBody(WS_METHODS.browserWorkflowStatus, BrowserWorkflowRunInput),
   tagRequestBody(WS_METHODS.browserWorkflowGet, BrowserWorkflowRunInput),
@@ -263,6 +368,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.reviewerDecisionCreate, ReviewerDecisionCreateInput),
   tagRequestBody(WS_METHODS.reviewerDecisionGet, ReviewerDecisionGetInput),
   tagRequestBody(WS_METHODS.reviewerDecisionList, ReviewerDecisionListInput),
+  tagRequestBody(WS_METHODS.reviewerDecisionReworkStart, ReviewerReworkStartInput),
   tagRequestBody(WS_METHODS.previewDetect, PreviewDetectInput),
   tagRequestBody(WS_METHODS.previewStart, PreviewStartInput),
   tagRequestBody(WS_METHODS.previewStop, PreviewStopInput),
@@ -318,6 +424,8 @@ export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
   readonly [WS_CHANNELS.browserOpenRequested]: BrowserOpenPreviewRequestedPayload;
   readonly [WS_CHANNELS.browserObservationCaptured]: BrowserObservationCapturedPayload;
+  readonly [WS_CHANNELS.browserSessionEvent]: BrowserSessionEventPushPayload;
+  readonly [WS_CHANNELS.desktopBrowserBridgeRequest]: DesktopBrowserBridgeRequestPayload;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
 }
 
@@ -357,6 +465,14 @@ export const WsPushBrowserObservationCaptured = makeWsPushSchema(
   WS_CHANNELS.browserObservationCaptured,
   BrowserObservationCapturedPayload,
 );
+export const WsPushBrowserSessionEvent = makeWsPushSchema(
+  WS_CHANNELS.browserSessionEvent,
+  BrowserSessionEventPushPayload,
+);
+export const WsPushDesktopBrowserBridgeRequest = makeWsPushSchema(
+  WS_CHANNELS.desktopBrowserBridgeRequest,
+  DesktopBrowserBridgeRequestPayload,
+);
 export const WsPushOrchestrationDomainEvent = makeWsPushSchema(
   ORCHESTRATION_WS_CHANNELS.domainEvent,
   OrchestrationEvent,
@@ -370,6 +486,8 @@ export const WsPushChannelSchema = Schema.Literals([
   WS_CHANNELS.terminalEvent,
   WS_CHANNELS.browserOpenRequested,
   WS_CHANNELS.browserObservationCaptured,
+  WS_CHANNELS.browserSessionEvent,
+  WS_CHANNELS.desktopBrowserBridgeRequest,
   ORCHESTRATION_WS_CHANNELS.domainEvent,
 ]);
 export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
@@ -382,6 +500,8 @@ export const WsPush = Schema.Union([
   WsPushTerminalEvent,
   WsPushBrowserOpenRequested,
   WsPushBrowserObservationCaptured,
+  WsPushBrowserSessionEvent,
+  WsPushDesktopBrowserBridgeRequest,
   WsPushOrchestrationDomainEvent,
 ]);
 export type WsPush = typeof WsPush.Type;

@@ -77,6 +77,7 @@ export interface ChatMessage {
   completedAt?: string | undefined;
   streaming: boolean;
   source?: OrchestrationMessageSource;
+  turnId?: TurnId | null | undefined;
 }
 
 export interface ProposedPlan {
@@ -151,6 +152,7 @@ export interface Thread extends ThreadWorkspaceState {
   error: string | null;
   createdAt: string;
   updatedAt?: string | undefined;
+  archivedAt?: string | null | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
   forkSourceThreadId?: ThreadId | null;

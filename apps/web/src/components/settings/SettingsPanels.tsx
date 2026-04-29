@@ -148,14 +148,15 @@ function getProviderSummary(provider: ServerProvider | undefined) {
       detail: provider.message ?? "CLI not detected on PATH.",
     };
   }
-  if (provider.auth.status === "authenticated") {
-    const authLabel = provider.auth.label ?? provider.auth.type;
+  const authStatus = provider.auth?.status ?? provider.authStatus ?? "unknown";
+  if (authStatus === "authenticated") {
+    const authLabel = provider.auth?.label ?? provider.auth?.type;
     return {
       headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
       detail: provider.message ?? null,
     };
   }
-  if (provider.auth.status === "unauthenticated") {
+  if (authStatus === "unauthenticated") {
     return {
       headline: "Not authenticated",
       detail: provider.message ?? null,
@@ -619,7 +620,7 @@ export function GeneralSettingsPanel() {
       if (
         serverProviders
           .find((candidate) => candidate.provider === provider)
-          ?.models.some((option) => !option.isCustom && option.slug === normalized)
+          ?.models?.some((option) => !option.isCustom && option.slug === normalized)
       ) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,

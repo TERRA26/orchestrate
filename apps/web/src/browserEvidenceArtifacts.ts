@@ -2,6 +2,7 @@ import {
   EvidenceArtifactId,
   type EvidenceArtifactContentResult,
   type NativeApi,
+  type ReviewerUserVisibleSummary,
 } from "@orchestrate/contracts";
 
 export function evidenceArtifactContentDataUrl(
@@ -27,4 +28,30 @@ export async function fetchEvidenceArtifactImageDataUrl(
     artifactId: EvidenceArtifactId.makeUnsafe(artifactId),
   });
   return evidenceArtifactContentDataUrl(artifact);
+}
+
+export function reviewerUserVisibleSummaryFromArtifact(
+  artifact: EvidenceArtifactContentResult,
+): ReviewerUserVisibleSummary | null {
+  if (artifact.metadata.kind !== "reviewer-user-visible-summary") {
+    return null;
+  }
+  if (artifact.encoding !== "utf8" || !artifact.content) {
+    return null;
+  }
+  try {
+    return JSON.parse(artifact.content) as ReviewerUserVisibleSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchReviewerUserVisibleSummary(
+  api: Pick<NativeApi, "evidence">,
+  artifactId: string,
+): Promise<ReviewerUserVisibleSummary | null> {
+  const artifact = await api.evidence.getArtifact({
+    artifactId: EvidenceArtifactId.makeUnsafe(artifactId),
+  });
+  return reviewerUserVisibleSummaryFromArtifact(artifact);
 }

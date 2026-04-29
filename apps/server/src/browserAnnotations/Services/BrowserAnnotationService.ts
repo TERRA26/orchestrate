@@ -66,13 +66,27 @@ export interface BrowserAnnotationServiceShape {
   readonly list: (input: {
     readonly threadId: ThreadId;
     readonly sessionId?: BrowserSessionId | undefined;
+    readonly browserSessionId?: BrowserSessionId | undefined;
+    readonly includeResolved?: boolean | undefined;
   }) => Effect.Effect<BrowserAnnotationsResult, ProjectionRepositoryError>;
+  readonly get: (input: {
+    readonly annotationId: BrowserAnnotationId;
+  }) => Effect.Effect<
+    BrowserAnnotationResult,
+    ProjectionRepositoryError | BrowserAnnotationNotFoundError
+  >;
   readonly resolve: (input: {
     readonly annotationId: BrowserAnnotationId;
-  }) => Effect.Effect<void, ProjectionRepositoryError | BrowserAnnotationNotFoundError>;
+  }) => Effect.Effect<
+    BrowserAnnotationResult,
+    ProjectionRepositoryError | BrowserAnnotationNotFoundError
+  >;
   readonly reopen: (input: {
     readonly annotationId: BrowserAnnotationId;
-  }) => Effect.Effect<void, ProjectionRepositoryError | BrowserAnnotationNotFoundError>;
+  }) => Effect.Effect<
+    BrowserAnnotationResult,
+    ProjectionRepositoryError | BrowserAnnotationNotFoundError
+  >;
 }
 
 export class BrowserAnnotationService extends ServiceMap.Service<

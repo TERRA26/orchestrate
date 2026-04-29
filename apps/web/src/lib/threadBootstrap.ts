@@ -216,19 +216,21 @@ export function shouldReuseActiveDraftThread(input: {
   entryPoint: ThreadPrimarySurface;
   projectId: ProjectId;
   routeThreadId: ThreadId | null;
-  threadType: "orchestrator" | "agent";
+  threadType?: "orchestrator" | "agent";
 }): input is {
   draftThread: DraftThreadState;
   entryPoint: ThreadPrimarySurface;
   projectId: ProjectId;
   routeThreadId: ThreadId;
+  threadType?: "orchestrator" | "agent";
 } {
+  const threadType = input.threadType ?? "orchestrator";
   return Boolean(
     input.draftThread &&
     input.routeThreadId &&
     input.draftThread.projectId === input.projectId &&
     input.draftThread.entryPoint === input.entryPoint &&
-    (input.draftThread.threadType ?? "orchestrator") === input.threadType,
+    (input.draftThread.threadType ?? "orchestrator") === threadType,
   );
 }
 
@@ -256,7 +258,7 @@ export function resolveTerminalThreadCreationState(
           : null,
       projectModelSelection: input.projectDefaultModelSelection,
       defaultProvider: input.defaultProvider,
-      defaultModelByProvider: input.defaultModelByProvider,
+      defaultModelByProvider: input.defaultModelByProvider ?? null,
     }),
     runtimeMode:
       input.draftThread?.runtimeMode ??

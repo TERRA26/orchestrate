@@ -1,7 +1,14 @@
 import { Schema } from "effect";
 
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
-import { BrowserAction, BrowserSessionId } from "./browser";
+import {
+  BrowserAction,
+  BrowserApprovalId,
+  BrowserApprovalRequest,
+  BrowserApprovalStatus,
+  BrowserAnnotationTarget,
+  BrowserSessionId,
+} from "./browser";
 import { OrchestratorRunId } from "./orchestration";
 
 const MAX_ID_LENGTH = 128;
@@ -267,12 +274,13 @@ export const BrowserPolicyDecision = Schema.Union([
 export type BrowserPolicyDecision = typeof BrowserPolicyDecision.Type;
 
 export const CodeStateRef = Schema.Struct({
+  captureStatus: Schema.optional(Schema.Literals(["captured", "no-code-change", "unknown"])),
   repoRoot: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_FILE_PATH_LENGTH)),
   baseSha: Schema.optional(EntityId),
-  headSha: EntityId,
-  dirtyHash: EntityId,
+  headSha: Schema.optional(EntityId),
+  dirtyHash: Schema.optional(EntityId),
   changedFiles: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_FILE_PATH_LENGTH))),
-  diffArtifactRef: EvidenceArtifactId,
+  diffArtifactRef: Schema.optional(EvidenceArtifactId),
   capturedAt: IsoDateTime,
 });
 export type CodeStateRef = typeof CodeStateRef.Type;
@@ -306,6 +314,7 @@ export const EvidenceArtifactKind = Schema.Literals([
   "dev-server-stop",
   "preview-target-created",
   "browser-screenshot",
+  "browser-inspection",
   "browser-observation",
   "browser-action",
   "browser-session",
@@ -336,6 +345,7 @@ export const EvidenceArtifactKind = Schema.Literals([
   "browser-comment",
   "approval-record",
   "workflow-trace",
+  "reviewer-user-visible-summary",
 ]);
 export type EvidenceArtifactKind = typeof EvidenceArtifactKind.Type;
 
@@ -520,6 +530,12 @@ export const BrowserWorkflowPurpose = Schema.Literals([
 ]);
 export type BrowserWorkflowPurpose = typeof BrowserWorkflowPurpose.Type;
 
+export const BrowserWorkflowControlMode = Schema.Literals([
+  "full-control",
+  "observe-only-current-page",
+]);
+export type BrowserWorkflowControlMode = typeof BrowserWorkflowControlMode.Type;
+
 export const BrowserAssertion = Schema.Union([
   Schema.Struct({
     id: Schema.optional(EntityId),
@@ -652,6 +668,8 @@ export type BrowserWorkflowRoutePlan = typeof BrowserWorkflowRoutePlan.Type;
 export const BrowserWorkflowStartInput = Schema.Struct({
   sessionId: EntityId,
   previewTarget: PreviewTarget,
+  preferredRuntimeKind: Schema.optional(BrowserRuntimeKind),
+  controlMode: Schema.optional(BrowserWorkflowControlMode),
   taskSpecId: Schema.optional(TaskSpecId),
   acceptanceCriteriaId: Schema.optional(AcceptanceCriteriaId),
   permissionPolicyId: Schema.optional(PermissionPolicyId),
@@ -732,10 +750,22 @@ export const HumanControlLease = Schema.Struct({
   browserSessionId: BrowserSessionId,
   holder: Schema.Literals(["agent", "human", "none"]),
   mode: Schema.Literal("exclusive"),
+  state: Schema.optional(
+    Schema.Literals([
+      "agent-control",
+      "human-control",
+      "paused",
+      "approval-required",
+      "review-only",
+    ]),
+  ),
   acquiredAt: IsoDateTime,
   releasedAt: Schema.optional(IsoDateTime),
   reason: Schema.Literals([
     "user-takeover",
+    "human-input",
+    "manual-pause",
+    "fresh-observation-required",
     "agent-action",
     "approval-needed",
     "login-needed",
@@ -745,6 +775,7 @@ export const HumanControlLease = Schema.Struct({
   lastSnapshotBeforeAcquireRef: Schema.optional(EvidenceArtifactId),
   requiredSnapshotAfterRelease: Schema.Boolean,
   snapshotAfterReleaseRef: Schema.optional(EvidenceArtifactId),
+  lastObservationRef: Schema.optional(EvidenceArtifactId),
 });
 export type HumanControlLease = typeof HumanControlLease.Type;
 
@@ -753,6 +784,9 @@ export const BrowserControlAcquireInput = Schema.Struct({
   requestedBy: Schema.Literals(["agent", "human"]),
   reason: Schema.Literals([
     "user-takeover",
+    "human-input",
+    "manual-pause",
+    "fresh-observation-required",
     "agent-action",
     "approval-needed",
     "login-needed",
@@ -775,6 +809,81 @@ export const BrowserControlLeaseResult = Schema.Struct({
 });
 export type BrowserControlLeaseResult = typeof BrowserControlLeaseResult.Type;
 
+export const BrowserControlSessionInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+});
+export type BrowserControlSessionInput = typeof BrowserControlSessionInput.Type;
+
+export const BrowserControlStatusResult = Schema.Struct({
+  lease: Schema.NullOr(HumanControlLease),
+});
+export type BrowserControlStatusResult = typeof BrowserControlStatusResult.Type;
+
+export const BrowserControlTakeInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+  reason: Schema.optional(
+    Schema.Literals(["user-takeover", "human-input", "manual-pause", "login-needed"]),
+  ),
+});
+export type BrowserControlTakeInput = typeof BrowserControlTakeInput.Type;
+
+export const BrowserControlPauseInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+  reason: Schema.optional(Schema.Literals(["manual-pause", "approval-needed"])),
+});
+export type BrowserControlPauseInput = typeof BrowserControlPauseInput.Type;
+
+export const BrowserControlObserveFreshInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+  observationRef: Schema.optional(EvidenceArtifactId),
+});
+export type BrowserControlObserveFreshInput = typeof BrowserControlObserveFreshInput.Type;
+
+export const BrowserHumanInputKind = Schema.Literals([
+  "mouse",
+  "keyboard",
+  "navigation",
+  "focus",
+  "manual",
+]);
+export type BrowserHumanInputKind = typeof BrowserHumanInputKind.Type;
+
+export const BrowserControlHumanInputInput = Schema.Struct({
+  browserSessionId: BrowserSessionId,
+  kind: BrowserHumanInputKind,
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(2_048))),
+  occurredAt: IsoDateTime,
+});
+export type BrowserControlHumanInputInput = typeof BrowserControlHumanInputInput.Type;
+
+export const BrowserApprovalGetInput = Schema.Struct({
+  approvalId: BrowserApprovalId,
+});
+export type BrowserApprovalGetInput = typeof BrowserApprovalGetInput.Type;
+
+export const BrowserApprovalListInput = Schema.Struct({
+  browserSessionId: Schema.optional(BrowserSessionId),
+  status: Schema.optional(BrowserApprovalStatus),
+});
+export type BrowserApprovalListInput = typeof BrowserApprovalListInput.Type;
+
+export const BrowserApprovalRespondInput = Schema.Struct({
+  approvalId: BrowserApprovalId,
+  decision: Schema.Literals(["approved", "rejected"]),
+  reason: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_REASON_LENGTH))),
+});
+export type BrowserApprovalRespondInput = typeof BrowserApprovalRespondInput.Type;
+
+export const BrowserApprovalResult = Schema.Struct({
+  approval: BrowserApprovalRequest,
+});
+export type BrowserApprovalResult = typeof BrowserApprovalResult.Type;
+
+export const BrowserApprovalListResult = Schema.Struct({
+  approvals: Schema.Array(BrowserApprovalRequest),
+});
+export type BrowserApprovalListResult = typeof BrowserApprovalListResult.Type;
+
 export const EvidenceBundle = Schema.Struct({
   id: EvidenceBundleId,
   sessionId: EntityId,
@@ -783,7 +892,7 @@ export const EvidenceBundle = Schema.Struct({
   taskSpecId: TaskSpecId,
   acceptanceCriteriaId: AcceptanceCriteriaId,
   permissionPolicyId: PermissionPolicyId,
-  browserSessionId: BrowserSessionId,
+  browserSessionId: Schema.optional(BrowserSessionId),
   codeState: CodeStateRef,
   artifactRefs: Schema.Array(EvidenceArtifactId),
   eventRefs: Schema.Array(SessionEventId),
@@ -793,6 +902,7 @@ export const EvidenceBundle = Schema.Struct({
       readinessEvidenceRef: Schema.optional(EvidenceArtifactId),
       serverLogRefs: Schema.Array(EvidenceArtifactId),
       healthEvidenceRefs: Schema.Array(EvidenceArtifactId),
+      unknownRefs: Schema.optional(Schema.Array(EntityId)),
     }),
   ),
   browser: Schema.optional(
@@ -802,6 +912,7 @@ export const EvidenceBundle = Schema.Struct({
       consoleSummaryRefs: Schema.Array(EvidenceArtifactId),
       networkSummaryRefs: Schema.Array(EvidenceArtifactId),
       pageErrorRefs: Schema.Array(EvidenceArtifactId),
+      unknownRefs: Schema.optional(Schema.Array(EntityId)),
     }),
   ),
   workflow: Schema.optional(
@@ -809,6 +920,14 @@ export const EvidenceBundle = Schema.Struct({
       workflowRunRef: WorkflowRunId,
       assertionResultRefs: Schema.Array(EvidenceArtifactId),
       statusEventRefs: Schema.Array(EvidenceArtifactId),
+      unknownRefs: Schema.optional(Schema.Array(EntityId)),
+    }),
+  ),
+  annotations: Schema.optional(
+    Schema.Struct({
+      annotationRefs: Schema.Array(EntityId),
+      artifactRefs: Schema.Array(EvidenceArtifactId),
+      unresolvedAnnotationRefs: Schema.Array(EntityId),
     }),
   ),
   createdAt: IsoDateTime,
@@ -867,6 +986,8 @@ export const ReviewerGateName = Schema.Literals([
   "no-network-failures",
   "assertions-passed",
   "evidence-not-stale",
+  "criteria-evaluated",
+  "comments-addressed",
 ]);
 export type ReviewerGateName = typeof ReviewerGateName.Type;
 
@@ -888,6 +1009,22 @@ export const ReviewerFinding = Schema.Struct({
 });
 export type ReviewerFinding = typeof ReviewerFinding.Type;
 
+export const BrowserAnnotationReworkTarget = Schema.Struct({
+  annotationId: EntityId,
+  browserSessionId: Schema.optional(BrowserSessionId),
+  previewTargetId: Schema.optional(PreviewTargetId),
+  workflowRunId: Schema.optional(WorkflowRunId),
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  route: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  target: Schema.optional(BrowserAnnotationTarget),
+  comment: Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+  cropArtifactRef: Schema.optional(EvidenceArtifactId),
+  domSnippetArtifactRef: Schema.optional(EvidenceArtifactId),
+  styleSummaryArtifactRef: Schema.optional(EvidenceArtifactId),
+  artifactRefs: Schema.Array(EvidenceArtifactId),
+});
+export type BrowserAnnotationReworkTarget = typeof BrowserAnnotationReworkTarget.Type;
+
 export const ReworkPacket = Schema.Struct({
   id: ReworkPacketId,
   decisionId: ReviewerDecisionId,
@@ -898,24 +1035,89 @@ export const ReworkPacket = Schema.Struct({
   relevantEvidenceRefs: Schema.Array(EvidenceArtifactId),
   relevantCommentRefs: Schema.Array(EvidenceArtifactId),
   relevantDiffRefs: Schema.Array(EvidenceArtifactId),
+  annotationTargets: Schema.optional(Schema.Array(BrowserAnnotationReworkTarget)),
   recommendedNextActions: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH))),
   maxReworkAttemptsRemaining: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ReworkPacket = typeof ReworkPacket.Type;
+
+export const ReviewerDecisionPurpose = Schema.Literals([
+  "browser-smoke",
+  "code-change",
+  "post-edit-verification",
+  "comment-resolution",
+  "manual-review",
+]);
+export type ReviewerDecisionPurpose = typeof ReviewerDecisionPurpose.Type;
+
+export const ReviewerActionPacketKind = Schema.Literals([
+  "rework",
+  "blocked",
+  "inconclusive",
+  "needs-human-review",
+  "notes",
+]);
+export type ReviewerActionPacketKind = typeof ReviewerActionPacketKind.Type;
+
+export const ReviewerActionPacket = Schema.Struct({
+  id: EntityId,
+  decisionId: ReviewerDecisionId,
+  kind: ReviewerActionPacketKind,
+  reason: Schema.String.check(Schema.isMaxLength(MAX_REASON_LENGTH)),
+  blockingFindings: Schema.Array(ReviewerFinding),
+  relevantEvidenceRefs: Schema.Array(EvidenceArtifactId),
+  relevantGateNames: Schema.Array(ReviewerGateName),
+  relevantCriterionIds: Schema.Array(AcceptanceCriterionId),
+  focusedRoutes: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+  focusedViewports: Schema.Array(PreviewViewport),
+  annotationTargets: Schema.optional(Schema.Array(BrowserAnnotationReworkTarget)),
+  recommendedNextActions: Schema.Array(
+    Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+  ).check(Schema.isMinLength(1)),
+  createdAt: IsoDateTime,
+});
+export type ReviewerActionPacket = typeof ReviewerActionPacket.Type;
+
+export const ReviewerUserVisibleSummary = Schema.Struct({
+  decisionId: ReviewerDecisionId,
+  outcome: ReviewerOutcome,
+  confidence: Schema.Literals(["high", "medium", "low"]),
+  purpose: ReviewerDecisionPurpose,
+  checked: Schema.Struct({
+    routes: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
+    viewports: Schema.Array(PreviewViewport),
+    previewTargetId: PreviewTargetId,
+    workflowRunId: WorkflowRunId,
+  }),
+  gates: Schema.Array(ReviewerGateResult),
+  findings: Schema.Array(ReviewerFinding),
+  criterionResults: Schema.Array(AcceptanceCriterionResult),
+  evidence: Schema.Struct({
+    screenshotArtifactRefs: Schema.Array(EvidenceArtifactId),
+    observationRefs: Schema.Array(EvidenceArtifactId),
+    workflowRunRef: WorkflowRunId,
+    evidenceBundleId: EvidenceBundleId,
+  }),
+  actionPacket: Schema.optional(ReviewerActionPacket),
+  createdAt: IsoDateTime,
+});
+export type ReviewerUserVisibleSummary = typeof ReviewerUserVisibleSummary.Type;
 
 export const ReviewerDecision = Schema.Struct({
   id: ReviewerDecisionId,
   sessionId: EntityId,
   workflowRunId: WorkflowRunId,
   evidenceBundleId: EvidenceBundleId,
+  purpose: ReviewerDecisionPurpose,
   outcome: ReviewerOutcome,
   confidence: Schema.Literals(["high", "medium", "low"]),
-  gates: Schema.optional(Schema.Array(ReviewerGateResult)),
+  gates: Schema.Array(ReviewerGateResult),
   criteria: Schema.Array(AcceptanceCriterionResult).check(Schema.isMinLength(1)),
-  criterionResults: Schema.optional(Schema.Array(AcceptanceCriterionResult)),
+  criterionResults: Schema.Array(AcceptanceCriterionResult),
   findings: Schema.Array(ReviewerFinding),
   unresolvedCriteria: Schema.Array(AcceptanceCriterionId),
   reworkPacket: Schema.optional(ReworkPacket),
+  actionPacket: Schema.optional(ReviewerActionPacket),
   userVisibleSummaryRef: EvidenceArtifactId,
   createdAt: IsoDateTime,
 });
@@ -924,6 +1126,7 @@ export type ReviewerDecision = typeof ReviewerDecision.Type;
 export const EvidenceBundleCreateInput = Schema.Struct({
   workflowRunId: WorkflowRunId,
   codeState: Schema.optional(CodeStateRef),
+  annotationIds: Schema.optional(Schema.Array(EntityId)),
 });
 export type EvidenceBundleCreateInput = typeof EvidenceBundleCreateInput.Type;
 
@@ -945,6 +1148,7 @@ export type EvidenceBundleGetResult = typeof EvidenceBundleGetResult.Type;
 export const ReviewerDecisionCreateInput = Schema.Struct({
   evidenceBundleId: EvidenceBundleId,
   workflowRunId: Schema.optional(WorkflowRunId),
+  purpose: Schema.optional(ReviewerDecisionPurpose),
   requiredRoutes: Schema.optional(
     Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_URL_LENGTH))),
   ),
@@ -964,6 +1168,7 @@ export type ReviewerDecisionGetInput = typeof ReviewerDecisionGetInput.Type;
 
 export const ReviewerDecisionListInput = Schema.Struct({
   sessionId: Schema.optional(EntityId),
+  workflowRunId: Schema.optional(WorkflowRunId),
 });
 export type ReviewerDecisionListInput = typeof ReviewerDecisionListInput.Type;
 
@@ -982,6 +1187,26 @@ export const ReviewerDecisionListResult = Schema.Struct({
   decisions: Schema.Array(ReviewerDecision),
 });
 export type ReviewerDecisionListResult = typeof ReviewerDecisionListResult.Type;
+
+export const ReviewerReworkStartInput = Schema.Struct({
+  decisionId: Schema.optional(ReviewerDecisionId),
+  workflowRunId: Schema.optional(WorkflowRunId),
+  annotationIds: Schema.optional(Schema.Array(EntityId)),
+  instruction: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH))),
+  mode: Schema.optional(Schema.Literals(["draft-task", "start-agent-run"])),
+});
+export type ReviewerReworkStartInput = typeof ReviewerReworkStartInput.Type;
+
+export const ReviewerReworkStartResult = Schema.Struct({
+  reworkTaskId: EntityId,
+  threadId: ThreadId,
+  parentDecisionId: Schema.optional(ReviewerDecisionId),
+  annotationTargets: Schema.Array(BrowserAnnotationReworkTarget),
+  evidenceRefs: Schema.Array(EvidenceArtifactId),
+  status: Schema.Literals(["drafted", "started"]),
+  instruction: Schema.String.check(Schema.isMaxLength(MAX_TEXT_LENGTH)),
+});
+export type ReviewerReworkStartResult = typeof ReviewerReworkStartResult.Type;
 
 export const SessionEventActor = Schema.Literals(["system", "agent", "human", "reviewer"]);
 export type SessionEventActor = typeof SessionEventActor.Type;
@@ -1024,6 +1249,7 @@ export const SessionEvent = Schema.Struct({
     "BrowserWorkflowCancelled",
     "EvidenceBundleCreated",
     "ReviewerDecisionCreated",
+    "ReviewerReworkTaskDrafted",
     "UserAccepted",
     "UserRequestedRework",
   ]),

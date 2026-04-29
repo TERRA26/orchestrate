@@ -185,7 +185,8 @@ export function makeServerRuntimeServicesLayer() {
   );
   const projectFaviconResolverLayer = ProjectFaviconResolverLive;
   const browserAnnotationServiceLayer = BrowserAnnotationServiceLive.pipe(
-    Layer.provide(BrowserAnnotationRepositoryLive),
+    Layer.provideMerge(BrowserAnnotationRepositoryLive),
+    Layer.provideMerge(BrowserOrchestrationEvidenceRepositoryLive),
   );
   const previewServiceLayer = PreviewServiceLive.pipe(
     Layer.provide(BrowserOrchestrationEvidenceRepositoryLive),
@@ -196,6 +197,7 @@ export function makeServerRuntimeServicesLayer() {
   );
   const browserWorkflowAndReviewerLayer = ReviewerDecisionServiceLive.pipe(
     Layer.provideMerge(browserWorkflowManagerLayer),
+    Layer.provide(BrowserAnnotationRepositoryLive),
     Layer.provide(BrowserOrchestrationEvidenceRepositoryLive),
   );
 

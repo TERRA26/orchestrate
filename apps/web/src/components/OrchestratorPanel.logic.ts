@@ -1,4 +1,14 @@
-import type { BrowserAction, BrowserObservation, TurnId } from "@orchestrate/contracts";
+import {
+  ORCHESTRATOR_MAX_ITERATIONS,
+  ORCHESTRATOR_MAX_REVIEW_DIFF_CHARS,
+  ORCHESTRATOR_MAX_REVIEW_FILE_CHARS,
+  ORCHESTRATOR_MAX_REVIEW_FILE_SNAPSHOTS,
+  ORCHESTRATOR_MAX_REVIEW_WORK_LOG_DETAIL_CHARS,
+  ORCHESTRATOR_MAX_REVIEW_WORK_LOG_ENTRIES,
+  type BrowserAction,
+  type BrowserObservation,
+  type TurnId,
+} from "@orchestrate/contracts";
 
 import type { WorkLogEntry } from "../session-logic";
 import type { Thread, TurnDiffSummary } from "../types";
@@ -1482,7 +1492,11 @@ export function formatBrowserValidationActionSummary(input: {
                           : `Wait for "${input.action.textGone}" to disappear`
                         : input.action.kind === "evaluate"
                           ? `Evaluate: ${input.action.expression.length > 60 ? input.action.expression.slice(0, 60) + "..." : input.action.expression}`
-                          : `Navigate to ${input.action.url}`;
+                          : input.action.kind === "clickTarget"
+                            ? "Click target"
+                            : input.action.kind === "fillTarget"
+                              ? "Fill target"
+                              : `Navigate to ${input.action.url}`;
 
   return input.reason ? `${actionLabel}. ${input.reason}` : actionLabel;
 }

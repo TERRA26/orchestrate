@@ -44,7 +44,7 @@ export function WorkerCanvas({ workers, tasks }: WorkerCanvasProps) {
     }
     const result = new Map<OrchestratorWorkerId, OrchestratorTask>();
     for (const worker of workers) {
-      const taskId = worker.taskId as unknown as string | undefined;
+      const taskId = worker.activeTaskId as unknown as string | undefined;
       if (!taskId) continue;
       const task = byId.get(taskId);
       if (task) result.set(worker.workerId, task);

@@ -90,12 +90,16 @@ export default function LiveBenchImportDialog({
     return rows.filter((row) => row.task === taskFilter);
   }, [rowsQuery.data, taskFilter]);
 
-  const handleCategoryChange = (next: string) => {
+  const handleCategoryChange = (next: string | null) => {
+    if (!next) return;
     if ((LIVEBENCH_CATEGORIES as readonly string[]).includes(next)) {
       setCategory(next as LiveBenchCategory);
       setTaskFilter(ALL_TASKS);
       setSelectedIds(new Set());
     }
+  };
+  const handleTaskFilterChange = (next: string | null) => {
+    if (next) setTaskFilter(next);
   };
 
   const toggleRow = (id: string) => {
@@ -180,7 +184,7 @@ export default function LiveBenchImportDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Task</span>
-              <Select value={taskFilter} onValueChange={setTaskFilter}>
+              <Select value={taskFilter} onValueChange={handleTaskFilterChange}>
                 <SelectTrigger
                   className="w-56"
                   aria-label="LiveBench task"

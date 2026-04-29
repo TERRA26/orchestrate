@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import { createHash, randomUUID } from "node:crypto";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -15,6 +16,9 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TERMINAL_ID,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EvidenceArtifactId,
+  type BrowserAction,
+  type BrowserApprovalRequest,
   type EvidenceArtifactContentResult,
   type ClientOrchestrationCommand,
   type OrchestrationReadModel,
@@ -23,6 +27,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
+  SessionEventId,
   ThreadId,
   WS_CHANNELS,
   WS_METHODS,
@@ -87,6 +92,13 @@ import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
 import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
 import { BrowserRuntimeService } from "./browserRuntime/Services/BrowserRuntimeService.ts";
+import {
+  clearDesktopBrowserBridgePendingRequests,
+  handleDesktopBrowserBridgeResponse,
+  registerDesktopBrowserBridgeClient,
+  setDesktopBrowserBridgePublisher,
+  unregisterDesktopBrowserBridgeClient,
+} from "./browserRuntime/Layers/DesktopBrowserBridge.ts";
 import { BrowserWorkflowManager } from "./browserWorkflow/Services/BrowserWorkflowManager.ts";
 import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
 import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
@@ -344,6 +356,76 @@ function evidenceArtifactContentResult(input: {
   };
 }
 
+function browserApprovalFromRow(row: {
+  readonly approvalId: BrowserApprovalRequest["id"];
+  readonly browserSessionId: BrowserApprovalRequest["browserSessionId"];
+  readonly desktopClientId: string | null;
+  readonly actionJson: string;
+  readonly actionHash: string;
+  readonly reason: string;
+  readonly risk: BrowserApprovalRequest["risk"];
+  readonly preApprovalObservationRef: string | null;
+  readonly observedUrl: string | null;
+  readonly origin: string | null;
+  readonly status: BrowserApprovalRequest["status"];
+  readonly evidenceRefsJson: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly expiresAt: string | null;
+  readonly consumedAt: string | null;
+  readonly executedActionRef: string | null;
+  readonly decisionReason: string | null;
+}): BrowserApprovalRequest {
+  const action = JSON.parse(row.actionJson) as BrowserAction;
+  return {
+    id: row.approvalId,
+    browserSessionId: row.browserSessionId,
+    ...(row.desktopClientId ? { desktopClientId: row.desktopClientId } : {}),
+    action,
+    actionHash: row.actionHash || createHash("sha256").update(JSON.stringify(action)).digest("hex"),
+    reason: row.reason,
+    risk: row.risk,
+    ...(row.preApprovalObservationRef
+      ? { preApprovalObservationRef: row.preApprovalObservationRef }
+      : {}),
+    ...(row.observedUrl ? { observedUrl: row.observedUrl } : {}),
+    ...(row.origin ? { origin: row.origin } : {}),
+    status: row.status,
+    evidenceRefs: JSON.parse(row.evidenceRefsJson) as string[],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    ...(row.expiresAt ? { expiresAt: row.expiresAt } : {}),
+    ...(row.consumedAt ? { consumedAt: row.consumedAt } : {}),
+    ...(row.executedActionRef ? { executedActionRef: row.executedActionRef } : {}),
+    ...(row.decisionReason ? { decisionReason: row.decisionReason } : {}),
+  };
+}
+
+function browserSessionEventPayload(input: {
+  readonly eventId?: SessionEventId | string;
+  readonly sessionId: string;
+  readonly workflowRunId?: string | null;
+  readonly type: string;
+  readonly actor: "system" | "agent" | "human" | "reviewer";
+  readonly artifactRefs?: ReadonlyArray<string>;
+  readonly payload: unknown;
+  readonly occurredAt?: string;
+}) {
+  return {
+    eventId:
+      typeof input.eventId === "string"
+        ? input.eventId
+        : (input.eventId ?? SessionEventId.makeUnsafe(`browser-session-event-${randomUUID()}`)),
+    sessionId: input.sessionId,
+    workflowRunId: input.workflowRunId ?? null,
+    type: input.type,
+    actor: input.actor,
+    artifactRefs: [...(input.artifactRefs ?? [])],
+    payload: input.payload,
+    occurredAt: input.occurredAt ?? new Date().toISOString(),
+  };
+}
+
 const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
 const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
 
@@ -490,9 +572,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   );
 
-  const providerStatuses = yield* providerHealth.getStatuses;
+  const providerStatuses = (yield* providerHealth.getStatuses).map((provider) => ({
+    provider: provider.provider,
+    enabled: provider.available,
+    installed: provider.available,
+    available: provider.available,
+    version: null,
+    status: provider.status,
+    auth: { status: provider.authStatus },
+    authStatus: provider.authStatus,
+    checkedAt: provider.checkedAt,
+    ...(provider.message ? { message: provider.message } : {}),
+    models: [],
+  }));
 
   const clients = yield* Ref.make(new Set<WebSocket>());
+  const desktopBridgeClientIdsBySocket = new WeakMap<WebSocket, string>();
   const logger = createLogger("ws");
   const readiness = yield* makeServerReadiness;
 
@@ -510,6 +605,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     clients,
     logOutgoingPush,
   });
+  setDesktopBrowserBridgePublisher((clientId, channel, data) =>
+    Effect.gen(function* () {
+      const connectedClients = yield* Ref.get(clients);
+      for (const client of connectedClients) {
+        if (desktopBridgeClientIdsBySocket.get(client) === clientId) {
+          return yield* pushBus.publishClient(client, channel, data);
+        }
+      }
+      return false;
+    }),
+  );
   yield* readiness.markPushBusReady;
   yield* keybindingsManager.start.pipe(
     Effect.mapError(
@@ -1085,6 +1191,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { relativePath: target.relativePath };
       }
 
+      case WS_METHODS.projectsReadFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        const contents = yield* fileSystem.readFileString(target.absolutePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to read workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        return { relativePath: target.relativePath, contents };
+      }
+
       case WS_METHODS.shellOpenInEditor: {
         const body = stripRequestTag(request.body);
         return yield* openInEditor(body);
@@ -1239,6 +1363,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return result;
       }
 
+      case WS_METHODS.browserInspect: {
+        const body = stripRequestTag(request.body);
+        return yield* browserRuntime.inspect(body);
+      }
+
       case WS_METHODS.browserAct: {
         const body = stripRequestTag(request.body);
         const result = yield* browserRuntime.act(body);
@@ -1250,6 +1379,63 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             actionSummary: browserActionSummary(body.action),
           });
         }
+        if (result.status === "requires-approval" && result.approvalRequestId) {
+          const approval = yield* browserEvidenceRepository.getBrowserApprovalRequest({
+            approvalId: result.approvalRequestId,
+          });
+          if (Option.isSome(approval)) {
+            const approvalSnapshot = browserApprovalFromRow(approval.value);
+            yield* pushBus.publishAll(
+              WS_CHANNELS.browserSessionEvent,
+              browserSessionEventPayload({
+                sessionId: approvalSnapshot.browserSessionId,
+                type: "BrowserApprovalRequestCreated",
+                actor: "agent",
+                artifactRefs: approvalSnapshot.evidenceRefs,
+                payload: {
+                  approvalId: approvalSnapshot.id,
+                  browserSessionId: approvalSnapshot.browserSessionId,
+                  action: approvalSnapshot.action,
+                  actionHash: approvalSnapshot.actionHash,
+                  reason: approvalSnapshot.reason,
+                  risk: approvalSnapshot.risk,
+                  status: approvalSnapshot.status,
+                  origin: approvalSnapshot.origin,
+                  observedUrl: approvalSnapshot.observedUrl,
+                  evidenceRefs: approvalSnapshot.evidenceRefs,
+                  approval: approvalSnapshot,
+                },
+              }),
+            );
+          }
+        } else if (body.approvalRef && result.status === "ok") {
+          const approval = yield* browserEvidenceRepository.getBrowserApprovalRequest({
+            approvalId: body.approvalRef,
+          });
+          if (Option.isSome(approval)) {
+            const approvalSnapshot = browserApprovalFromRow(approval.value);
+            yield* pushBus.publishAll(
+              WS_CHANNELS.browserSessionEvent,
+              browserSessionEventPayload({
+                sessionId: approvalSnapshot.browserSessionId,
+                type: "BrowserApprovalConsumed",
+                actor: "agent",
+                artifactRefs: approvalSnapshot.evidenceRefs,
+                payload: {
+                  approvalId: approvalSnapshot.id,
+                  browserSessionId: approvalSnapshot.browserSessionId,
+                  action: approvalSnapshot.action,
+                  actionHash: approvalSnapshot.actionHash,
+                  status: approvalSnapshot.status,
+                  risk: approvalSnapshot.risk,
+                  executedActionRef: approvalSnapshot.executedActionRef,
+                  evidenceRefs: approvalSnapshot.evidenceRefs,
+                  approval: approvalSnapshot,
+                },
+              }),
+            );
+          }
+        }
         return result;
       }
 
@@ -1259,24 +1445,228 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { closed: true, sessionId: body.sessionId };
       }
 
+      case WS_METHODS.desktopBrowserBridgeResponse: {
+        const body = stripRequestTag(request.body);
+        handleDesktopBrowserBridgeResponse(body);
+        return { received: true, requestId: body.requestId };
+      }
+
       case WS_METHODS.browserControlAcquire: {
         const body = stripRequestTag(request.body);
-        return yield* browserControlLeases.acquire(body);
+        const result = yield* browserControlLeases.acquire(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlLeaseAcquired",
+            actor: body.requestedBy,
+            payload: { lease: result.lease },
+          }),
+        );
+        return result;
       }
 
       case WS_METHODS.browserControlRelease: {
         const body = stripRequestTag(request.body);
-        return yield* browserControlLeases.release(body);
+        const result = yield* browserControlLeases.release(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlLeaseReleased",
+            actor: result.lease.reason === "agent-action" ? "agent" : "human",
+            artifactRefs: body.snapshotAfterReleaseRef ? [body.snapshotAfterReleaseRef] : [],
+            payload: { lease: result.lease },
+          }),
+        );
+        if (result.lease.requiredSnapshotAfterRelease && !result.lease.snapshotAfterReleaseRef) {
+          yield* pushBus.publishAll(
+            WS_CHANNELS.browserSessionEvent,
+            browserSessionEventPayload({
+              sessionId: body.browserSessionId,
+              type: "BrowserControlFreshObservationRequired",
+              actor: "human",
+              payload: { lease: result.lease },
+            }),
+          );
+        }
+        return result;
+      }
+
+      case WS_METHODS.browserControlStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* browserControlLeases.status(body);
+      }
+
+      case WS_METHODS.browserControlTake: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.take(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlHumanControlTaken",
+            actor: "human",
+            payload: { lease: result.lease, reason: body.reason ?? "user-takeover" },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserControlPauseAgent: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.pauseAgent(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlAgentPaused",
+            actor: "human",
+            payload: { lease: result.lease, reason: body.reason ?? "manual-pause" },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserControlResumeAgent: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.resumeAgent(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlAgentResumed",
+            actor: "agent",
+            payload: { lease: result.lease },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserControlObserveFresh: {
+        const body = stripRequestTag(request.body);
+        const observed = yield* browserRuntime.observe({ sessionId: body.browserSessionId });
+        const observationRef =
+          observed.screenshotArtifactRef ??
+          observed.runtimeTruth?.screenshotArtifactRef ??
+          observed.observation.screenshotArtifactRef ??
+          observed.evidenceRefs?.[0];
+        if (!observationRef) {
+          throw new Error("Fresh browser observation did not produce evidence.");
+        }
+        const control = yield* browserControlLeases.observeFresh({
+          browserSessionId: body.browserSessionId,
+          observationRef: EvidenceArtifactId.makeUnsafe(observationRef),
+        });
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlFreshObservationSatisfied",
+            actor: "agent",
+            artifactRefs: [observationRef],
+            payload: { lease: control.lease, observationRef },
+          }),
+        );
+        return {
+          ...control,
+          observation: observed.observation,
+          evidenceRefs: observed.evidenceRefs ?? [],
+        };
+      }
+
+      case WS_METHODS.browserControlHumanInput: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.humanInput(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlHumanInputDetected",
+            actor: "human",
+            payload: {
+              lease: result.lease,
+              kind: body.kind,
+              ...(body.url ? { url: body.url } : {}),
+              occurredAt: body.occurredAt,
+            },
+          }),
+        );
+        return result;
       }
 
       case WS_METHODS.browserAddAnnotation: {
         const body = stripRequestTag(request.body);
-        return yield* browserAnnotations.create(body);
+        const result = yield* browserAnnotations.create(body);
+        if (result.annotation.browserSessionId ?? result.annotation.sessionId) {
+          yield* pushBus.publishAll(
+            WS_CHANNELS.browserSessionEvent,
+            browserSessionEventPayload({
+              sessionId:
+                result.annotation.browserSessionId ??
+                result.annotation.sessionId ??
+                result.annotation.threadId,
+              type: "BrowserAnnotationCreated",
+              actor: "human",
+              artifactRefs: result.annotation.artifactRefs ?? [],
+              payload: { annotationId: result.annotation.id, annotation: result.annotation },
+            }),
+          );
+        }
+        return result;
+      }
+
+      case WS_METHODS.browserResolveAnnotationTargetAtPoint: {
+        const body = stripRequestTag(request.body);
+        return yield* browserRuntime.resolveAnnotationTargetAtPoint(body);
       }
 
       case WS_METHODS.browserListAnnotations: {
         const body = stripRequestTag(request.body);
         return yield* browserAnnotations.list(body);
+      }
+
+      case WS_METHODS.browserGetAnnotation: {
+        const body = stripRequestTag(request.body);
+        return yield* browserAnnotations.get(body);
+      }
+
+      case WS_METHODS.browserResolveAnnotation: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserAnnotations.resolve(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId:
+              result.annotation.browserSessionId ??
+              result.annotation.sessionId ??
+              result.annotation.threadId,
+            type: "BrowserAnnotationResolved",
+            actor: "human",
+            artifactRefs: result.annotation.artifactRefs ?? [],
+            payload: { annotationId: result.annotation.id, annotation: result.annotation },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserReopenAnnotation: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserAnnotations.reopen(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId:
+              result.annotation.browserSessionId ??
+              result.annotation.sessionId ??
+              result.annotation.threadId,
+            type: "BrowserAnnotationReopened",
+            actor: "human",
+            artifactRefs: result.annotation.artifactRefs ?? [],
+            payload: { annotationId: result.annotation.id, annotation: result.annotation },
+          }),
+        );
+        return result;
       }
 
       case WS_METHODS.browserWorkflowStart: {
@@ -1302,6 +1692,95 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.browserWorkflowList: {
         const body = stripRequestTag(request.body);
         return yield* browserWorkflows.list(body);
+      }
+
+      case WS_METHODS.browserApprovalGet: {
+        const body = stripRequestTag(request.body);
+        const approval = yield* browserEvidenceRepository.getBrowserApprovalRequest(body);
+        if (Option.isNone(approval)) {
+          return yield* new RouteRequestError({
+            message: `Browser approval request not found: ${body.approvalId}`,
+          });
+        }
+        return { approval: browserApprovalFromRow(approval.value) };
+      }
+
+      case WS_METHODS.browserApprovalList: {
+        const body = stripRequestTag(request.body);
+        const approvals = yield* browserEvidenceRepository.listBrowserApprovalRequests(body);
+        return { approvals: approvals.map(browserApprovalFromRow) };
+      }
+
+      case WS_METHODS.browserApprovalRespond: {
+        const body = stripRequestTag(request.body);
+        const existing = yield* browserEvidenceRepository.getBrowserApprovalRequest(body);
+        if (Option.isNone(existing)) {
+          return yield* new RouteRequestError({
+            message: `Browser approval request not found: ${body.approvalId}`,
+          });
+        }
+        yield* browserEvidenceRepository.updateBrowserApprovalStatus({
+          approvalId: body.approvalId,
+          status: body.decision,
+          updatedAt: new Date().toISOString(),
+          ...(body.reason ? { decisionReason: body.reason } : {}),
+        });
+        const updated = yield* browserEvidenceRepository.getBrowserApprovalRequest(body);
+        if (Option.isNone(updated)) {
+          return yield* new RouteRequestError({
+            message: `Browser approval request not found after update: ${body.approvalId}`,
+          });
+        }
+        const approval = browserApprovalFromRow(updated.value);
+        yield* browserEvidenceRepository.appendSessionEvent({
+          eventId: SessionEventId.makeUnsafe(`browser-approval-event-${randomUUID()}`),
+          sessionId: existing.value.browserSessionId,
+          workflowRunId: null,
+          type:
+            body.decision === "approved" ? "BrowserApprovalApproved" : "BrowserApprovalRejected",
+          actor: "human",
+          artifactRefsJson: existing.value.evidenceRefsJson,
+          payloadJson: JSON.stringify({
+            approvalId: body.approvalId,
+            browserSessionId: existing.value.browserSessionId,
+            decision: body.decision,
+            status: body.decision,
+            action: approval.action,
+            actionHash: approval.actionHash,
+            risk: approval.risk,
+            origin: approval.origin,
+            observedUrl: approval.observedUrl,
+            evidenceRefs: approval.evidenceRefs,
+            approval,
+            ...(body.reason ? { reason: body.reason } : {}),
+          }),
+          occurredAt: new Date().toISOString(),
+        });
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: existing.value.browserSessionId,
+            type:
+              body.decision === "approved" ? "BrowserApprovalApproved" : "BrowserApprovalRejected",
+            actor: "human",
+            artifactRefs: approval.evidenceRefs,
+            payload: {
+              approvalId: body.approvalId,
+              browserSessionId: existing.value.browserSessionId,
+              decision: body.decision,
+              status: body.decision,
+              action: approval.action,
+              actionHash: approval.actionHash,
+              risk: approval.risk,
+              origin: approval.origin,
+              observedUrl: approval.observedUrl,
+              evidenceRefs: approval.evidenceRefs,
+              approval,
+              ...(body.reason ? { reason: body.reason } : {}),
+            },
+          }),
+        );
+        return { approval };
       }
 
       case WS_METHODS.evidenceArtifactGet: {
@@ -1353,6 +1832,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.reviewerDecisionList: {
         const body = stripRequestTag(request.body);
         return yield* reviewerDecisionService.listDecisions(body);
+      }
+
+      case WS_METHODS.reviewerDecisionReworkStart: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.startRework(body);
       }
 
       case WS_METHODS.previewDetect: {
@@ -1496,6 +1980,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
+    const desktopBridgeClientId = `desktop-bridge-client-${randomUUID()}`;
+    desktopBridgeClientIdsBySocket.set(ws, desktopBridgeClientId);
+    registerDesktopBrowserBridgeClient(desktopBridgeClientId);
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 
@@ -1522,6 +2009,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     ws.on("close", () => {
+      unregisterDesktopBrowserBridgeClient(desktopBridgeClientId);
+      clearDesktopBrowserBridgePendingRequests("Desktop browser bridge client disconnected.");
       void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
@@ -1531,6 +2020,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     ws.on("error", () => {
+      unregisterDesktopBrowserBridgeClient(desktopBridgeClientId);
+      clearDesktopBrowserBridgePendingRequests("Desktop browser bridge client disconnected.");
       void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);

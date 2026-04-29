@@ -5,11 +5,14 @@ import { Effect, Layer } from "effect";
 import { BrowserAnnotationService } from "../Services/BrowserAnnotationService.ts";
 import { BrowserAnnotationServiceLive } from "./BrowserAnnotationService.ts";
 import { BrowserAnnotationRepositoryLive } from "../../persistence/Layers/BrowserAnnotations.ts";
+import { BrowserOrchestrationEvidenceRepositoryLive } from "../../persistence/Layers/BrowserOrchestrationEvidence.ts";
+import { BrowserOrchestrationEvidenceRepository } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 
 const layer = it.layer(
   BrowserAnnotationServiceLive.pipe(
-    Layer.provide(BrowserAnnotationRepositoryLive),
+    Layer.provideMerge(BrowserAnnotationRepositoryLive),
+    Layer.provideMerge(BrowserOrchestrationEvidenceRepositoryLive),
     Layer.provideMerge(SqlitePersistenceMemory),
   ),
 );
@@ -34,12 +37,41 @@ layer("BrowserAnnotationService", (it) => {
         scrollTop: 120,
         targetId: "target-button",
         targetLabel: "Submit",
+        screenshotDataUrl: "data:image/png;base64,annotationcrop",
+        target: {
+          kind: "element",
+          element: {
+            id: "target-button",
+            tagName: "button",
+            role: "button",
+            name: "Submit",
+            visible: true,
+            box: { x: 10, y: 20, width: 80, height: 32, coordinateSpace: "css-pixels" },
+          },
+          geometry: {
+            coordinateSpace: "css-pixels",
+            rect: { x: 10, y: 20, width: 80, height: 32 },
+            viewport: { width: 1280, height: 720, deviceScaleFactor: 2 },
+            scroll: { x: 0, y: 120 },
+          },
+        },
       });
 
       assert.strictEqual(result.annotation.x, 1);
       assert.strictEqual(result.annotation.y, 0);
       assert.strictEqual(result.annotation.height, 1);
+      assert.strictEqual(result.annotation.status, "open");
+      assert.ok(result.annotation.artifactRefs?.some((ref) => ref.startsWith("browser-comment-")));
+      assert.ok(result.annotation.cropArtifactRef?.startsWith("screenshot-crop-"));
+      assert.ok(result.annotation.domSnippetArtifactRef?.startsWith("dom-snapshot-"));
+      assert.ok(result.annotation.styleSummaryArtifactRef?.startsWith("browser-comment-"));
       assert.strictEqual(result.annotations.length, 1);
+
+      const evidence = yield* BrowserOrchestrationEvidenceRepository;
+      const artifact = yield* evidence.getEvidenceArtifact({
+        artifactId: result.annotation.artifactRefs![0]!,
+      });
+      assert.strictEqual(artifact._tag, "Some");
 
       const listed = yield* service.list({
         threadId: ThreadId.makeUnsafe("thread-service"),

@@ -113,9 +113,10 @@ export function useUpdateSettings() {
         // Optimistic update of the React Query cache
         queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), (old) => {
           if (!old) return old;
+          const currentSettings = old.settings ?? DEFAULT_SERVER_SETTINGS;
           return {
             ...old,
-            settings: deepMerge(old.settings, serverPatch),
+            settings: deepMerge(currentSettings, serverPatch),
           };
         });
         // Fire-and-forget RPC — push will reconcile on success

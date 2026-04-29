@@ -2,8 +2,14 @@ import {
   BrowserSessionId,
   HumanControlLeaseId,
   type BrowserControlAcquireInput,
+  type BrowserControlHumanInputInput,
+  type BrowserControlObserveFreshInput,
+  type BrowserControlPauseInput,
   type BrowserControlLeaseResult,
   type BrowserControlReleaseInput,
+  type BrowserControlSessionInput,
+  type BrowserControlStatusResult,
+  type BrowserControlTakeInput,
 } from "@orchestrate/contracts";
 import { Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -57,6 +63,31 @@ export interface BrowserControlLeaseServiceShape {
   readonly get: (input: {
     readonly browserSessionId: BrowserSessionId;
   }) => Effect.Effect<BrowserControlLeaseResult | null>;
+  readonly status: (input: BrowserControlSessionInput) => Effect.Effect<BrowserControlStatusResult>;
+  readonly take: (
+    input: BrowserControlTakeInput,
+  ) => Effect.Effect<
+    BrowserControlLeaseResult,
+    BrowserControlLeaseHeldError | BrowserControlSnapshotRequiredError
+  >;
+  readonly pauseAgent: (
+    input: BrowserControlPauseInput,
+  ) => Effect.Effect<
+    BrowserControlLeaseResult,
+    BrowserControlLeaseHeldError | BrowserControlSnapshotRequiredError
+  >;
+  readonly resumeAgent: (
+    input: BrowserControlSessionInput,
+  ) => Effect.Effect<BrowserControlStatusResult, BrowserControlSnapshotRequiredError>;
+  readonly observeFresh: (
+    input: BrowserControlObserveFreshInput,
+  ) => Effect.Effect<BrowserControlLeaseResult, BrowserControlLeaseNotFoundError>;
+  readonly humanInput: (
+    input: BrowserControlHumanInputInput,
+  ) => Effect.Effect<
+    BrowserControlLeaseResult,
+    BrowserControlLeaseHeldError | BrowserControlSnapshotRequiredError
+  >;
 }
 
 export class BrowserControlLeaseService extends ServiceMap.Service<

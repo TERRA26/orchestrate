@@ -1,8 +1,11 @@
 import {
   type BrowserAction,
   type BrowserClaimGateReport,
+  type BrowserInspectionArtifact,
   type BrowserObservation,
   type BrowserPolicyDecision,
+  type BrowserElementSummary,
+  type BrowserTargetResolution,
   type BrowserRuntimeTruth,
   type BrowserSessionId,
   type EvidenceArtifactId,
@@ -16,6 +19,7 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 export type BrowserEvidenceRuntimeContext = {
   readonly previewTarget: PreviewTarget;
   readonly browserSessionId: BrowserSessionId;
+  readonly runtimeTruth?: BrowserRuntimeTruth | undefined;
 };
 
 export type BrowserEvidenceRecordResult = {
@@ -31,6 +35,13 @@ export interface BrowserEvidenceRecorderShape {
     input: BrowserEvidenceRuntimeContext & {
       readonly action: BrowserAction;
       readonly policyDecision?: BrowserPolicyDecision;
+      readonly resolvedTarget?: BrowserElementSummary;
+      readonly targetResolution?: BrowserTargetResolution;
+    },
+  ) => Effect.Effect<BrowserEvidenceRecordResult, ProjectionRepositoryError>;
+  readonly recordInspection: (
+    input: BrowserEvidenceRuntimeContext & {
+      readonly inspection: BrowserInspectionArtifact;
     },
   ) => Effect.Effect<BrowserEvidenceRecordResult, ProjectionRepositoryError>;
   readonly recordObservation: (

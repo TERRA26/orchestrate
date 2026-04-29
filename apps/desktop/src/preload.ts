@@ -27,6 +27,14 @@ const BROWSER_NEW_TAB_CHANNEL = "desktop:browser-new-tab";
 const BROWSER_CLOSE_TAB_CHANNEL = "desktop:browser-close-tab";
 const BROWSER_SELECT_TAB_CHANNEL = "desktop:browser-select-tab";
 const BROWSER_OPEN_DEVTOOLS_CHANNEL = "desktop:browser-open-devtools";
+const BROWSER_OPEN_SESSION_CHANNEL = "desktop:browser-open-session";
+const BROWSER_OBSERVE_SESSION_CHANNEL = "desktop:browser-observe-session";
+const BROWSER_INSPECT_SESSION_CHANNEL = "desktop:browser-inspect-session";
+const BROWSER_RESOLVE_TARGET_SESSION_CHANNEL = "desktop:browser-resolve-target-session";
+const BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL =
+  "desktop:browser-resolve-annotation-target-at-point";
+const BROWSER_ACT_SESSION_CHANNEL = "desktop:browser-act-session";
+const BROWSER_CLOSE_SESSION_CHANNEL = "desktop:browser-close-session";
 const wsUrl = process.env.ORCHESTRATE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -79,6 +87,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     closeTab: (input) => ipcRenderer.invoke(BROWSER_CLOSE_TAB_CHANNEL, input),
     selectTab: (input) => ipcRenderer.invoke(BROWSER_SELECT_TAB_CHANNEL, input),
     openDevTools: (input) => ipcRenderer.invoke(BROWSER_OPEN_DEVTOOLS_CHANNEL, input),
+    openSession: (input) => ipcRenderer.invoke(BROWSER_OPEN_SESSION_CHANNEL, input),
+    observeSession: (input) => ipcRenderer.invoke(BROWSER_OBSERVE_SESSION_CHANNEL, input),
+    inspectSession: (input) => ipcRenderer.invoke(BROWSER_INSPECT_SESSION_CHANNEL, input),
+    resolveTargetSession: (input) =>
+      ipcRenderer.invoke(BROWSER_RESOLVE_TARGET_SESSION_CHANNEL, input),
+    resolveAnnotationTargetAtPoint: (input) =>
+      ipcRenderer.invoke(BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL, input),
+    actSession: (input) => ipcRenderer.invoke(BROWSER_ACT_SESSION_CHANNEL, input),
+    closeSession: (input) => ipcRenderer.invoke(BROWSER_CLOSE_SESSION_CHANNEL, input),
     onState: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
         if (typeof state !== "object" || state === null) return;

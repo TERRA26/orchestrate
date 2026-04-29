@@ -224,12 +224,20 @@ async function captureScreenshotDataUrl(
       return dataUrl;
     }
 
-    const downscaled = await downscaleScreenshotDataUrl(page, dataUrl, {
+    const downscaleOptions: {
+      maxWidth: number;
+      maxHeight: number;
+      quality: number;
+      maxBytes?: number;
+    } = {
       maxWidth: options.maxWidth,
       maxHeight: options.maxHeight,
       quality: options.quality ?? 0.42,
-      maxBytes: options.maxBytes,
-    });
+    };
+    if (options.maxBytes !== undefined) {
+      downscaleOptions.maxBytes = options.maxBytes;
+    }
+    const downscaled = await downscaleScreenshotDataUrl(page, dataUrl, downscaleOptions);
     if (downscaled) {
       return downscaled;
     }

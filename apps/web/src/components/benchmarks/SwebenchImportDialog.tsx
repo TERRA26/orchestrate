@@ -146,6 +146,12 @@ export default function SwebenchImportDialog({
     }
     return count;
   }, [selectedIds, existingIds]);
+  const handleRepoFilterChange = (next: string | null) => {
+    if (next) setRepoFilter(next);
+  };
+  const handleDifficultyFilterChange = (next: string | null) => {
+    if (next) setDifficultyFilter(next);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -162,7 +168,7 @@ export default function SwebenchImportDialog({
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Repository</span>
-              <Select value={repoFilter} onValueChange={setRepoFilter}>
+              <Select value={repoFilter} onValueChange={handleRepoFilterChange}>
                 <SelectTrigger className="w-56" aria-label="SWE-Bench repo">
                   <SelectValue>{repoFilter === ALL_REPOS ? "All repos" : repoFilter}</SelectValue>
                 </SelectTrigger>
@@ -180,7 +186,7 @@ export default function SwebenchImportDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Difficulty</span>
-              <Select value={difficultyFilter} onValueChange={setDifficultyFilter}>
+              <Select value={difficultyFilter} onValueChange={handleDifficultyFilterChange}>
                 <SelectTrigger className="w-48" aria-label="SWE-Bench difficulty">
                   <SelectValue>
                     {difficultyFilter === ALL_DIFFICULTIES ? "All" : difficultyFilter}

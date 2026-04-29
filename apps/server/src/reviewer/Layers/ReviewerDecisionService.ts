@@ -3,27 +3,38 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   AcceptanceCriterionId,
   BROWSER_ORCHESTRATION_SCHEMA_VERSION,
+  BrowserAnnotationId,
+  BrowserSessionId,
   type BrowserAssertionResult,
   type BrowserWorkflowRun,
   type CodeStateRef,
   EvidenceArtifactId,
   type EvidenceArtifactKind,
+  EvidenceBundle as EvidenceBundleSchema,
   EvidenceBundleId,
   type EvidenceBundle,
   type PreviewViewport,
+  PreviewTargetId,
+  type ReviewerActionPacket,
   type ReviewerDecision,
   ReviewerDecisionId,
   type ReviewerDecisionListInput,
+  type ReviewerDecisionPurpose,
+  type ReviewerReworkStartResult,
   type ReviewerFinding,
   type ReviewerGateResult,
   type ReviewerOutcome,
   ReworkPacketId,
   SessionEventId,
+  ThreadId,
+  WorkflowRunId,
   type AcceptanceCriterionResult,
+  type BrowserAnnotationReworkTarget,
 } from "@orchestrate/contracts";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 
 import { BrowserWorkflowManager } from "../../browserWorkflow/Services/BrowserWorkflowManager.ts";
+import { BrowserAnnotationRepository } from "../../persistence/Services/BrowserAnnotations.ts";
 import { BrowserOrchestrationEvidenceRepository } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
 import type {
   EvidenceBundleRow,
@@ -58,6 +69,10 @@ function uniqueRefs(refs: ReadonlyArray<EvidenceArtifactId | string>): EvidenceA
   return [...new Set(refs.map(String))].map((ref) => EvidenceArtifactId.makeUnsafe(ref));
 }
 
+function uniqueStrings(values: ReadonlyArray<string>): string[] {
+  return [...new Set(values)];
+}
+
 function assertionKey(result: BrowserAssertionResult): string {
   return result.assertionId ?? result.assertion.id ?? result.assertion.type;
 }
@@ -79,7 +94,21 @@ function parseJson<T>(value: string, fallback: T): T {
   }
 }
 
+const decodeEvidenceBundle = Schema.decodeUnknownSync(EvidenceBundleSchema);
+
 function evidenceBundleFromRow(row: EvidenceBundleRow): EvidenceBundle {
+  if (row.bundleSnapshotJson) {
+    const snapshot = decodeEvidenceBundle(JSON.parse(row.bundleSnapshotJson));
+    if (
+      snapshot.id !== row.bundleId ||
+      snapshot.sessionId !== row.sessionId ||
+      snapshot.workflowRunId !== row.workflowRunId ||
+      snapshot.previewTargetId !== row.previewTargetId
+    ) {
+      throw new Error(`Evidence bundle snapshot identity mismatch: ${row.bundleId}`);
+    }
+    return snapshot;
+  }
   return {
     id: row.bundleId,
     sessionId: row.sessionId,
@@ -88,12 +117,11 @@ function evidenceBundleFromRow(row: EvidenceBundleRow): EvidenceBundle {
     taskSpecId: row.taskSpecId,
     acceptanceCriteriaId: row.acceptanceCriteriaId,
     permissionPolicyId: row.permissionPolicyId,
-    browserSessionId: row.browserSessionId,
+    ...(row.browserSessionId ? { browserSessionId: row.browserSessionId } : {}),
     codeState: parseJson<CodeStateRef>(row.codeStateJson, {
       repoRoot: process.cwd(),
-      dirtyHash: "unknown",
+      captureStatus: "unknown",
       changedFiles: [],
-      diffArtifactRef: EvidenceArtifactId.makeUnsafe("artifact-missing-code-state"),
       capturedAt: row.createdAt,
     }),
     artifactRefs: parseJson<EvidenceArtifactId[]>(row.artifactRefsJson, []),
@@ -106,35 +134,40 @@ function reviewerDecisionFromRow(row: ReviewerDecisionRow): ReviewerDecision {
   const reworkPacket = row.reworkPacketJson
     ? { reworkPacket: parseJson(row.reworkPacketJson, undefined) }
     : {};
+  const actionPacket = row.actionPacketJson
+    ? { actionPacket: parseJson(row.actionPacketJson, undefined) }
+    : {};
   return {
     id: row.decisionId,
     sessionId: row.sessionId,
     workflowRunId: row.workflowRunId,
     evidenceBundleId: row.evidenceBundleId,
+    purpose: row.purpose,
     outcome: row.outcome,
     confidence: row.confidence,
+    gates: parseJson(row.gatesJson, []),
     criteria: parseJson(row.criteriaJson, []),
     criterionResults: parseJson(row.criteriaJson, []),
     findings: parseJson(row.findingsJson, []),
     unresolvedCriteria: parseJson(row.unresolvedCriteriaJson, []),
     ...reworkPacket,
+    ...actionPacket,
     userVisibleSummaryRef: row.userVisibleSummaryRef,
     createdAt: row.createdAt,
   };
 }
 
-function defaultCodeState(diffArtifactRef: EvidenceArtifactId, capturedAt: string): CodeStateRef {
+function defaultCodeState(capturedAt: string): CodeStateRef {
   return {
+    captureStatus: "unknown",
     repoRoot: process.cwd(),
-    dirtyHash: "not-captured",
     changedFiles: [],
-    diffArtifactRef,
     capturedAt,
   };
 }
 
 function makeSyntheticCriterionResult(input: {
-  readonly status: AcceptanceCriterionResult["status"];
+  readonly status: "pass" | "fail" | "warning" | "not-evaluated" | "not-applicable";
   readonly evidenceRefs: ReadonlyArray<EvidenceArtifactId>;
   readonly reason: string;
 }): AcceptanceCriterionResult {
@@ -172,12 +205,83 @@ function gate(
   };
 }
 
+function derivePurpose(
+  workflow: BrowserWorkflowRun,
+  explicitPurpose?: ReviewerDecisionPurpose | undefined,
+): ReviewerDecisionPurpose {
+  const workflowPurpose = (() => {
+    switch (workflow.purpose) {
+      case "initial-preview":
+        return "browser-smoke";
+      case "post-edit-verification":
+        return "post-edit-verification";
+      case "comment-resolution":
+        return "comment-resolution";
+      case "regression-check":
+        return "post-edit-verification";
+      case "manual-human-review":
+        return "manual-review";
+      default:
+        return "manual-review";
+    }
+  })();
+  if (!explicitPurpose) return workflowPurpose;
+  return purposeRank(explicitPurpose) > purposeRank(workflowPurpose)
+    ? explicitPurpose
+    : workflowPurpose;
+}
+
+function purposeRank(purpose: ReviewerDecisionPurpose): number {
+  switch (purpose) {
+    case "browser-smoke":
+      return 0;
+    case "manual-review":
+      return 1;
+    case "post-edit-verification":
+      return 2;
+    case "comment-resolution":
+      return 3;
+    case "code-change":
+      return 4;
+  }
+}
+
+function isTaskSpecificCriterion(criterion: AcceptanceCriterionResult): boolean {
+  switch (String(criterion.criterionId)) {
+    case "criterion-browser-workflow-hard-gates":
+    case "criterion-user-acceptance-criteria":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function isCodeChangeLikePurpose(purpose: ReviewerDecisionPurpose): boolean {
+  return (
+    purpose === "code-change" ||
+    purpose === "post-edit-verification" ||
+    purpose === "comment-resolution"
+  );
+}
+
+function routeForAnnotation(url: string | undefined) {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return url;
+  }
+}
+
 function buildHardGates(input: {
   readonly workflow: BrowserWorkflowRun;
   readonly evidenceBundle: EvidenceBundle;
+  readonly purpose: ReviewerDecisionPurpose;
   readonly screenshotArtifactsResolve: boolean;
   readonly requiredRoutes: ReadonlyArray<string>;
   readonly requiredViewports: ReadonlyArray<PreviewViewport>;
+  readonly hasTaskSpecificCriteria: boolean;
   readonly finalCodeState?: CodeStateRef | undefined;
   readonly finalCodeMutationCompletedAt?: string | undefined;
 }): ReviewerGateResult[] {
@@ -196,13 +300,23 @@ function buildHardGates(input: {
     workflow.viewports.map(viewportKey),
     requiredViewports.map(viewportKey),
   );
+  const failedBeforeBrowser =
+    workflow.status === "failed" &&
+    !workflow.browserSessionId &&
+    !(workflow.observationRefs?.length ?? 0);
   const evidenceStale =
     input.finalCodeState &&
-    (input.finalCodeState.headSha !== evidenceBundle.codeState.headSha ||
-      input.finalCodeState.dirtyHash !== evidenceBundle.codeState.dirtyHash ||
+    ((input.finalCodeState.headSha &&
+      evidenceBundle.codeState.headSha &&
+      input.finalCodeState.headSha !== evidenceBundle.codeState.headSha) ||
+      (input.finalCodeState.dirtyHash &&
+        evidenceBundle.codeState.dirtyHash &&
+        input.finalCodeState.dirtyHash !== evidenceBundle.codeState.dirtyHash) ||
       (input.finalCodeMutationCompletedAt
         ? Date.parse(evidenceBundle.createdAt) <= Date.parse(input.finalCodeMutationCompletedAt)
         : false));
+  const codeStateUnknown = (evidenceBundle.codeState.captureStatus ?? "captured") === "unknown";
+  const codeChangeLike = isCodeChangeLikePurpose(input.purpose);
 
   return [
     gate({
@@ -265,10 +379,16 @@ function buildHardGates(input: {
     }),
     gate({
       name: "screenshot-evidence-resolves",
-      status: input.screenshotArtifactsResolve ? "pass" : "fail",
-      message: input.screenshotArtifactsResolve
-        ? "Screenshot artifact refs resolve."
-        : "No screenshot artifact ref resolved through durable evidence.",
+      status: failedBeforeBrowser
+        ? "not-applicable"
+        : input.screenshotArtifactsResolve
+          ? "pass"
+          : "fail",
+      message: failedBeforeBrowser
+        ? "No browser session was opened; screenshot evidence was not expected."
+        : input.screenshotArtifactsResolve
+          ? "Screenshot artifact refs resolve."
+          : "No screenshot artifact ref resolved through durable evidence.",
       evidenceRefs: workflow.screenshotArtifactRefs ?? evidenceRefs,
     }),
     gate({
@@ -324,13 +444,49 @@ function buildHardGates(input: {
     }),
     gate({
       name: "evidence-not-stale",
-      status: input.finalCodeState ? (evidenceStale ? "fail" : "pass") : "not-applicable",
+      status: input.finalCodeState
+        ? evidenceStale || codeStateUnknown
+          ? "fail"
+          : "pass"
+        : codeStateUnknown && codeChangeLike
+          ? "warn"
+          : "not-applicable",
       message: input.finalCodeState
-        ? evidenceStale
-          ? "Evidence is stale relative to the final code state."
-          : "Evidence code state matches the final review state."
-        : "No final code state was supplied for freshness comparison.",
+        ? codeStateUnknown
+          ? "Evidence code state was not captured and cannot be compared to the final review state."
+          : evidenceStale
+            ? "Evidence is stale relative to the final code state."
+            : "Evidence code state matches the final review state."
+        : codeStateUnknown && codeChangeLike
+          ? "Evidence code state was not captured for a code-change-like review."
+          : codeStateUnknown
+            ? "No captured code state was supplied for freshness comparison."
+            : "No final code state was supplied for freshness comparison.",
       evidenceRefs,
+    }),
+    gate({
+      name: "criteria-evaluated",
+      status: codeChangeLike ? (input.hasTaskSpecificCriteria ? "pass" : "warn") : "not-applicable",
+      message: codeChangeLike
+        ? input.hasTaskSpecificCriteria
+          ? "Task-specific acceptance criteria were evaluated."
+          : "No task-specific acceptance criteria were supplied for this code-change-like review."
+        : "Task-specific acceptance criteria are not required for this reviewer purpose.",
+      evidenceRefs,
+    }),
+    gate({
+      name: "comments-addressed",
+      status: evidenceBundle.annotations
+        ? evidenceBundle.annotations.unresolvedAnnotationRefs.length
+          ? "fail"
+          : "pass"
+        : "not-applicable",
+      message: evidenceBundle.annotations
+        ? evidenceBundle.annotations.unresolvedAnnotationRefs.length
+          ? `${evidenceBundle.annotations.unresolvedAnnotationRefs.length} browser comment(s) remain unresolved.`
+          : "Browser comments are resolved."
+        : "No browser comments were attached to this review.",
+      evidenceRefs: evidenceBundle.annotations?.artifactRefs ?? [],
     }),
   ];
 }
@@ -393,16 +549,32 @@ function chooseOutcome(input: {
   readonly workflow: BrowserWorkflowRun;
   readonly gates: ReadonlyArray<ReviewerGateResult>;
   readonly criteria: ReadonlyArray<AcceptanceCriterionResult>;
+  readonly purpose: ReviewerDecisionPurpose;
+  readonly hasTaskSpecificCriteria: boolean;
+  readonly codeStateUnknown: boolean;
 }): ReviewerOutcome {
   const failed = input.gates.filter((item) => item.status === "fail");
+  const codeChangeLike = isCodeChangeLikePurpose(input.purpose);
   if (input.workflow.status === "failed" && !(input.workflow.observationRefs?.length ?? 0)) {
     return "blocked";
+  }
+  if (
+    input.workflow.status === "completed" &&
+    (!input.workflow.browserSessionId || !(input.workflow.observationRefs?.length ?? 0))
+  ) {
+    return "inconclusive";
   }
   if (failed.some((item) => item.name === "screenshot-evidence-resolves")) {
     return "inconclusive";
   }
   if (failed.length > 0) {
     return "rework-required";
+  }
+  if (codeChangeLike && (input.codeStateUnknown || !input.hasTaskSpecificCriteria)) {
+    return "needs-human-review";
+  }
+  if (input.purpose === "manual-review" && input.codeStateUnknown) {
+    return "needs-human-review";
   }
   if (
     input.criteria.some(
@@ -414,36 +586,133 @@ function chooseOutcome(input: {
   return input.gates.some((item) => item.status === "warn") ? "accepted-with-notes" : "accepted";
 }
 
+function makeActionPacket(input: {
+  readonly decisionId: ReviewerDecisionId;
+  readonly outcome: ReviewerOutcome;
+  readonly purpose: ReviewerDecisionPurpose;
+  readonly workflow: BrowserWorkflowRun;
+  readonly gates: ReadonlyArray<ReviewerGateResult>;
+  readonly criteria: ReadonlyArray<AcceptanceCriterionResult>;
+  readonly findings: ReadonlyArray<ReviewerFinding>;
+  readonly evidenceBundle: EvidenceBundle;
+  readonly focusedRoutes: ReadonlyArray<string>;
+  readonly focusedViewports: ReadonlyArray<PreviewViewport>;
+  readonly createdAt: string;
+}): ReviewerActionPacket | undefined {
+  const failedGates = input.gates.filter((item) => item.status === "fail");
+  const warnGates = input.gates.filter((item) => item.status === "warn");
+  const relevantGates = [...failedGates, ...warnGates];
+  const unresolvedCriteria = input.criteria.filter(
+    (criterion) =>
+      criterion.status === "fail" ||
+      criterion.status === "not-evaluated" ||
+      criterion.status === "warning",
+  );
+  const relevantEvidenceRefs = uniqueRefs([
+    ...input.evidenceBundle.artifactRefs,
+    ...relevantGates.flatMap((gateResult) => gateResult.evidenceRefs),
+    ...input.findings.flatMap((finding) => finding.evidenceRefs),
+  ]);
+  const base = {
+    id: `reviewer-action-packet-${randomUUID()}`,
+    decisionId: input.decisionId,
+    reason:
+      input.findings[0]?.description ??
+      relevantGates[0]?.message ??
+      "Reviewer decision requires follow-up.",
+    blockingFindings: input.findings.filter((finding) => finding.severity !== "note"),
+    relevantEvidenceRefs,
+    relevantGateNames: [
+      ...new Set(relevantGates.map((gateResult) => gateResult.name)),
+    ] as ReviewerActionPacket["relevantGateNames"],
+    relevantCriterionIds: unresolvedCriteria.map((criterion) => criterion.criterionId),
+    focusedRoutes: [...input.focusedRoutes],
+    focusedViewports: [...input.focusedViewports],
+    createdAt: input.createdAt,
+  };
+  switch (input.outcome) {
+    case "accepted":
+      return undefined;
+    case "accepted-with-notes":
+      return {
+        ...base,
+        kind: "notes",
+        recommendedNextActions: ["Review warning gates before treating this as fully accepted."],
+      };
+    case "rework-required":
+      return {
+        ...base,
+        kind: "rework",
+        recommendedNextActions: input.findings.length
+          ? input.findings.map((finding) => finding.suggestedAction ?? finding.title)
+          : ["Fix failing workflow assertions and rerun browser.workflow.start."],
+      };
+    case "blocked":
+      return {
+        ...base,
+        kind: "blocked",
+        recommendedNextActions: [
+          "Inspect preview and workflow logs for the blocking failure.",
+          "Restart the preview target if needed.",
+          "Rerun the workflow after the browser session can open.",
+        ],
+      };
+    case "inconclusive":
+      return {
+        ...base,
+        kind: "inconclusive",
+        recommendedNextActions: [
+          "Rerun the workflow to recapture missing evidence.",
+          "Verify required screenshot artifacts resolve.",
+        ],
+      };
+    case "needs-human-review":
+      return {
+        ...base,
+        kind: "needs-human-review",
+        recommendedNextActions: isCodeChangeLikePurpose(input.purpose)
+          ? [
+              "Review the evidence manually.",
+              "Provide task-specific acceptance criteria.",
+              "Provide captured final code state before code-change acceptance.",
+            ]
+          : ["Review the evidence manually before accepting this result."],
+      };
+  }
+}
+
 function formatSummary(input: {
   readonly decision: Omit<ReviewerDecision, "userVisibleSummaryRef">;
   readonly workflow: BrowserWorkflowRun;
-  readonly gates: ReadonlyArray<ReviewerGateResult>;
   readonly evidenceBundle: EvidenceBundle;
 }) {
-  const failed = input.gates.filter((item) => item.status === "fail");
-  const routes = input.workflow.routes.join(", ");
-  const viewports = input.workflow.viewports.map(viewportKey).join(", ");
-  return [
-    `Decision: ${input.decision.outcome}`,
-    "",
-    "Workflow:",
-    `- Workflow run: ${input.workflow.id}`,
-    `- Preview target: ${input.workflow.previewTargetId}`,
-    `- Routes checked: ${routes}`,
-    `- Viewports checked: ${viewports}`,
-    "",
-    "Evidence:",
-    `- Evidence bundle: ${input.evidenceBundle.id}`,
-    `- Screenshots: ${(input.workflow.screenshotArtifactRefs ?? []).join(", ") || "none"}`,
-    `- Observations: ${(input.workflow.observationRefs ?? []).join(", ") || "none"}`,
-    "",
-    "Gates:",
-    ...input.gates.map((item) => `- ${item.name}: ${item.status} (${item.message})`),
-    "",
-    failed.length
-      ? `Next action: ${failed[0]?.message ?? "Fix failing gates and rerun."}`
-      : "Next action: Accept or inspect evidence.",
-  ].join("\n");
+  return JSON.stringify(
+    {
+      decisionId: input.decision.id,
+      outcome: input.decision.outcome,
+      confidence: input.decision.confidence,
+      purpose: input.decision.purpose,
+      checked: {
+        routes: input.workflow.routes,
+        viewports: input.workflow.viewports,
+        previewTargetId: input.workflow.previewTargetId,
+        workflowRunId: input.workflow.id,
+      },
+      gates: input.decision.gates,
+      findings: input.decision.findings,
+      criterionResults: input.decision.criterionResults,
+      evidence: {
+        screenshotArtifactRefs: input.workflow.screenshotArtifactRefs ?? [],
+        observationRefs: input.workflow.observationRefs ?? [],
+        workflowRunRef: input.workflow.id,
+        evidenceBundleId: input.evidenceBundle.id,
+      },
+      ...(input.decision.actionPacket ? { actionPacket: input.decision.actionPacket } : {}),
+      createdAt: input.decision.createdAt,
+    },
+    null,
+    2,
+  );
 }
 
 export const ReviewerDecisionServiceLive = Layer.effect(
@@ -451,6 +720,7 @@ export const ReviewerDecisionServiceLive = Layer.effect(
   Effect.gen(function* () {
     const repository = yield* BrowserOrchestrationEvidenceRepository;
     const workflows = yield* BrowserWorkflowManager;
+    const annotationRepository = yield* BrowserAnnotationRepository;
     const evidenceBundles = new Map<string, EvidenceBundle>();
     const decisions = new Map<string, ReviewerDecision>();
 
@@ -489,8 +759,8 @@ export const ReviewerDecisionServiceLive = Layer.effect(
 
     const appendEvent = (
       sessionId: string,
-      workflowRunId: BrowserWorkflowRun["id"],
-      type: "EvidenceBundleCreated" | "ReviewerDecisionCreated",
+      workflowRunId: BrowserWorkflowRun["id"] | null,
+      type: "EvidenceBundleCreated" | "ReviewerDecisionCreated" | "ReviewerReworkTaskDrafted",
       artifactRefs: ReadonlyArray<EvidenceArtifactId>,
       payload: unknown,
     ) =>
@@ -523,6 +793,7 @@ export const ReviewerDecisionServiceLive = Layer.effect(
 
     const classifyRefs = (refs: ReadonlyArray<EvidenceArtifactId>) =>
       Effect.gen(function* () {
+        const artifactRefs: EvidenceArtifactId[] = [];
         const assertionResultRefs: EvidenceArtifactId[] = [];
         const statusEventRefs: EvidenceArtifactId[] = [];
         const consoleSummaryRefs: EvidenceArtifactId[] = [];
@@ -533,6 +804,9 @@ export const ReviewerDecisionServiceLive = Layer.effect(
         let readinessEvidenceRef: EvidenceArtifactId | undefined;
         for (const ref of refs) {
           const kind = yield* artifactKind(ref);
+          if (kind) {
+            artifactRefs.push(ref);
+          }
           switch (kind) {
             case "browser-workflow-assertion-result":
               assertionResultRefs.push(ref);
@@ -568,6 +842,7 @@ export const ReviewerDecisionServiceLive = Layer.effect(
           }
         }
         return {
+          artifactRefs: uniqueRefs(artifactRefs),
           assertionResultRefs,
           statusEventRefs,
           consoleSummaryRefs,
@@ -579,36 +854,199 @@ export const ReviewerDecisionServiceLive = Layer.effect(
         };
       });
 
+    const classifyWorkflowEvidenceRefs = (
+      workflow: BrowserWorkflowRun,
+      diffArtifactRef: EvidenceArtifactId | undefined,
+    ) =>
+      Effect.gen(function* () {
+        const evidenceRefs = uniqueRefs([
+          ...(workflow.evidenceRefs ?? []),
+          ...(diffArtifactRef ? [diffArtifactRef] : []),
+        ]);
+        const screenshotArtifactRefs = uniqueRefs(workflow.screenshotArtifactRefs ?? []);
+        const observationRefs = uniqueRefs(workflow.observationRefs ?? []);
+        const classifiedEvidence = yield* classifyRefs(evidenceRefs);
+        const classifiedScreenshots = yield* classifyRefs(screenshotArtifactRefs);
+        const classifiedObservations = yield* classifyRefs(observationRefs);
+        const artifactRefs = uniqueRefs([
+          ...classifiedEvidence.artifactRefs,
+          ...classifiedScreenshots.artifactRefs,
+          ...classifiedObservations.artifactRefs,
+        ]);
+        const artifactRefSet = new Set(artifactRefs.map(String));
+        const observationRefSet = new Set(observationRefs.map(String));
+        const unknownWorkflowRefs = evidenceRefs.filter((ref) => !artifactRefSet.has(String(ref)));
+        const unknownBrowserRefs = uniqueRefs(
+          screenshotArtifactRefs.filter(
+            (ref) => !artifactRefSet.has(String(ref)) && !observationRefSet.has(String(ref)),
+          ),
+        );
+        const sessionEvents = yield* repository.getSessionEvents({ sessionId: workflow.sessionId });
+        const eventRefs = sessionEvents
+          .filter((event) => event.workflowRunId === workflow.id)
+          .map((event) => event.eventId);
+
+        return {
+          artifactRefs,
+          eventRefs,
+          observationRefs,
+          screenshotArtifactRefs,
+          unknownWorkflowRefs,
+          unknownBrowserRefs,
+          assertionResultRefs: uniqueRefs([
+            ...classifiedEvidence.assertionResultRefs,
+            ...classifiedScreenshots.assertionResultRefs,
+            ...classifiedObservations.assertionResultRefs,
+          ]),
+          statusEventRefs: uniqueRefs([
+            ...classifiedEvidence.statusEventRefs,
+            ...classifiedScreenshots.statusEventRefs,
+            ...classifiedObservations.statusEventRefs,
+          ]),
+          consoleSummaryRefs: uniqueRefs([
+            ...classifiedEvidence.consoleSummaryRefs,
+            ...classifiedScreenshots.consoleSummaryRefs,
+            ...classifiedObservations.consoleSummaryRefs,
+          ]),
+          networkSummaryRefs: uniqueRefs([
+            ...classifiedEvidence.networkSummaryRefs,
+            ...classifiedScreenshots.networkSummaryRefs,
+            ...classifiedObservations.networkSummaryRefs,
+          ]),
+          pageErrorRefs: uniqueRefs([
+            ...classifiedEvidence.pageErrorRefs,
+            ...classifiedScreenshots.pageErrorRefs,
+            ...classifiedObservations.pageErrorRefs,
+          ]),
+          healthEvidenceRefs: uniqueRefs([
+            ...classifiedEvidence.healthEvidenceRefs,
+            ...classifiedScreenshots.healthEvidenceRefs,
+            ...classifiedObservations.healthEvidenceRefs,
+          ]),
+          serverLogRefs: uniqueRefs([
+            ...classifiedEvidence.serverLogRefs,
+            ...classifiedScreenshots.serverLogRefs,
+            ...classifiedObservations.serverLogRefs,
+          ]),
+          readinessEvidenceRef:
+            classifiedEvidence.readinessEvidenceRef ??
+            classifiedScreenshots.readinessEvidenceRef ??
+            classifiedObservations.readinessEvidenceRef,
+        };
+      });
+
+    const loadAnnotationSection = (
+      workflow: BrowserWorkflowRun,
+      annotationIds: ReadonlyArray<string> | undefined,
+    ) =>
+      Effect.gen(function* () {
+        const allThreadRows = yield* annotationRepository.listByThread({
+          threadId: ThreadId.makeUnsafe(workflow.sessionId),
+          includeResolved: true,
+        });
+        const autoRows = allThreadRows.filter((row) => {
+          if (row.status === "resolved") return false;
+          try {
+            const annotation = JSON.parse(row.annotationJson) as {
+              browserSessionId?: string;
+              sessionId?: string;
+              previewTargetId?: string;
+              workflowRunId?: string;
+            };
+            return (
+              annotation.workflowRunId === workflow.id ||
+              annotation.previewTargetId === workflow.previewTargetId ||
+              (workflow.browserSessionId !== undefined &&
+                (annotation.browserSessionId === workflow.browserSessionId ||
+                  annotation.sessionId === workflow.browserSessionId)) ||
+              (!workflow.browserSessionId && annotation.sessionId === workflow.sessionId)
+            );
+          } catch {
+            return false;
+          }
+        });
+        const evidenceRows = allThreadRows.filter((row) => {
+          try {
+            const annotation = JSON.parse(row.annotationJson) as {
+              browserSessionId?: string;
+              sessionId?: string;
+              previewTargetId?: string;
+              workflowRunId?: string;
+            };
+            return (
+              annotation.workflowRunId === workflow.id ||
+              annotation.previewTargetId === workflow.previewTargetId ||
+              (workflow.browserSessionId !== undefined &&
+                (annotation.browserSessionId === workflow.browserSessionId ||
+                  annotation.sessionId === workflow.browserSessionId))
+            );
+          } catch {
+            return false;
+          }
+        });
+        const mergedIds = uniqueStrings([
+          ...(annotationIds ?? []),
+          ...autoRows.map((row) => String(row.annotationId)),
+          ...evidenceRows.map((row) => String(row.annotationId)),
+        ]);
+        if (!mergedIds.length) return undefined;
+        const annotationRefs: string[] = [];
+        const artifactRefs: EvidenceArtifactId[] = [];
+        const unresolvedAnnotationRefs: string[] = [];
+        for (const rawId of mergedIds) {
+          const annotationId = BrowserAnnotationId.makeUnsafe(rawId);
+          const row = yield* annotationRepository.getById({ annotationId });
+          if (Option.isNone(row)) {
+            unresolvedAnnotationRefs.push(rawId);
+            continue;
+          }
+          annotationRefs.push(rawId);
+          const annotation = JSON.parse(row.value.annotationJson) as {
+            artifactRefs?: string[];
+            cropArtifactRef?: string;
+            screenshotArtifactRef?: string;
+          };
+          for (const ref of [
+            ...(annotation.artifactRefs ?? []),
+            annotation.cropArtifactRef,
+            annotation.screenshotArtifactRef,
+          ]) {
+            if (ref) artifactRefs.push(EvidenceArtifactId.makeUnsafe(ref));
+          }
+          if (row.value.status !== "resolved") {
+            unresolvedAnnotationRefs.push(rawId);
+          }
+        }
+        return {
+          annotationRefs,
+          artifactRefs: uniqueRefs(artifactRefs),
+          unresolvedAnnotationRefs,
+        };
+      });
+
     const createEvidenceBundle: ReviewerDecisionServiceShape["createEvidenceBundle"] = (input) =>
       Effect.gen(function* () {
         const workflow = yield* getWorkflowOrFail(input.workflowRunId);
-        if (!workflow.browserSessionId) {
-          return yield* Effect.fail(
-            new Error(`Workflow has no browser session: ${input.workflowRunId}`),
-          );
-        }
         const createdAt = now();
         const bundleId = EvidenceBundleId.makeUnsafe(`evidence-bundle-${randomUUID()}`);
-        const diffArtifactRef =
-          input.codeState?.diffArtifactRef ??
-          (yield* writeArtifact(
-            workflow.sessionId,
-            "diff",
-            JSON.stringify({
-              workflowRunId: workflow.id,
-              note: "No code diff was supplied for this deterministic browser review bundle.",
-            }),
-            "application/json",
-            { workflowRunId: workflow.id, generatedBy: "ReviewerDecisionService" },
-          ));
-        const artifactRefs = uniqueRefs([
-          ...(workflow.evidenceRefs ?? []),
-          ...(workflow.observationRefs ?? []),
-          ...(workflow.screenshotArtifactRefs ?? []),
-          diffArtifactRef,
-        ]);
-        const classified = yield* classifyRefs(artifactRefs);
-        const codeState = input.codeState ?? defaultCodeState(diffArtifactRef, createdAt);
+        const diffArtifactRef = input.codeState?.diffArtifactRef;
+        const classified = yield* classifyWorkflowEvidenceRefs(workflow, diffArtifactRef);
+        const annotations = yield* loadAnnotationSection(workflow, input.annotationIds);
+        const codeState = input.codeState ?? defaultCodeState(createdAt);
+        const browserSection = workflow.browserSessionId
+          ? {
+              browser: {
+                observationRefs: classified.observationRefs,
+                screenshotArtifactRefs: classified.screenshotArtifactRefs,
+                consoleSummaryRefs: classified.consoleSummaryRefs,
+                networkSummaryRefs: classified.networkSummaryRefs,
+                pageErrorRefs: classified.pageErrorRefs,
+                ...(classified.unknownBrowserRefs.length
+                  ? { unknownRefs: classified.unknownBrowserRefs }
+                  : {}),
+              },
+            }
+          : {};
         const bundle: EvidenceBundle = {
           id: bundleId,
           sessionId: workflow.sessionId,
@@ -617,10 +1055,13 @@ export const ReviewerDecisionServiceLive = Layer.effect(
           taskSpecId: workflow.taskSpecId,
           acceptanceCriteriaId: workflow.acceptanceCriteriaId,
           permissionPolicyId: workflow.permissionPolicyId,
-          browserSessionId: workflow.browserSessionId,
+          ...(workflow.browserSessionId ? { browserSessionId: workflow.browserSessionId } : {}),
           codeState,
-          artifactRefs,
-          eventRefs: [],
+          artifactRefs: uniqueRefs([
+            ...classified.artifactRefs,
+            ...(annotations?.artifactRefs ?? []),
+          ]),
+          eventRefs: classified.eventRefs,
           preview: {
             serverLogRefs: classified.serverLogRefs,
             healthEvidenceRefs: classified.healthEvidenceRefs,
@@ -628,40 +1069,46 @@ export const ReviewerDecisionServiceLive = Layer.effect(
               ? { readinessEvidenceRef: classified.readinessEvidenceRef }
               : {}),
           },
-          browser: {
-            observationRefs: workflow.observationRefs ?? [],
-            screenshotArtifactRefs: workflow.screenshotArtifactRefs ?? [],
-            consoleSummaryRefs: classified.consoleSummaryRefs,
-            networkSummaryRefs: classified.networkSummaryRefs,
-            pageErrorRefs: classified.pageErrorRefs,
-          },
+          ...browserSection,
           workflow: {
             workflowRunRef: workflow.id,
             assertionResultRefs: classified.assertionResultRefs,
             statusEventRefs: classified.statusEventRefs,
+            ...(classified.unknownWorkflowRefs.length
+              ? { unknownRefs: classified.unknownWorkflowRefs }
+              : {}),
           },
+          ...(annotations ? { annotations } : {}),
           createdAt,
         };
+        const validatedBundle = decodeEvidenceBundle(bundle);
         yield* repository.createEvidenceBundle({
-          bundleId: bundle.id,
-          sessionId: bundle.sessionId,
-          workflowRunId: bundle.workflowRunId,
-          previewTargetId: bundle.previewTargetId,
-          taskSpecId: bundle.taskSpecId,
-          acceptanceCriteriaId: bundle.acceptanceCriteriaId,
-          permissionPolicyId: bundle.permissionPolicyId,
-          browserSessionId: bundle.browserSessionId,
-          codeStateJson: JSON.stringify(bundle.codeState),
-          artifactRefsJson: JSON.stringify(bundle.artifactRefs),
-          eventRefsJson: JSON.stringify(bundle.eventRefs),
-          createdAt: bundle.createdAt,
+          bundleId: validatedBundle.id,
+          sessionId: validatedBundle.sessionId,
+          workflowRunId: validatedBundle.workflowRunId,
+          previewTargetId: validatedBundle.previewTargetId,
+          taskSpecId: validatedBundle.taskSpecId,
+          acceptanceCriteriaId: validatedBundle.acceptanceCriteriaId,
+          permissionPolicyId: validatedBundle.permissionPolicyId,
+          browserSessionId: validatedBundle.browserSessionId ?? null,
+          codeStateJson: JSON.stringify(validatedBundle.codeState),
+          artifactRefsJson: JSON.stringify(validatedBundle.artifactRefs),
+          eventRefsJson: JSON.stringify(validatedBundle.eventRefs),
+          bundleSnapshotJson: JSON.stringify(validatedBundle),
+          createdAt: validatedBundle.createdAt,
         });
-        yield* appendEvent(workflow.sessionId, workflow.id, "EvidenceBundleCreated", artifactRefs, {
-          evidenceBundleId: bundle.id,
-          workflowRunId: workflow.id,
-        });
-        evidenceBundles.set(String(bundle.id), bundle);
-        return { evidenceBundle: bundle };
+        yield* appendEvent(
+          workflow.sessionId,
+          workflow.id,
+          "EvidenceBundleCreated",
+          validatedBundle.artifactRefs,
+          {
+            evidenceBundleId: validatedBundle.id,
+            workflowRunId: workflow.id,
+          },
+        );
+        evidenceBundles.set(String(validatedBundle.id), validatedBundle);
+        return { evidenceBundle: validatedBundle };
       }).pipe(Effect.mapError(errorFromUnknown));
 
     const getEvidenceBundle: ReviewerDecisionServiceShape["getEvidenceBundle"] = (input) =>
@@ -669,8 +1116,11 @@ export const ReviewerDecisionServiceLive = Layer.effect(
         const cached = evidenceBundles.get(String(input.evidenceBundleId));
         if (cached) return { evidenceBundle: cached };
         const row = yield* repository.getEvidenceBundle({ bundleId: input.evidenceBundleId });
+        if (Option.isNone(row)) return { evidenceBundle: undefined };
+        const evidenceBundle = evidenceBundleFromRow(row.value);
+        evidenceBundles.set(String(evidenceBundle.id), evidenceBundle);
         return {
-          evidenceBundle: Option.isSome(row) ? evidenceBundleFromRow(row.value) : undefined,
+          evidenceBundle,
         };
       }).pipe(Effect.mapError(errorFromUnknown));
 
@@ -685,26 +1135,113 @@ export const ReviewerDecisionServiceLive = Layer.effect(
 
     const screenshotsResolve = (workflow: BrowserWorkflowRun) =>
       Effect.gen(function* () {
-        const refs = workflow.screenshotArtifactRefs ?? [];
+        const assertionScreenshotRefs = (workflow.assertionResults ?? [])
+          .filter((result) => result.assertion.type === "screenshot-captured")
+          .flatMap((result) => result.evidenceRefs);
+        const refs = uniqueRefs([
+          ...(workflow.screenshotArtifactRefs ?? []),
+          ...assertionScreenshotRefs,
+        ]);
         if (!refs.length) return false;
         for (const ref of refs) {
           const artifact = yield* repository.getEvidenceArtifact({ artifactId: ref });
-          if (Option.isSome(artifact)) return true;
+          if (Option.isNone(artifact)) return false;
         }
-        return false;
+        return true;
       });
+
+    const loadAnnotationReworkTargetsByIds = (annotationIds: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        if (!annotationIds.length) return [] as BrowserAnnotationReworkTarget[];
+        const targets: BrowserAnnotationReworkTarget[] = [];
+        for (const rawId of annotationIds) {
+          const row = yield* annotationRepository.getById({
+            annotationId: BrowserAnnotationId.makeUnsafe(rawId),
+          });
+          if (Option.isNone(row)) {
+            targets.push({
+              annotationId: rawId,
+              comment: "Missing browser annotation record.",
+              artifactRefs: [],
+            });
+            continue;
+          }
+          const annotation = JSON.parse(row.value.annotationJson) as {
+            id?: string;
+            browserSessionId?: string;
+            previewTargetId?: string;
+            workflowRunId?: string;
+            url?: string;
+            target?: BrowserAnnotationReworkTarget["target"];
+            comment?: string;
+            cropArtifactRef?: string;
+            domSnippetArtifactRef?: string;
+            styleSummaryArtifactRef?: string;
+            artifactRefs?: string[];
+          };
+          const artifactRefs = [
+            ...(annotation.artifactRefs ?? []),
+            annotation.cropArtifactRef,
+            annotation.domSnippetArtifactRef,
+            annotation.styleSummaryArtifactRef,
+          ].filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
+          targets.push({
+            annotationId: rawId,
+            ...(annotation.browserSessionId
+              ? { browserSessionId: BrowserSessionId.makeUnsafe(annotation.browserSessionId) }
+              : {}),
+            ...(annotation.previewTargetId
+              ? { previewTargetId: PreviewTargetId.makeUnsafe(annotation.previewTargetId) }
+              : {}),
+            ...(annotation.workflowRunId
+              ? { workflowRunId: WorkflowRunId.makeUnsafe(annotation.workflowRunId) }
+              : {}),
+            ...(annotation.url ? { url: annotation.url } : {}),
+            ...(annotation.url ? { route: routeForAnnotation(annotation.url) } : {}),
+            ...(annotation.target ? { target: annotation.target } : {}),
+            comment: annotation.comment ?? "Unresolved browser comment.",
+            ...(annotation.cropArtifactRef
+              ? { cropArtifactRef: EvidenceArtifactId.makeUnsafe(annotation.cropArtifactRef) }
+              : {}),
+            ...(annotation.domSnippetArtifactRef
+              ? {
+                  domSnippetArtifactRef: EvidenceArtifactId.makeUnsafe(
+                    annotation.domSnippetArtifactRef,
+                  ),
+                }
+              : {}),
+            ...(annotation.styleSummaryArtifactRef
+              ? {
+                  styleSummaryArtifactRef: EvidenceArtifactId.makeUnsafe(
+                    annotation.styleSummaryArtifactRef,
+                  ),
+                }
+              : {}),
+            artifactRefs: uniqueRefs(artifactRefs.map((ref) => EvidenceArtifactId.makeUnsafe(ref))),
+          });
+        }
+        return targets;
+      });
+
+    const loadAnnotationReworkTargets = (bundle: EvidenceBundle) =>
+      loadAnnotationReworkTargetsByIds(bundle.annotations?.unresolvedAnnotationRefs ?? []);
 
     const createDecision: ReviewerDecisionServiceShape["createDecision"] = (input) =>
       Effect.gen(function* () {
         const bundle = yield* loadEvidenceBundleOrFail(input.evidenceBundleId);
         const workflow = yield* getWorkflowOrFail(input.workflowRunId ?? bundle.workflowRunId);
+        const purpose = derivePurpose(workflow, input.purpose);
+        const hasTaskSpecificCriteria = (input.criteria ?? []).some(isTaskSpecificCriterion);
+        const codeStateUnknown = (bundle.codeState.captureStatus ?? "captured") === "unknown";
         const screenshotArtifactsResolve = yield* screenshotsResolve(workflow);
         const gates = buildHardGates({
           workflow,
           evidenceBundle: bundle,
+          purpose,
           screenshotArtifactsResolve,
           requiredRoutes: input.requiredRoutes ?? workflow.routes,
           requiredViewports: input.requiredViewports ?? workflow.viewports,
+          hasTaskSpecificCriteria,
           finalCodeState: input.finalCodeState,
           finalCodeMutationCompletedAt: input.finalCodeMutationCompletedAt,
         });
@@ -726,14 +1263,28 @@ export const ReviewerDecisionServiceLive = Layer.effect(
                     : "One or more deterministic browser workflow gates failed.",
               }),
             ];
+        const criteriaWithPolicy =
+          isCodeChangeLikePurpose(purpose) && !hasTaskSpecificCriteria
+            ? [
+                ...suppliedCriteria,
+                {
+                  criterionId: AcceptanceCriterionId.makeUnsafe(
+                    "criterion-user-acceptance-criteria",
+                  ),
+                  status: "not-evaluated" as const,
+                  evidenceRefs: bundle.artifactRefs,
+                  reason: "No task-specific acceptance criteria were supplied.",
+                },
+              ]
+            : suppliedCriteria;
         const suppliedCriterionIds = new Set(
-          suppliedCriteria.map((criterion) => criterion.criterionId),
+          criteriaWithPolicy.map((criterion) => criterion.criterionId),
         );
         const missingRequiredCriteria = (input.requiredCriterionIds ?? []).filter(
           (criterionId) => !suppliedCriterionIds.has(criterionId),
         );
         const criteria = [
-          ...suppliedCriteria,
+          ...criteriaWithPolicy,
           ...missingRequiredCriteria.map(
             (criterionId): AcceptanceCriterionResult => ({
               criterionId,
@@ -748,8 +1299,16 @@ export const ReviewerDecisionServiceLive = Layer.effect(
             (criterion) => criterion.status === "fail" || criterion.status === "not-evaluated",
           )
           .map((criterion) => criterion.criterionId);
-        const outcome = chooseOutcome({ workflow, gates, criteria });
+        const outcome = chooseOutcome({
+          workflow,
+          gates,
+          criteria,
+          purpose,
+          hasTaskSpecificCriteria,
+          codeStateUnknown,
+        });
         const decisionId = ReviewerDecisionId.makeUnsafe(`reviewer-decision-${randomUUID()}`);
+        const annotationTargets = yield* loadAnnotationReworkTargets(bundle);
         const reworkPacket =
           outcome === "rework-required"
             ? {
@@ -766,20 +1325,62 @@ export const ReviewerDecisionServiceLive = Layer.effect(
                   ? input.requiredViewports
                   : workflow.viewports,
                 relevantEvidenceRefs: bundle.artifactRefs,
-                relevantCommentRefs: [],
-                relevantDiffRefs: [bundle.codeState.diffArtifactRef],
-                recommendedNextActions: findings.length
-                  ? findings.map((finding) => finding.suggestedAction ?? finding.title)
-                  : ["Fix failing workflow assertions and rerun browser.workflow.start."],
+                relevantCommentRefs: uniqueRefs(
+                  annotationTargets.flatMap((target) => target.artifactRefs),
+                ),
+                relevantDiffRefs: bundle.codeState.diffArtifactRef
+                  ? [bundle.codeState.diffArtifactRef]
+                  : [],
+                ...(annotationTargets.length ? { annotationTargets } : {}),
+                recommendedNextActions:
+                  annotationTargets.length || findings.length
+                    ? [
+                        ...annotationTargets.map(
+                          (target) =>
+                            `Address browser comment ${target.annotationId}: ${target.comment}`,
+                        ),
+                        ...findings.map((finding) => finding.suggestedAction ?? finding.title),
+                      ]
+                    : ["Fix failing workflow assertions and rerun browser.workflow.start."],
                 maxReworkAttemptsRemaining:
                   input.maxReworkAttemptsRemaining ?? workflow.retryBudget,
               }
             : undefined;
+        const createdAt = now();
+        let actionPacket = makeActionPacket({
+          decisionId,
+          outcome,
+          purpose,
+          workflow,
+          gates,
+          criteria,
+          findings,
+          evidenceBundle: bundle,
+          focusedRoutes: input.requiredRoutes?.length ? input.requiredRoutes : workflow.routes,
+          focusedViewports: input.requiredViewports?.length
+            ? input.requiredViewports
+            : workflow.viewports,
+          createdAt,
+        });
+        if (actionPacket?.kind === "rework" && reworkPacket) {
+          actionPacket = {
+            ...actionPacket,
+            blockingFindings: reworkPacket.blockingFindings,
+            relevantEvidenceRefs: reworkPacket.relevantEvidenceRefs,
+            focusedRoutes: reworkPacket.focusedRoutes,
+            focusedViewports: reworkPacket.focusedViewports,
+            ...(reworkPacket.annotationTargets
+              ? { annotationTargets: reworkPacket.annotationTargets }
+              : {}),
+            recommendedNextActions: reworkPacket.recommendedNextActions,
+          };
+        }
         const decisionBase = {
           id: decisionId,
           sessionId: bundle.sessionId,
           workflowRunId: workflow.id,
           evidenceBundleId: bundle.id,
+          purpose,
           outcome,
           confidence:
             outcome === "accepted" ? "high" : outcome === "inconclusive" ? "low" : "medium",
@@ -789,19 +1390,19 @@ export const ReviewerDecisionServiceLive = Layer.effect(
           findings,
           unresolvedCriteria,
           ...(reworkPacket ? { reworkPacket } : {}),
-          createdAt: now(),
+          ...(actionPacket ? { actionPacket } : {}),
+          createdAt,
         } satisfies Omit<ReviewerDecision, "userVisibleSummaryRef">;
         const summary = formatSummary({
           decision: decisionBase,
           workflow,
-          gates,
           evidenceBundle: bundle,
         });
         const summaryRef = yield* writeArtifact(
           bundle.sessionId,
-          "workflow-trace",
+          "reviewer-user-visible-summary",
           summary,
-          "text/markdown",
+          "application/json",
           {
             type: "reviewer-user-visible-summary",
             workflowRunId: workflow.id,
@@ -818,12 +1419,15 @@ export const ReviewerDecisionServiceLive = Layer.effect(
           sessionId: decision.sessionId,
           workflowRunId: decision.workflowRunId,
           evidenceBundleId: decision.evidenceBundleId,
+          purpose: decision.purpose,
           outcome: decision.outcome,
           confidence: decision.confidence,
+          gatesJson: JSON.stringify(gates),
           criteriaJson: JSON.stringify(criteria),
           findingsJson: JSON.stringify(findings),
           unresolvedCriteriaJson: JSON.stringify(unresolvedCriteria),
           reworkPacketJson: decision.reworkPacket ? JSON.stringify(decision.reworkPacket) : null,
+          actionPacketJson: decision.actionPacket ? JSON.stringify(decision.actionPacket) : null,
           userVisibleSummaryRef: summaryRef,
           createdAt: decision.createdAt,
         });
@@ -850,13 +1454,94 @@ export const ReviewerDecisionServiceLive = Layer.effect(
     const listDecisions: ReviewerDecisionServiceShape["listDecisions"] = (
       input: ReviewerDecisionListInput,
     ) =>
-      Effect.sync(() => {
-        const all = [...decisions.values()];
-        const filtered = input.sessionId
-          ? all.filter((decision) => String(decision.sessionId) === String(input.sessionId))
-          : all;
-        return { decisions: filtered };
-      });
+      Effect.gen(function* () {
+        if (!input.sessionId && !input.workflowRunId) {
+          return yield* Effect.fail(
+            new Error("reviewer.decision.list requires sessionId or workflowRunId."),
+          );
+        }
+        const rows = yield* repository.listReviewerDecisions(input);
+        const listed = rows.map(reviewerDecisionFromRow);
+        for (const decision of listed) {
+          decisions.set(String(decision.id), decision);
+        }
+        return { decisions: listed };
+      }).pipe(Effect.mapError(errorFromUnknown));
+
+    const startRework: ReviewerDecisionServiceShape["startRework"] = (input) =>
+      Effect.gen(function* () {
+        let parentDecisionId: ReviewerDecisionId | undefined;
+        let parentWorkflowRunId: WorkflowRunId | undefined;
+        let threadId: ThreadId | undefined;
+        let annotationTargets: BrowserAnnotationReworkTarget[] = [];
+        if (input.decisionId) {
+          const decisionResult = yield* getDecision({ decisionId: input.decisionId });
+          const decision = decisionResult.decision;
+          if (!decision) {
+            return yield* Effect.fail(
+              new Error(`Reviewer decision not found: ${input.decisionId}`),
+            );
+          }
+          parentDecisionId = decision.id;
+          parentWorkflowRunId = decision.workflowRunId;
+          threadId = ThreadId.makeUnsafe(decision.sessionId);
+          annotationTargets = [
+            ...(decision.reworkPacket?.annotationTargets ??
+              decision.actionPacket?.annotationTargets ??
+              []),
+          ];
+        }
+        if (input.annotationIds?.length) {
+          annotationTargets = [
+            ...annotationTargets,
+            ...(yield* loadAnnotationReworkTargetsByIds(input.annotationIds)),
+          ];
+        }
+        const uniqueTargets = [
+          ...new Map(annotationTargets.map((target) => [target.annotationId, target])).values(),
+        ];
+        if (!uniqueTargets.length) {
+          return yield* Effect.fail(
+            new Error("reviewer.decision.rework.start requires unresolved annotation targets."),
+          );
+        }
+        threadId ??= ThreadId.makeUnsafe(
+          uniqueTargets[0]?.browserSessionId ??
+            uniqueTargets[0]?.workflowRunId ??
+            "reviewer-rework",
+        );
+        const evidenceRefs = uniqueRefs(uniqueTargets.flatMap((target) => target.artifactRefs));
+        const instruction =
+          input.instruction ??
+          [
+            "Address the following browser comment(s):",
+            ...uniqueTargets.map(
+              (target) =>
+                `- ${target.annotationId}${target.route ? ` on ${target.route}` : ""}: ${target.comment}`,
+            ),
+            "Use the attached crop, DOM snippet, style summary, route, target, and geometry evidence. Acceptance requires the comment to be resolved or the reviewer comments-addressed gate to pass.",
+          ].join("\n");
+        const result: ReviewerReworkStartResult = {
+          reworkTaskId: `reviewer-rework-task-${randomUUID()}`,
+          threadId,
+          ...(parentDecisionId ? { parentDecisionId } : {}),
+          annotationTargets: uniqueTargets,
+          evidenceRefs,
+          status: "drafted",
+          instruction,
+        };
+        yield* appendEvent(
+          threadId,
+          input.workflowRunId ?? parentWorkflowRunId ?? null,
+          "ReviewerReworkTaskDrafted",
+          evidenceRefs,
+          {
+            ...result,
+            mode: input.mode ?? "draft-task",
+          },
+        );
+        return result;
+      }).pipe(Effect.mapError(errorFromUnknown));
 
     return {
       createEvidenceBundle,
@@ -864,6 +1549,7 @@ export const ReviewerDecisionServiceLive = Layer.effect(
       createDecision,
       getDecision,
       listDecisions,
+      startRework,
     } satisfies ReviewerDecisionServiceShape;
   }),
 );

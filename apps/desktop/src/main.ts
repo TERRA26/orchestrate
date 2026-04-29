@@ -19,9 +19,16 @@ import {
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
+  BrowserActInput,
+  BrowserAnnotationResolveTargetAtPointInput,
+  BrowserInspectSessionInput,
+  BrowserResolveTargetSessionInput,
   BrowserNavigateInput,
+  BrowserCloseSessionInput,
+  BrowserObserveSessionInput,
   BrowserNewTabInput,
   BrowserOpenInput,
+  BrowserOpenSessionInput,
   BrowserSetPanelBoundsInput,
   BrowserTabInput,
   BrowserThreadInput,
@@ -80,6 +87,14 @@ const BROWSER_NEW_TAB_CHANNEL = "desktop:browser-new-tab";
 const BROWSER_CLOSE_TAB_CHANNEL = "desktop:browser-close-tab";
 const BROWSER_SELECT_TAB_CHANNEL = "desktop:browser-select-tab";
 const BROWSER_OPEN_DEVTOOLS_CHANNEL = "desktop:browser-open-devtools";
+const BROWSER_OPEN_SESSION_CHANNEL = "desktop:browser-open-session";
+const BROWSER_OBSERVE_SESSION_CHANNEL = "desktop:browser-observe-session";
+const BROWSER_INSPECT_SESSION_CHANNEL = "desktop:browser-inspect-session";
+const BROWSER_RESOLVE_TARGET_SESSION_CHANNEL = "desktop:browser-resolve-target-session";
+const BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL =
+  "desktop:browser-resolve-annotation-target-at-point";
+const BROWSER_ACT_SESSION_CHANNEL = "desktop:browser-act-session";
+const BROWSER_CLOSE_SESSION_CHANNEL = "desktop:browser-close-session";
 const BASE_DIR = process.env.ORCHESTRATE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "orchestrate";
@@ -1426,6 +1441,44 @@ function registerIpcHandlers(): void {
   ipcMain.removeHandler(BROWSER_OPEN_DEVTOOLS_CHANNEL);
   ipcMain.handle(BROWSER_OPEN_DEVTOOLS_CHANNEL, async (_event, input: BrowserTabInput) => {
     browserManager.openDevTools(input);
+  });
+
+  ipcMain.removeHandler(BROWSER_OPEN_SESSION_CHANNEL);
+  ipcMain.handle(BROWSER_OPEN_SESSION_CHANNEL, async (_event, input: BrowserOpenSessionInput) =>
+    browserManager.openSession(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_OBSERVE_SESSION_CHANNEL);
+  ipcMain.handle(
+    BROWSER_OBSERVE_SESSION_CHANNEL,
+    async (_event, input: BrowserObserveSessionInput) => browserManager.observeSession(input),
+  );
+  ipcMain.removeHandler(BROWSER_INSPECT_SESSION_CHANNEL);
+  ipcMain.handle(
+    BROWSER_INSPECT_SESSION_CHANNEL,
+    async (_event, input: BrowserInspectSessionInput) => browserManager.inspectSession(input),
+  );
+  ipcMain.removeHandler(BROWSER_RESOLVE_TARGET_SESSION_CHANNEL);
+  ipcMain.handle(
+    BROWSER_RESOLVE_TARGET_SESSION_CHANNEL,
+    async (_event, input: BrowserResolveTargetSessionInput) =>
+      browserManager.resolveTargetSession(input),
+  );
+  ipcMain.removeHandler(BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL);
+  ipcMain.handle(
+    BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL,
+    async (_event, input: BrowserAnnotationResolveTargetAtPointInput) =>
+      browserManager.resolveAnnotationTargetAtPoint(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_ACT_SESSION_CHANNEL);
+  ipcMain.handle(BROWSER_ACT_SESSION_CHANNEL, async (_event, input: BrowserActInput) =>
+    browserManager.actSession(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_CLOSE_SESSION_CHANNEL);
+  ipcMain.handle(BROWSER_CLOSE_SESSION_CHANNEL, async (_event, input: BrowserCloseSessionInput) => {
+    browserManager.closeSession(input);
   });
 }
 

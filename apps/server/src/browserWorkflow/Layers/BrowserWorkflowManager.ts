@@ -14,9 +14,11 @@ import {
   EvidenceArtifactId,
   type EvidenceArtifactKind,
   PermissionPolicyId,
+  type PreviewTarget,
   AcceptanceCriteriaId,
   SessionEventId,
   TaskSpecId,
+  ThreadId,
   WorkflowRunId,
 } from "@orchestrate/contracts";
 import { Effect, Layer, Option } from "effect";
@@ -64,6 +66,21 @@ function resolveRoute(baseUrl: string, route: string): string {
   } catch {
     return route;
   }
+}
+
+function observedViewport(
+  observation: BrowserObservation,
+  fallback: PreviewTarget["viewports"][number] | undefined,
+): PreviewTarget["viewports"][number] | undefined {
+  const metrics = observation.pageMetrics;
+  if (!metrics) return fallback;
+  return {
+    id: "observed-current-viewport",
+    label: `${metrics.viewportWidth}x${metrics.viewportHeight}`,
+    width: metrics.viewportWidth,
+    height: metrics.viewportHeight,
+    deviceScaleFactor: fallback?.deviceScaleFactor ?? 1,
+  };
 }
 
 function observationEvidenceRefs(observation: BrowserObservation): EvidenceArtifactId[] {
@@ -321,7 +338,7 @@ export const BrowserWorkflowManagerLive = Layer.effect(
         const viewportPlan = input.viewportPlan?.length
           ? input.viewportPlan
           : input.previewTarget.viewports;
-        const assertions = input.assertions?.length
+        const assertions: ReadonlyArray<BrowserAssertion> = input.assertions?.length
           ? input.assertions
           : [
               { id: "url-matches", type: "url-matches", pattern: input.previewTarget.baseUrl },
@@ -383,9 +400,12 @@ export const BrowserWorkflowManagerLive = Layer.effect(
           workflow = yield* updateStatus(workflow, "resolving-preview-target");
           workflow = yield* updateStatus(workflow, "starting-browser");
           const opened = yield* browserRuntime.openSession({
-            threadId: input.sessionId,
+            threadId: ThreadId.makeUnsafe(input.sessionId),
             url: input.previewTarget.canonicalUrl,
             previewTarget: input.previewTarget,
+            ...(input.preferredRuntimeKind
+              ? { preferredRuntimeKind: input.preferredRuntimeKind }
+              : {}),
           });
           browserSessionId = opened.sessionId;
           workflow = {
@@ -402,6 +422,77 @@ export const BrowserWorkflowManagerLive = Layer.effect(
           for (const ref of screenshotRefs(opened.observation))
             screenshotArtifactRefs.add(String(ref));
 
+          if (input.controlMode === "observe-only-current-page") {
+            workflow = yield* updateStatus(workflow, "observing");
+            const observation = opened.observation;
+            const currentViewport = observedViewport(observation, input.previewTarget.viewports[0]);
+            const observationArtifact = yield* persistWorkflowEvent(
+              workflow,
+              "browser-workflow-observation-captured",
+              "BrowserWorkflowObservationCaptured",
+              {
+                workflowRunId: workflow.id,
+                route: { route: observation.url, label: "current visible page" },
+                viewport: currentViewport,
+                url: observation.url,
+                title: observation.title,
+                evidenceRefs: observationEvidenceRefs(observation),
+                screenshotArtifactRefs: screenshotRefs(observation),
+                controlMode: input.controlMode,
+              },
+            );
+            evidenceRefs.add(String(observationArtifact));
+
+            workflow = yield* updateStatus(workflow, "verifying");
+            const resolvedScreenshotRefs = yield* resolveScreenshotRefs(observation);
+            for (const [index, assertion] of assertions.entries()) {
+              assertionResults.push(
+                runAssertion(
+                  assertion,
+                  index,
+                  observation,
+                  [...evidenceRefs].map(evidenceRef),
+                  resolvedScreenshotRefs,
+                ),
+              );
+            }
+            for (const result of assertionResults) {
+              const assertionArtifact = yield* persistWorkflowEvent(
+                workflow,
+                "browser-workflow-assertion-result",
+                "BrowserWorkflowAssertionResult",
+                { workflowRunId: workflow.id, result, controlMode: input.controlMode },
+              );
+              evidenceRefs.add(String(assertionArtifact));
+            }
+
+            workflow = {
+              ...workflow,
+              status: "completed",
+              routes: [observation.url],
+              viewports: currentViewport ? [currentViewport] : [],
+              updatedAt: now(),
+              completedAt: now(),
+              evidenceRefs: [...evidenceRefs].map(evidenceRef),
+              observationRefs: [...observationRefs].map(evidenceRef),
+              screenshotArtifactRefs: [...screenshotArtifactRefs].map(evidenceRef),
+              assertionResults,
+            };
+            yield* saveWorkflow(workflow);
+            yield* persistWorkflowEvent(
+              workflow,
+              "browser-workflow-completed",
+              "BrowserWorkflowCompleted",
+              {
+                workflowRunId: workflow.id,
+                assertionResults,
+                evidenceRefs: workflow.evidenceRefs,
+                controlMode: input.controlMode,
+              },
+            );
+            return { workflow };
+          }
+
           for (const viewport of viewportPlan) {
             workflow = yield* updateStatus(workflow, "collecting-baseline");
             const viewportArtifact = yield* persistWorkflowEvent(
@@ -411,12 +502,14 @@ export const BrowserWorkflowManagerLive = Layer.effect(
               { workflowRunId: workflow.id, viewport },
             );
             evidenceRefs.add(String(viewportArtifact));
-            const resized = yield* browserRuntime.act({
-              threadId: input.sessionId,
-              sessionId: opened.sessionId,
-              action: { kind: "resize", width: viewport.width, height: viewport.height },
-            });
-            for (const ref of resized.evidenceRefs ?? []) evidenceRefs.add(String(ref));
+            if (input.preferredRuntimeKind !== "electron-visible") {
+              const resized = yield* browserRuntime.act({
+                threadId: ThreadId.makeUnsafe(input.sessionId),
+                sessionId: opened.sessionId,
+                action: { kind: "resize", width: viewport.width, height: viewport.height },
+              });
+              for (const ref of resized.evidenceRefs ?? []) evidenceRefs.add(String(ref));
+            }
 
             for (const route of routePlan) {
               workflow = yield* updateStatus(workflow, "opening-route");
@@ -430,7 +523,7 @@ export const BrowserWorkflowManagerLive = Layer.effect(
               evidenceRefs.add(String(routeArtifact));
               workflow = yield* updateStatus(workflow, "acting");
               const navigated = yield* browserRuntime.act({
-                threadId: input.sessionId,
+                threadId: ThreadId.makeUnsafe(input.sessionId),
                 sessionId: opened.sessionId,
                 action: { kind: "navigate", url },
               });

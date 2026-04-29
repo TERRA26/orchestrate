@@ -185,9 +185,12 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
           {
             browserSessionId: context.browserSessionId,
             previewTargetId: context.previewTarget.id,
-            runtimeKind: "playwright-headless",
-            surfaceMode: "headless-validation-mirror",
-            isUserVisibleSurface: false,
+            runtimeKind: context.runtimeTruth?.runtimeKind ?? "playwright-headless",
+            surfaceMode: context.runtimeTruth?.surfaceMode ?? "headless-validation-mirror",
+            isUserVisibleSurface: context.runtimeTruth?.isUserVisibleSurface ?? false,
+            observedUrl: context.runtimeTruth?.observedUrl ?? null,
+            visiblePanelUrl: context.runtimeTruth?.visiblePanelUrl ?? null,
+            urlAgreement: context.runtimeTruth?.urlAgreement ?? "unknown",
           },
           { type: "session-opened" },
         );
@@ -210,6 +213,8 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
             previewTargetId: input.previewTarget.id,
             action: input.action,
             policyDecision: input.policyDecision ?? { outcome: "allow" },
+            ...(input.resolvedTarget ? { resolvedTarget: input.resolvedTarget } : {}),
+            ...(input.targetResolution ? { targetResolution: input.targetResolution } : {}),
           },
           { type: input.policyDecision ? "policy-decision" : "browser-action" },
         );
@@ -222,8 +227,31 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
           {
             action: input.action,
             policyDecision: input.policyDecision ?? { outcome: "allow" },
+            ...(input.resolvedTarget ? { resolvedTarget: input.resolvedTarget } : {}),
+            ...(input.targetResolution ? { targetResolution: input.targetResolution } : {}),
           },
         );
+        return { evidenceRefs: [artifactRef] };
+      });
+
+    const recordInspection: BrowserEvidenceRecorderShape["recordInspection"] = (input) =>
+      Effect.gen(function* () {
+        const artifactRef = yield* writeJsonArtifact(
+          input,
+          "browser-inspection",
+          input.inspection,
+          {
+            type: "browser-inspection",
+            url: input.inspection.url,
+            screenshotArtifactRef: input.inspection.screenshotArtifactRef ?? null,
+          },
+        );
+        yield* appendEvent(input, "BrowserInspectionCaptured", [artifactRef], {
+          browserSessionId: input.browserSessionId,
+          url: input.inspection.url,
+          elementCount: input.inspection.elements.length,
+          screenshotArtifactRef: input.inspection.screenshotArtifactRef ?? null,
+        });
         return { evidenceRefs: [artifactRef] };
       });
 
@@ -332,6 +360,7 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
     return {
       recordSessionOpened,
       recordAction,
+      recordInspection,
       recordObservation,
       recordClaimGate,
     } satisfies BrowserEvidenceRecorderShape;

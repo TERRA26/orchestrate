@@ -21,7 +21,7 @@
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:orchestrator-smoke": "vitest run src/wsServer.test.ts -t \"supports a server-driven orchestrator smoke flow with explicit provider override\"",
+    "test:orchestrator-smoke": "vitest run src/reviewer/ReviewerLoop.integration.test.ts",
     "test:orchestrator-journey": "vitest run src/wsServer.orchestrator.test.ts"
   },
   "dependencies": {

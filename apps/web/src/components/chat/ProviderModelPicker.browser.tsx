@@ -1,8 +1,4 @@
-import {
-  type ModelSlug,
-  type ProviderKind,
-  type ServerProviderStatus,
-} from "@orchestrate/contracts";
+import { type ModelSlug, type ProviderKind, type ServerProvider } from "@orchestrate/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -25,7 +21,7 @@ async function mountPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
-  providers?: ReadonlyArray<ServerProviderStatus>;
+  providers?: ReadonlyArray<ServerProvider>;
 }) {
   const host = document.createElement("div");
   document.body.append(host);

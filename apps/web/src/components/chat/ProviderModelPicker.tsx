@@ -1,8 +1,4 @@
-import {
-  type ModelSlug,
-  type ProviderKind,
-  type ServerProviderStatus,
-} from "@orchestrate/contracts";
+import { type ModelSlug, type ProviderKind, type ServerProvider } from "@orchestrate/contracts";
 import { resolveSelectableModel } from "@orchestrate/shared/model";
 import { memo, useState } from "react";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
@@ -38,7 +34,7 @@ const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   claudeAgent: ClaudeAI,
 };
 
-function resolveLiveProviderAvailability(provider: ServerProviderStatus | undefined): {
+function resolveLiveProviderAvailability(provider: ServerProvider | undefined): {
   disabled: boolean;
   label: string | null;
 } {
@@ -49,14 +45,15 @@ function resolveLiveProviderAvailability(provider: ServerProviderStatus | undefi
     };
   }
 
-  if (!provider.available) {
+  const authStatus = provider.authStatus ?? provider.auth?.status ?? "unknown";
+  if (provider.available === false) {
     return {
       disabled: true,
-      label: provider.authStatus === "unauthenticated" ? "Sign in" : "Unavailable",
+      label: authStatus === "unauthenticated" ? "Sign in" : "Unavailable",
     };
   }
 
-  if (provider.authStatus === "unauthenticated") {
+  if (authStatus === "unauthenticated") {
     return {
       disabled: true,
       label: "Sign in",
@@ -83,7 +80,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
-  providers?: ReadonlyArray<ServerProviderStatus>;
+  providers?: ReadonlyArray<ServerProvider>;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
   activeProviderIconClassName?: string;
   compact?: boolean;

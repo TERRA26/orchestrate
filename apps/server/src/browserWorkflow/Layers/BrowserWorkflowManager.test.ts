@@ -119,18 +119,49 @@ function makeObservation(input: {
   };
 }
 
-function makeBrowserRuntimeLayer(options: { readonly consoleError?: boolean } = {}) {
+function makeBrowserRuntimeLayer(
+  options: {
+    readonly consoleError?: boolean;
+    readonly runtimeKind?: "electron-visible" | "playwright-headless";
+    readonly actCalls?: string[];
+  } = {},
+) {
   const sessionId = BrowserSessionId.makeUnsafe("browser-session-workflow");
+  const runtimeKind = options.runtimeKind ?? "playwright-headless";
+  const surfaceMode =
+    runtimeKind === "electron-visible" ? "live-shared-browser" : "headless-validation-mirror";
+  const isUserVisibleSurface = runtimeKind === "electron-visible";
   return Layer.succeed(BrowserRuntimeService, {
     openSession: () =>
       Effect.succeed({
         sessionId,
-        observation: makeObservation({ sessionId }),
-        runtimeTruth: makeObservation({ sessionId }).runtimeTruth,
+        observation: {
+          ...makeObservation({ sessionId }),
+          runtimeKind,
+          surfaceMode,
+          isUserVisibleSurface,
+          runtimeTruth: {
+            ...makeObservation({ sessionId }).runtimeTruth!,
+            runtimeKind,
+            surfaceMode,
+            isUserVisibleSurface,
+            visiblePanelUrl: "http://127.0.0.1:5173/",
+            urlAgreement: "same",
+          },
+        },
+        runtimeTruth: {
+          ...makeObservation({ sessionId }).runtimeTruth!,
+          runtimeKind,
+          surfaceMode,
+          isUserVisibleSurface,
+          visiblePanelUrl: "http://127.0.0.1:5173/",
+          urlAgreement: "same",
+        },
         evidenceRefs: [EvidenceArtifactId.makeUnsafe("open-evidence-workflow")],
       }),
-    act: (input) =>
-      Effect.succeed({
+    act: (input) => {
+      options.actCalls?.push(input.action.kind);
+      return Effect.succeed({
         observation: makeObservation({
           sessionId: input.sessionId,
           url: input.action.kind === "navigate" ? input.action.url : "http://127.0.0.1:5173/",
@@ -140,12 +171,19 @@ function makeBrowserRuntimeLayer(options: { readonly consoleError?: boolean } = 
         }),
         runtimeTruth: makeObservation({ sessionId: input.sessionId }).runtimeTruth,
         evidenceRefs: [EvidenceArtifactId.makeUnsafe(`evidence-${input.action.kind}`)],
-      }),
+      });
+    },
     closeSession: () => Effect.void,
   });
 }
 
-function makeLayer(options: { readonly consoleError?: boolean } = {}) {
+function makeLayer(
+  options: {
+    readonly consoleError?: boolean;
+    readonly runtimeKind?: "electron-visible" | "playwright-headless";
+    readonly actCalls?: string[];
+  } = {},
+) {
   const evidenceRepositoryLayer = BrowserOrchestrationEvidenceRepositoryLive.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
@@ -243,3 +281,91 @@ makeLayer({ consoleError: true })("BrowserWorkflowManagerLive assertion failures
     }),
   );
 });
+
+const observeOnlyActCalls: string[] = [];
+
+makeLayer({ runtimeKind: "electron-visible", actCalls: observeOnlyActCalls })(
+  "BrowserWorkflowManagerLive observe-only current-page mode",
+  (it) => {
+    it.effect("captures assertions without unsupported route or viewport actions", () =>
+      Effect.gen(function* () {
+        observeOnlyActCalls.length = 0;
+        const workflows = yield* BrowserWorkflowManager;
+        const repository = yield* BrowserOrchestrationEvidenceRepository;
+        yield* seedScreenshotArtifact(
+          repository,
+          EvidenceArtifactId.makeUnsafe("screenshot-workflow"),
+        );
+
+        const result = yield* workflows.start({
+          sessionId: "workflow-session",
+          previewTarget,
+          preferredRuntimeKind: "electron-visible",
+          controlMode: "observe-only-current-page",
+          routePlan: [{ route: "/settings", label: "settings should not be navigated" }],
+          viewportPlan: [
+            {
+              id: "mobile",
+              label: "Mobile should not resize",
+              width: 390,
+              height: 844,
+              deviceScaleFactor: 2,
+            },
+          ],
+          assertions: [
+            { id: "url", type: "url-matches", pattern: "127.0.0.1" },
+            { id: "screenshot", type: "screenshot-captured" },
+          ],
+        });
+
+        assert.strictEqual(result.workflow.status, "completed");
+        assert.deepStrictEqual(observeOnlyActCalls, []);
+        assert.deepStrictEqual(result.workflow.routes, ["http://127.0.0.1:5173/"]);
+        assert.deepStrictEqual(
+          result.workflow.viewports.map((viewport) => viewport.id),
+          ["desktop"],
+        );
+        assert.ok(
+          result.workflow.assertionResults?.some(
+            (assertion) => assertion.assertionId === "screenshot" && assertion.status === "pass",
+          ),
+        );
+        assert.ok(result.workflow.screenshotArtifactRefs?.includes("screenshot-workflow"));
+      }),
+    );
+
+    it.effect(
+      "runs limited full-control route checks without resizing electron-visible runtime",
+      () =>
+        Effect.gen(function* () {
+          observeOnlyActCalls.length = 0;
+          const workflows = yield* BrowserWorkflowManager;
+          const repository = yield* BrowserOrchestrationEvidenceRepository;
+          yield* seedScreenshotArtifact(
+            repository,
+            EvidenceArtifactId.makeUnsafe("screenshot-navigate"),
+          );
+
+          const result = yield* workflows.start({
+            sessionId: "workflow-session",
+            previewTarget,
+            preferredRuntimeKind: "electron-visible",
+            controlMode: "full-control",
+            routePlan: [{ route: "/settings", label: "settings" }],
+            assertions: [
+              { id: "url", type: "url-matches", pattern: "/settings" },
+              { id: "screenshot", type: "screenshot-captured" },
+            ],
+          });
+
+          assert.strictEqual(result.workflow.status, "completed");
+          assert.deepStrictEqual(observeOnlyActCalls, ["navigate"]);
+          assert.ok(
+            result.workflow.assertionResults?.some(
+              (assertion) => assertion.assertionId === "screenshot" && assertion.status === "pass",
+            ),
+          );
+        }),
+    );
+  },
+);

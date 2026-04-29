@@ -336,7 +336,7 @@ function projectDraftThreadMappingKey(
   entryPoint: ThreadPrimarySurface = "chat",
   threadType: "orchestrator" | "agent" = "orchestrator",
 ): string {
-  let key = projectId;
+  let key = String(projectId);
   if (entryPoint === "terminal") {
     key += TERMINAL_DRAFT_THREAD_MAPPING_SUFFIX;
   }

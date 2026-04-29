@@ -264,7 +264,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
-        threadType: thread.threadType,
+        ...(thread.threadType ? { threadType: thread.threadType } : {}),
         parentThreadId: thread.parentThreadId ?? null,
         modelSelection: {
           ...thread.modelSelection,
@@ -301,7 +301,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
             text: message.text,
             createdAt: message.createdAt,
             streaming: message.streaming,
-            source: message.source,
+            ...(message.source ? { source: message.source } : {}),
+            turnId: message.turnId,
             ...(message.streaming ? {} : { completedAt: message.updatedAt }),
             ...(attachments && attachments.length > 0 ? { attachments } : {}),
           };
