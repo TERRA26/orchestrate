@@ -13,6 +13,7 @@ import {
   type EvidenceArtifactKind,
   EvidenceBundle as EvidenceBundleSchema,
   EvidenceBundleId,
+  MessageId,
   type EvidenceBundle,
   type PreviewViewport,
   PreviewTargetId,
@@ -39,6 +40,7 @@ import { Effect, Layer, Option, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { BrowserWorkflowManager } from "../../browserWorkflow/Services/BrowserWorkflowManager.ts";
+import { workerKickoffMessage } from "../../orchestration/reportProtocol.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { BrowserAnnotationRepository } from "../../persistence/Services/BrowserAnnotations.ts";
 import { BrowserOrchestrationEvidenceRepository } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
@@ -1645,6 +1647,21 @@ export const ReviewerDecisionServiceLive = Layer.effect(
             threadId: ThreadId.makeUnsafe(workerThreadId),
             spawnBudget,
             workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
+            createdAt: now(),
+          });
+          yield* orchestrationEngine.value.dispatch({
+            type: "thread.turn.start",
+            commandId: commandId(),
+            threadId: ThreadId.makeUnsafe(workerThreadId),
+            message: {
+              messageId: MessageId.makeUnsafe(randomUUID()),
+              role: "user",
+              text: workerKickoffMessage(instruction),
+              attachments: [],
+            },
+            modelSelection: callingThread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
             createdAt: now(),
           });
         }

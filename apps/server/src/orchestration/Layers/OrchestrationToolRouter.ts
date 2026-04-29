@@ -26,6 +26,7 @@ import { Effect, Layer, Option, Schema, Stream } from "effect";
 import crypto from "node:crypto";
 
 import { BrowserRuntimeService } from "../../browserRuntime/Services/BrowserRuntimeService.ts";
+import { workerKickoffMessage } from "../reportProtocol.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationToolRouterService,
@@ -600,26 +601,7 @@ function handleSpawnAgent(
     // auto-submit. So the reminder asks workers to emit a REPORT block in
     // their FINAL assistant message. The orchestrator's review flow reads
     // this block (via get_agent_logs) plus get_agent_diff to accept/reject.
-    const reportProtocolReminder = [
-      "",
-      "When you finish, end your last message with a REPORT block in this format:",
-      "",
-      "## REPORT",
-      "summary: one-sentence account of what you did",
-      "filesWritten:",
-      "  - absolute/repo-relative/path/to/file1",
-      "  - absolute/repo-relative/path/to/file2",
-      "testsRun:",
-      "  - name: test suite or file name",
-      "    passed: true",
-      "notes: anything surprising, deferred cleanup, unresolved questions",
-      "hasChanges: true if you wrote files, false if inspection-only",
-      "",
-      "The orchestrator reads this REPORT to decide accept vs reject. Omit it and",
-      "you will be rejected with a resubmit instruction.",
-    ].join("\n");
-    const taskMessage =
-      (normalizedObjective || "Begin working on the assigned task.") + reportProtocolReminder;
+    const taskMessage = workerKickoffMessage(normalizedObjective);
     yield* dispatch({
       type: "thread.turn.start" as const,
       commandId: uuid() as any,

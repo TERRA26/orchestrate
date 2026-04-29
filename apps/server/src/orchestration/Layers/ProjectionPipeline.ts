@@ -1287,15 +1287,16 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             runId: event.aggregateId as any,
           });
           const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
-          if (!existingTask) return;
-          yield* orchestratorRunsRepository.upsertTask({
-            ...existingTask,
-            status: "assigned",
-            ownerKind: event.payload.assigneeKind,
-            ownerId: event.payload.assigneeId ?? null,
-            assignedWorkerId: event.payload.assigneeId ?? null,
-            updatedAt: event.payload.assignedAt,
-          });
+          if (existingTask) {
+            yield* orchestratorRunsRepository.upsertTask({
+              ...existingTask,
+              status: "assigned",
+              ownerKind: event.payload.assigneeKind,
+              ownerId: event.payload.assigneeId ?? null,
+              assignedWorkerId: event.payload.assigneeId ?? null,
+              updatedAt: event.payload.assignedAt,
+            });
+          }
           yield* sql`
             UPDATE rework_tasks
             SET status = 'running', updated_at = ${event.payload.assignedAt}
@@ -1309,13 +1310,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             runId: event.aggregateId as any,
           });
           const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
-          if (!existingTask) return;
-          yield* orchestratorRunsRepository.upsertTask({
-            ...existingTask,
-            status: "submitted",
-            updatedAt: event.payload.submittedAt,
-            submittedAt: event.payload.submittedAt,
-          });
+          if (existingTask) {
+            yield* orchestratorRunsRepository.upsertTask({
+              ...existingTask,
+              status: "submitted",
+              updatedAt: event.payload.submittedAt,
+              submittedAt: event.payload.submittedAt,
+            });
+          }
           const afterEvidenceContent = JSON.stringify({
             type: "rework-task-submit",
             taskId: event.payload.taskId,
@@ -1367,13 +1369,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             runId: event.aggregateId as any,
           });
           const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
-          if (!existingTask) return;
-          yield* orchestratorRunsRepository.upsertTask({
-            ...existingTask,
-            status: "accepted",
-            updatedAt: event.payload.acceptedAt,
-            acceptedAt: event.payload.acceptedAt,
-          });
+          if (existingTask) {
+            yield* orchestratorRunsRepository.upsertTask({
+              ...existingTask,
+              status: "accepted",
+              updatedAt: event.payload.acceptedAt,
+              acceptedAt: event.payload.acceptedAt,
+            });
+          }
           yield* sql`
             UPDATE rework_tasks
             SET
@@ -1390,13 +1393,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             runId: event.aggregateId as any,
           });
           const existingTask = tasks.find((t) => t.taskId === event.payload.taskId);
-          if (!existingTask) return;
-          yield* orchestratorRunsRepository.upsertTask({
-            ...existingTask,
-            status: "needs-rework",
-            iteration: existingTask.iteration + 1,
-            updatedAt: event.payload.rejectedAt,
-          });
+          if (existingTask) {
+            yield* orchestratorRunsRepository.upsertTask({
+              ...existingTask,
+              status: "needs-rework",
+              iteration: existingTask.iteration + 1,
+              updatedAt: event.payload.rejectedAt,
+            });
+          }
           yield* sql`
             UPDATE rework_tasks
             SET

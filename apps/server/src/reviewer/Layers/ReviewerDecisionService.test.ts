@@ -5,22 +5,34 @@ import {
   BrowserSessionId,
   EvidenceArtifactId,
   EvidenceBundleId,
+  ProjectId,
   PreviewTargetId,
   ReviewerDecisionId,
+  ThreadId,
   TaskSpecId,
   AcceptanceCriteriaId,
   AcceptanceCriterionId,
   PermissionPolicyId,
   WorkflowRunId,
+  type OrchestrationCommand,
+  type OrchestrationReadModel,
+  type OrchestrationThread,
   type BrowserObservation,
   type BrowserWorkflowRun,
   type PreviewTarget,
 } from "@orchestrate/contracts";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { BrowserRuntimeService } from "../../browserRuntime/Services/BrowserRuntimeService.ts";
 import { BrowserWorkflowManager } from "../../browserWorkflow/Services/BrowserWorkflowManager.ts";
 import { BrowserWorkflowManagerLive } from "../../browserWorkflow/Layers/BrowserWorkflowManager.ts";
+import { reportProtocolReminder } from "../../orchestration/reportProtocol.ts";
+import {
+  OrchestrationEngineService,
+  type OrchestrationEngineShape,
+} from "../../orchestration/Services/OrchestrationEngine.ts";
+import { createEmptyReadModel } from "../../orchestration/projector.ts";
 import { BrowserAnnotationRepositoryLive } from "../../persistence/Layers/BrowserAnnotations.ts";
 import { BrowserAnnotationRepository } from "../../persistence/Services/BrowserAnnotations.ts";
 import { BrowserOrchestrationEvidenceRepositoryLive } from "../../persistence/Layers/BrowserOrchestrationEvidence.ts";
@@ -57,6 +69,72 @@ const previewTarget: PreviewTarget = {
   serverLogRefs: [EvidenceArtifactId.makeUnsafe("server-log-reviewer")],
   createdAt: "2026-04-28T00:00:00.000Z",
 };
+
+const reviewerProjectId = ProjectId.makeUnsafe("project-reviewer-rework");
+const reviewerThreadId = ThreadId.makeUnsafe("browser-session-rework-start");
+
+function makeReviewerThread(): OrchestrationThread {
+  return {
+    id: reviewerThreadId,
+    projectId: reviewerProjectId,
+    title: "Reviewer rework thread",
+    threadType: "orchestrator",
+    modelSelection: { provider: "codex", model: "gpt-5-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    envMode: "local",
+    branch: null,
+    worktreePath: null,
+    associatedWorktreePath: null,
+    associatedWorktreeBranch: null,
+    associatedWorktreeRef: null,
+    forkSourceThreadId: null,
+    latestTurn: null,
+    createdAt: "2026-04-28T00:00:00.000Z",
+    updatedAt: "2026-04-28T00:00:00.000Z",
+    deletedAt: null,
+    archivedAt: null,
+    handoff: null,
+    messages: [],
+    proposedPlans: [],
+    activities: [],
+    checkpoints: [],
+    session: null,
+  };
+}
+
+function makeReviewerReadModel(): OrchestrationReadModel {
+  return {
+    ...createEmptyReadModel("2026-04-28T00:00:00.000Z"),
+    projects: [
+      {
+        id: reviewerProjectId,
+        title: "Reviewer Rework Project",
+        workspaceRoot: "/tmp/reviewer-rework",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+        scripts: [],
+        createdAt: "2026-04-28T00:00:00.000Z",
+        updatedAt: "2026-04-28T00:00:00.000Z",
+        deletedAt: null,
+      },
+    ],
+    threads: [makeReviewerThread()],
+  };
+}
+
+function makeOrchestrationEngineLayer(commands: OrchestrationCommand[]) {
+  const engine: OrchestrationEngineShape = {
+    getReadModel: () => Effect.succeed(makeReviewerReadModel()),
+    dispatch: (command) =>
+      Effect.sync(() => {
+        commands.push(command);
+        return { sequence: commands.length };
+      }),
+    readEvents: () => Stream.empty,
+    streamDomainEvents: Stream.empty,
+  };
+  return Layer.succeed(OrchestrationEngineService, engine);
+}
 
 function seedArtifact(
   repository: BrowserOrchestrationEvidenceRepositoryShape,
@@ -177,6 +255,34 @@ function makeLayer(options: { readonly consoleError?: boolean } = {}) {
       ),
       evidenceRepositoryLayer,
       annotationRepositoryLayer,
+    ),
+  );
+}
+
+function makeStartAgentRunLayer(commands: OrchestrationCommand[]) {
+  const persistenceLayer = SqlitePersistenceMemory;
+  const evidenceRepositoryLayer = BrowserOrchestrationEvidenceRepositoryLive.pipe(
+    Layer.provide(persistenceLayer),
+  );
+  const annotationRepositoryLayer = BrowserAnnotationRepositoryLive.pipe(
+    Layer.provide(persistenceLayer),
+  );
+  const workflowLayer = BrowserWorkflowManagerLive.pipe(
+    Layer.provide(makeBrowserRuntimeLayer()),
+    Layer.provide(evidenceRepositoryLayer),
+  );
+  return it.layer(
+    Layer.mergeAll(
+      ReviewerDecisionServiceLive.pipe(
+        Layer.provideMerge(workflowLayer),
+        Layer.provide(annotationRepositoryLayer),
+        Layer.provide(evidenceRepositoryLayer),
+        Layer.provide(makeOrchestrationEngineLayer(commands)),
+        Layer.provide(persistenceLayer),
+      ),
+      evidenceRepositoryLayer,
+      annotationRepositoryLayer,
+      persistenceLayer,
     ),
   );
 }
@@ -323,6 +429,106 @@ function makeReviewerOnlyLayer(workflow: BrowserWorkflowRun) {
     ),
   );
 }
+
+const startAgentRunCommands: OrchestrationCommand[] = [];
+
+makeStartAgentRunLayer(startAgentRunCommands)(
+  "ReviewerDecisionServiceLive start-agent-run rework",
+  (it) => {
+    it.effect("spawns and kicks off a focused rework worker turn", () =>
+      Effect.gen(function* () {
+        startAgentRunCommands.length = 0;
+        const reviewer = yield* ReviewerDecisionService;
+        const annotations = yield* BrowserAnnotationRepository;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* annotations.insert({
+          annotationId: BrowserAnnotationId.makeUnsafe("browser-annotation-start-agent"),
+          threadId: reviewerThreadId,
+          sessionId: null,
+          status: "open",
+          annotationJson: JSON.stringify({
+            id: "browser-annotation-start-agent",
+            threadId: reviewerThreadId,
+            browserSessionId: reviewerThreadId,
+            url: "http://127.0.0.1:5173/settings",
+            comment: "Align the save button with the form footer.",
+            kind: "point",
+            x: 0.5,
+            y: 0.5,
+            status: "open",
+            cropArtifactRef: "browser-comment-crop-start-agent",
+            beforeScreenshotArtifactRef: "browser-screenshot-before-start-agent",
+            beforeDomArtifactRef: "browser-dom-before-start-agent",
+            artifactRefs: ["browser-comment-crop-start-agent"],
+            createdAt: "2026-04-28T00:00:00.000Z",
+            updatedAt: "2026-04-28T00:00:00.000Z",
+          }),
+          resolvedByDecisionId: null,
+          targetJson: null,
+          geometryContextJson: null,
+          createdAt: "2026-04-28T00:00:00.000Z",
+          updatedAt: "2026-04-28T00:00:00.000Z",
+          resolvedAt: null,
+          reopenedAt: null,
+        });
+
+        const result = yield* reviewer.startRework({
+          annotationIds: ["browser-annotation-start-agent"],
+          mode: "start-agent-run",
+        });
+
+        assert.strictEqual(result.status, "started");
+        assert.deepEqual(
+          startAgentRunCommands.map((command) => command.type),
+          [
+            "orchestrator.run.create",
+            "orchestrator.task.create",
+            "thread.create",
+            "orchestrator.worker.spawn",
+            "thread.turn.start",
+          ],
+        );
+
+        const turnStart = startAgentRunCommands[4];
+        assert.strictEqual(turnStart?.type, "thread.turn.start");
+        if (turnStart?.type !== "thread.turn.start") {
+          throw new Error("Expected thread.turn.start command.");
+        }
+        assert.ok(turnStart.message.text.includes("Align the save button"));
+        assert.ok(turnStart.message.text.includes(reportProtocolReminder));
+        assert.deepEqual(turnStart.modelSelection, {
+          provider: "codex",
+          model: "gpt-5-codex",
+        });
+        assert.strictEqual(turnStart.runtimeMode, "full-access");
+
+        const reworkRows = yield* sql<{
+          readonly status: string;
+          readonly orchestratorTaskId: string | null;
+          readonly workerId: string | null;
+          readonly beforeEvidenceRefsJson: string;
+        }>`
+          SELECT
+            status,
+            orchestrator_task_id AS "orchestratorTaskId",
+            worker_id AS "workerId",
+            before_evidence_refs_json AS "beforeEvidenceRefsJson"
+          FROM rework_tasks
+          WHERE rework_task_id = ${result.reworkTaskId}
+        `;
+        assert.strictEqual(reworkRows.length, 1);
+        assert.strictEqual(reworkRows[0]?.status, "assigned");
+        assert.ok(reworkRows[0]?.orchestratorTaskId);
+        assert.ok(reworkRows[0]?.workerId);
+        assert.deepEqual(JSON.parse(reworkRows[0]?.beforeEvidenceRefsJson ?? "[]"), [
+          "browser-screenshot-before-start-agent",
+          "browser-dom-before-start-agent",
+        ]);
+      }),
+    );
+  },
+);
 
 makeLayer()("ReviewerDecisionServiceLive accepted path", (it) => {
   it.effect("creates an evidence bundle and accepted reviewer decision from a workflow", () =>

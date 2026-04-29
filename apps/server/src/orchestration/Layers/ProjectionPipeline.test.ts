@@ -4,6 +4,9 @@ import {
   CorrelationId,
   EventId,
   MessageId,
+  OrchestratorRunId,
+  OrchestratorTaskId,
+  OrchestratorWorkerId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -1991,6 +1994,220 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           visibility: "foreground",
         },
       ]);
+    }),
+  );
+
+  it.effect("projects rework task lifecycle transitions and submit evidence", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = new Date().toISOString();
+      const submittedAt = new Date(Date.parse(createdAt) + 1_000).toISOString();
+      const acceptedAt = new Date(Date.parse(createdAt) + 2_000).toISOString();
+      const rejectedAt = new Date(Date.parse(createdAt) + 3_000).toISOString();
+      const runId = OrchestratorRunId.makeUnsafe("run-rework-lifecycle");
+      const acceptedTaskId = OrchestratorTaskId.makeUnsafe("task-rework-accepted");
+      const rejectedTaskId = OrchestratorTaskId.makeUnsafe("task-rework-rejected");
+      const acceptedWorkerId = OrchestratorWorkerId.makeUnsafe("worker-rework-accepted");
+      const rejectedWorkerId = OrchestratorWorkerId.makeUnsafe("worker-rework-rejected");
+      const spawnBudget = {
+        maxDepth: 1,
+        maxChildren: 2,
+        maxConcurrentWriters: 1,
+        maxTotalWorkers: 2,
+        allowedTools: [],
+        writeScope: [],
+      };
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-rework-project"),
+        projectId: ProjectId.makeUnsafe("project-rework-lifecycle"),
+        title: "Rework Lifecycle Project",
+        workspaceRoot: "/tmp/project-rework-lifecycle",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      });
+
+      yield* engine.dispatch({
+        type: "orchestrator.run.create",
+        commandId: CommandId.makeUnsafe("cmd-rework-run"),
+        runId,
+        projectId: ProjectId.makeUnsafe("project-rework-lifecycle"),
+        userRequest: "Review rework lifecycle",
+        goals: ["Persist rework lifecycle"],
+        spawnBudget,
+        createdAt,
+      });
+
+      for (const taskId of [acceptedTaskId, rejectedTaskId]) {
+        yield* engine.dispatch({
+          type: "orchestrator.task.create",
+          commandId: CommandId.makeUnsafe(`cmd-${taskId}-create`),
+          taskId,
+          runId,
+          title: `Rework ${taskId}`,
+          objective: `Complete ${taskId}`,
+          acceptanceCriteria: ["Lifecycle persists"],
+          maxIterations: 3,
+          createdAt,
+        });
+      }
+
+      yield* sql`
+        INSERT INTO rework_tasks (
+          rework_task_id, thread_id, orchestrator_task_id, status,
+          annotation_targets_json, evidence_refs_json, before_evidence_refs_json,
+          after_evidence_refs_json, instruction, created_at, updated_at
+        )
+        VALUES
+          (
+            'rework-task-accepted', 'thread-rework-lifecycle',
+            ${acceptedTaskId}, 'assigned', '[]', '[]', '[]', '[]',
+            'accepted path', ${createdAt}, ${createdAt}
+          ),
+          (
+            'rework-task-rejected', 'thread-rework-lifecycle',
+            ${rejectedTaskId}, 'assigned', '[]', '[]', '[]', '[]',
+            'rejected path', ${createdAt}, ${createdAt}
+          )
+      `;
+
+      yield* engine.dispatch({
+        type: "orchestrator.worker.spawn",
+        commandId: CommandId.makeUnsafe("cmd-rework-accepted-spawn"),
+        workerId: acceptedWorkerId,
+        runId,
+        taskId: acceptedTaskId,
+        threadId: ThreadId.makeUnsafe("worker-thread-rework-accepted"),
+        spawnBudget,
+        workspace: {
+          mode: "local",
+          cwd: "/tmp/project-rework-lifecycle",
+          terminalIds: [],
+        },
+        createdAt,
+      });
+
+      const runningRows = yield* sql<{ readonly status: string; readonly workerId: string }>`
+        SELECT status, worker_id AS "workerId"
+        FROM rework_tasks
+        WHERE rework_task_id = 'rework-task-accepted'
+      `;
+      assert.deepEqual(runningRows, [{ status: "running", workerId: acceptedWorkerId }]);
+
+      yield* engine.dispatch({
+        type: "orchestrator.task.submit",
+        commandId: CommandId.makeUnsafe("cmd-rework-accepted-submit"),
+        taskId: acceptedTaskId,
+        workerId: acceptedWorkerId,
+        summary: "Resolved the annotation",
+        hasChanges: true,
+        filesWritten: ["apps/web/src/Settings.tsx"],
+        testsRun: [{ name: "Settings layout", passed: true }],
+        notes: "Visual alignment checked.",
+        createdAt: submittedAt,
+      });
+
+      const submittedRows = yield* sql<{
+        readonly status: string;
+        readonly afterEvidenceRefsJson: string;
+        readonly submittedAt: string | null;
+      }>`
+        SELECT
+          status,
+          after_evidence_refs_json AS "afterEvidenceRefsJson",
+          submitted_at AS "submittedAt"
+        FROM rework_tasks
+        WHERE rework_task_id = 'rework-task-accepted'
+      `;
+      assert.strictEqual(submittedRows[0]?.status, "submitted");
+      assert.strictEqual(submittedRows[0]?.submittedAt, submittedAt);
+      const afterEvidenceRefs = JSON.parse(submittedRows[0]?.afterEvidenceRefsJson ?? "[]") as
+        | string[]
+        | unknown;
+      assert.ok(Array.isArray(afterEvidenceRefs));
+      assert.strictEqual(afterEvidenceRefs.length, 1);
+      assert.match(afterEvidenceRefs[0] ?? "", /^rework-after-/);
+
+      const evidenceRows = yield* sql<{ readonly kind: string }>`
+        SELECT kind
+        FROM evidence_artifacts
+        WHERE artifact_id = ${afterEvidenceRefs[0]}
+      `;
+      assert.deepEqual(evidenceRows, [{ kind: "browser-comment" }]);
+
+      yield* engine.dispatch({
+        type: "orchestrator.task.accept",
+        commandId: CommandId.makeUnsafe("cmd-rework-accepted-accept"),
+        taskId: acceptedTaskId,
+        summary: "Accepted",
+        createdAt: acceptedAt,
+      });
+
+      const acceptedRows = yield* sql<{ readonly status: string; readonly reviewedAt: string }>`
+        SELECT status, reviewed_at AS "reviewedAt"
+        FROM rework_tasks
+        WHERE rework_task_id = 'rework-task-accepted'
+      `;
+      assert.deepEqual(acceptedRows, [{ status: "accepted", reviewedAt: acceptedAt }]);
+
+      yield* engine.dispatch({
+        type: "orchestrator.worker.spawn",
+        commandId: CommandId.makeUnsafe("cmd-rework-rejected-spawn"),
+        workerId: rejectedWorkerId,
+        runId,
+        taskId: rejectedTaskId,
+        threadId: ThreadId.makeUnsafe("worker-thread-rework-rejected"),
+        spawnBudget,
+        workspace: {
+          mode: "local",
+          cwd: "/tmp/project-rework-lifecycle",
+          terminalIds: [],
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "orchestrator.task.submit",
+        commandId: CommandId.makeUnsafe("cmd-rework-rejected-submit"),
+        taskId: rejectedTaskId,
+        workerId: rejectedWorkerId,
+        summary: "Attempted fix",
+        hasChanges: true,
+        createdAt: submittedAt,
+      });
+      yield* engine.dispatch({
+        type: "orchestrator.task.reject",
+        commandId: CommandId.makeUnsafe("cmd-rework-rejected-reject"),
+        taskId: rejectedTaskId,
+        instruction: "Still misaligned",
+        createdAt: rejectedAt,
+      });
+
+      const rejectedRows = yield* sql<{ readonly status: string; readonly reviewedAt: string }>`
+        SELECT status, reviewed_at AS "reviewedAt"
+        FROM rework_tasks
+        WHERE rework_task_id = 'rework-task-rejected'
+      `;
+      assert.deepEqual(rejectedRows, [{ status: "needs-review", reviewedAt: rejectedAt }]);
+
+      yield* engine.dispatch({
+        type: "orchestrator.worker.demote",
+        commandId: CommandId.makeUnsafe("cmd-rework-accepted-demote"),
+        workerId: acceptedWorkerId,
+        visibility: "background",
+        createdAt: rejectedAt,
+      });
+      yield* engine.dispatch({
+        type: "orchestrator.worker.demote",
+        commandId: CommandId.makeUnsafe("cmd-rework-rejected-demote"),
+        workerId: rejectedWorkerId,
+        visibility: "background",
+        createdAt: rejectedAt,
+      });
     }),
   );
 

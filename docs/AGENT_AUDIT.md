@@ -938,7 +938,7 @@ The infrastructure shape is right — schema fields, migration, projection, UI s
 - All targeted tests run on my machine: server 15/15, web 35/35, contracts 17/17. `bun lint` 0 errors. `bun typecheck` 10/10 PASS. No `as any`/`@ts-expect-error`/`eslint-disable` introduced in the production diff (Q5 confirmed).
 - Schema fields added correctly to both [`packages/contracts/src/browser.ts:774-781`](packages/contracts/src/browser.ts:774) (`BrowserAnnotation`) and [`packages/contracts/src/browserOrchestration.ts:1024-1027`](packages/contracts/src/browserOrchestration.ts:1024) (`BrowserAnnotationReworkTarget`). Both `Schema.optional`, no schema lies.
 - Migration [`045_ReworkTasks.ts`](apps/server/src/persistence/Migrations/045_ReworkTasks.ts) creates the table with the right columns and three useful indexes (`parent_decision_id`, `orchestrator_task_id`, `status`). Registered in [`Migrations.ts:60,117`](apps/server/src/persistence/Migrations.ts:60).
-- Before-evidence is captured at *annotation creation* by reusing `fullScreenshotArtifactRef`/`browserInspectionRef` ([`BrowserAnnotationService.ts:70-73`](apps/server/src/browserAnnotations/Layers/BrowserAnnotationService.ts:70)). Smart — the existing creation-time capture *is* the "before" moment. No new capture path needed.
+- Before-evidence is captured at _annotation creation_ by reusing `fullScreenshotArtifactRef`/`browserInspectionRef` ([`BrowserAnnotationService.ts:70-73`](apps/server/src/browserAnnotations/Layers/BrowserAnnotationService.ts:70)). Smart — the existing creation-time capture _is_ the "before" moment. No new capture path needed.
 - `loadAnnotationReworkTargetsByIds` propagates the four refs to `BrowserAnnotationReworkTarget` and includes them in `artifactRefs` ([`ReviewerDecisionService.ts:1192-1280`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1192)).
 - `startRework` correctly delegates to `OrchestrationEngineService` rather than stuffing orchestration into the reviewer ([`ReviewerDecisionService.ts:1575-1639`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1575)). Dispatches `orchestrator.run.create`, `orchestrator.task.create`, `thread.create`, `orchestrator.worker.spawn`. Uses `Effect.serviceOption` to cleanly fail-closed when the engine is unavailable in non-orchestrator contexts.
 - Persisted row uses `INSERT … ON CONFLICT DO UPDATE SET status, updated_at` — idempotent and safe under retry. Initial status: `"drafted"` (mode=draft-task) or `"assigned"` (mode=start-agent-run).
@@ -990,6 +990,7 @@ The agent reported "PASS server tests" but the only `startRework` test in [`Revi
 - The dispatched `thread.turn.start` (the F-1 fix) message contains the report protocol reminder text.
 
 These five (or more) tests close the bundle's stated gates:
+
 - "startRework with mode === 'start-agent-run' DOES spawn a task; row exists with status 'assigned'…"
 - "State machine transitions: assigned → running → submitted → needs-review → accepted (and a separate test for the rejected branch)."
 - "After-evidence is captured at submit, not at accept."
@@ -1013,14 +1014,16 @@ Screenshot browser-screenshot-… Screenshot rework-after-abc12…
 DOM browser-inspection-…        (no DOM)
 ```
 
-The whole point of "before/after evidence" is *visual proof of the change*. JSON-summary-as-text doesn't deliver that. The current implementation is a structurally sound stub.
+The whole point of "before/after evidence" is _visual proof of the change_. JSON-summary-as-text doesn't deliver that. The current implementation is a structurally sound stub.
 
 Accepted as deferred because:
+
 - The schema fields and the projection routing are in place.
 - Wiring fresh visual capture at submit requires a non-trivial decision: where does the screenshot come from? Worker self-captures via `BrowserRuntimeService.observe` and includes refs in the submit payload? Or does the projection look up an active session by thread/preview? Or does the supervisor capture on the submit signal? All viable, all bigger than this PR.
-- The current artifact provides *some* durable trail at submit time, which is non-zero.
+- The current artifact provides _some_ durable trail at submit time, which is non-zero.
 
 **Follow-up bundle (call it 17B-F-3 or roll into 17C):**
+
 - Decide the capture mechanism (recommendation: worker self-captures via the existing `BrowserRuntimeService.observe` API and includes the screenshot/DOM artifact refs in its submit payload — this aligns with the rest of the architecture where workers are responsible for their own evidence).
 - Extend `orchestrator.task.submit` event payload with optional `browserAfterScreenshotRef` / `browserAfterDomRef` (or a generic `submissionEvidenceRefs` array).
 - Projection writes those refs to `rework_tasks.after_evidence_refs_json` and to the corresponding `BrowserAnnotationReworkTarget.afterScreenshotArtifactRef` / `afterDomArtifactRef` field on the annotation row.
@@ -1037,7 +1040,7 @@ Track this as the F-3 follow-up; do not block Sub-scope B re-do on it.
 
 3. **Should start-agent-run dispatch `thread.turn.start`?** **Yes, this is required (F-1).** Without it, the worker is created but never starts. Extract a shared `reportProtocol.ts` helper and use it in both `OrchestrationToolRouter.handleSpawnAgent` and `ReviewerDecisionService.startRework`.
 
-4. **Lifecycle: `rejected → needs-review` mapping?** Acceptable as a thoughtful reinterpretation of "rejection means more iteration." The original spec said `accepted | rejected` as terminal states. Your mapping treats `rejected` as a *transition* into a non-terminal `needs-review` state where a human can decide whether to iterate or finalize. That's defensible. If you want to keep this, add an explicit terminal `rejected` state for the case where the reviewer declines further iteration entirely (e.g., the work is fundamentally wrong and shouldn't be retried). Otherwise document the divergence in the bundle spec. No blocking change required.
+4. **Lifecycle: `rejected → needs-review` mapping?** Acceptable as a thoughtful reinterpretation of "rejection means more iteration." The original spec said `accepted | rejected` as terminal states. Your mapping treats `rejected` as a _transition_ into a non-terminal `needs-review` state where a human can decide whether to iterate or finalize. That's defensible. If you want to keep this, add an explicit terminal `rejected` state for the case where the reviewer declines further iteration entirely (e.g., the work is fundamentally wrong and shouldn't be retried). Otherwise document the divergence in the bundle spec. No blocking change required.
 
 5. **as any / ts-expect-error in your diff?** Verified clean. The grep against your production files in 27e8514b returned zero hits. Existing pre-existing casts in `wsServer.test.ts`, `wsServer.ts:999`, `NodeSqliteClient.ts`, and `ProjectionPipeline.test.ts` are unchanged.
 
@@ -1081,3 +1084,32 @@ Out of scope for the re-do (deferred):
 
 - **2026-04-29 — Agent Report — Bundle 17B Sub-scope B** — implemented; pushed at `27e8514b`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17B Sub-scope B** — BLOCKED on F-1 (dispatch `thread.turn.start`) and F-2 (test the start-agent-run path + four projection transitions). F-3 (visual after-evidence) deferred to a follow-up bundle. Migration numbering, schema lies, silent fallbacks, and `as any` checks all clean.
+
+## Agent Report — 2026-04-29T19:04:00-04:00 — Bundle 17B Sub-scope B re-do
+
+This follow-up addresses the two blocking reviewer findings from `91d8eb38`: F-1 worker kickoff and F-2 missing coverage. F-3 visual after-evidence remains deferred as requested.
+
+### Changes
+
+- Extracted the worker REPORT protocol text and kickoff-message construction into a shared helper: [`apps/server/src/orchestration/reportProtocol.ts:1`](apps/server/src/orchestration/reportProtocol.ts:1).
+- Updated the existing spawn-agent path to use the shared helper without changing the emitted reminder text: [`apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:603`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:603).
+- `ReviewerDecisionService.startRework({ mode: "start-agent-run" })` now dispatches `thread.turn.start` immediately after `orchestrator.worker.spawn`, using the worker thread, the caller's model selection, full-access/default runtime settings, and `workerKickoffMessage(instruction)`: [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1652`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1652).
+- Hardened rework projection updates so task lifecycle events always update matching `rework_tasks` rows from the event payload, even when the regular task projection lookup does not find a task under that event aggregate: [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1289`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1289), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1312`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1312), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1371`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1371), [`apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1395`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1395).
+
+### Tests Added
+
+- Added a reviewer-service test that runs `startRework` in `start-agent-run` mode with an `OrchestrationEngineService` mock, asserts the five dispatched commands in order (`run.create`, `task.create`, `thread.create`, `worker.spawn`, `thread.turn.start`), verifies the kickoff message contains the shared report protocol reminder, and checks the persisted `rework_tasks` row is `assigned`: [`apps/server/src/reviewer/Layers/ReviewerDecisionService.test.ts:438`](apps/server/src/reviewer/Layers/ReviewerDecisionService.test.ts:438).
+- Added a projection lifecycle test that drives a real engine through worker spawn, submit, accept, and reject, and asserts `rework_tasks` transitions through `running`, `submitted`, `accepted`, and `needs-review`; submit also verifies a `browser-comment` evidence artifact with `rework-after-*` ref and `submitted_at`: [`apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts:2000`](apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts:2000).
+
+### Verification
+
+- PASS: `cd apps/server && PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/reviewer/Layers/ReviewerDecisionService.test.ts src/orchestration/Layers/OrchestrationToolRouter.test.ts` (29 tests).
+- PASS: `cd apps/server && PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/orchestration/Layers/ProjectionPipeline.test.ts -t "rework task lifecycle"` (1 targeted lifecycle test; 18 skipped by filter).
+- PASS: `cd apps/server && PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/persistence/Migrations/045_ReworkTasks.test.ts` (1 test).
+- PASS: `cd packages/contracts && bun run test src/browserOrchestration.test.ts` (17 tests).
+- PASS: `cd apps/web && bun run test src/browserWorkLog.test.ts src/components/chat/WorkEntryRow.test.tsx` (35 tests).
+
+### Notes for Reviewer
+
+- The projection lifecycle test initially exposed that task submit/accept/reject rework updates were gated behind an existing-task lookup that can miss for task-scoped events. I fixed that rather than only adjusting the test, because the durable `rework_tasks` row should follow the event payload.
+- I have not changed the deferred F-3 visual after-evidence behavior.
