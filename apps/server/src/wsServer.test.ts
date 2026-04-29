@@ -54,6 +54,11 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import {
+  BrowserRuntimeService,
+  type BrowserRuntimeServiceShape,
+} from "./browserRuntime/Services/BrowserRuntimeService.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -493,6 +498,7 @@ describe("WebSocket Server", () => {
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
+      browserRuntime?: BrowserRuntimeServiceShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -534,6 +540,9 @@ describe("WebSocket Server", () => {
       options.terminalManager
         ? Layer.succeed(TerminalManager, options.terminalManager)
         : Layer.empty,
+      options.browserRuntime
+        ? Layer.succeed(BrowserRuntimeService, options.browserRuntime)
+        : Layer.empty,
     );
 
     const runtimeLayer = Layer.merge(
@@ -549,6 +558,7 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(NodeServices.layer),
     );
     const runtimeServices = await Effect.runPromise(
@@ -604,6 +614,80 @@ describe("WebSocket Server", () => {
         projectName: "project",
       }),
     );
+  });
+
+  it("opens browser sessions through the WS boundary with electron-visible default", async () => {
+    let capturedPreferredRuntimeKind: unknown = "not-called";
+    const browserRuntime: BrowserRuntimeServiceShape = {
+      openSession: (input) =>
+        Effect.sync(() => {
+          capturedPreferredRuntimeKind = input.preferredRuntimeKind;
+          return {
+            sessionId: "electron-visible-ws-boundary-session",
+            observation: {
+              sessionId: "electron-visible-ws-boundary-session",
+              url: input.url,
+              title: "Visible boundary fixture",
+              readyState: "complete",
+              textSummary: "Visible boundary fixture page",
+              targets: [],
+              consoleErrors: [],
+              networkErrors: [],
+              runtimeKind: "electron-visible",
+              surfaceMode: "live-shared-browser",
+              isUserVisibleSurface: true,
+              observedUrl: input.url,
+              visiblePanelUrl: input.url,
+              urlAgreement: "same",
+              observedAt: "2026-04-29T00:00:00.000Z",
+              runtimeTruth: {
+                runtimeKind: "electron-visible",
+                surfaceMode: "live-shared-browser",
+                isUserVisibleSurface: true,
+                browserSessionId: "electron-visible-ws-boundary-session",
+                observedUrl: input.url,
+                visiblePanelUrl: input.url,
+                urlAgreement: "same",
+              },
+            },
+            runtimeTruth: {
+              runtimeKind: "electron-visible",
+              surfaceMode: "live-shared-browser",
+              isUserVisibleSurface: true,
+              browserSessionId: "electron-visible-ws-boundary-session",
+              observedUrl: input.url,
+              visiblePanelUrl: input.url,
+              urlAgreement: "same",
+            },
+            evidenceRefs: [],
+            claimGate: [],
+          };
+        }),
+      act: () => Effect.fail(new Error("not used")),
+      closeSession: () => Effect.void,
+      observe: () => Effect.fail(new Error("not used")),
+      inspect: () => Effect.fail(new Error("not used")),
+      resolveAnnotationTargetAtPoint: () => Effect.fail(new Error("not used")),
+    };
+    server = await createTestServer({ browserRuntime });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+    const response = await sendRequest(ws, WS_METHODS.browserOpenSession, {
+      url: "http://127.0.0.1:5173/",
+      threadId: "thread-browser-ws-boundary",
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(capturedPreferredRuntimeKind).toBe("electron-visible");
+    const result = response.result as {
+      runtimeTruth?: { runtimeKind?: string; surfaceMode?: string };
+    };
+    expect(result.runtimeTruth?.runtimeKind).toBe("electron-visible");
+    expect(result.runtimeTruth?.surfaceMode).toBe("live-shared-browser");
   });
 
   it("serves persisted attachments from stateDir", async () => {

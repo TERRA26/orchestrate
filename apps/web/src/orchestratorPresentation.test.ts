@@ -22,6 +22,13 @@ describe("orchestratorPresentation", () => {
         isDurable: true,
       }),
     ).toBe("Live shared browser · evidence captured");
+    expect(browserSurfaceModeLabel("unknown")).toBe("Browser runtime unknown");
+    expect(
+      browserRuntimeEvidenceLabel({
+        surfaceMode: "unknown",
+        isDurable: true,
+      }),
+    ).toBe("Browser runtime unknown · evidence incomplete");
   });
 
   it("maps raw browser work into semantic progress phrases", () => {

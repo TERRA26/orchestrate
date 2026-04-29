@@ -1664,3 +1664,11 @@ Bundle 16C checks currently pass:
 - `bun run test:orchestrator-smoke` (`2` reviewer-loop integration tests)
 
 Broad `bun run test` was probed and still fails in existing broad `@orchestrate/web` test debt. Current broad web probe again reported `9` failed test files and `13` failed tests, with `767` passing web tests out of `780`. The failure classes remain the broad baseline set: composer slash command expectations, pinned thread storage environment, websocket push envelope tests, session work-log ordering, sidebar palette expectations, sidebar search expectations, composer draft thread shape, terminal store persistence setup, and message timeline class snapshots.
+
+## Bundle 17B Hardening Baseline Refresh - 2026-04-29
+
+Bundle 17A/17B verification uses Node `24.14.1` locally because the default shell Node `20.19.6` is below the repo's current Astro requirement. The focused browser runtime/workflow/router/evidence and presentation tests pass, and `bun fmt`, `bun lint`, and `bun typecheck` pass with the Node 24 path.
+
+The broad `bun run test` baseline still includes web test debt outside the browser runtime patch area. The current observed failing web files are `apps/web/src/composerSlashCommands.test.ts`, `apps/web/src/composerDraftStore.test.ts`, `apps/web/src/terminalStateStore.test.ts`, `apps/web/src/components/SidebarSearchPalette.logic.test.ts`, plus the already documented `apps/web/src/pinnedThreadsStore.test.ts`, `apps/web/src/session-logic.test.ts`, `apps/web/src/wsTransport.test.ts`, `apps/web/src/components/Sidebar.logic.test.ts`, and `apps/web/src/components/chat/MessagesTimeline.test.tsx`. These failures cover command expectation drift, persisted-store browser-environment assumptions, websocket listener/push envelope expectations, session work-log ordering, sidebar/search palette expectations, composer draft thread shape, terminal store persistence setup, and message timeline class snapshots.
+
+Claude's 17A review also observed a broad `@orchestrate/game-platform` failure in `apps/game-platform/src/tic-tac-toe/logic.test.ts` around the AI-unbeatable timeout path. That package is outside the browser runtime/reviewer annotation work; track it as a likely flaky or performance-sensitive test until a game-platform-focused bundle can isolate it.

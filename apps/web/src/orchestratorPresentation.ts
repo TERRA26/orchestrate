@@ -15,6 +15,7 @@ export function browserSurfaceModeLabel(surfaceMode: BrowserSurfaceMode): string
   if (surfaceMode === "live-shared-browser") return "Live shared browser";
   if (surfaceMode === "headless-validation-mirror") return "Headless validation mirror";
   if (surfaceMode === "static-screenshot-evidence") return "Static screenshot evidence";
+  if (surfaceMode === "unknown") return "Browser runtime unknown";
   return surfaceMode;
 }
 
@@ -27,6 +28,9 @@ export function browserRuntimeEvidenceLabel(input: {
   }
   if (input.surfaceMode === "live-shared-browser") {
     return "Live shared browser · evidence captured";
+  }
+  if (input.surfaceMode === "unknown") {
+    return "Browser runtime unknown · evidence incomplete";
   }
   return browserSurfaceModeLabel(input.surfaceMode);
 }

@@ -1350,7 +1350,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case WS_METHODS.browserOpenSession: {
-        const body = stripRequestTag(request.body);
+        const requestBody = stripRequestTag(request.body);
+        const body = {
+          ...requestBody,
+          preferredRuntimeKind: requestBody.preferredRuntimeKind ?? "electron-visible",
+        };
         const result = yield* browserRuntime.openSession(body);
         const threadId = body.threadId ?? browserPreviewThreadBySocket.get(ws);
         if (threadId) {

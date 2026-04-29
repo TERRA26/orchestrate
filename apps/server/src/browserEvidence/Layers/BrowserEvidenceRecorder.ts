@@ -81,6 +81,28 @@ function observationSummary(input: {
   };
 }
 
+function missingRuntimeTruthWarnings(input: {
+  readonly browserSessionId: string;
+  readonly previewTargetId: string;
+  readonly runtimeKind: unknown;
+  readonly surfaceMode: unknown;
+}) {
+  return Effect.gen(function* () {
+    if (input.runtimeKind === "unknown") {
+      yield* Effect.logWarning("BrowserEvidenceRecorder recorded unknown runtime kind", {
+        browserSessionId: input.browserSessionId,
+        previewTargetId: input.previewTargetId,
+      });
+    }
+    if (input.surfaceMode === "unknown") {
+      yield* Effect.logWarning("BrowserEvidenceRecorder recorded unknown surface mode", {
+        browserSessionId: input.browserSessionId,
+        previewTargetId: input.previewTargetId,
+      });
+    }
+  });
+}
+
 export const BrowserEvidenceRecorderLive = Layer.effect(
   BrowserEvidenceRecorder,
   Effect.gen(function* () {
@@ -178,14 +200,22 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
 
     const recordSessionOpened: BrowserEvidenceRecorderShape["recordSessionOpened"] = (context) =>
       Effect.gen(function* () {
+        const runtimeKind = context.runtimeTruth?.runtimeKind ?? "unknown";
+        const surfaceMode = context.runtimeTruth?.surfaceMode ?? "unknown";
+        yield* missingRuntimeTruthWarnings({
+          browserSessionId: context.browserSessionId,
+          previewTargetId: context.previewTarget.id,
+          runtimeKind,
+          surfaceMode,
+        });
         const artifactRef = yield* writeJsonArtifact(
           context,
           "browser-session",
           {
             browserSessionId: context.browserSessionId,
             previewTargetId: context.previewTarget.id,
-            runtimeKind: context.runtimeTruth?.runtimeKind ?? "unknown",
-            surfaceMode: context.runtimeTruth?.surfaceMode ?? "unknown",
+            runtimeKind,
+            surfaceMode,
             isUserVisibleSurface: context.runtimeTruth?.isUserVisibleSurface ?? false,
             observedUrl: context.runtimeTruth?.observedUrl ?? null,
             visiblePanelUrl: context.runtimeTruth?.visiblePanelUrl ?? null,
@@ -258,6 +288,13 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
       Effect.gen(function* () {
         const artifactRefs: EvidenceArtifactId[] = [];
         let screenshotArtifactRef: EvidenceArtifactId | undefined;
+        const summary = observationSummary(input);
+        yield* missingRuntimeTruthWarnings({
+          browserSessionId: input.browserSessionId,
+          previewTargetId: input.previewTarget.id,
+          runtimeKind: summary.runtimeKind,
+          surfaceMode: summary.surfaceMode,
+        });
         const screenshotDataUrl = screenshotDataUrlFor(input.observation);
         if (screenshotDataUrl) {
           screenshotArtifactRef = yield* writeDataUrlArtifact(input, screenshotDataUrl, {
@@ -271,19 +308,16 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
           input,
           "browser-observation",
           {
-            ...observationSummary(input),
+            ...summary,
             observation: sanitizeObservation(input.observation),
           },
           { type: "browser-observation", url: input.observation.url },
         );
         artifactRefs.push(observationRef);
 
-        const urlAgreementRef = yield* writeJsonArtifact(
-          input,
-          "browser-url-agreement",
-          observationSummary(input),
-          { type: "browser-url-agreement" },
-        );
+        const urlAgreementRef = yield* writeJsonArtifact(input, "browser-url-agreement", summary, {
+          type: "browser-url-agreement",
+        });
         artifactRefs.push(urlAgreementRef);
 
         if (input.observation.consoleErrors) {
@@ -326,7 +360,7 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
 
         yield* appendEvent(input, "BrowserObservationCaptured", artifactRefs, {
           observationId: input.runtimeTruth?.observationId ?? null,
-          ...observationSummary(input),
+          ...summary,
         });
         return {
           evidenceRefs: artifactRefs,

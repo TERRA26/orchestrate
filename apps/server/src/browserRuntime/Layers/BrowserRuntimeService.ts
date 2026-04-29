@@ -25,7 +25,7 @@ import {
   type PreviewTarget,
   SessionEventId,
 } from "@orchestrate/contracts";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Match, Option } from "effect";
 
 import { BrowserAutomation } from "../../browser/Services/BrowserAutomation.ts";
 import {
@@ -707,103 +707,121 @@ export const BrowserRuntimeServiceLive = Layer.effect(
         try: async () => {
           const previewTarget =
             (input.previewTarget as PreviewTarget | undefined) ?? createPreviewTarget(input);
-          const runtimeKind = requestedRuntimeKind(input);
-          if (runtimeKind === "electron-visible") {
-            const rawObservation = await Effect.runPromise(desktopBridge.openSession(input));
-            sessions.set(rawObservation.sessionId, { previewTarget });
-            const openedObservation = electronVisibleObservation(rawObservation, { previewTarget });
-            const sessionEvidence = await Effect.runPromise(
-              evidenceRecorder.recordSessionOpened({
-                browserSessionId: rawObservation.sessionId,
-                previewTarget,
-                runtimeTruth: openedObservation.runtimeTruth,
-              }),
+          if (input.preferredRuntimeKind === undefined) {
+            await Effect.runPromise(
+              Effect.logWarning(
+                "BrowserRuntimeService applied user-facing default; upstream caller did not specify preferredRuntimeKind",
+                {
+                  threadId: input.threadId ?? null,
+                  url: input.url,
+                },
+              ),
             );
-            const recorded = await recordElectronObservation({
-              previewTarget,
-              observation: rawObservation,
-              sessionEvidenceRefs: sessionEvidence.evidenceRefs,
-            });
-            return {
-              sessionId: rawObservation.sessionId,
-              observation: recorded.observation,
-              ...(recorded.observation.runtimeTruth
-                ? { runtimeTruth: recorded.observation.runtimeTruth }
-                : {}),
-              evidenceRefs: recorded.evidenceRefs,
-              claimGate: recorded.claimGate,
-            } satisfies BrowserOpenSessionResult;
           }
-          if (runtimeKind !== "playwright-headless") {
-            throw new Error(`Unsupported browser runtime kind: ${runtimeKind}`);
-          }
-          const session = await runtime.openSession({ previewTarget });
-          sessions.set(session.browserSessionId, { previewTarget });
-          const sessionEvidence = await Effect.runPromise(
-            evidenceRecorder.recordSessionOpened({
-              browserSessionId: session.browserSessionId,
-              previewTarget,
+          const runtimeKind = requestedRuntimeKind(input);
+          return await Match.value(runtimeKind).pipe(
+            Match.when("electron-visible", async () => {
+              const rawObservation = await Effect.runPromise(desktopBridge.openSession(input));
+              sessions.set(rawObservation.sessionId, { previewTarget });
+              const openedObservation = electronVisibleObservation(rawObservation, {
+                previewTarget,
+              });
+              const sessionEvidence = await Effect.runPromise(
+                evidenceRecorder.recordSessionOpened({
+                  browserSessionId: rawObservation.sessionId,
+                  previewTarget,
+                  runtimeTruth: openedObservation.runtimeTruth,
+                }),
+              );
+              const recorded = await recordElectronObservation({
+                previewTarget,
+                observation: rawObservation,
+                sessionEvidenceRefs: sessionEvidence.evidenceRefs,
+              });
+              return {
+                sessionId: rawObservation.sessionId,
+                observation: recorded.observation,
+                ...(recorded.observation.runtimeTruth
+                  ? { runtimeTruth: recorded.observation.runtimeTruth }
+                  : {}),
+                evidenceRefs: recorded.evidenceRefs,
+                claimGate: recorded.claimGate,
+              } satisfies BrowserOpenSessionResult;
             }),
-          );
-          const legacyResult = await Effect.runPromise(
-            browserAutomation.act({
-              sessionId: session.browserSessionId,
-              action: { kind: "wait", ms: 0 },
+            Match.when("playwright-headless", async () => {
+              const session = await runtime.openSession({ previewTarget });
+              sessions.set(session.browserSessionId, { previewTarget });
+              const sessionEvidence = await Effect.runPromise(
+                evidenceRecorder.recordSessionOpened({
+                  browserSessionId: session.browserSessionId,
+                  previewTarget,
+                }),
+              );
+              const legacyResult = await Effect.runPromise(
+                browserAutomation.act({
+                  sessionId: session.browserSessionId,
+                  action: { kind: "wait", ms: 0 },
+                }),
+              );
+              const provisionalObservation = withRuntimeTruth(legacyResult.observation, {
+                previewTarget,
+                evidenceRefs: sessionEvidence.evidenceRefs,
+              });
+              const observationEvidence = await Effect.runPromise(
+                evidenceRecorder.recordObservation({
+                  browserSessionId: session.browserSessionId,
+                  previewTarget,
+                  observation: provisionalObservation,
+                  runtimeTruth: provisionalObservation.runtimeTruth,
+                }),
+              );
+              const evidenceRefs = [
+                ...sessionEvidence.evidenceRefs,
+                ...observationEvidence.evidenceRefs,
+              ];
+              const enrichedObservation = withRuntimeTruth(legacyResult.observation, {
+                previewTarget,
+                ...(observationEvidence.screenshotArtifactRef
+                  ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
+                  : {}),
+                evidenceRefs,
+              });
+              const runtimeTruth = enrichedObservation.runtimeTruth;
+              const claimGate = browserClaimGateForObservation({
+                observation: enrichedObservation,
+                runtimeTruth,
+              });
+              const claimGateEvidence = await Effect.runPromise(
+                evidenceRecorder.recordClaimGate({
+                  browserSessionId: session.browserSessionId,
+                  previewTarget,
+                  observation: enrichedObservation,
+                  reports: claimGate,
+                }),
+              );
+              const allEvidenceRefs = [...evidenceRefs, ...claimGateEvidence.evidenceRefs];
+              const finalObservation = withRuntimeTruth(legacyResult.observation, {
+                previewTarget,
+                ...(observationEvidence.screenshotArtifactRef
+                  ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
+                  : {}),
+                evidenceRefs: allEvidenceRefs,
+              });
+              return {
+                sessionId: session.browserSessionId,
+                observation: finalObservation,
+                ...(finalObservation.runtimeTruth
+                  ? { runtimeTruth: finalObservation.runtimeTruth }
+                  : {}),
+                evidenceRefs: allEvidenceRefs,
+                claimGate,
+              } satisfies BrowserOpenSessionResult;
             }),
-          );
-          const provisionalObservation = withRuntimeTruth(legacyResult.observation, {
-            previewTarget,
-            evidenceRefs: sessionEvidence.evidenceRefs,
-          });
-          const observationEvidence = await Effect.runPromise(
-            evidenceRecorder.recordObservation({
-              browserSessionId: session.browserSessionId,
-              previewTarget,
-              observation: provisionalObservation,
-              runtimeTruth: provisionalObservation.runtimeTruth,
+            Match.when("chrome-extension", (kind) => {
+              throw new Error(`Unsupported browser runtime kind: ${kind}`);
             }),
+            Match.exhaustive,
           );
-          const evidenceRefs = [
-            ...sessionEvidence.evidenceRefs,
-            ...observationEvidence.evidenceRefs,
-          ];
-          const enrichedObservation = withRuntimeTruth(legacyResult.observation, {
-            previewTarget,
-            ...(observationEvidence.screenshotArtifactRef
-              ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
-              : {}),
-            evidenceRefs,
-          });
-          const runtimeTruth = enrichedObservation.runtimeTruth;
-          const claimGate = browserClaimGateForObservation({
-            observation: enrichedObservation,
-            runtimeTruth,
-          });
-          const claimGateEvidence = await Effect.runPromise(
-            evidenceRecorder.recordClaimGate({
-              browserSessionId: session.browserSessionId,
-              previewTarget,
-              observation: enrichedObservation,
-              reports: claimGate,
-            }),
-          );
-          const allEvidenceRefs = [...evidenceRefs, ...claimGateEvidence.evidenceRefs];
-          const finalObservation = withRuntimeTruth(legacyResult.observation, {
-            previewTarget,
-            ...(observationEvidence.screenshotArtifactRef
-              ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
-              : {}),
-            evidenceRefs: allEvidenceRefs,
-          });
-          return {
-            sessionId: session.browserSessionId,
-            observation: finalObservation,
-            ...(finalObservation.runtimeTruth
-              ? { runtimeTruth: finalObservation.runtimeTruth }
-              : {}),
-            evidenceRefs: allEvidenceRefs,
-            claimGate,
-          } satisfies BrowserOpenSessionResult;
         },
         catch: (cause) => cause as never,
       });

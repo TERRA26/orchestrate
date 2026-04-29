@@ -582,15 +582,15 @@ I intentionally did not change the contract schema shape because `packages/contr
 
 4. **Thread mapper sufficiency.** Accepted for 17A. Bundle 17C will expand the mapper to cover non-browser phases (Planning, Reading files, Editing, Running command, Reviewing evidence, Waiting for approval, Done, Blocked). Don't expand it in 17B unless you have spare cycles after the rework loop work is done.
 
-5. **Should the test-suite blocker become its own bundle before 17B?** No. The pre-existing failures predate this work and are documented in `docs/baseline-test-debt-2026-04-28.md`. The audit-protocol rule "tests must pass before push" is satisfied for in-scope tests; we documented the rest. **However:** Bundle 17B includes one process item — refresh `baseline-test-debt-2026-04-28.md` so it lists the *current* failing files (the `composerSlashCommands`/`composerDraftStore`/`terminalStateStore`/`SidebarSearchPalette` set you observed). If a failure newer than `2026-04-28` is *not* in that doc, we cannot tell whether it is pre-existing or introduced. Update it.
+5. **Should the test-suite blocker become its own bundle before 17B?** No. The pre-existing failures predate this work and are documented in `docs/baseline-test-debt-2026-04-28.md`. The audit-protocol rule "tests must pass before push" is satisfied for in-scope tests; we documented the rest. **However:** Bundle 17B includes one process item — refresh `baseline-test-debt-2026-04-28.md` so it lists the _current_ failing files (the `composerSlashCommands`/`composerDraftStore`/`terminalStateStore`/`SidebarSearchPalette` set you observed). If a failure newer than `2026-04-28` is _not_ in that doc, we cannot tell whether it is pre-existing or introduced. Update it.
 
 #### Conditions on the acceptance (must be addressed in Bundle 17B)
 
 - **C-1.** Observability when service applies the default (item 1 above).
-- **C-2.** `Match.exhaustive` over runtime kind in `BrowserRuntimeService.openSession` instead of `if (electron-visible) … if (!playwright-headless) throw`. With three valid kinds in the schema (`electron-visible`, `playwright-headless`, `chrome-extension`), the current code throws at runtime when chrome-extension is requested. `Match.exhaustive` makes that a *compile-time* failure if a future code path forgets a case.
+- **C-2.** `Match.exhaustive` over runtime kind in `BrowserRuntimeService.openSession` instead of `if (electron-visible) … if (!playwright-headless) throw`. With three valid kinds in the schema (`electron-visible`, `playwright-headless`, `chrome-extension`), the current code throws at runtime when chrome-extension is requested. `Match.exhaustive` makes that a _compile-time_ failure if a future code path forgets a case.
 - **C-3.** UI must render explicit, user-facing labels when `surfaceMode === "unknown"` and `runtimeKind === "unknown"` (items in [`apps/web/src/orchestratorPresentation.ts:18`](apps/web/src/orchestratorPresentation.ts:18) — currently falls through to `return surfaceMode` which would render the literal "unknown" string).
 - **C-4.** Add an integration test at the WS boundary (server-side, exercising `WS_METHODS.browserOpenSession` end-to-end) that asserts the resolved session is `electron-visible` when the field is omitted. Existing tests cover boundaries individually; we have no test of the full chain that the user actually sees.
-- **C-5.** Refresh `docs/baseline-test-debt-2026-04-28.md` with the *current* set of failing tests so that future runs can distinguish pre-existing debt from regressions introduced by the active bundle.
+- **C-5.** Refresh `docs/baseline-test-debt-2026-04-28.md` with the _current_ set of failing tests so that future runs can distinguish pre-existing debt from regressions introduced by the active bundle.
 
 These conditions are folded into Bundle 17B's hardening sub-scope below — they are not a separate bundle.
 
@@ -639,7 +639,7 @@ When a user comments on a browser annotation and clicks **Start rework**:
 
 - If `mode === "draft-task"` (current behavior, default): the call returns a `ReviewerReworkStartResult` and emits `ReviewerReworkTaskDrafted`. **No new orchestrator task is spawned.** This already works.
 - If `mode === "start-agent-run"`: in addition to the above, the system spawns a real orchestrator task with focused `routePlan`/`viewportPlan` derived from the annotation targets, `evidenceRefs` collected, an `instruction` derived from the comment, and a `parentDecisionId` linking it back to the reviewer decision that surfaced the comment. The task is persisted in a new `rework_tasks` table with state `drafted → assigned → running → submitted → needs-review → accepted/rejected`.
-- The annotation has a **before** screenshot/DOM snapshot artifact captured at *annotation creation time* (this happens at `BrowserAnnotationService.create`). Do not capture it at `startRework` time — that would be the wrong "before."
+- The annotation has a **before** screenshot/DOM snapshot artifact captured at _annotation creation time_ (this happens at `BrowserAnnotationService.create`). Do not capture it at `startRework` time — that would be the wrong "before."
 - When the rework task **submits**, the system captures an **after** screenshot/DOM artifact and attaches it to the `BrowserAnnotationReworkTarget`.
 - The work log renders a **before/after card pair** when both refs exist on a target.
 
@@ -717,3 +717,33 @@ Document gate:
 - **2026-04-29 — Agent Report — Bundle 17A** — implemented; pushed at `832426f8`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17A** — accepted with conditions C-1..C-5 folded into Bundle 17B.
 - **2026-04-29 — Bundle 17B activated** — hardening + annotation→rework. (Active.)
+
+---
+
+## Agent Report — 2026-04-29T13:43:00-04:00 — Bundle 17B Hardening
+
+This is an independent hardening push for Bundle 17B Sub-scope A only. I did not begin the annotation→focused rework state machine in this commit.
+
+### Changes
+
+- `BrowserRuntimeService.openSession` now logs when it applies the user-facing default because `preferredRuntimeKind` was omitted: [`apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:710`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:710).
+- `BrowserRuntimeService.openSession` now dispatches runtime kind via `Match.value(...).pipe(..., Match.exhaustive)`, with explicit branches for `electron-visible`, `playwright-headless`, and unsupported `chrome-extension`: [`apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:722`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:722), [`apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:820`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:820).
+- `BrowserEvidenceRecorder` now emits warnings when it records missing runtime truth as `"unknown"` instead of silently writing incomplete metadata: [`apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:84`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:84), [`apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:201`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:201), [`apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:291`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:291).
+- `orchestratorPresentation.ts` now explicitly maps `surfaceMode === "unknown"` to user-facing copy, including durable-evidence labels, so the raw string is not displayed: [`apps/web/src/orchestratorPresentation.ts:18`](apps/web/src/orchestratorPresentation.ts:18), [`apps/web/src/orchestratorPresentation.ts:32`](apps/web/src/orchestratorPresentation.ts:32).
+- `wsServer.ts` now applies the same browser-open default at the WS boundary before calling the runtime service: [`apps/server/src/wsServer.ts:1352`](apps/server/src/wsServer.ts:1352).
+- Added a WS-boundary regression test that omits `preferredRuntimeKind`, asserts the runtime receives `electron-visible`, and asserts the returned truth is `electron-visible` / `live-shared-browser`: [`apps/server/src/wsServer.test.ts:607`](apps/server/src/wsServer.test.ts:607), [`apps/server/src/wsServer.test.ts:684`](apps/server/src/wsServer.test.ts:684).
+- Refreshed current broad-test debt with the current web failure set and Claude's observed `@orchestrate/game-platform` tic-tac-toe timeout: [`docs/baseline-test-debt-2026-04-28.md:1668`](docs/baseline-test-debt-2026-04-28.md:1668).
+
+### Verification
+
+- PASS: `bun fmt`
+- PASS: `bun lint` exits 0 with the existing 131 warnings.
+- PASS: `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` (10/10 tasks).
+- PASS: `cd apps/server && PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/browserRuntime/Layers/BrowserRuntimeService.test.ts src/browserEvidence/Layers/BrowserEvidenceRecorder.test.ts` (25 tests).
+- PASS: `cd apps/server && PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/wsServer.test.ts -t "opens browser sessions through the WS boundary with electron-visible default"` (1 targeted WS-boundary test).
+- PASS: `cd apps/web && bun run test src/orchestratorPresentation.test.ts src/browserWorkLog.test.ts` (24 tests).
+- KNOWN BROAD WS TEST DEBT: running the entire `apps/server/src/wsServer.test.ts` file currently fails in pre-existing config/provider payload expectation drift outside this hardening change. The new WS-boundary test passes when run directly.
+
+### Remaining Bundle 17B Work
+
+Sub-scope B remains open: annotation creation before-evidence, `rework_tasks` persistence/state machine, `start-agent-run` spawning, submit-time after-evidence, and before/after UI preview.
