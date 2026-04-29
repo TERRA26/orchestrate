@@ -1,8 +1,9 @@
 # Orchestrate — Reviewer Audit & Iteration Brief
 
-**Audit date:** 2026-04-29
+**Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Branch audited:** `main` @ `ec79dc67` (`feat: harden browser review loop`)
+**Latest reviewed commit:** `832426f8` (`fix browser runtime default routing`)
+**Active bundle:** **Bundle 17B — Hardening + Annotation→Rework** (see §10 iteration log for the full spec)
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -242,7 +243,7 @@ Even at the very bottom of the stack, recording uses `?? "playwright-headless"`.
 
 You will execute **one bundle at a time**, in order, and stop at the end of each for review. The Active Bundle is whichever is at the top of the "Active Bundle" list below at any moment.
 
-### Active Bundle: **Bundle 17A — Single Shared Browser Default + Runtime Routing Audit + Thread Truth Pass**
+### ✅ Bundle 17A (COMPLETED & ACCEPTED at `832426f8` — see §10 iteration log for review): **Single Shared Browser Default + Runtime Routing Audit + Thread Truth Pass**
 
 **Why this first.** Until the default user-facing call lands in Electron-visible, none of the rest matters. This is the trust bundle.
 
@@ -543,3 +544,176 @@ Implemented the single shared browser default and thread truth slice for Bundle 
 #### Notes for Reviewer
 
 I intentionally did not change the contract schema shape because `packages/contracts` is schema-only and defaulting there would still leave runtime callers ambiguous. The durable behavior now lives at runtime boundaries that actually decide execution: `BrowserRuntimeService`, `BrowserWorkflowManager`, and `OrchestrationToolRouter`. I also left explicit `playwright-headless` test paths intact by adding explicit preferences to tests that intentionally exercise headless behavior.
+
+---
+
+### Reviewer Scrutiny — 2026-04-29 — Bundle 17A
+
+**Verdict: ACCEPTED.** The two-browser regression as the user observed it is fixed. I verified the diff end-to-end and re-ran the verification commands myself.
+
+#### What I verified directly
+
+- `git diff ec79dc67..832426f8` — 13 files, +787/−117 lines, all in scope.
+- Each cited file:line read against the diff:
+  - [`apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:49,55,710,711,737`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:710) — service-level default + explicit `throw` on unsupported kinds. Confirmed.
+  - [`apps/server/src/browserWorkflow/Layers/BrowserWorkflowManager.ts:398,407,504`](apps/server/src/browserWorkflow/Layers/BrowserWorkflowManager.ts:398) — default + always-forward + resolved-kind viewport guard. Confirmed; conditional spread is gone.
+  - [`apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:1222-1224`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:1222) — explicit `?? "electron-visible"` enrichment at the orchestrator boundary. Confirmed.
+  - [`apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:74,75,187,188`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:74) — `?? "playwright-headless"` and `?? "headless-validation-mirror"` replaced with `?? "unknown"`. Confirmed; the lie is gone.
+  - [`apps/web/src/components/BrowserPanel.tsx:972`](apps/web/src/components/BrowserPanel.tsx:972) and [`apps/web/src/components/orchestrator/useOrchestratorEngine.ts:1026`](apps/web/src/components/orchestrator/useOrchestratorEngine.ts:1026) — both user-observed callsites now request `electron-visible` explicitly. Confirmed.
+  - [`apps/web/src/orchestratorPresentation.ts`](apps/web/src/orchestratorPresentation.ts) — file exists, exports `browserSurfaceModeLabel`, `browserRuntimeEvidenceLabel`, `browserObservationTitle`, `browserActionStatusLabel`. Confirmed.
+- Tests reviewed:
+  - `BrowserRuntimeService.test.ts:210` — fail-closed when bridge unavailable, omitted preference. **This is the regression test I asked for** ("test (c)"). Confirmed.
+  - `BrowserRuntimeService.test.ts:487` — omitted preference becomes `electron-visible` when bridge available. Positive case. Confirmed.
+  - `BrowserWorkflowManager.test.ts:297` — omitted workflow preference forwards as `electron-visible`. Confirmed.
+  - `OrchestrationToolRouter.test.ts:210,262` — orchestrator tool calls enriched. Confirmed.
+- Verification I re-ran on my machine:
+  - `bun lint` — exit 0 with 131 pre-existing warnings, 0 errors.
+  - `bun typecheck` — 10/10 packages PASS in 2m 21s.
+  - `bun run test` — server/contracts/shared/desktop pass; **one new failure in `@orchestrate/game-platform` (`tic-tac-toe/logic.test.ts:142` — 5s timeout in AI-unbeatable test).** This is unrelated to Bundle 17A (no browser-runtime files touched in game-platform) and reads as a flaky timeout, not a regression.
+  - The web-side test failures the agent listed are the `baseline-test-debt-2026-04-28.md` set + a few new ones (`composerSlashCommands`, `composerDraftStore`, `terminalStateStore`, `SidebarSearchPalette.logic`). None overlap Bundle 17A files.
+
+#### Answers to the agent's five questions
+
+1. **Service-level defaulting vs `withUserFacingDefaults` helper.** Accepted as implemented. Service-level default is a defensible architectural choice and acts as a backstop. **But** it conceals a future bug where some upstream caller forgets to enrich. Bundle 17B requires you to add an `Effect.logWarning(...)` whenever the service-level default is applied, so missing-boundary-enrichment becomes visible in logs. Defense in depth, not replacement.
+
+2. **`OrchestrationToolRouter` defaulting all `orchestrate_browser_open_session` to electron-visible.** Accepted. This is the right call because every browser tool the agent invokes is, by definition, user-facing work the user is watching. Agents that need explicit headless validation can pass `preferredRuntimeKind: "playwright-headless"`; the router now preserves that intent.
+
+3. **Evidence recorder using `"unknown"`.** Accepted as the temporary truth. Two follow-ups required in Bundle 17B: (a) when the recorder writes `"unknown"`, also emit `Effect.logWarning` so we can track how often this happens; (b) the UI must explicitly handle `surfaceMode === "unknown"` and `runtimeKind === "unknown"` with sensible labels, not render the literal string "unknown" to users.
+
+4. **Thread mapper sufficiency.** Accepted for 17A. Bundle 17C will expand the mapper to cover non-browser phases (Planning, Reading files, Editing, Running command, Reviewing evidence, Waiting for approval, Done, Blocked). Don't expand it in 17B unless you have spare cycles after the rework loop work is done.
+
+5. **Should the test-suite blocker become its own bundle before 17B?** No. The pre-existing failures predate this work and are documented in `docs/baseline-test-debt-2026-04-28.md`. The audit-protocol rule "tests must pass before push" is satisfied for in-scope tests; we documented the rest. **However:** Bundle 17B includes one process item — refresh `baseline-test-debt-2026-04-28.md` so it lists the *current* failing files (the `composerSlashCommands`/`composerDraftStore`/`terminalStateStore`/`SidebarSearchPalette` set you observed). If a failure newer than `2026-04-28` is *not* in that doc, we cannot tell whether it is pre-existing or introduced. Update it.
+
+#### Conditions on the acceptance (must be addressed in Bundle 17B)
+
+- **C-1.** Observability when service applies the default (item 1 above).
+- **C-2.** `Match.exhaustive` over runtime kind in `BrowserRuntimeService.openSession` instead of `if (electron-visible) … if (!playwright-headless) throw`. With three valid kinds in the schema (`electron-visible`, `playwright-headless`, `chrome-extension`), the current code throws at runtime when chrome-extension is requested. `Match.exhaustive` makes that a *compile-time* failure if a future code path forgets a case.
+- **C-3.** UI must render explicit, user-facing labels when `surfaceMode === "unknown"` and `runtimeKind === "unknown"` (items in [`apps/web/src/orchestratorPresentation.ts:18`](apps/web/src/orchestratorPresentation.ts:18) — currently falls through to `return surfaceMode` which would render the literal "unknown" string).
+- **C-4.** Add an integration test at the WS boundary (server-side, exercising `WS_METHODS.browserOpenSession` end-to-end) that asserts the resolved session is `electron-visible` when the field is omitted. Existing tests cover boundaries individually; we have no test of the full chain that the user actually sees.
+- **C-5.** Refresh `docs/baseline-test-debt-2026-04-28.md` with the *current* set of failing tests so that future runs can distinguish pre-existing debt from regressions introduced by the active bundle.
+
+These conditions are folded into Bundle 17B's hardening sub-scope below — they are not a separate bundle.
+
+#### What I did NOT find that I worried about
+
+- No new silent-fallback patterns introduced. I grepped for `?? "playwright-headless"`, `?? "headless-validation-mirror"`, conditional spreads `...(x ? { x } : {})` in workflow code, and `Layer.orElse` between runtime services. Clean.
+- No `as any`, `// @ts-expect-error`, or `// eslint-disable` added to make gates pass.
+- No tests deleted or `.skip`'d.
+
+---
+
+## Active Bundle: **Bundle 17B — Hardening of 17A + Annotation → Focused Rework Task**
+
+This bundle has two sub-scopes. Do the **Hardening** sub-scope first (small, mostly mechanical) and then move to the **Rework Loop** sub-scope. Both are required for the bundle to be accepted.
+
+### Sub-scope A — Hardening (small, do first)
+
+These close the conditions C-1 through C-5 from the 17A review.
+
+1. **Observability when service applies the default.**
+   - In [`apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:55) where `requestedRuntimeKind(input)` is called, when `input.preferredRuntimeKind === undefined`, emit `Effect.logWarning("BrowserRuntimeService applied user-facing default; upstream caller did not specify preferredRuntimeKind", { ... })` with enough context (threadId, url) to find the caller.
+   - Same for [`BrowserEvidenceRecorder.ts:74,75,187,188`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:74) — when `"unknown"` is recorded, emit a warning.
+
+2. **`Match.exhaustive` in service runtime branch.**
+   - Convert the `if (runtimeKind === "electron-visible") … if (runtimeKind !== "playwright-headless") throw …` in `BrowserRuntimeService.openSession` to a `Match.value(runtimeKind).pipe(Match.when("electron-visible", ...), Match.when("playwright-headless", ...), Match.when("chrome-extension", () => Effect.fail(new RuntimeUnsupported(...))), Match.exhaustive)`. Compile-time exhaustiveness over `BrowserRuntimeTruthKind`.
+   - Same treatment at any other service-side switch on `runtimeKind` you find while reading.
+
+3. **UI explicit handling of `"unknown"` runtime/surface.**
+   - In [`apps/web/src/orchestratorPresentation.ts:14`](apps/web/src/orchestratorPresentation.ts:14), add explicit `if (surfaceMode === "unknown") return "Browser runtime unknown"`. Do not fall through to `return surfaceMode`.
+   - Same for the runtime evidence label and any other consumer that might display the raw string.
+   - Add a unit test in `orchestratorPresentation.test.ts` covering the `"unknown"` case.
+
+4. **WS-boundary integration test.**
+   - Add a test (preferably in `apps/server/src/wsServer.integration.test.ts` if that file exists; otherwise create alongside the existing reviewer-loop integration test) that exercises `WS_METHODS.browserOpenSession` with a body that omits `preferredRuntimeKind`, and asserts the session it gets back has `runtimeKind === "electron-visible"` and `surfaceMode === "live-shared-browser"`. This covers the full path the user observed.
+
+5. **Test-debt refresh.**
+   - Update [`docs/baseline-test-debt-2026-04-28.md`](docs/baseline-test-debt-2026-04-28.md) with the current set of pre-existing failures, including the ones the agent observed (`composerSlashCommands`, `composerDraftStore`, `terminalStateStore`, `SidebarSearchPalette.logic`) and the `@orchestrate/game-platform` tic-tac-toe-AI timeout. One paragraph per category. This is process hygiene, not feature work — do it inline with this bundle.
+
+### Sub-scope B — Annotation → Focused Rework Task
+
+This is the main work of 17B. The user's "browser comments become rework" loop currently terminates at `"drafted"`. We need it to actually drive an orchestrator task end-to-end with before/after evidence.
+
+#### Required behavior
+
+When a user comments on a browser annotation and clicks **Start rework**:
+
+- If `mode === "draft-task"` (current behavior, default): the call returns a `ReviewerReworkStartResult` and emits `ReviewerReworkTaskDrafted`. **No new orchestrator task is spawned.** This already works.
+- If `mode === "start-agent-run"`: in addition to the above, the system spawns a real orchestrator task with focused `routePlan`/`viewportPlan` derived from the annotation targets, `evidenceRefs` collected, an `instruction` derived from the comment, and a `parentDecisionId` linking it back to the reviewer decision that surfaced the comment. The task is persisted in a new `rework_tasks` table with state `drafted → assigned → running → submitted → needs-review → accepted/rejected`.
+- The annotation has a **before** screenshot/DOM snapshot artifact captured at *annotation creation time* (this happens at `BrowserAnnotationService.create`). Do not capture it at `startRework` time — that would be the wrong "before."
+- When the rework task **submits**, the system captures an **after** screenshot/DOM artifact and attaches it to the `BrowserAnnotationReworkTarget`.
+- The work log renders a **before/after card pair** when both refs exist on a target.
+
+#### Files to inspect/change
+
+- **Contracts:**
+  - [`packages/contracts/src/browserOrchestration.ts:1012-1026`](packages/contracts/src/browserOrchestration.ts:1012) (`BrowserAnnotationReworkTarget`) — add optional fields:
+    - `beforeScreenshotArtifactRef?: EvidenceArtifactId`
+    - `beforeDomArtifactRef?: EvidenceArtifactId`
+    - `afterScreenshotArtifactRef?: EvidenceArtifactId`
+    - `afterDomArtifactRef?: EvidenceArtifactId`
+  - Define a new `ReworkTaskStatus` literal union (`"drafted" | "assigned" | "running" | "submitted" | "needs-review" | "accepted" | "rejected"`) and a `ReworkTask` record schema.
+  - Define a new event `ReworkTaskStateChanged`.
+- **Persistence:**
+  - New migration `040_ReworkTasks.ts` creating the `rework_tasks` table with columns: `rework_task_id, thread_id, parent_decision_id, status, instruction, annotation_targets_json, evidence_refs_json, iteration, max_iterations, before_evidence_refs_json, after_evidence_refs_json, submitted_at, accepted_at, rejected_at, created_at, updated_at`. Index on `thread_id`, `parent_decision_id`, `status`.
+- **Server:**
+  - [`apps/server/src/browserAnnotations/Services/BrowserAnnotationService.ts`](apps/server/src/browserAnnotations/Services/BrowserAnnotationService.ts) — at annotation creation, capture and persist before-screenshot + before-DOM via the existing `BrowserEvidenceRecorder`. Plumb the resulting artifact refs onto the annotation record so `loadAnnotationReworkTargetsByIds` (in `ReviewerDecisionService.ts:1153`) can return them.
+  - [`apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1471-1544`](apps/server/src/reviewer/Layers/ReviewerDecisionService.ts:1471) — branch on `input.mode`:
+    - `"draft-task"`: existing behavior; status = `"drafted"`; no orchestrator spawn.
+    - `"start-agent-run"`: persist a `rework_tasks` row (status = `"drafted"`), then call into `OrchestrationEngineService` (verify the exact name in your codebase before assuming) to spawn a focused task. Update status → `"assigned"` once spawn succeeds.
+  - Listen for orchestrator task lifecycle events; transition the `rework_tasks` row through `running → submitted → needs-review → accepted/rejected`.
+  - At task **submitted**, capture after-evidence (screenshot + DOM of the same annotation target) and attach refs to `rework_tasks.after_evidence_refs_json` and to the corresponding `BrowserAnnotationReworkTarget`.
+- **Web:**
+  - [`apps/web/src/components/chat/WorkEntryRow.tsx`](apps/web/src/components/chat/WorkEntryRow.tsx) — when a `BrowserAnnotationCard` (or its rework variant) has both before and after screenshot refs, render a side-by-side or tabbed comparison view. A simple two-column layout with both `BrowserScreenshotPreview` components labeled "Before" / "After" is enough; no fancy diff.
+  - Surface the rework task state in the thread (drafted / assigned / running / submitted / needs-review / accepted / rejected) using a labeled chip. Reuse the existing decision card style.
+  - When `mode === "start-agent-run"` succeeds, the UI shows "Rework task started" — confirm or fix this; the Bundle 17A review noted the existing label said "Rework task started" but no spawn actually happened. Now it will.
+
+#### Tests required
+
+- Annotation creation captures before-screenshot + before-DOM artifacts.
+- `startRework` with `mode: "draft-task"` does NOT spawn an orchestrator task; row in `rework_tasks` either absent or status `"drafted"`.
+- `startRework` with `mode: "start-agent-run"` DOES spawn a task; row exists with status `"assigned"`; spawn input contains the focused routes + viewports + evidenceRefs derived from the annotation.
+- State machine transitions: assigned → running → submitted → needs-review → accepted (and a separate test for the rejected branch).
+- After-evidence is captured at submit, not at accept.
+- UI test: when a `BrowserAnnotationReworkTarget` has both before and after refs, the work log renders a paired before/after preview.
+- Existing reviewer/annotation tests still pass.
+
+#### Out of scope
+
+- **Bundle 17C** (queued): expand `orchestratorPresentation.ts` mapper to non-browser tools (Planning, Reading files, Editing, Running command, Waiting for approval, Done, Blocked). Add the agent-state pill in the composer.
+- **Bundle 17D** (queued): switch the headless validation backend to `chromium.connectOverCDP` against the running Electron's debug port, so even Playwright-style automation acts on the user's WebContentsView. The architectural fix to two-browsers; orthogonal to today's policy fix and bigger.
+
+### Bundle 17B acceptance gates
+
+Hardening (must all be cited file:line in your report):
+
+- [ ] `BrowserRuntimeService` emits `logWarning` when `preferredRuntimeKind` is missing.
+- [ ] `BrowserEvidenceRecorder` emits `logWarning` when it writes `"unknown"`.
+- [ ] `BrowserRuntimeService.openSession` uses `Match.exhaustive` over `BrowserRuntimeTruthKind`.
+- [ ] `orchestratorPresentation.ts` returns explicit user-facing labels for `surfaceMode === "unknown"` and `runtimeKind === "unknown"`. No literal `"unknown"` reaches the UI.
+- [ ] WS-boundary integration test exists, omits `preferredRuntimeKind`, asserts `electron-visible` end-to-end. Test passes.
+- [ ] `docs/baseline-test-debt-2026-04-28.md` updated with current pre-existing failures.
+
+Rework loop (must all be cited file:line):
+
+- [ ] `BrowserAnnotationReworkTarget` schema has `beforeScreenshotArtifactRef`, `beforeDomArtifactRef`, `afterScreenshotArtifactRef`, `afterDomArtifactRef` (all optional).
+- [ ] Migration `040_ReworkTasks.ts` exists; `rework_tasks` table created; indexes in place.
+- [ ] `BrowserAnnotationService.create` captures and stores before-evidence artifact refs.
+- [ ] `ReviewerDecisionService.startRework` with `mode === "start-agent-run"` spawns an orchestrator task and persists a `rework_tasks` row.
+- [ ] State machine transitions are persisted on each event; `running → submitted → needs-review → accepted` test passes.
+- [ ] After-evidence is captured at task **submit**, not at accept.
+- [ ] UI renders before/after paired preview when both refs exist on an annotation rework target.
+- [ ] All of `bun fmt && bun lint && bun typecheck && bun run test` pass for in-scope packages. Pre-existing failures noted in `baseline-test-debt-2026-04-28.md` are documented but not fixed in this bundle.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+
+Document gate:
+
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17B` to this file with file:line for each gate, and a separate `## Agent Report` for the Hardening sub-scope if you complete and push it independently.
+
+---
+
+### Iteration log entries since 2026-04-29 audit
+
+- **2026-04-29 — Initial audit (this file)** — Bundle 17A defined.
+- **2026-04-29 — Agent Report — Bundle 17A** — implemented; pushed at `832426f8`.
+- **2026-04-29 — Reviewer Scrutiny — Bundle 17A** — accepted with conditions C-1..C-5 folded into Bundle 17B.
+- **2026-04-29 — Bundle 17B activated** — hardening + annotation→rework. (Active.)
