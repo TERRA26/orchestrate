@@ -1788,7 +1788,7 @@ Small, mechanical. Rolls up the lowest-risk follow-ups from earlier bundles. Pus
 3. **RU-2**: Add a fail-closed test in `BrowserRuntimeService.test.ts` for the `playwright-headless` attach path when:
    - The CDP endpoint response has no matching session for the visible session id → asserts `Effect.fail` with the "did not expose a targetId" message.
    - The matching session has no `targetId` → same assertion.
-   Use the existing `headlessAttachBridgeLayer` shape but provide a fixture that omits the targetId or returns no matching session.
+     Use the existing `headlessAttachBridgeLayer` shape but provide a fixture that omits the targetId or returns no matching session.
 4. **RU-3**: Add a test that closes an attached `playwright-headless` session and verifies the underlying `browser.close()` and `context.close()` are NOT called. Use a mock automation that records `closeInputs` (already in `PlaywrightHeadlessBrowserRuntime.test.ts`'s `makeAttachedAutomation`); extend the existing CDP attach test or add a new one that asserts `closeBrowserOnClose: false` semantics propagate through.
 
 **Out of scope for 17E:**
@@ -1820,3 +1820,25 @@ Small, mechanical. Rolls up the lowest-risk follow-ups from earlier bundles. Pus
 - **2026-04-30 — Agent Report — Bundle 17D** — implemented; pushed at `6c6affba`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17D** — accepted. CDP attach is substrate-level. Three follow-ups (RU-1, RU-2, RU-3) tracked. DoD still satisfied; structural prevention strengthens items 1–2.
 - **2026-04-30 — Bundle 17E activated** — cleanup sweep rolling up FU-1, FU-4, RU-2, RU-3.
+
+## Agent Report — 2026-04-30T03:19:18Z — Bundle 17E
+
+Implemented the cleanup sweep from the active bundle.
+
+- **FU-1**: Moved `EvidenceArtifactId` into [`packages/contracts/src/baseSchemas.ts`](packages/contracts/src/baseSchemas.ts). [`packages/contracts/src/browserOrchestration.ts`](packages/contracts/src/browserOrchestration.ts) now imports that branded schema instead of defining its own local brand, and [`packages/contracts/src/orchestration.ts`](packages/contracts/src/orchestration.ts) now uses the same branded `EvidenceArtifactId` for `browserAfterScreenshotRef` and `browserAfterDomRef`. The old `OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(...)` workaround is gone.
+- **FU-4**: Refreshed the stale browser entries in [`apps/web/src/components/chat/WorkEntryRow.tsx`](apps/web/src/components/chat/WorkEntryRow.tsx): `"Browser preview"`, `"Checking browser"`, `"Acting on browser"`, and `"Closing browser"`.
+- **RU-2**: Added fail-closed coverage in [`apps/server/src/browserRuntime/Layers/BrowserRuntimeService.test.ts`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.test.ts) for explicit `playwright-headless` attach when the CDP endpoint has no matching visible session and when the matching session lacks `targetId`. Both assert failure before any fallback launch can occur.
+- **RU-3**: Added [`apps/server/src/browser/Layers/BrowserAutomation.test.ts`](apps/server/src/browser/Layers/BrowserAutomation.test.ts), mocking Playwright's CDP attach path and verifying `closeSession` does not call the Electron-owned `context.close()` or `browser.close()` for attached sessions.
+
+Verification:
+
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/browser/Layers/BrowserAutomation.test.ts src/browserRuntime/Layers/BrowserRuntimeService.test.ts src/browserRuntime/PlaywrightHeadlessBrowserRuntime.test.ts` passed in `apps/server` (31 tests).
+- `bun run test src/browser.test.ts src/browserOrchestration.test.ts` passed in `packages/contracts` (26 tests).
+- `bun fmt` passed.
+- `bun lint` passed with existing warnings and 0 errors.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` passed (10/10 tasks).
+
+Reviewer notes:
+
+- No production behavior changed in the CDP attach path for RU-2/RU-3; those are test coverage only.
+- The base schema export keeps the existing package barrel behavior because `packages/contracts/src/index.ts` already exports `baseSchemas` before `browserOrchestration`.

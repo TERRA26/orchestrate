@@ -69,66 +69,76 @@ const evidenceRecorderLayer = BrowserEvidenceRecorderLive.pipe(
 const controlLeaseLayer = BrowserControlLeaseServiceLive.pipe(
   Layer.provide(evidenceRepositoryLayer),
 );
-const headlessAttachBridgeLayer = Layer.succeed(DesktopBrowserBridge, {
-  openSession: (input) =>
-    Effect.succeed({
-      sessionId: "electron-visible-thread-runtime-service-tab-main",
-      url: input.url,
-      title: "Visible fixture",
-      readyState: "complete",
-      textSummary: "Visible fixture page",
-      screenshotDataUrl: "data:image/png;base64,electron",
-      targets: [],
-      consoleErrors: [],
-      networkErrors: [],
-      runtimeKind: "electron-visible" as const,
-      surfaceMode: "live-shared-browser" as const,
-      isUserVisibleSurface: true,
-      observedUrl: input.url,
-      visiblePanelUrl: input.url,
-      urlAgreement: "same" as const,
-      observedAt: "2026-04-28T00:00:02.000Z",
-    }),
-  observeSession: (input) =>
-    Effect.succeed({
-      sessionId: input.sessionId,
-      url: "http://127.0.0.1:5173/",
-      title: "Visible fixture observed",
-      readyState: "complete",
-      textSummary: "Visible fixture observed page",
-      screenshotDataUrl: "data:image/png;base64,electron-observed",
-      targets: [],
-      consoleErrors: [],
-      networkErrors: [],
-      runtimeKind: "electron-visible" as const,
-      surfaceMode: "live-shared-browser" as const,
-      isUserVisibleSurface: true,
-      observedUrl: "http://127.0.0.1:5173/",
-      visiblePanelUrl: "http://127.0.0.1:5173/",
-      urlAgreement: "same" as const,
-      observedAt: "2026-04-28T00:00:03.000Z",
-    }),
-  inspectSession: () => Effect.fail(new Error("inspectSession not used by attach tests")),
-  resolveTargetSession: () =>
-    Effect.fail(new Error("resolveTargetSession not used by attach tests")),
-  actSession: () => Effect.fail(new Error("actSession not used by attach tests")),
-  closeSession: () => Effect.void,
-  getSessionOwnerClientId: () => Effect.succeed("desktop-client-runtime-test"),
-  getCdpEndpoint: () =>
-    Effect.succeed({
-      endpointUrl: "http://127.0.0.1:9333",
-      port: 9333,
-      sessions: [
-        {
-          sessionId: "electron-visible-thread-runtime-service-tab-main",
-          webContentsId: 42,
-          targetId: "target-visible-runtime-service",
-          url: "http://127.0.0.1:5173/",
-          title: "Visible fixture",
-        },
-      ],
-    }),
-});
+function makeHeadlessAttachBridgeLayer(input?: {
+  readonly cdpSessionId?: string;
+  readonly includeTargetId?: boolean;
+}) {
+  const visibleSessionId = "electron-visible-thread-runtime-service-tab-main";
+  return Layer.succeed(DesktopBrowserBridge, {
+    openSession: (openInput) =>
+      Effect.succeed({
+        sessionId: visibleSessionId,
+        url: openInput.url,
+        title: "Visible fixture",
+        readyState: "complete",
+        textSummary: "Visible fixture page",
+        screenshotDataUrl: "data:image/png;base64,electron",
+        targets: [],
+        consoleErrors: [],
+        networkErrors: [],
+        runtimeKind: "electron-visible" as const,
+        surfaceMode: "live-shared-browser" as const,
+        isUserVisibleSurface: true,
+        observedUrl: openInput.url,
+        visiblePanelUrl: openInput.url,
+        urlAgreement: "same" as const,
+        observedAt: "2026-04-28T00:00:02.000Z",
+      }),
+    observeSession: (observeInput) =>
+      Effect.succeed({
+        sessionId: observeInput.sessionId,
+        url: "http://127.0.0.1:5173/",
+        title: "Visible fixture observed",
+        readyState: "complete",
+        textSummary: "Visible fixture observed page",
+        screenshotDataUrl: "data:image/png;base64,electron-observed",
+        targets: [],
+        consoleErrors: [],
+        networkErrors: [],
+        runtimeKind: "electron-visible" as const,
+        surfaceMode: "live-shared-browser" as const,
+        isUserVisibleSurface: true,
+        observedUrl: "http://127.0.0.1:5173/",
+        visiblePanelUrl: "http://127.0.0.1:5173/",
+        urlAgreement: "same" as const,
+        observedAt: "2026-04-28T00:00:03.000Z",
+      }),
+    inspectSession: () => Effect.fail(new Error("inspectSession not used by attach tests")),
+    resolveTargetSession: () =>
+      Effect.fail(new Error("resolveTargetSession not used by attach tests")),
+    actSession: () => Effect.fail(new Error("actSession not used by attach tests")),
+    closeSession: () => Effect.void,
+    getSessionOwnerClientId: () => Effect.succeed("desktop-client-runtime-test"),
+    getCdpEndpoint: () =>
+      Effect.succeed({
+        endpointUrl: "http://127.0.0.1:9333",
+        port: 9333,
+        sessions: [
+          {
+            sessionId: input?.cdpSessionId ?? visibleSessionId,
+            webContentsId: 42,
+            ...(input?.includeTargetId === false
+              ? {}
+              : { targetId: "target-visible-runtime-service" }),
+            url: "http://127.0.0.1:5173/",
+            title: "Visible fixture",
+          },
+        ],
+      }),
+  });
+}
+
+const headlessAttachBridgeLayer = makeHeadlessAttachBridgeLayer();
 const layer = it.layer(
   Layer.mergeAll(
     BrowserRuntimeServiceLive.pipe(
@@ -264,6 +274,76 @@ layer("BrowserRuntimeServiceLive", (it) => {
 
       const events = yield* repository.getSessionEvents({ sessionId: "thread-runtime-denied" });
       assert.ok(events.some((event) => event.type === "BrowserPolicyDecisionRecorded"));
+    }),
+  );
+});
+
+const noMatchingCdpSessionLayer = it.layer(
+  Layer.mergeAll(
+    BrowserRuntimeServiceLive.pipe(
+      Layer.provide(browserAutomationLayer),
+      Layer.provide(evidenceRecorderLayer),
+      Layer.provide(
+        makeHeadlessAttachBridgeLayer({
+          cdpSessionId: "electron-visible-other-session",
+        }),
+      ),
+      Layer.provide(controlLeaseLayer),
+      Layer.provide(evidenceRepositoryLayer),
+    ),
+    evidenceRepositoryLayer,
+    controlLeaseLayer,
+  ),
+);
+
+noMatchingCdpSessionLayer("BrowserRuntimeServiceLive CDP attach fail-closed", (it) => {
+  it.effect("fails closed when the CDP endpoint has no matching visible session", () =>
+    Effect.gen(function* () {
+      const runtime = yield* BrowserRuntimeService;
+
+      const exit = yield* Effect.exit(
+        runtime.openSession({
+          url: "http://127.0.0.1:5173/",
+          threadId: "thread-runtime-cdp-no-match",
+          preferredRuntimeKind: "playwright-headless",
+        }),
+      );
+
+      assert.strictEqual(exit._tag, "Failure");
+      assert.match(String(exit.cause), /did not expose a targetId/);
+    }),
+  );
+});
+
+const missingTargetIdLayer = it.layer(
+  Layer.mergeAll(
+    BrowserRuntimeServiceLive.pipe(
+      Layer.provide(browserAutomationLayer),
+      Layer.provide(evidenceRecorderLayer),
+      Layer.provide(makeHeadlessAttachBridgeLayer({ includeTargetId: false })),
+      Layer.provide(controlLeaseLayer),
+      Layer.provide(evidenceRepositoryLayer),
+    ),
+    evidenceRepositoryLayer,
+    controlLeaseLayer,
+  ),
+);
+
+missingTargetIdLayer("BrowserRuntimeServiceLive CDP attach missing target", (it) => {
+  it.effect("fails closed when the matching CDP session has no target id", () =>
+    Effect.gen(function* () {
+      const runtime = yield* BrowserRuntimeService;
+
+      const exit = yield* Effect.exit(
+        runtime.openSession({
+          url: "http://127.0.0.1:5173/",
+          threadId: "thread-runtime-cdp-missing-target",
+          preferredRuntimeKind: "playwright-headless",
+        }),
+      );
+
+      assert.strictEqual(exit._tag, "Failure");
+      assert.match(String(exit.cause), /did not expose a targetId/);
     }),
   );
 });

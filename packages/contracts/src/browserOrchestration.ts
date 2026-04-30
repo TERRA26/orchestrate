@@ -1,6 +1,12 @@
 import { Schema } from "effect";
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
+import {
+  EvidenceArtifactId,
+  IsoDateTime,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas";
 import {
   BrowserAction,
   BrowserApprovalId,
@@ -43,8 +49,6 @@ export const DevServerInstanceId = EntityId.pipe(Schema.brand("DevServerInstance
 export type DevServerInstanceId = typeof DevServerInstanceId.Type;
 export const PreviewTargetId = EntityId.pipe(Schema.brand("PreviewTargetId"));
 export type PreviewTargetId = typeof PreviewTargetId.Type;
-export const EvidenceArtifactId = EntityId.pipe(Schema.brand("EvidenceArtifactId"));
-export type EvidenceArtifactId = typeof EvidenceArtifactId.Type;
 const EvidenceRefs = Schema.Array(EvidenceArtifactId).check(Schema.isMinLength(1));
 export const EvidenceBundleId = EntityId.pipe(Schema.brand("EvidenceBundleId"));
 export type EvidenceBundleId = typeof EvidenceBundleId.Type;

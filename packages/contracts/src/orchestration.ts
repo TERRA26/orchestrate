@@ -6,6 +6,7 @@ import {
   CheckpointRef,
   CommandId,
   EventId,
+  EvidenceArtifactId,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -15,8 +16,6 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
-
-const OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
@@ -1935,8 +1934,8 @@ export const OrchestratorTaskSubmitCommand = Schema.Struct({
   filesWritten: Schema.optional(Schema.Array(Schema.String)),
   testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
   notes: Schema.optional(Schema.String),
-  browserAfterScreenshotRef: Schema.optional(OrchestratorEvidenceArtifactId),
-  browserAfterDomRef: Schema.optional(OrchestratorEvidenceArtifactId),
+  browserAfterScreenshotRef: Schema.optional(EvidenceArtifactId),
+  browserAfterDomRef: Schema.optional(EvidenceArtifactId),
   createdAt: IsoDateTime,
 });
 
@@ -2198,8 +2197,8 @@ export const OrchestratorTaskSubmittedPayload = Schema.Struct({
   filesWritten: Schema.optional(Schema.Array(Schema.String)),
   testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
   notes: Schema.optional(Schema.String),
-  browserAfterScreenshotRef: Schema.optional(OrchestratorEvidenceArtifactId),
-  browserAfterDomRef: Schema.optional(OrchestratorEvidenceArtifactId),
+  browserAfterScreenshotRef: Schema.optional(EvidenceArtifactId),
+  browserAfterDomRef: Schema.optional(EvidenceArtifactId),
   submittedAt: IsoDateTime,
 });
 

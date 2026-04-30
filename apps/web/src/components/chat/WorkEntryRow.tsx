@@ -54,10 +54,10 @@ const ORCH_TOOL_DISPLAY_LABELS: Record<string, string> = {
   orchestrate_review_agent_work: "Reviewing evidence",
   orchestrate_send_to_agent: "Sent instruction",
   orchestrate_focus_agent: "Focused worker",
-  orchestrate_open_browser_preview: "open browser preview",
-  orchestrate_browser_open_session: "capture browser screenshot",
-  orchestrate_browser_act: "browser observation",
-  orchestrate_browser_close_session: "close browser session",
+  orchestrate_open_browser_preview: "Browser preview",
+  orchestrate_browser_open_session: "Checking browser",
+  orchestrate_browser_act: "Acting on browser",
+  orchestrate_browser_close_session: "Closing browser",
 };
 
 function shortWorkerId(workerId: string | undefined): string | null {
