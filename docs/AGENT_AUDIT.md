@@ -1,9 +1,9 @@
 # Orchestrate — Reviewer Audit & Iteration Brief
 
-**Audit date:** 2026-04-29 (continuously updated each iteration)
+**Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `3feddf3f` (`test(browser): cover cdp attach cleanup paths`) — Bundle 17E reviewed; **ACCEPTED**. All four sub-items (FU-1, FU-4, RU-2, RU-3) deliver. One small architectural note (E-N1) tracked but not blocking.
-**Active bundle:** **Bundle 17F — Typed `browser-dom-snapshot` evidence artifact kind (FU-2)**. Eliminates the heuristic `find` in `OrchestrationToolRouter.ts` that picks "any evidenceRef that isn't a screenshot or url-agreement" — currently fragile under future evidence-ref ordering changes. RU-1 (dynamic port allocation) and FU-3 (async UI test) remain queued.
+**Latest reviewed commit:** `96a1a0ac` (`feat(browser): type dom snapshot evidence refs`) — Bundle 17F reviewed; **ACCEPTED**. The heuristic in `OrchestrationToolRouter.handleAcceptWork` is gone; `browserAfterDomRef` is now selected by typed artifact kind. Three small architectural notes (F-N1, F-N2, F-N3) tracked but none blocking.
+**Active bundle:** **Bundle 17H — Dynamic port allocation in Electron main (RU-1)**. Replaces the fixed-port-9333-with-env-override scheme with dynamic allocation surfaced via the existing IPC bridge. Closes the last operational gap in the CDP attach substrate (multi-instance host conflicts). Bundle 17G (FU-3 async UI test) and 17V (end-to-end UI verification) remain queued.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -1977,3 +1977,100 @@ Reviewer notes:
 
 - A full `ProjectionPipeline.test.ts` run still has two unrelated existing failures in rollback/timestamp coverage; the 17F projection lifecycle target passed.
 - `BrowserEvidenceRecorder.recordObservation` intentionally does not synthesize a DOM snapshot from non-DOM data. Empty text with no ARIA snapshot and no elements leaves `browserAfterDomRef` absent downstream.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17F
+
+**Verdict: ACCEPTED.** All gates met. The heuristic in `handleAcceptWork` is gone and the negative test locks in the new behavior. Three small architectural notes (F-N1, F-N2, F-N3) — none blocking.
+
+#### What I verified
+
+- `git diff a249d338..96a1a0ac` — 7 files, +347/−32. No `as any`, `@ts-expect-error`, or `eslint-disable` introduced in the production diff.
+- **Schema**: [`packages/contracts/src/browserOrchestration.ts:323`](packages/contracts/src/browserOrchestration.ts:323) adds `"browser-dom-snapshot"` to `EvidenceArtifactKind`. Schema decode test added.
+- **Recorder**: [`BrowserEvidenceRecorder.ts:67-86, 339-348`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:67) — `domSnapshotPayload(observation)` returns `undefined` when `textSummary`, `ariaSnapshot`, and `elements` are all empty/absent. Otherwise emits a separately-typed JSON artifact alongside the existing `browser-observation`. Existing artifacts (observation, url-agreement) are unchanged.
+- **Router**: [`OrchestrationToolRouter.ts:127-147`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:127) defines `findEvidenceRefByKind(repository, refs, kind)` that iterates `refs`, fetches each artifact via `getEvidenceArtifact`, and returns the first ref whose persisted `kind` matches. The old heuristic `observed.evidenceRefs.find(ref => ref !== screenshotRef && !ref.includes("url-agreement"))` is **gone** ([line 974-978 was the old call site; replaced with kind-based lookup](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:976-980)). Repository wired via `Effect.serviceOption(BrowserOrchestrationEvidenceRepository)` consistent with how `BrowserRuntimeService` is handled.
+- **Negative test** ([`OrchestrationToolRouter.test.ts:619-727`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts:619)): provides `evidenceRefs: ["screenshot-after", "browser-observation-after", "browser-url-agreement-after"]` (no dom-snapshot) and asserts `commands[0]` does not have `browserAfterDomRef` and `result` does not have `browserAfterDomRef`. **Crucially**, `browser-observation-after` is exactly the ref the OLD heuristic would have picked. If anyone reintroduces a fallback, this test fails immediately.
+- **Positive test**: provides all four refs including `browser-dom-snapshot-after`, asserts `browserAfterDomRef === "browser-dom-snapshot-after"` (not the second-position observation ref).
+- **Recorder tests**: positive case verifies the DOM snapshot artifact is written with `textSummary` + `ariaSnapshot` content; negative case verifies no `browser-dom-snapshot` ref appears when observation has empty `textSummary` and no other DOM signals.
+- Re-ran on my machine: `bun lint` exit 0, `bun typecheck` 10/10, server tests 18/18, contracts tests 18/18, projection lifecycle target test PASS.
+
+#### Answers to your four scrutiny questions
+
+1. **Should `domSnapshotPayload()` require stronger DOM evidence than `textSummary`?** Accept current behavior. `textSummary` IS DOM-derived (extracted page text from the rendered DOM). The bar to skip should be high (no DOM-derived content at all), and the recorder correctly meets that bar. A page with only `textSummary: "Welcome"` produces a snapshot with that minimal content — non-zero useful evidence. Track as **F-N1** if a future refinement wants separate `browser-text-summary` and `browser-dom-snapshot` kinds.
+
+2. **Should `OrchestrationToolRouter` fail closed when `BrowserOrchestrationEvidenceRepository` is absent?** Accept current behavior (return undefined). Consistent with how `BrowserRuntimeService` is handled at [line 968](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:968) — same "best-effort capture; accept_work always succeeds if accept dispatch succeeds" pattern. Production should always have the repository wired; if missing, that's a config bug elsewhere. Track as **F-N2**: log a warning when the repository is `Option.None` so missing wiring is visible.
+
+3. **Is swallowing repository lookup errors in `findEvidenceRefByKind` acceptable?** Accept. Same rationale as Q2: the after-evidence DOM ref is supplementary to the primary accept dispatch, and a transient artifact-fetch failure shouldn't fail the entire accept_work. Track as **F-N3**: emit `Effect.logWarning` from the `Effect.catch` handler so swallowed errors are visible in diagnostics. Non-blocking.
+
+4. **Does the negative test sufficiently prevent future fallback heuristic reintroduction?** Yes. The test deliberately includes `browser-observation-after` (the exact ref the old heuristic would have picked) in the evidenceRefs but configures the repository to mark it as `"browser-observation"`, not `"browser-dom-snapshot"`. The assertion `expect(commands[0]).not.toHaveProperty("browserAfterDomRef")` would fail the moment any fallback was reintroduced. Strong lock-in.
+
+#### Things I checked that are clean
+
+- Old heuristic line is removed entirely (re-greped: no remaining `evidenceRefs.find` that filters by url-agreement substring).
+- `findEvidenceRefByKind` properly threads through `Effect.serviceOption` so layer composition stays clean.
+- Recorder test uses `repository.getEvidenceArtifact` to verify the artifact is persisted, not just that a ref was emitted — proves the `kind` field is actually stored.
+- The kind-aware fake repository in router tests correctly differentiates the four refs by their kind, exercising the production lookup path.
+
+#### Three architectural notes (queued, none blocking)
+
+- **F-N1**: If a future bundle wants finer artifact taxonomy, split `browser-dom-snapshot` into `browser-text-summary` (textSummary-only) and a richer DOM kind (with ariaSnapshot/elements). Optional.
+- **F-N2**: Log a warning when `Effect.serviceOption(BrowserOrchestrationEvidenceRepository)` is `Option.None` at accept_work time. Surfaces missing wiring in dev/test setups.
+- **F-N3**: Emit a warning from the `Effect.catch` handler in `findEvidenceRefByKind` so artifact-lookup failures are visible.
+
+#### Bundle 17F status — COMPLETE
+
+All gates from the bundle spec are satisfied. The fragility flagged in 17B-F-3 review (heuristic in `handleAcceptWork`) is structurally resolved.
+
+#### Active Bundle: **Bundle 17H — Dynamic port allocation in Electron main (RU-1)**
+
+The CDP attach substrate is operationally solid except for one corner: the debug port is fixed at 9333 with `ORCHESTRATE_ELECTRON_CDP_PORT` override. This fails when:
+- A second Orchestrate instance is launched on the same host (port already bound).
+- Port 9333 is already in use by another process (Electron silently fails to bind, then `getCdpEndpoint` returns metadata pointing at a port nothing's listening on).
+
+Either case manifests as "playwright-headless attach fails with confusing error" rather than a clear "port unavailable" diagnostic.
+
+**Scope:**
+
+1. **Allocate a free port at startup.** In [`apps/desktop/src/main.ts`](apps/desktop/src/main.ts:118) before `app.commandLine.appendSwitch(...)`, allocate a free port:
+   - Open a TCP socket on `127.0.0.1:0` (OS picks a free port), read `address().port`, close the socket. Use the port number for `appendSwitch`.
+   - If `ORCHESTRATE_ELECTRON_CDP_PORT` is set, honor it (let the user pin a port for debugging) — the env override stays as an explicit opt-in.
+   - Verify after `appendSwitch` that the port was actually accepted; if Electron's CDP doesn't bind, fail startup with a clear error rather than continuing with a non-functional debug port.
+2. **Surface the chosen port via the existing IPC bridge.** [`getCdpEndpoint(port)`](apps/desktop/src/browserManager.ts:602) currently takes the port as a parameter; the calling [`ipcMain.handle(BROWSER_CDP_ENDPOINT_CHANNEL, async () => browserManager.getCdpEndpoint(ELECTRON_CDP_PORT))`](apps/desktop/src/main.ts:1460) passes the constant. Change to pass the dynamically-allocated port.
+3. **No contract changes.** The bridge response already carries `port`; consumers read it dynamically. Server-side Playwright `connectOverCDP(endpoint.endpointUrl)` already uses the URL from the response, not a hardcoded port. So this is internal-only.
+4. **Tests:**
+   - Unit test the port allocator helper (mock `net.createServer`/`address()` to verify it returns a port and closes the listener).
+   - Integration-ish test in `desktop/main.ts` is hard without spinning up Electron; defer to manual smoke or a separate end-to-end harness.
+   - Verify `getCdpEndpoint` returns the dynamically-chosen port in the bridge response.
+5. **Document** the change in [`docs/browser-runtime-notes.md`](docs/browser-runtime-notes.md): port is now dynamic by default; env override remains for explicit pinning.
+
+**Out of scope for 17H:**
+- Bundle 17G (FU-3 async UI test) — separate small bundle.
+- Bundle 17V (end-to-end UI verification) — user-driven.
+- F-N1, F-N2, F-N3 — small future cleanups.
+- E-N1 — entity ID max-length constraint.
+
+**Acceptance gates:**
+
+- [ ] `apps/desktop/src/main.ts` allocates a free port before `appendSwitch("remote-debugging-port", ...)`. The env override `ORCHESTRATE_ELECTRON_CDP_PORT` still works when set.
+- [ ] The IPC `BROWSER_CDP_ENDPOINT_CHANNEL` handler passes the dynamically-chosen port to `browserManager.getCdpEndpoint(...)`.
+- [ ] `getCdpEndpoint` response carries the actually-chosen port; server `connectOverCDP` uses the URL from the response (no hardcoded `:9333`).
+- [ ] Port allocator helper has a unit test.
+- [ ] Two Orchestrate instances launched in parallel each get their own port (verifiable manually; a unit test on the allocator helper is sufficient for CI).
+- [ ] If `ORCHESTRATE_ELECTRON_CDP_PORT` is set to a port already in use, startup fails with a clear error rather than silently continuing.
+- [ ] `docs/browser-runtime-notes.md` updated.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted server/desktop/contracts tests pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17H` to this file with file:line for each gate.
+
+**Queued for after 17H:**
+
+- **Bundle 17G**: FU-3 (`@testing-library/react` async UI test for `BrowserArtifactScreenshotPreview`).
+- **Optional Bundle 17V**: end-to-end UI verification with the dev server (best driven by you, the user).
+- **Small follow-ups**: F-N1, F-N2, F-N3 (logging/taxonomy refinements), E-N1 (entity ID max-length).
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17F** — implemented; pushed at `96a1a0ac`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17F** — accepted. Heuristic gone, kind-based selection in place, strong negative test. Three small notes (F-N1, F-N2, F-N3) tracked.
+- **2026-04-30 — Bundle 17H activated** — dynamic port allocation in Electron main. Closes the last operational gap in CDP attach.
