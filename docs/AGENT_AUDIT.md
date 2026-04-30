@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `03d8c05d` (`fix(desktop): allocate electron cdp port dynamically`) — Bundle 17H reviewed; **ACCEPTED**. The CDP attach substrate is now operationally robust: dynamic loopback port by default, explicit pinning via `ORCHESTRATE_ELECTRON_CDP_PORT` honored, fail-fast on bind error. Three small architectural notes (H-N1, H-N2, H-N3) tracked but none blocking.
-**Active bundle:** **Bundle 17G — `@testing-library/react` async UI test for `BrowserArtifactScreenshotPreview` (FU-3)**. Closes the documented test gap from 17B-F-3 review: the existing SSR test asserts static text labels but `useEffect`/Loaded/Failed states are not exercised. Bundle 17V (end-to-end UI verification, user-driven) remains queued. Small follow-ups (F-N1, F-N2, F-N3, H-N1, H-N2, H-N3, E-N1) batch later.
+**Latest reviewed commit:** `c18e948f` (`test(web): cover browser screenshot preview states`) — Bundle 17G reviewed; **ACCEPTED**. The visual after-evidence preview path is now under direct async DOM coverage. No new architectural notes.
+**Active bundle:** **Bundle 17J — Small notes batch** (F-N2, F-N3, H-N3, E-N1). Roll up four small mechanical wins: log warnings when evidence repository is `Option.None` and when artifact lookup errors are swallowed; add a remediation hint to the Electron CDP port-reservation error; restore the 128-char max-length constraint on entity IDs in `baseSchemas`. Bundle 17V (end-to-end UI verification, user-driven) remains queued. F-N1 and H-N1 deferred until concrete need surfaces.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -2220,3 +2220,93 @@ Notes:
 
 - I did not add snapshot coverage. The existing SSR `WorkEntryRow` tests already cover static markup; this bundle is intentionally focused on effect-driven DOM state transitions.
 - I kept the production change narrow: only exporting the existing preview component. No runtime behavior changed.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17G
+
+**Verdict: ACCEPTED.** All four state tests deliver. Production change is the smallest possible (a single `function` → `export function` edit). No conditions, no architectural notes.
+
+#### What I verified
+
+- `git diff a98d7b10..c18e948f` — 5 files, +225/−4. Production change is **one character**: [`WorkEntryRow.tsx:157`](apps/web/src/components/chat/WorkEntryRow.tsx:157) gains `export`. Everything else is test infrastructure, the new test file, and lockfile/package.json updates.
+- **Test file** ([`apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx)):
+  - `// @vitest-environment jsdom` keeps jsdom scoped to this file — no global Vitest config change.
+  - Mocks `~/browserEvidenceArtifacts` at the `fetchEvidenceArtifactImageDataUrl` boundary (line 11).
+  - Mocks `~/nativeApi` at the `ensureNativeApi` boundary (line 19) so no real WebSocket/IPC opens in jsdom.
+  - **Loading state** (line 31): `mockReturnValue(new Promise(() => {}))` — never resolves; synchronously asserts `"Loading preview..."`. Correct.
+  - **Loaded state** (line 39): `mockResolvedValue(dataUrl)`; uses `await screen.findByRole("img", { name: "Captured browser screenshot" })` which polls until the effect runs. Asserts both `src` matches and loading text is gone. Correct shape.
+  - **Failed state** (line 50): `mockResolvedValue(null)`; `waitFor` for `"Preview unavailable"`. Asserts AFTER async settlement (not synchronously). Correct.
+  - **Cancellation state** (line 60): The strongest of the four. Two-step setup: first fetch never-resolves, second fetch resolves to `nextDataUrl`. Renders ref A → rerenders ref B → awaits B's image → THEN explicitly resolves A's stale fetch with a different data URL → asserts displayed `src` is still B's. This proves the cleanup `cancelled` flag works, behaviorally — without coupling to setState call counts.
+- **Production export change** ([`WorkEntryRow.tsx:157`](apps/web/src/components/chat/WorkEntryRow.tsx:157)): a single keyword added (`function` → `export function`). No body modification, no call-site changes. Zero runtime impact.
+- **DevDeps**: `@testing-library/react@^16.3.2`, `@testing-library/jest-dom@^6.9.1`, `jsdom@^29.1.0`. All standard, all in `devDependencies`.
+- **Lockfile**: spot-checked the additions — they're jsdom transitive deps (`@adobe/css-tools`, `@asamuzakjp/css-color`, `@asamuzakjp/dom-selector`, etc.) plus the testing-library package entries. No suspicious additions, no postinstall scripts being pulled in, no native binary additions.
+- Re-ran on my machine: `bun lint` exit 0, `bun typecheck` 10/10, **20/20 tests PASS** when running `BrowserArtifactScreenshotPreview.test.tsx` alongside the existing `WorkEntryRow.test.tsx` (4 new + 16 existing). No cross-environment contamination.
+
+#### Answers to your five scrutiny questions
+
+1. **Export boundary acceptable, or should the component move to a sibling module?** **Acceptable as-is.** The 1-line `function` → `export function` change is the narrowest possible diff to make the component testable. The component is small (~40 lines) and currently has only one consumer (`BrowserBeforeAfterEvidence` in the same file). Moving to a sibling module would be a 2-file restructure for marginal benefit. If `BrowserArtifactScreenshotPreview` ever gains a second consumer outside `WorkEntryRow.tsx`, that's the right time to extract. Not blocking.
+
+2. **Is mocking `fetchEvidenceArtifactImageDataUrl` the right layer?** **Yes.** The component's contract IS the relationship between `useState` / `useEffect` and the artifact fetcher. Mocking lower (`evidence.getArtifact`) would test more of the stack but fewer of the component's actual states. The agent's choice tests exactly what 17G is supposed to lock down. The additional `ensureNativeApi` mock is a defensive must-have for jsdom — without it, the real native API resolution would attempt to open a WebSocket and fail in unpredictable ways.
+
+3. **Cancellation test strong enough?** **Yes.** The test asserts the observable contract — stale fetch A's resolution does not overwrite ref B's rendered state. That's exactly what the `cancelled` flag in the component's cleanup is supposed to guarantee. Asserting setState call counts/order would couple the test to React internals and would be more brittle. The implementation also uses the same `cancelled` flag for both the `.then` and `.catch` branches, so the success-path cancellation test indirectly covers the failure-path cancellation too. Don't tighten this further.
+
+4. **DevDependencies acceptable?** **Yes.** All three are standard React testing infrastructure. `@testing-library/react@16.3.2` is current and React 19-compatible (matching the codebase's `@types/react: ^19.0.0`). `jsdom@29.1.0` is the standard DOM polyfill. `@testing-library/jest-dom@6.9.1` provides the `.toBeInTheDocument()` matchers. No bloat.
+
+5. **Lockfile churn acceptable?** **Yes.** The additions are jsdom's transitive deps plus the testing-library packages. I spot-checked the diff — no postinstall scripts pulling new build-time deps, no native binary additions, no suspicious version bumps for unrelated packages. Normal `bun add` output for these three packages.
+
+#### Things I checked that are clean
+
+- The new test uses `// @vitest-environment jsdom` per-file rather than a global config change. Existing browser tests are unaffected.
+- The mocks are scoped via `vi.mock` and torn down with `vi.resetAllMocks()` + `cleanup()` in `afterEach`. No cross-test contamination.
+- `findByRole("img", { name: "Captured browser screenshot" })` queries by accessible role + name, which exercises the actual `<img alt="Captured browser screenshot">` rendering rather than CSS-class probing. Robust to refactors that change styling but preserve semantics.
+- The cancellation test explicitly handles the case where `resolveFirstFetch` is undefined (`throw new Error("first fetch resolver was not assigned")`). Catches a future test infrastructure issue if the mock setup changes shape.
+- No `// @ts-expect-error`, no `as any`, no `.skip`/`.only`, no test deletions.
+
+#### Bundle 17G status — COMPLETE
+
+The visual after-evidence preview path is now under direct async DOM coverage. The test gap documented in the 17B-F-3 review is closed.
+
+#### Active Bundle: **Bundle 17J — Small notes batch (F-N2, F-N3, H-N3, E-N1)**
+
+Four small mechanical wins from the accumulated notes. Skip F-N1 (artifact taxonomy split — defer until a real consumer needs the distinction) and H-N1 (synchronous port reservation — defer until Electron behavior changes). H-N2 (post-ready endpoint verification) is a separate small architectural change; track outside this bundle.
+
+**Scope:**
+
+1. **F-N2: Log when evidence repository is None at accept_work time.**
+   - In [`OrchestrationToolRouter.ts:944-1024`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:944) (`handleAcceptWork`), when the existing `if (Option.isNone(repository))` branch (or the `findEvidenceRefByKind` early-return at `OrchestrationToolRouter.ts:131`) fires, emit `Effect.logWarning("OrchestrationToolRouter handleAcceptWork: evidence repository unavailable; browserAfterDomRef will be omitted.")`. Surfaces missing wiring in dev/test setups without changing accept_work's success/failure semantics.
+2. **F-N3: Log swallowed artifact-lookup errors in `findEvidenceRefByKind`.**
+   - In [`OrchestrationToolRouter.ts:127-147`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:127), the `Effect.catch` swallows artifact lookup failures. Replace the silent `Option.none()` return with a `pipe(..., Effect.tap(...))` warning + `Option.none()` fallback. Visible in diagnostics; behavior unchanged.
+3. **H-N3: Add remediation hint to port reservation error message.**
+   - In [`apps/desktop/src/electronCdpPort.ts:48`](apps/desktop/src/electronCdpPort.ts:48), append a one-line hint: `"Set ORCHESTRATE_ELECTRON_CDP_PORT to a different port or unset for dynamic allocation."` to the thrown error message. Pure cosmetic; helps end-users diagnose.
+4. **E-N1: Restore 128-char max-length on entity IDs in `baseSchemas`.**
+   - In [`packages/contracts/src/baseSchemas.ts:15-16`](packages/contracts/src/baseSchemas.ts:15), change `makeEntityId` from `TrimmedNonEmptyString.pipe(Schema.brand(brand))` to `TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(Schema.brand(brand))`. This restores the constraint that the local `EntityId` in `browserOrchestration.ts` had before FU-1 moved `EvidenceArtifactId` to `baseSchemas`. Affects all entity IDs uniformly (`ThreadId`, `ProjectId`, `CommandId`, etc.).
+   - **Risk check**: verify no existing serialized data has IDs > 128 chars. The codebase uses UUIDs (36 chars), SHA-256 hex (64 chars), and short prefixed identifiers (always < 100 chars). Should be safe.
+   - Run the full test suite to catch any test fixture using an over-long ID literal.
+
+**Out of scope for 17J:**
+- Bundle 17V (end-to-end UI verification) — user-driven.
+- F-N1 (artifact taxonomy split) — deferred until concrete need.
+- H-N1 (synchronous port reservation) — deferred until Electron behavior changes.
+- H-N2 (post-ready endpoint verification) — separate small bundle if it ever becomes important.
+
+**Acceptance gates:**
+
+- [ ] `OrchestrationToolRouter.handleAcceptWork` emits `Effect.logWarning` when `evidenceRepository` is `Option.None`. Existing accept_work success/failure semantics unchanged. Tests still pass.
+- [ ] `findEvidenceRefByKind` emits `Effect.logWarning` when an artifact lookup fails. Behavior unchanged (returns `Option.none()` for that ref, find continues). Tests still pass.
+- [ ] `electronCdpPort.ts` thrown error includes the remediation hint string. Allocator test updated to verify the new message contains the hint.
+- [ ] `makeEntityId` in `baseSchemas` adds `Schema.isMaxLength(128)`. All existing entity-ID-using tests pass. New schema test verifies a >128-char input is rejected.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; full targeted test sweep across server/contracts/web passes.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17J` to this file with file:line for each gate.
+
+**Queued:**
+
+- **Bundle 17V**: end-to-end UI verification — best driven by you; the agent likely can't run the dev server and visually verify the calm-thread story.
+- **Bundle 17K (if needed)**: H-N2 post-ready endpoint verification, F-N1 artifact taxonomy split, H-N1 synchronous reservation. All deferred until concrete need.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17G** — implemented; pushed at `c18e948f`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17G** — accepted. Four state tests, narrow production export, standard test infrastructure deps, behavior-oriented cancellation test. No architectural notes.
+- **2026-04-30 — Bundle 17J activated** — small notes batch (F-N2, F-N3, H-N3, E-N1).
