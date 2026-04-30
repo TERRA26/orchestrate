@@ -47,7 +47,7 @@ import {
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
 import { buildOrchestratorSystemPrompt } from "./orchestration/orchestratorSystemPrompt";
-import { ServerConfig } from "./config.ts";
+import { ServerConfig, type ServerConfigShape } from "./config.ts";
 
 type PendingRequestKey = string;
 
@@ -492,6 +492,33 @@ export function buildCodexInitializeParams() {
   } as const;
 }
 
+export function buildCodexOrchestratorEnvironment(input: {
+  readonly baseEnv: NodeJS.ProcessEnv;
+  readonly serverConfig?: Pick<ServerConfigShape, "port" | "authToken">;
+  readonly threadId: ThreadId;
+  readonly codexHomePath?: string;
+  readonly threadType?: "orchestrator" | "agent";
+}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...input.baseEnv,
+    ...(input.codexHomePath ? { CODEX_HOME: input.codexHomePath } : {}),
+  };
+
+  if (input.threadType !== "orchestrator") {
+    return env;
+  }
+
+  env.ORCHESTRATE_PARENT_THREAD_ID = input.threadId;
+  if (input.serverConfig !== undefined) {
+    env.ORCHESTRATE_WS_PORT = String(input.serverConfig.port);
+    if (input.serverConfig.authToken) {
+      env.ORCHESTRATE_AUTH_TOKEN = input.serverConfig.authToken;
+    }
+  }
+
+  return env;
+}
+
 function resolveOrchestratorPromptProjectRoot(startDir: string): string {
   let current = path.resolve(startDir);
   while (true) {
@@ -711,6 +738,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const codexOptions = readCodexProviderOptions(input);
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
+      const serverConfig = await this.runPromise(
+        Effect.serviceOption(ServerConfig).pipe(
+          Effect.map((option) => (option._tag === "Some" ? option.value : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      );
       this.assertSupportedCodexCliVersion({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
@@ -718,13 +751,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       });
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
-          ...(input.threadType === "orchestrator"
-            ? { ORCHESTRATE_PARENT_THREAD_ID: threadId }
-            : {}),
-        },
+        env: buildCodexOrchestratorEnvironment({
+          baseEnv: process.env,
+          serverConfig,
+          threadId,
+          codexHomePath,
+          threadType: input.threadType,
+        }),
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
       });

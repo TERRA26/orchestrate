@@ -2709,3 +2709,37 @@ Per user instruction: keep iterating. Each batch = pick a small SaaS shape, run 
 - **2026-04-30 — Agent Report — Bundle 17W** — initial smoke + send-path follow-up; pushed at `94b02af7` and `27aa6edf`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17W** — accepted. Six bugs surfaced; five fixed (one as transparency, four root-cause); send-path schema-shape silent divergence root-fixed in follow-up. Three small notes (W-N1, W-N2, W-N3) tracked; one critical follow-up (17W-6 browser MCP unavailable) for next batch.
 - **2026-04-30 — Bundle 17X activated** — continuous SaaS-build smoke loop. Increment batch number per iteration.
+
+## Agent Report — 2026-04-30T15:09:14Z — Bundle 17X-1
+
+### What I tried
+
+Investigated **17W-6**, where `orchestrate_browser_open_session` failed during a Codex/Orchestrate smoke with `Cannot connect to orchestration server at ws://localhost:3773`.
+
+The failure was a real regression in the Codex orchestrator MCP launch path, not just an environment startup race:
+
+- `scripts/orchestrate-mcp-server.ts:472-487` builds WebSocket URLs from `ORCHESTRATE_WS_PORT` and `ORCHESTRATE_AUTH_TOKEN`, otherwise it falls back to unauthenticated `ws://localhost:3773` and `ws://localhost:3774`.
+- `apps/server/src/provider/Layers/ClaudeAdapter.ts:3305-3308` already launches Claude orchestrator MCP subprocesses with `ORCHESTRATE_WS_PORT`, `ORCHESTRATE_AUTH_TOKEN`, and `ORCHESTRATE_PARENT_THREAD_ID`.
+- `apps/server/src/codexAppServerManager.ts:722-726` previously launched Codex app-server orchestrator sessions with only `ORCHESTRATE_PARENT_THREAD_ID`, so Codex-hosted MCP tools could not discover the actual server port or auth token and fell back to `localhost:3773`.
+
+### What changed
+
+- Added `buildCodexOrchestratorEnvironment` at `apps/server/src/codexAppServerManager.ts:495-520`. It preserves the base env and `CODEX_HOME`, and only for orchestrator sessions adds:
+  - `ORCHESTRATE_PARENT_THREAD_ID`
+  - `ORCHESTRATE_WS_PORT`
+  - `ORCHESTRATE_AUTH_TOKEN` when configured
+- Updated Codex app-server process launch at `apps/server/src/codexAppServerManager.ts:741-760` to read `ServerConfig` and use that helper for the spawned `codex app-server` environment.
+- Added focused tests at `apps/server/src/codexAppServerManager.test.ts:25-62` proving orchestrator Codex sessions receive port/auth/thread env while non-orchestrator Codex sessions do not.
+- Added the missing `Effect` test import at `apps/server/src/codexAppServerManager.test.ts:7`; the existing orchestrator system-prompt test already used `Effect.runPromise` and was failing without the import.
+
+### Verification
+
+- `bun fmt` — passed.
+- `bun lint` — passed with existing warnings, 0 errors.
+- `PATH=/opt/homebrew/Cellar/node@24/24.15.0/bin:$PATH bun typecheck` — passed, 10/10 tasks. Plain `bun typecheck` failed first because the shell's Node was `v20.19.6` and Astro requires `>=22.12.0`; rerunning with Node 24 fixed the environment issue.
+- `cd apps/server && bun run test src/codexAppServerManager.test.ts` — passed, 48 passed / 1 skipped.
+- `PATH=/opt/homebrew/Cellar/node@24/24.15.0/bin:$PATH bun run test` — failed in the existing web suite, unrelated to this server-side Codex env patch. Failures included `apps/web/src/terminalStateStore.test.ts` (`useTerminalStateStore.persist` undefined), `apps/web/src/pinnedThreadsStore.test.ts` (`window is not defined`), existing expectation drift in `composerSlashCommands`, `session-logic`, `Sidebar.logic`, `SidebarSearchPalette.logic`, `wsTransport`, `composerDraftStore`, and `MessagesTimeline` timeouts. Server/contracts/shared/scripts/desktop/demo-fullstack tests reached in that run passed before the web package failed.
+
+### Current status
+
+17X-1 root cause is fixed in code and covered by a targeted test. The global web test baseline remains red and should be handled as a separate 17X batch if the reviewer prioritizes test-suite health.

@@ -4,8 +4,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ApprovalRequestId, ThreadId } from "@orchestrate/contracts";
+import { Effect } from "effect";
 
 import {
+  buildCodexOrchestratorEnvironment,
   buildCodexInitializeParams,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
@@ -19,6 +21,45 @@ import {
 import { buildOrchestratorSystemPrompt } from "./orchestration/orchestratorSystemPrompt";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+
+describe("buildCodexOrchestratorEnvironment", () => {
+  it("passes the server port and auth token to Codex orchestrator MCP tools", () => {
+    const env = buildCodexOrchestratorEnvironment({
+      baseEnv: { PATH: "/bin" },
+      serverConfig: {
+        port: 51234,
+        authToken: "secret-token",
+      },
+      threadId: asThreadId("thread-codex-orchestrator"),
+      codexHomePath: "/tmp/codex-home",
+      threadType: "orchestrator",
+    });
+
+    expect(env).toMatchObject({
+      PATH: "/bin",
+      CODEX_HOME: "/tmp/codex-home",
+      ORCHESTRATE_PARENT_THREAD_ID: "thread-codex-orchestrator",
+      ORCHESTRATE_WS_PORT: "51234",
+      ORCHESTRATE_AUTH_TOKEN: "secret-token",
+    });
+  });
+
+  it("does not expose orchestration MCP env to non-orchestrator Codex sessions", () => {
+    const env = buildCodexOrchestratorEnvironment({
+      baseEnv: { PATH: "/bin" },
+      serverConfig: {
+        port: 51234,
+        authToken: "secret-token",
+      },
+      threadId: asThreadId("thread-codex-agent"),
+      threadType: "agent",
+    });
+
+    expect(env.ORCHESTRATE_PARENT_THREAD_ID).toBeUndefined();
+    expect(env.ORCHESTRATE_WS_PORT).toBeUndefined();
+    expect(env.ORCHESTRATE_AUTH_TOKEN).toBeUndefined();
+  });
+});
 
 function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
