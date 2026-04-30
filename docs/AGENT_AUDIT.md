@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `eca9ec0e` (`chore: address browser evidence cleanup notes`) — Bundle 17J reviewed; **ACCEPTED**. All four small notes (F-N2, F-N3, H-N3, E-N1) closed. No new architectural notes.
-**Active bundle:** **Bundle 17V — End-to-end UI verification** (user-driven). All accumulated agent-doable work is landed. The remaining gate is the user actually exercising the calm-thread story end-to-end in the running dev server. F-N1 (artifact taxonomy split), H-N1 (synchronous port reservation), and H-N2 (post-ready endpoint verification) remain deferred until concrete need surfaces.
+**Latest reviewed commit:** `aa816dfd` (`fix(browser): restore desktop action bridge`) — Bundle 17V reviewed; **ACCEPTED**. The agent ran the end-to-end verification themselves in real Electron, **found two serious integration bugs** (MCP auth missing, openSession bridge decode shape mismatch) plus three UI/dev-loop polish issues, fixed all five with proper test coverage, and verified actual YouTube playback through the Orchestrate browser tools. **Phase 17 primary goals are met.**
+**Active bundle:** **Phase 17 sign-off (no active work)**. The agent's suggested next direction — full SaaS-build scenario inside Orchestrate, exercising orchestration beyond browser tooling — is a strong candidate (could be Bundle 17W). Alternatively, declare Phase 17 done and move to Phase 18 net-new feature work. Small follow-ups (F-N1, H-N1, H-N2, J-N1) remain deferred.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -2458,3 +2458,79 @@ Ran the desktop stack end-to-end with the real Electron visible browser and foun
 - The MCP URL builder deliberately uses `new URL("ws://...")`; this preserves valid WebSocket URLs and percent/plus-encodes tokens consistently.
 - I did not attempt to solve YouTube recommendations being unavailable when signed out. The product bug was that automated actions were unavailable; that is fixed and verified.
 - Next loop should move from browser smoke tests into a full SaaS-building scenario inside Orchestrate: create a fresh thread, ask Orchestrate to build a small SaaS feature, watch the work log, inspect UI artifacts, file annotations, and convert any broken UX into the next bundle.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17V
+
+**Verdict: ACCEPTED.** This iteration delivered far more than the loop expected. The agent took the user-driven verification on themselves, ran the desktop stack against real Electron, and turned what should have been a "the user will exercise this" handoff into a bug-hunting pass that **found and fixed two serious integration bugs** that would have blocked end-to-end browser tooling in any real deployment. Visual proof of YouTube playback is concrete confirmation that the CDP attach + browser tooling substrate works.
+
+#### What I verified
+
+- `git diff 75ad8ed0..aa816dfd` — 10 files, +199/−64. All five fixes scoped tightly; no scope creep.
+- **17V-F1 (MCP auth token plumbing)** — verified at:
+  - [`apps/server/src/provider/Layers/ClaudeAdapter.ts:3306-3308`](apps/server/src/provider/Layers/ClaudeAdapter.ts:3306) — conditional spread `...(serverConfig.authToken ? { ORCHESTRATE_AUTH_TOKEN: serverConfig.authToken } : {})`. Doesn't inject empty/undefined env vars.
+  - [`scripts/orchestrate-mcp-server.ts:470-487`](scripts/orchestrate-mcp-server.ts:470) — pure `buildOrchestrationWsUrls(env)` function, exported for testability. Uses `new URL("ws://...")` + `searchParams.set("token", authToken)` for safe URL construction (correctly percent-encodes special characters in tokens).
+  - **This is the most operationally important fix in the bundle.** Without it, every deployment that enables auth (which is the production default) would have the orchestration MCP subprocess unable to connect — every browser tool call would fail at the WebSocket auth gate before reaching the bridge. The agent caught this only because they actually ran the stack end-to-end.
+- **17V-F2 (openSession bridge decode shape)** — verified at [`apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.ts:14, 66, 189-200, 311`](apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.ts:14):
+  - New `decodeBrowserOpenSessionResult` decoder + `decodeOpenSessionObservation` helper that decodes the full `BrowserOpenSessionResult` and extracts `result.observation`.
+  - `openSession` callsite uses the new helper; other methods (`observeSession`, `inspectSession`, etc.) still use `decodeObservationResult` because their bridge contracts ARE `BrowserObservation` (not the wrapper).
+  - Distinct error code `desktop-bridge-invalid-open-session-result` for diagnosability.
+  - **Test fixtures updated**: [`DesktopBrowserBridge.test.ts`](apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.test.ts) now uses the real `BrowserOpenSessionResult` shape, so this mismatch can never hide behind bare-observation fixtures again.
+  - **Diagnosis was sharp**: the desktop browser manager always returned `BrowserOpenSessionResult` (`{ sessionId, observation, runtimeTruth, evidenceRefs, claimGate }`), but the server broker decoded the IPC response as a flat `BrowserObservation`. The decoder accepted SOME of the fields (because BrowserObservation overlaps with the inner observation) and silently produced a structurally broken value with missing `url`. This is exactly the silent-divergence pattern the audit was supposed to catch — and it had been hiding behind tests that mocked the wrong shape.
+- **17V-F3 (composer pill "ready")** — verified at [`OrchestratorAgentStatePill.tsx:8, 22-23`](apps/web/src/components/orchestrator/OrchestratorAgentStatePill.tsx:8). Idle/completed → `"ready"` with neutral border/text styling. Test [`OrchestratorComposer.test.tsx:12-13, 24`](apps/web/src/components/orchestrator/OrchestratorComposer.test.tsx:12) updated. Sensible UX call: "done" implied work just finished, but for a fresh idle composer it just means "nothing's running yet."
+- **17V-F4 (theme dedup)** — verified at [`useTheme.ts:14-15, 30-44`](apps/web/src/hooks/useTheme.ts:14):
+  - Module-level cache `lastAppliedTheme` + `lastAppliedSystemDark`.
+  - `applyTheme` early-returns when `(theme, systemDark)` matches the last applied combination AND `suppressTransitions` is false. Cache is updated after each application.
+  - The `suppressTransitions` carve-out is correct — when called with that flag (only at boot to prevent flash), we always re-apply because the no-transitions class needs to be added/removed regardless.
+  - Subtle correctness: cache is module-scoped (singleton), shared across all `useTheme` consumers — the right scope for de-duplication.
+- **17V-F5 (CSS @import order)** — verified at [`apps/web/src/index.css:1-2`](apps/web/src/index.css:1). Google Font import now precedes Tailwind import. CSS spec requires all `@import` rules to appear before other statements; the previous order was technically invalid even though browsers tolerated it. Trivial fix.
+- **Lint warning bump from 131 → 132**: I checked. Running `bun lint` on `75ad8ed0` (the prior commit) ALSO shows 132. The 131 in my earlier reviews was a stale recollection. **No new warning introduced by this commit.**
+- Re-ran on my machine: lint exit 0, typecheck 10/10, **server bridge + runtime: 32/32 PASS**, scripts MCP: 5/5 PASS, web composer: 2/2 PASS. No regressions.
+
+#### Live verification
+
+The agent's report describes a real end-to-end run:
+- `bun run dev:desktop` started successfully (after fixing a local Electron binary install — environment repair only, no committed files).
+- The composer's `ready` pill rendered correctly in light mode at app load.
+- A real orchestrator task drove `orchestrate_browser_act` with `navigate`, `evaluate`, `wait`, and `close` actions through an `electron-visible-...` session.
+- YouTube playback was verified by the playhead advancing from `0:01` → `0:03` → `0:19/0:19` with the up-next countdown.
+
+**This is the strongest possible evidence the calm-thread + CDP attach + browser tooling stack works in production.** The visible session id prefix (`electron-visible-...`) confirms the user-facing browser was the same one the agent acted on — closing the original "two browsers" trust failure.
+
+#### Things I checked that are clean
+
+- Both auth-token paths are conservative (conditional spread; URL constructor with searchParams). No leakage of an empty token into env or URL.
+- The bridge decode change is surgical — only `openSession` was wrong-shaped; `observeSession`/`inspectSession`/etc. correctly remain on `decodeObservationResult`.
+- The pill UX change preserves the same `data-agent-state-pill={label}` attribute, so any analytics or test selectors keying on it adapt automatically (selector becomes `data-agent-state-pill="ready"`).
+- The theme cache uses two module-level vars but no mutation race because JS is single-threaded and `applyTheme` is synchronous.
+- No `// @ts-expect-error`, no `as any`, no `.skip`/`.only`, no test deletions.
+- The MCP URL builder is exported AND test-fixture-friendly (takes `env` as input rather than reading `process.env` directly), enabling unit coverage without env mutation.
+
+#### What I did NOT independently verify
+
+- The actual end-to-end Electron run. Setting up a desktop Electron stack to replay the agent's verification would take significant time and isn't strictly necessary — the agent's evidence (commit + claim of YouTube playhead progression) is credible, and the unit/integration tests cover the schema/decode paths that actually broke.
+- Whether the auth-token leak could surface in logs. The `URL.toString()` will include `?token=...` in the connection URL, which could appear in any process logging that tee's stdout/stderr. **Tracked as V-N1**: consider redacting `?token=...` from any log line that captures the WebSocket URL. Non-blocking but worth a follow-up if log-export ever becomes user-facing.
+
+#### Bundle 17V status — COMPLETE; Phase 17 primary goals met
+
+The end-to-end verification is done, two serious integration bugs are fixed, and the calm-thread browser orchestration stack works in real Electron. The original 10-point Definition of Done at §9 is satisfied AND now empirically validated.
+
+#### What's next (user decides)
+
+The agent's suggestion — **Bundle 17W: full SaaS-build scenario inside Orchestrate** — is a strong candidate. It would exercise orchestration beyond browser tooling: file edits, terminal commands, multi-worker coordination, the rework loop end-to-end. It's likely to surface more bugs the way 17V did. Risk: it could become a sprawling bundle if many bugs are found at once.
+
+Alternative paths:
+- **Phase 18 net-new feature work**: declare Phase 17 done and move on to whatever the next product priority is.
+- **Bundle 17K (small)**: tackle H-N2 (post-ready CDP endpoint verification) as one more piece of operational hardening before declaring done.
+- **Bundle 17X (cleanup)**: J-N1 (consolidate `EntityId` branding into baseSchemas) + V-N1 (redact tokens from URL logs). Mechanical wins.
+
+**My recommendation:** since the agent demonstrated they can actually run end-to-end, do **Bundle 17W (full SaaS-build scenario)** as one more integration smoke. Find and fix anything else hiding before declaring Phase 17 fully closed. Cap scope by saying "first 3 bugs found = next bundle; remaining = separate bundles."
+
+But this is your call. Whichever direction you pick, paste the prompt and the loop continues; otherwise we can declare done.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17V** — implemented; pushed at `aa816dfd`. Two serious integration bugs (auth, decode shape) and three UI/dev polish issues caught and fixed during real-Electron verification. YouTube playback verified end-to-end.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17V** — accepted. Phase 17 primary goals met. Tracked V-N1 (redact tokens from URL logs) as small follow-up.
+- **2026-04-30 — Phase 17 sign-off** — no active work; user decides next phase.
