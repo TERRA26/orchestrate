@@ -3220,3 +3220,95 @@ I used the fallback SaaS surface requested for the smoke and fixed concrete demo
 ### Next target
 
 The decisive 17X-5 review should decide whether the local demo fix is acceptable as partial progress. The primary product blocker remains the stale MCP host: worker spawn, browser preview, and annotation/rework tools all fail before reaching Orchestrate.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17X-5 (substituted: demo polish in lieu of smoke)
+
+**Verdict: NARROW PARTIAL ACCEPT — accept the small bug fixes, mark the redesign as out-of-scope substitution, escalate the operational blocker.**
+
+This batch did not satisfy the 17X-5 contract. Both Path A (operator-driven live confirmation) and Path B (annotation→rework cycle smoke) were operationally blocked by the same stale Codex MCP host that has now blocked four batches. Path B specifically required driving a worker through `orchestrate_spawn_agent`, which fails with the same pre-diagnostic stack the agent reported. So Path B was not chosen and skipped the smoke step — it was blocked at step 1, identical to Path A.
+
+What the agent shipped instead is **substitute work**: a redesign of the LedgerPilot demo from arcade aesthetic to B2B SaaS aesthetic. This was not authorized by the 17X-5 active bundle; it is creative-direction polish, not bug-fix output of an Orchestrate-driven smoke. The 17X-5 acceptance gate was "At least one identified bug fixed OR a clean live confirmation captured" — the bugs identified in this batch were not surfaced through Orchestrate's smoke loop (the smoke didn't run); they were found by manually running the demo.
+
+I am narrowly accepting the small concrete fixes because they are real and low-cost to keep, and rolling them back would burn cycles without product gain. But this batch is a clear instance of the smoke-loop stall that 17X-5 was supposed to break, and it must not recur in 17X-6.
+
+#### What's legitimately useful
+
+- **CORS allow-list correction** at [`apps/demo-fullstack/server/src/app.ts:64`](apps/demo-fullstack/server/src/app.ts:64). Replaces stale `http://localhost:5173` with `["http://localhost:5175", "http://127.0.0.1:5175"]` — the real Vite dev-server origins. Real bug, real fix. Keep.
+- **Optional `seed` flag** on `createApp({ seed?: boolean })` at [`apps/demo-fullstack/server/src/app.ts:19-52`](apps/demo-fullstack/server/src/app.ts:19). Preserves the empty-store invariant the existing tests rely on; lets `main.ts` boot with seeded data for runtime smokes. Pragmatic. Keep.
+- **Boot-log label** at [`apps/demo-fullstack/server/src/main.ts:7`](apps/demo-fullstack/server/src/main.ts:7). "Todos API" → "LedgerPilot API". Keep.
+
+#### What's out of scope
+
+- The full visual redesign (palette, fonts, KPI cards, plan mix, accounts table, billing-risk alerts) at `apps/demo-fullstack/web/{index.html,src/index.css,src/App.tsx,tailwind.config.js}`. This is a creative-direction choice, not a bug fix. None of these changes were driven by an Orchestrate smoke output. Total scope of substitute work: ~177 of the 218 inserted lines.
+
+The redesign isn't being reverted because (a) it doesn't break any tests or other consumers, and (b) the demo app's UI direction is mutable by definition. But it should not be counted as 17X-5 progress, and future blocked-smoke batches must not invent substitute polish work.
+
+#### Operational reality check
+
+Four batches (17X-2 through 17X-5) have now been blocked by the same stale MCP host. The diagnostic + redaction work is fully complete:
+
+- `orchestrate-mcp-server.ts` boot diagnostic prints `port=…; auth=…; parentThread=…` to stderr.
+- Connection-failure errors include the redacted shape.
+- All token leakage is closed.
+
+Every part of "is the env wired correctly" is now self-diagnosing. The only remaining question is operational: **a fresh managed Codex provider session is needed**, and only the human operator can spawn one by hard-restarting the desktop stack outside the current MCP review loop.
+
+#### Notes status
+
+- **X-3-N1 — CLOSED**.
+- **X-2-N1 — CLOSED**.
+- **X-2-N2 — STILL TRACKED.** `scripts/typecheck` `ws` import hygiene. Acceptable to address in 17X-6 if the operator-driven live confirmation cannot be performed this batch and the agent needs a non-substitute fallback.
+
+#### Bundle 17X-5 status — NARROW PARTIAL ACCEPT (substitute work; smoke not executed)
+
+The CORS/seed/label fixes land. The redesign sits on main but is not counted as 17X-5 progress. Path A and Path B both remain unexecuted.
+
+#### Active Bundle: **Bundle 17X-6 — Operator escalation; one allowed fallback (X-2-N2)**
+
+The smoke loop has stalled on operator-only-resolvable infrastructure. The next batch enforces a strict scope.
+
+**Primary task — operator-driven Path A live confirmation** (unchanged from 17X-4/17X-5; primary if available this batch):
+
+1. Operator hard-restarts the desktop stack outside any Codex MCP host context.
+2. Open a new orchestrator thread; let Orchestrate spawn the Codex provider itself.
+3. The first MCP-subprocess stderr line **must** be:
+
+   ```text
+   orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present
+   ```
+
+   `fallback`/`missing` in any field means 17X-1 is incomplete and is the primary bug to fix.
+
+4. Send `orchestrate_browser_open_session({ url: "https://example.com" })`. Confirm no fallback failure; confirm `sessionId` is `electron-visible-…`.
+5. Paste the boot line and the result into the agent report.
+
+**Single allowed fallback if and only if the operator confirms that a hard-restart is operationally blocked at the start of the batch: X-2-N2 — `scripts/typecheck` `ws` import hygiene.**
+
+- Choose one approach:
+  - Add `@types/ws` to `scripts/devDependencies` and ensure `ws` itself resolves at runtime, OR
+  - Migrate `scripts/live-orchestrator-smoke.ts` and `scripts/scenario-runner.ts` to Node 22's built-in `WebSocket`.
+- Acceptance: a clean `bun install` followed by `cd scripts && bun run typecheck` passes. Do an import-fix only.
+
+**Hard-stop scope rules for 17X-6:**
+
+- No demo app polish.
+- No demo app redesigns.
+- No "since I'm here" cleanup outside the two paths above.
+- If both Path A and X-2-N2 are blocked (e.g. operator unavailable and `@types/ws` install introduces unrelated repo churn), **the correct deliverable is an empty docs commit reporting the block.** That is acceptable progress; substitute work is not.
+
+**Acceptance gates per batch:**
+
+- [ ] Path A: live confirmation captured with the boot-line + `sessionId` evidence in the agent report. OR
+- [ ] X-2-N2: `cd scripts && bun run typecheck` passes from a clean install. OR
+- [ ] Empty docs commit reporting the operational block, with an explicit "I did not perform substitute work" note.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted suites pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17X-6` with the chosen path and the result.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17X-5 (substituted)** — Path A blocked by stale MCP host; Path B also blocked by same stale MCP at `orchestrate_spawn_agent`. Agent shipped LedgerPilot demo redesign as substitute work. Pushed at `18b1ba32`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17X-5** — narrow partial accept. Small CORS/seed/label fixes kept; redesign documented as out-of-scope substitution; smoke-loop stall escalated.
+- **2026-04-30 — Bundle 17X-6 activated** — operator-driven Path A primary; X-2-N2 single allowed fallback; otherwise empty docs commit reporting block. **No substitute work.**
