@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `27aa6edf` (`fix(orchestrator): include modes in worker follow-ups`) covering Bundle 17W (`94b02af7` + `27aa6edf`) — **ACCEPTED**. The agent ran the LedgerPilot SaaS smoke inside Orchestrate, found and fixed six real orchestration-loop bugs (one was the **`orchestrate_send_to_agent` schema-shape silent divergence** that the follow-up commit root-fixed), verified the demo dashboard renders, and built a workable smoke loop for finding more bugs.
-**Active bundle:** **Bundle 17X — Continuous SaaS-build smoke loop**. Per user instruction: keep iterating indefinitely. Each batch = run a fresh SaaS-build scenario inside Orchestrate, find real app/UI/workflow bugs, fix them, push, return for review. The bundle number increments per batch (17X-1, 17X-2, …). Three small notes from this batch (W-N1, W-N2, W-N3) tracked. Older follow-ups (F-N1, H-N1, H-N2, J-N1, V-N1) remain deferred.
+**Latest reviewed commit:** `f9ef0aa9` (`fix(codex): pass orchestration MCP connection env`) — Bundle 17X-1 reviewed; **ACCEPTED**. Real Codex MCP launch regression: the Codex `app-server` spawn was missing `ORCHESTRATE_WS_PORT` and `ORCHESTRATE_AUTH_TOKEN`, so the orchestration MCP subprocess fell back to unauthenticated `ws://localhost:3773` and bounced. **Symmetric to the Claude-side fix in 17V-F1.** Diagnosis was correct, fix is appropriately scoped, the test locks the asymmetry (orchestrator gets env, agent does not).
+**Active bundle:** **Bundle 17X-2 — Live confirmation of `browser_open_session` + next smoke pass**. Top priority: a fresh Codex orchestrator run that proves `orchestrate_browser_open_session` actually works after the env-passing fix. Without confirmation, we don't know if 17W-6 had multiple layers. After confirmation, continue with the next SaaS-shape smoke (annotation→rework cycle is high value).
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -2743,3 +2743,83 @@ The failure was a real regression in the Codex orchestrator MCP launch path, not
 ### Current status
 
 17X-1 root cause is fixed in code and covered by a targeted test. The global web test baseline remains red and should be handled as a separate 17X batch if the reviewer prioritizes test-suite health.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17X-1
+
+**Verdict: ACCEPTED.** Real bug, sharp diagnosis, correct fix, appropriate test coverage. Symmetric to the Claude-side fix in 17V-F1 — confirms a class of bug (asymmetric env propagation between provider adapters) that the smoke loop should keep watching for.
+
+#### What I verified
+
+- `git diff 0fc2ccae..f9ef0aa9` — 3 files, +116/−8. Tightly scoped: helper extraction + spawn rewiring + tests + audit.
+- **Diagnosis is sharp.** Codex's `startSession` at [`codexAppServerManager.ts:741-760`](apps/server/src/codexAppServerManager.ts:741) passed only `ORCHESTRATE_PARENT_THREAD_ID` to the spawned `codex app-server`. Claude's adapter at [`ClaudeAdapter.ts:3306-3308`](apps/server/src/provider/Layers/ClaudeAdapter.ts:3306) already passed both `ORCHESTRATE_WS_PORT` and `ORCHESTRATE_AUTH_TOKEN`. The MCP subprocess at [`scripts/orchestrate-mcp-server.ts:472-487`](scripts/orchestrate-mcp-server.ts:472) only authenticates when both env vars are present; otherwise it falls back to unauthenticated `ws://localhost:3773` / `:3774` which the auth-enabled server rejects. So the symptom "Cannot connect to orchestration server at ws://localhost:3773" was the Codex-hosted MCP probe failing on the wrong URL. **17W-6 was a real Codex MCP launch regression.**
+- **Helper extraction** at [`codexAppServerManager.ts:495-520`](apps/server/src/codexAppServerManager.ts:495):
+  - `buildCodexOrchestratorEnvironment` is a pure function; takes `baseEnv`, optional `serverConfig`, `threadId`, optional `codexHomePath`, optional `threadType`.
+  - **Conditional logic is correct**: always copies `baseEnv` and optionally adds `CODEX_HOME`. Returns early when `threadType !== "orchestrator"` — non-orchestrator Codex sessions get neither `ORCHESTRATE_PARENT_THREAD_ID` nor the WS env. Only orchestrator sessions get the orchestration env.
+  - When `serverConfig` is undefined, the helper still adds `ORCHESTRATE_PARENT_THREAD_ID` for orchestrator sessions but skips the WS env vars. Graceful degradation for tests/setups without a wired ServerConfig.
+- **Spawn wiring** at [`codexAppServerManager.ts:741-760`](apps/server/src/codexAppServerManager.ts:741) reads `ServerConfig` via `Effect.serviceOption(ServerConfig).pipe(Effect.map(Option-extract), Effect.orElseSucceed(() => undefined))`. Optional resolution; missing service ⇒ undefined. This is the right shape for a class with its own Effect runtime where the layer may or may not provide ServerConfig (e.g., test harnesses).
+- **Tests** at [`codexAppServerManager.test.ts:23-62`](apps/server/src/codexAppServerManager.test.ts:23):
+  - Positive case (`threadType: "orchestrator"`): explicit `port: 51234`, `authToken: "secret-token"`, asserts all five env vars present including `ORCHESTRATE_WS_PORT: "51234"` (string-stringified) and `ORCHESTRATE_AUTH_TOKEN: "secret-token"`.
+  - Negative case (`threadType: "agent"`): same serverConfig but asserts none of the orchestration env vars are present. **This is the lockdown that prevents future code from accidentally exposing orchestration tools to agent workers.**
+- **Re-ran on my machine**: `bun lint` exit 0, `bun typecheck` 10/10, `bun run test src/codexAppServerManager.test.ts` 48 passed / 1 skipped (matching agent's report; my first run flaked at JIT warmup with one timeout, second run was clean — 28s vs 74s).
+- The `Effect` import on line 7 is genuinely needed; the agent caught a latent test-import gap.
+
+#### Answers to your four reviewer-focus questions
+
+1. **ServerConfig dependency boundary in `CodexAppServerManager.startSession`?** Acceptable. Reading via `Effect.serviceOption(ServerConfig).pipe(Effect.orElseSucceed(() => undefined))` is the right shape for a class that owns its own Effect runtime — production wiring provides ServerConfig, test wiring may not. The boundary is at spawn time, which is when threadType is known and the WS port/token are stable. Same shape as how the manager already resolves other optional services.
+
+2. **Are `ORCHESTRATE_WS_PORT` and `ORCHESTRATE_AUTH_TOKEN` enough?** Yes. The MCP consumer at `scripts/orchestrate-mcp-server.ts` reads exactly these two env vars to construct the authenticated WebSocket URL. The fix matches the consumer's contract one-for-one.
+
+3. **Should non-orchestrator Codex sessions NOT receive orchestration MCP env?** Yes — and the early-return + negative test enforce it. Agent workers without orchestration tools should not have a route to the orchestration server. This also avoids token leakage to the broader agent workspace.
+
+4. **Next 17X batch priority — web test baseline OR continue smoke?** **Continue smoke.** The whole point of 17X-1 was to fix 17W-6, but the live confirmation is still pending ("the previous live session had already loaded the old script code"). Without a fresh smoke run that proves `orchestrate_browser_open_session` actually works through Codex, we don't know if 17W-6 had multiple layers or if there's another silent-divergence pattern hiding behind the same symptom. The web test baseline is long-term hygiene; it's not blocking the smoke loop's primary goal of finding real product bugs. Tackle web test debt as a separate explicit batch when the smoke loop hits a quiescent stretch.
+
+#### Things I checked that are clean
+
+- No `as any`, `@ts-expect-error`, `eslint-disable`, `.skip`, `.only`.
+- The helper exports both the function and is consumed via direct named import — no module-state surprise.
+- The conditional `if (input.serverConfig.authToken)` correctly skips empty/falsy tokens (so an empty-string token doesn't pollute env).
+- The string conversion `String(input.serverConfig.port)` is explicit (not implicit) — env vars are strings.
+- No new env vars escape into non-orchestrator sessions even with `serverConfig` populated; the early return guarantees it.
+
+#### One small thing I'd like in 17X-2 (not blocking)
+
+- The fresh-session live confirmation should explicitly note **which** version of `scripts/orchestrate-mcp-server.ts` the Codex provider session loaded. The existing 17W-6 symptom was partly because a stale provider session held the old MCP script bytes. A simple `console.error("orchestrate-mcp-server.ts loaded; auth=<bool>; port=<n>")` boot log in the MCP script would make this trivially diagnosable in the future.
+
+#### Bundle 17X-1 status — COMPLETE
+
+The Codex MCP launch regression is fixed and locked in by a test that prevents future regressions in either direction (orchestrator must get env; agent must not).
+
+#### Active Bundle: **Bundle 17X-2 — Live confirmation + next smoke pass**
+
+**Primary task: confirm 17X-1 works in practice.**
+
+1. Restart the desktop stack with a fresh Codex provider session (kill any stale `codex app-server` processes first; the agent's note about "previous live session had already loaded the old script code" is the warning).
+2. Open a new orchestrator thread, send a small browser task that invokes `orchestrate_browser_open_session`. Confirm:
+   - The MCP subprocess connects successfully (no "Cannot connect to ws://localhost:3773" failure).
+   - The browser session id is `electron-visible-...` (proves the live shared browser path is reached).
+   - The `ws://` connection to the server includes `?token=...` (you should see this in the dev server logs if any logging captures it; otherwise verify by inspecting the spawned MCP subprocess env).
+3. If the live confirmation fails, the symptom and next-layer cause go into the agent report, and a follow-up fix lands as part of this same 17X-2 commit.
+
+**Secondary task (if the live confirmation passes quickly): pick the next smoke shape.** Options ranked by my preference:
+
+a. **Annotation → rework → submit cycle smoke.** This exercises the visual-evidence path that 17B-F-3 added: file an annotation in the live browser panel, click Start rework with `mode: "start-agent-run"`, wait for the worker to submit, confirm the before/after preview pair renders with actual screenshots. This is the most product-critical scenario that hasn't yet been smoke-verified end-to-end. Likely to surface 1-3 bugs.
+
+b. **Multi-worker scenario.** Spawn two parallel workers building different parts of a single SaaS feature (e.g., one builds the API, one builds the UI). Tests the spawn budget, coordination, and review-many-workers paths. Good "stress the orchestration loop" coverage.
+
+c. **17X-1 micro-followup**: add a boot-log line to `orchestrate-mcp-server.ts` so future "is the MCP loaded" questions are trivially answerable. Two lines of code.
+
+**Acceptance gates per batch (unchanged from 17X):**
+
+- [ ] At least one identified bug fixed; bug + fix described with file:line citations.
+- [ ] Targeted tests for any new code paths.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted suites pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17X-2` with what was tried, what broke, what was fixed, and what's the next obvious target.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17X-1** — Codex MCP env regression fixed; pushed at `f9ef0aa9`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17X-1** — accepted. Diagnosis sharp, fix symmetric with 17V-F1, test locks the asymmetry, no scope creep.
+- **2026-04-30 — Bundle 17X-2 activated** — live confirmation of `browser_open_session` + next smoke pass.
