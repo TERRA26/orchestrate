@@ -2285,6 +2285,7 @@ Four small mechanical wins from the accumulated notes. Skip F-N1 (artifact taxon
    - Run the full test suite to catch any test fixture using an over-long ID literal.
 
 **Out of scope for 17J:**
+
 - Bundle 17V (end-to-end UI verification) — user-driven.
 - F-N1 (artifact taxonomy split) — deferred until concrete need.
 - H-N1 (synchronous port reservation) — deferred until Electron behavior changes.
@@ -2310,3 +2311,31 @@ Four small mechanical wins from the accumulated notes. Skip F-N1 (artifact taxon
 - **2026-04-30 — Agent Report — Bundle 17G** — implemented; pushed at `c18e948f`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17G** — accepted. Four state tests, narrow production export, standard test infrastructure deps, behavior-oriented cancellation test. No architectural notes.
 - **2026-04-30 — Bundle 17J activated** — small notes batch (F-N2, F-N3, H-N3, E-N1).
+
+## Agent Report — 2026-04-30T05:04:16Z — Bundle 17J
+
+Implemented the small notes batch without changing success/failure semantics.
+
+- **F-N2 repository-missing warning**: [`findEvidenceRefByKind`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:127) now logs `OrchestrationToolRouter handleAcceptWork: evidence repository unavailable; browserAfterDomRef will be omitted.` before returning `undefined` when the optional evidence repository is absent.
+- **F-N3 artifact lookup warning**: [`findEvidenceRefByKind`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:140) now logs failed artifact lookups with `artifactRef`, `expectedKind`, and `cause`, then continues returning `Option.none()` for that ref. The existing best-effort lookup behavior is unchanged.
+- **H-N3 remediation hint**: [`reserveElectronCdpPort`](apps/desktop/src/electronCdpPort.ts:48) now appends `Set ORCHESTRATE_ELECTRON_CDP_PORT to a different port or unset it for dynamic allocation.` to port-reservation failures. The allocator test asserts the hint at [`electronCdpPort.test.ts:60`](apps/desktop/src/electronCdpPort.test.ts:60).
+- **E-N1 shared ID max length**: [`makeEntityId`](packages/contracts/src/baseSchemas.ts:15) now applies `Schema.isMaxLength(128)` before branding. This restores the 128-char limit for shared entity IDs such as `ThreadId`, `ProjectId`, `CommandId`, and `EvidenceArtifactId`.
+- **Schema regression test**: Added [`packages/contracts/src/baseSchemas.test.ts:1`](packages/contracts/src/baseSchemas.test.ts:1), verifying 128-character IDs decode and 129-character IDs fail.
+
+Verification:
+
+- `bun fmt` passed.
+- `bun lint` passed with existing warnings and 0 errors.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` passed (10/10 tasks).
+- `bun run test src/electronCdpPort.test.ts` passed in `apps/desktop` (4 tests).
+- `bun run test src/baseSchemas.test.ts src/browserOrchestration.test.ts` passed in `packages/contracts` (20 tests).
+- `bun run test` passed in `packages/contracts` (114 tests), which is the risk check for over-long entity ID fixtures.
+- `bun run test src/orchestration/Layers/OrchestrationToolRouter.test.ts` passed in `apps/server` (16 tests).
+- `bun run test src/orchestration/Layers/OrchestrationToolRouter.test.ts src/browserRuntime/Layers/DesktopBrowserBridge.test.ts` passed in `apps/server` (22 tests).
+- `bun run test src/components/chat/BrowserArtifactScreenshotPreview.test.tsx src/components/chat/WorkEntryRow.test.tsx` passed in `apps/web` (20 tests).
+- `git diff --check` passed.
+
+Notes:
+
+- I did not add separate log-capture assertions for the `Effect.logWarning` calls. The changes are direct calls in the two documented branches, and the existing router tests prove the returned command/result semantics remain unchanged.
+- I left the local `EntityId` helper in `browserOrchestration.ts` in place. It still enforces the same 128-char limit for browser-only IDs while shared IDs now regain the same bound in `baseSchemas`.

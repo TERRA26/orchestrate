@@ -130,14 +130,27 @@ function findEvidenceRefByKind(
   kind: EvidenceArtifactKind,
 ): Effect.Effect<string | undefined, never> {
   if (Option.isNone(repository)) {
-    return Effect.succeed(undefined);
+    return Effect.logWarning(
+      "OrchestrationToolRouter handleAcceptWork: evidence repository unavailable; browserAfterDomRef will be omitted.",
+    ).pipe(Effect.as(undefined));
   }
 
   return Effect.gen(function* () {
     for (const ref of refs) {
       const artifact = yield* repository.value
         .getEvidenceArtifact({ artifactId: EvidenceArtifactId.makeUnsafe(ref) })
-        .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "OrchestrationToolRouter findEvidenceRefByKind: artifact lookup failed; ref will be ignored.",
+              {
+                artifactRef: ref,
+                expectedKind: kind,
+                cause: error,
+              },
+            ).pipe(Effect.as(Option.none())),
+          ),
+        );
       if (Option.isSome(artifact) && artifact.value.kind === kind) {
         return ref;
       }

@@ -62,7 +62,9 @@ describe("reserveElectronCdpPort", () => {
 
     await expect(
       reserveElectronCdpPort({ envPort: "9333", createServer: () => server }),
-    ).rejects.toThrow("Unable to reserve Electron CDP debug port 127.0.0.1:9333");
+    ).rejects.toThrow(
+      "Set ORCHESTRATE_ELECTRON_CDP_PORT to a different port or unset it for dynamic allocation.",
+    );
   });
 
   it("rejects invalid explicit overrides", async () => {

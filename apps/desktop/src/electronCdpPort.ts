@@ -49,9 +49,10 @@ export async function reserveElectronCdpPort({
     server.once("error", (error) => {
       const target = requestedPort ? `${host}:${requestedPort}` : `${host}:0`;
       reject(
-        new Error(`Unable to reserve Electron CDP debug port ${target}: ${error.message}`, {
-          cause: error,
-        }),
+        new Error(
+          `Unable to reserve Electron CDP debug port ${target}: ${error.message}. Set ORCHESTRATE_ELECTRON_CDP_PORT to a different port or unset it for dynamic allocation.`,
+          { cause: error },
+        ),
       );
     });
     server.once("listening", () => resolve());
