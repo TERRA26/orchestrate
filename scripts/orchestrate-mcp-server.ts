@@ -489,6 +489,16 @@ export function buildOrchestrationWsUrls(env: NodeJS.ProcessEnv): ReadonlyArray<
 
 const ORCH_WS_URLS = buildOrchestrationWsUrls(process.env);
 
+export function redactOrchestrationWsUrlForLog(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("token");
+    return parsed.toString();
+  } catch {
+    return url.replace(/([?&]token=)[^&]*/i, "$1<redacted>");
+  }
+}
+
 export function buildMcpBootDiagnostic(env: NodeJS.ProcessEnv): string {
   return [
     "orchestrate-mcp-server loaded",
@@ -516,10 +526,11 @@ async function ensureWs(): Promise<WebSocket> {
     try {
       return await connectWs(url);
     } catch (error) {
+      const redactedUrl = redactOrchestrationWsUrlForLog(url);
       lastError =
         error instanceof Error
           ? error
-          : new Error(`Cannot connect to orchestration server at ${url}`);
+          : new Error(`Cannot connect to orchestration server at ${redactedUrl}`);
     }
   }
   throw new Error(
@@ -536,7 +547,12 @@ function connectWs(url: string): Promise<WebSocket> {
       wsConnection = ws;
       resolve(ws);
     };
-    ws.onerror = () => reject(new Error(`Cannot connect to orchestration server at ${url}`));
+    ws.onerror = () =>
+      reject(
+        new Error(
+          `Cannot connect to orchestration server at ${redactOrchestrationWsUrlForLog(url)}`,
+        ),
+      );
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(String(event.data));

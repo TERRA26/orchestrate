@@ -5,6 +5,7 @@ import {
   buildMcpConnectionFailureMessage,
   buildOrchestrationWsUrls,
   buildWorkerFollowUpTurnStartCommand,
+  redactOrchestrationWsUrlForLog,
   summarizeBrowserObservation,
 } from "./orchestrate-mcp-server";
 
@@ -29,6 +30,26 @@ describe("buildOrchestrationWsUrls", () => {
       "ws://localhost:3773/?token=secret",
       "ws://localhost:3774/?token=secret",
     ]);
+  });
+});
+
+describe("redactOrchestrationWsUrlForLog", () => {
+  it("removes token query parameters before logging websocket URLs", () => {
+    expect(redactOrchestrationWsUrlForLog("ws://localhost:59685/?token=secret-token")).toBe(
+      "ws://localhost:59685/",
+    );
+  });
+
+  it("preserves non-token query parameters", () => {
+    expect(redactOrchestrationWsUrlForLog("ws://localhost:59685/?token=secret-token&debug=1")).toBe(
+      "ws://localhost:59685/?debug=1",
+    );
+  });
+
+  it("redacts malformed URL strings defensively", () => {
+    expect(redactOrchestrationWsUrlForLog("not a url?token=secret-token&debug=1")).toBe(
+      "not a url?token=<redacted>&debug=1",
+    );
   });
 });
 

@@ -2959,3 +2959,44 @@ The diagnostic gap is closed. Future stale-vs-managed MCP sessions are now self-
 - **2026-04-30 — Agent Report — Bundle 17X-2** — boot diagnostic + failure-message diagnostic; pushed at `5d36bf46` and `543cab7f`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17X-2** — accepted. Diagnostic gap closed at both boot (stderr) and failure (error message). Two pre-existing notes tracked: X-2-N1 (token-in-URL leak) and X-2-N2 (scripts typecheck on `ws` import).
 - **2026-04-30 — Bundle 17X-3 activated** — fresh managed Codex live confirmation + token-in-URL redaction (X-2-N1).
+
+## Agent Report — 2026-04-30T16:14:11Z — Bundle 17X-3
+
+### What I tried
+
+Started with the secondary hardening Claude identified as **X-2-N1**: the diagnostic added in 17X-2 redacted `auth=present`, but the inherited `connectWs` error still interpolated the full WebSocket URL. When auth was configured, that URL could include `?token=<secret>`.
+
+I also retried `orchestrate_browser_open_session({ url: "https://example.com" })` from this Codex-hosted MCP context. It still returned the old pre-diagnostic stack:
+
+```text
+Cannot connect to orchestration server at ws://localhost:3773
+at .../scripts/orchestrate-mcp-server.ts:504:35
+```
+
+That line number no longer matches the current script, so the current Codex MCP host has not loaded the 17X-2/17X-3 script bytes. This remains stale-session evidence, not a fresh managed Codex confirmation.
+
+### Bug fixed
+
+**X-2-N1 token-in-URL leak:** `scripts/orchestrate-mcp-server.ts` could put an authenticated WebSocket URL into an error string. That error string is visible to orchestrator threads, so a failed auth-enabled connection could expose `ORCHESTRATE_AUTH_TOKEN`.
+
+### What changed
+
+- Added `redactOrchestrationWsUrlForLog` at `scripts/orchestrate-mcp-server.ts:492-500`.
+  - Uses `URL` parsing for normal WebSocket URLs.
+  - Deletes only the `token` query parameter.
+  - Keeps non-sensitive query parameters.
+  - Falls back to a defensive regex for malformed URL-like strings.
+- Updated `ensureWs` fallback error construction at `scripts/orchestrate-mcp-server.ts:522-540` to use the redacted URL.
+- Updated `connectWs` error construction at `scripts/orchestrate-mcp-server.ts:543-555` to use the redacted URL.
+- Added tests at `scripts/orchestrate-mcp-server.test.ts:33-52` covering token removal, non-token query preservation, and malformed URL fallback redaction.
+
+### Verification
+
+- `cd scripts && bun run test orchestrate-mcp-server.test.ts` — passed, 13/13.
+- `bun fmt` — passed.
+- `bun lint` — passed with warnings and 0 errors. Warning output still includes pre-existing repo warnings and untracked `.claude/worktrees/` noise.
+- `PATH=/opt/homebrew/Cellar/node@24/24.15.0/bin:$PATH bun typecheck` — passed, 10/10 tasks.
+
+### Current status
+
+The X-2-N1 hardening is fixed and covered. The primary 17X-3 live confirmation still needs a truly fresh Orchestrate-spawned Codex provider session. This current Codex tool process is demonstrably stale because it still reports the old `scripts/orchestrate-mcp-server.ts:504` stack line instead of the new diagnostic-enriched error path.
