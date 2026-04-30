@@ -154,7 +154,7 @@ function BrowserScreenshotPreview({
   );
 }
 
-function BrowserArtifactScreenshotPreview({ artifactRef }: { artifactRef: string }) {
+export function BrowserArtifactScreenshotPreview({ artifactRef }: { artifactRef: string }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 

@@ -2168,6 +2168,7 @@ The 17B-F-3 review documented this gap: the existing test at [`apps/web/src/comp
 5. **Make the test deterministic** — no real network, no real timers (use `vi.useFakeTimers()` if needed).
 
 **Out of scope for 17G:**
+
 - F-N1, F-N2, F-N3, H-N1, H-N2, H-N3, E-N1 — small future cleanups.
 - Bundle 17V — end-to-end UI verification (user-driven).
 - Renaming or refactoring `BrowserArtifactScreenshotPreview` — keep the component shape.
@@ -2193,3 +2194,29 @@ The 17B-F-3 review documented this gap: the existing test at [`apps/web/src/comp
 - **2026-04-30 — Agent Report — Bundle 17H** — implemented; pushed at `03d8c05d`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17H** — accepted. Dynamic port allocation in place, env override honored, fail-fast on bind error, no production 9333 hardcoding. Three small notes (H-N1, H-N2, H-N3) tracked.
 - **2026-04-30 — Bundle 17G activated** — `@testing-library/react` async UI test for `BrowserArtifactScreenshotPreview`. Closes the documented test gap from 17B-F-3.
+
+## Agent Report — 2026-04-30T04:38:16Z — Bundle 17G
+
+Implemented the async DOM test coverage for `BrowserArtifactScreenshotPreview`.
+
+- **Test infrastructure**: Added `@testing-library/react`, `@testing-library/jest-dom`, and `jsdom` to [`apps/web/package.json:60`](apps/web/package.json:60), with matching lockfile updates in [`bun.lock`](bun.lock).
+- **Testable component export**: Exported [`BrowserArtifactScreenshotPreview`](apps/web/src/components/chat/WorkEntryRow.tsx:157) from `WorkEntryRow.tsx` so the DOM test can exercise the existing component directly without duplicating its internal state machine.
+- **Async DOM test**: Added [`apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:1`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:1) with a jsdom Vitest environment and `jest-dom` matchers.
+- **Native API isolation**: The test mocks `fetchEvidenceArtifactImageDataUrl` at [`BrowserArtifactScreenshotPreview.test.tsx:11`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:11) and also mocks `ensureNativeApi` at [`BrowserArtifactScreenshotPreview.test.tsx:19`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:19), so no fallback WebSocket/native bridge path is opened during the test.
+- **Loading state**: [`BrowserArtifactScreenshotPreview.test.tsx:31`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:31) returns a never-resolving promise and asserts `Loading preview...` is rendered.
+- **Loaded state**: [`BrowserArtifactScreenshotPreview.test.tsx:39`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:39) resolves a data URL and waits with `findByRole` for the rendered screenshot image, then asserts the image `src`.
+- **Failed state**: [`BrowserArtifactScreenshotPreview.test.tsx:50`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:50) resolves `null` and waits for `Preview unavailable`, exercising the async failure path rather than static markup.
+- **Cancellation state**: [`BrowserArtifactScreenshotPreview.test.tsx:60`](apps/web/src/components/chat/BrowserArtifactScreenshotPreview.test.tsx:60) renders one pending ref, rerenders a second ref, waits for the second image, then resolves the stale first fetch and asserts the image remains on the second data URL.
+
+Verification:
+
+- `bun fmt` passed.
+- `bun lint` passed with existing warnings and 0 errors; the new test file adds no warning.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` passed after the explicit stale-fetch resolver guard.
+- `bun run test src/components/chat/BrowserArtifactScreenshotPreview.test.tsx` passed in `apps/web` (4 tests).
+- `bun run test src/components/chat/BrowserArtifactScreenshotPreview.test.tsx src/components/chat/WorkEntryRow.test.tsx` passed in `apps/web` (20 tests).
+
+Notes:
+
+- I did not add snapshot coverage. The existing SSR `WorkEntryRow` tests already cover static markup; this bundle is intentionally focused on effect-driven DOM state transitions.
+- I kept the production change narrow: only exporting the existing preview component. No runtime behavior changed.
