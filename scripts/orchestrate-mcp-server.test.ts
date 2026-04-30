@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildMcpBootDiagnostic,
   buildMcpConnectionFailureMessage,
+  buildOrchestrationConnectionFallbackError,
   buildOrchestrationWsUrls,
   buildWorkerFollowUpTurnStartCommand,
   redactOrchestrationWsUrlForLog,
@@ -82,6 +83,14 @@ describe("buildMcpConnectionFailureMessage", () => {
     ).toBe(
       "Cannot connect to orchestration server; orchestrate-mcp-server loaded; port=59685; auth=present; parentThread=present",
     );
+  });
+});
+
+describe("buildOrchestrationConnectionFallbackError", () => {
+  it("redacts tokens in the defensive websocket fallback error", () => {
+    expect(
+      buildOrchestrationConnectionFallbackError("ws://localhost:59685/?token=secret-token").message,
+    ).toBe("Cannot connect to orchestration server at ws://localhost:59685/");
   });
 });
 

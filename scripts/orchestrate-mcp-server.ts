@@ -515,6 +515,12 @@ export function buildMcpConnectionFailureMessage(
   return `${error.message}; ${buildMcpBootDiagnostic(env)}`;
 }
 
+export function buildOrchestrationConnectionFallbackError(url: string | undefined): Error {
+  return new Error(
+    `Cannot connect to orchestration server at ${redactOrchestrationWsUrlForLog(url ?? "unknown")}`,
+  );
+}
+
 let wsConnection: WebSocket | null = null;
 let wsRequestId = 0;
 const wsPending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
@@ -535,7 +541,7 @@ async function ensureWs(): Promise<WebSocket> {
   }
   throw new Error(
     buildMcpConnectionFailureMessage(
-      lastError ?? new Error(`Cannot connect to orchestration server at ${ORCH_WS_URLS[0]}`),
+      lastError ?? buildOrchestrationConnectionFallbackError(ORCH_WS_URLS[0]),
     ),
   );
 }

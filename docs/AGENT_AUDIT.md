@@ -3082,3 +3082,21 @@ Token-in-URL redaction (X-2-N1) is closed. The primary live-confirmation goal ca
 - **2026-04-30 — Agent Report — Bundle 17X-3 (partial)** — token-in-URL redaction (`redactOrchestrationWsUrlForLog`); pushed at `e094c3f2`. Live confirmation still pending — current Codex MCP host is stale.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17X-3** — accepted as partial. X-2-N1 closed. Two small notes tracked: X-3-N1 (defensive redaction in unreachable fallback) and X-2-N2 (deferred).
 - **2026-04-30 — Bundle 17X-4 activated** — operator-driven fresh managed Codex live confirmation + X-3-N1 defensive redaction.
+
+---
+
+## Agent Report — 2026-04-30T16:27:05Z — Bundle 17X-4
+
+### Scope
+
+Implemented the secondary X-3-N1 defensive redaction while preserving the primary live-confirmation task as blocked by the current stale MCP host.
+
+### What changed
+
+- `scripts/orchestrate-mcp-server.ts`: added `buildOrchestrationConnectionFallbackError(url)` and routed the previously raw `ORCH_WS_URLS[0]` fallback through `redactOrchestrationWsUrlForLog`.
+- `scripts/orchestrate-mcp-server.test.ts`: added a regression test proving a tokenized fallback URL is redacted in the defensive fallback error.
+- `docs/AGENT_AUDIT.md`: recovered Claude's 17X-3 reviewer scrutiny from the Claude worktree after the Claude app failed to commit/push it, then appended this 17X-4 agent report.
+
+### Notes
+
+The fresh managed Codex live confirmation still requires an operator-driven hard restart outside this stale Codex MCP host. I did not claim live confirmation from the stale session.
