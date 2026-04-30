@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  BrowserCdpEndpointInfo,
   type BrowserCloseSessionInput,
   type BrowserActInput,
   BrowserAnnotationResolveTargetAtPointResult,
@@ -38,6 +39,7 @@ export const DesktopBrowserBridgeUnavailableLive = Layer.succeed(DesktopBrowserB
   resolveAnnotationTargetAtPoint: unavailable,
   closeSession: unavailable,
   actSession: unavailable,
+  getCdpEndpoint: unavailable,
   getSessionOwnerClientId: () => Effect.succeed(null),
 } satisfies DesktopBrowserBridgeShape);
 
@@ -67,6 +69,7 @@ const decodeBrowserResolveTargetResult = Schema.decodeUnknownEffect(
 const decodeBrowserResolveAnnotationTargetAtPointResult = Schema.decodeUnknownEffect(
   BrowserAnnotationResolveTargetAtPointResult,
 );
+const decodeBrowserCdpEndpointInfo = Schema.decodeUnknownEffect(BrowserCdpEndpointInfo);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -95,7 +98,8 @@ function requestDesktopBrowserBridge(
     | BrowserResolveTargetSessionInput
     | BrowserAnnotationResolveTargetAtPointInput
     | BrowserActInput
-    | BrowserCloseSessionInput,
+    | BrowserCloseSessionInput
+    | Record<string, never>,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Effect.Effect<unknown, Error> {
   return Effect.tryPromise({
@@ -220,6 +224,18 @@ function decodeResolveAnnotationTargetAtPointResult(
   );
 }
 
+function decodeCdpEndpointInfo(value: unknown): Effect.Effect<BrowserCdpEndpointInfo, Error> {
+  return decodeBrowserCdpEndpointInfo(value).pipe(
+    Effect.mapError(
+      (cause) =>
+        bridgeError(
+          `Electron visible browser runtime bridge returned invalid CDP endpoint info: ${cause}`,
+          "desktop-bridge-invalid-cdp-endpoint",
+        ) as Error,
+    ),
+  );
+}
+
 export function setDesktopBrowserBridgePublisher(
   publisher: PublishDesktopBrowserBridgeRequest | null,
 ): void {
@@ -303,6 +319,8 @@ export const DesktopBrowserBridgeBrokerLive = Layer.succeed(DesktopBrowserBridge
       ),
       Effect.asVoid,
     ),
+  getCdpEndpoint: () =>
+    requestDesktopBrowserBridge("getCdpEndpoint", {}).pipe(Effect.flatMap(decodeCdpEndpointInfo)),
   getSessionOwnerClientId: (sessionId) =>
     Effect.sync(() => sessionOwnerClientIds.get(sessionId) ?? null),
 } satisfies DesktopBrowserBridgeShape);

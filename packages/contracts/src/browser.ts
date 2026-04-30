@@ -210,9 +210,26 @@ export type BrowserRuntimeTruthKind = typeof BrowserRuntimeTruthKind.Type;
 export const BrowserSurfaceMode = Schema.Literals([
   "live-shared-browser",
   "headless-validation-mirror",
+  "playwright-attached",
   "static-screenshot-evidence",
 ]);
 export type BrowserSurfaceMode = typeof BrowserSurfaceMode.Type;
+
+export const BrowserCdpEndpointSession = Schema.Struct({
+  sessionId: BrowserSessionId,
+  webContentsId: NonNegativeInt,
+  targetId: Schema.optionalKey(TrimmedNonEmptyString),
+  url: TrimmedNonEmptyString,
+  title: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type BrowserCdpEndpointSession = typeof BrowserCdpEndpointSession.Type;
+
+export const BrowserCdpEndpointInfo = Schema.Struct({
+  endpointUrl: TrimmedNonEmptyString,
+  port: PositiveInt,
+  sessions: Schema.Array(BrowserCdpEndpointSession),
+});
+export type BrowserCdpEndpointInfo = typeof BrowserCdpEndpointInfo.Type;
 
 export const BrowserUrlAgreement = Schema.Literals(["same", "different", "unknown"]);
 export type BrowserUrlAgreement = typeof BrowserUrlAgreement.Type;

@@ -35,6 +35,7 @@ const BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL =
   "desktop:browser-resolve-annotation-target-at-point";
 const BROWSER_ACT_SESSION_CHANNEL = "desktop:browser-act-session";
 const BROWSER_CLOSE_SESSION_CHANNEL = "desktop:browser-close-session";
+const BROWSER_CDP_ENDPOINT_CHANNEL = "desktop:browser-cdp-endpoint";
 const wsUrl = process.env.ORCHESTRATE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -96,6 +97,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL, input),
     actSession: (input) => ipcRenderer.invoke(BROWSER_ACT_SESSION_CHANNEL, input),
     closeSession: (input) => ipcRenderer.invoke(BROWSER_CLOSE_SESSION_CHANNEL, input),
+    getCdpEndpoint: () => ipcRenderer.invoke(BROWSER_CDP_ENDPOINT_CHANNEL),
     onState: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
         if (typeof state !== "object" || state === null) return;

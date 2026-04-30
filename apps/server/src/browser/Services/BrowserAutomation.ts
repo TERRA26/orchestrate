@@ -45,7 +45,10 @@ export type BrowserAutomationServiceError =
 
 export interface BrowserAutomationShape {
   readonly openSession: (
-    input: BrowserOpenSessionInput,
+    input: BrowserOpenSessionInput & {
+      readonly cdpEndpointUrl?: string;
+      readonly cdpTargetId?: string;
+    },
   ) => Effect.Effect<BrowserOpenSessionResult, BrowserAutomationServiceError>;
   readonly act: (
     input: BrowserActInput,

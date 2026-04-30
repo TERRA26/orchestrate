@@ -95,6 +95,7 @@ const BROWSER_RESOLVE_ANNOTATION_TARGET_AT_POINT_CHANNEL =
   "desktop:browser-resolve-annotation-target-at-point";
 const BROWSER_ACT_SESSION_CHANNEL = "desktop:browser-act-session";
 const BROWSER_CLOSE_SESSION_CHANNEL = "desktop:browser-close-session";
+const BROWSER_CDP_ENDPOINT_CHANNEL = "desktop:browser-cdp-endpoint";
 const BASE_DIR = process.env.ORCHESTRATE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "orchestrate";
@@ -114,6 +115,12 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const ELECTRON_CDP_PORT = Number.parseInt(
+  process.env.ORCHESTRATE_ELECTRON_CDP_PORT?.trim() || "9333",
+  10,
+);
+
+app.commandLine.appendSwitch("remote-debugging-port", String(ELECTRON_CDP_PORT));
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
@@ -1446,6 +1453,11 @@ function registerIpcHandlers(): void {
   ipcMain.removeHandler(BROWSER_OPEN_SESSION_CHANNEL);
   ipcMain.handle(BROWSER_OPEN_SESSION_CHANNEL, async (_event, input: BrowserOpenSessionInput) =>
     browserManager.openSession(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_CDP_ENDPOINT_CHANNEL);
+  ipcMain.handle(BROWSER_CDP_ENDPOINT_CHANNEL, async () =>
+    browserManager.getCdpEndpoint(ELECTRON_CDP_PORT),
   );
 
   ipcMain.removeHandler(BROWSER_OBSERVE_SESSION_CHANNEL);

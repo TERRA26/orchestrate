@@ -1,5 +1,6 @@
 import {
   type BrowserCloseSessionInput,
+  type BrowserCdpEndpointInfo,
   type BrowserActInput,
   type BrowserAnnotationResolveTargetAtPointInput,
   type BrowserAnnotationResolveTargetAtPointResult,
@@ -32,6 +33,7 @@ export interface DesktopBrowserBridgeShape {
   ) => Effect.Effect<BrowserAnnotationResolveTargetAtPointResult, Error>;
   readonly actSession: (input: BrowserActInput) => Effect.Effect<BrowserObservation, Error>;
   readonly closeSession: (input: BrowserCloseSessionInput) => Effect.Effect<void, Error>;
+  readonly getCdpEndpoint: () => Effect.Effect<BrowserCdpEndpointInfo, Error>;
   readonly getSessionOwnerClientId: (sessionId: string) => Effect.Effect<string | null>;
 }
 

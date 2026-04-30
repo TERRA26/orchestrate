@@ -46,11 +46,24 @@ import { DesktopBrowserBridge } from "../Services/DesktopBrowserBridge.ts";
 
 const RUNTIME_KIND: BrowserRuntimeTruthKind = "playwright-headless";
 const SURFACE_MODE: BrowserSurfaceMode = "headless-validation-mirror";
+const ATTACHED_SURFACE_MODE: BrowserSurfaceMode = "playwright-attached";
 const USER_FACING_DEFAULT_RUNTIME_KIND: BrowserRuntimeTruthKind = "electron-visible";
 
 type RuntimeSessionRecord = {
   readonly previewTarget: PreviewTarget;
+  readonly runtimeKind: BrowserRuntimeTruthKind;
+  readonly surfaceMode: BrowserSurfaceMode;
 };
+
+function isDirectElectronSession(session: RuntimeSessionRecord): boolean {
+  return (
+    session.runtimeKind === "electron-visible" && session.surfaceMode === "live-shared-browser"
+  );
+}
+
+function isAttachedPlaywrightSession(session: RuntimeSessionRecord): boolean {
+  return session.runtimeKind === RUNTIME_KIND && session.surfaceMode === ATTACHED_SURFACE_MODE;
+}
 
 function requestedRuntimeKind(input: Pick<BrowserOpenSessionInput, "preferredRuntimeKind">) {
   return input.preferredRuntimeKind ?? USER_FACING_DEFAULT_RUNTIME_KIND;
@@ -722,7 +735,11 @@ export const BrowserRuntimeServiceLive = Layer.effect(
           return await Match.value(runtimeKind).pipe(
             Match.when("electron-visible", async () => {
               const rawObservation = await Effect.runPromise(desktopBridge.openSession(input));
-              sessions.set(rawObservation.sessionId, { previewTarget });
+              sessions.set(rawObservation.sessionId, {
+                previewTarget,
+                runtimeKind: "electron-visible",
+                surfaceMode: "live-shared-browser",
+              });
               const openedObservation = electronVisibleObservation(rawObservation, {
                 previewTarget,
               });
@@ -749,22 +766,57 @@ export const BrowserRuntimeServiceLive = Layer.effect(
               } satisfies BrowserOpenSessionResult;
             }),
             Match.when("playwright-headless", async () => {
-              const session = await runtime.openSession({ previewTarget });
-              sessions.set(session.browserSessionId, { previewTarget });
+              const visibleObservation = await Effect.runPromise(
+                desktopBridge.openSession({
+                  ...input,
+                  preferredRuntimeKind: "electron-visible",
+                }),
+              );
+              const cdpEndpoint = await Effect.runPromise(desktopBridge.getCdpEndpoint());
+              const attachedSession = cdpEndpoint.sessions.find(
+                (candidate) => candidate.sessionId === visibleObservation.sessionId,
+              );
+              if (!attachedSession?.targetId) {
+                throw new Error(
+                  "Electron CDP endpoint did not expose a targetId for the requested visible browser session; refusing to launch a separate browser.",
+                );
+              }
+              const session = await runtime.openSession({
+                previewTarget,
+                cdpEndpointUrl: cdpEndpoint.endpointUrl,
+                cdpTargetId: attachedSession.targetId,
+                attachedBrowserSessionId: visibleObservation.sessionId,
+              });
+              sessions.set(session.browserSessionId, {
+                previewTarget,
+                runtimeKind: RUNTIME_KIND,
+                surfaceMode: ATTACHED_SURFACE_MODE,
+              });
               const sessionEvidence = await Effect.runPromise(
                 evidenceRecorder.recordSessionOpened({
                   browserSessionId: session.browserSessionId,
                   previewTarget,
+                  runtimeTruth: {
+                    runtimeKind: RUNTIME_KIND,
+                    surfaceMode: ATTACHED_SURFACE_MODE,
+                    isUserVisibleSurface: true,
+                    browserSessionId: session.browserSessionId,
+                    previewTargetId: previewTarget.id,
+                    observationId: `browser-observation-${randomUUID()}`,
+                    observedUrl: attachedSession.url,
+                    visiblePanelUrl: visibleObservation.url,
+                    urlAgreement: "same",
+                  },
                 }),
               );
-              const legacyResult = await Effect.runPromise(
-                browserAutomation.act({
-                  sessionId: session.browserSessionId,
-                  action: { kind: "wait", ms: 0 },
-                }),
-              );
-              const provisionalObservation = withRuntimeTruth(legacyResult.observation, {
+              const rawObservation = await runtime.observeObservation({
+                browserSessionId: session.browserSessionId,
+              });
+              const provisionalObservation = withRuntimeTruth(rawObservation, {
                 previewTarget,
+                surfaceMode: ATTACHED_SURFACE_MODE,
+                isUserVisibleSurface: true,
+                visiblePanelUrl: visibleObservation.url,
                 evidenceRefs: sessionEvidence.evidenceRefs,
               });
               const observationEvidence = await Effect.runPromise(
@@ -779,8 +831,11 @@ export const BrowserRuntimeServiceLive = Layer.effect(
                 ...sessionEvidence.evidenceRefs,
                 ...observationEvidence.evidenceRefs,
               ];
-              const enrichedObservation = withRuntimeTruth(legacyResult.observation, {
+              const enrichedObservation = withRuntimeTruth(rawObservation, {
                 previewTarget,
+                surfaceMode: ATTACHED_SURFACE_MODE,
+                isUserVisibleSurface: true,
+                visiblePanelUrl: visibleObservation.url,
                 ...(observationEvidence.screenshotArtifactRef
                   ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
                   : {}),
@@ -800,8 +855,11 @@ export const BrowserRuntimeServiceLive = Layer.effect(
                 }),
               );
               const allEvidenceRefs = [...evidenceRefs, ...claimGateEvidence.evidenceRefs];
-              const finalObservation = withRuntimeTruth(legacyResult.observation, {
+              const finalObservation = withRuntimeTruth(rawObservation, {
                 previewTarget,
+                surfaceMode: ATTACHED_SURFACE_MODE,
+                isUserVisibleSurface: true,
+                visiblePanelUrl: visibleObservation.url,
                 ...(observationEvidence.screenshotArtifactRef
                   ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
                   : {}),
@@ -833,7 +891,7 @@ export const BrowserRuntimeServiceLive = Layer.effect(
           if (!session) {
             throw new Error(`Unknown browser runtime session: ${input.sessionId}`);
           }
-          if (input.sessionId.startsWith("electron-visible-")) {
+          if (isDirectElectronSession(session)) {
             return await withSessionActionLock(input.sessionId, async () => {
               const agentLease = await Effect.runPromiseExit(
                 controlLeases.acquire({
@@ -1211,14 +1269,25 @@ export const BrowserRuntimeServiceLive = Layer.effect(
               policyDecision: { outcome: "allow" },
             }),
           );
-          const legacyResult = await Effect.runPromise(
-            browserAutomation.act({
-              sessionId: input.sessionId,
-              action: { kind: "wait", ms: 0 },
-            }),
-          );
-          const provisionalObservation = withRuntimeTruth(legacyResult.observation, {
+          const legacyObservation = isAttachedPlaywrightSession(session)
+            ? await runtime.observeObservation({ browserSessionId: input.sessionId })
+            : (
+                await Effect.runPromise(
+                  browserAutomation.act({
+                    sessionId: input.sessionId,
+                    action: { kind: "wait", ms: 0 },
+                  }),
+                )
+              ).observation;
+          const provisionalObservation = withRuntimeTruth(legacyObservation, {
             previewTarget: session.previewTarget,
+            ...(isAttachedPlaywrightSession(session)
+              ? {
+                  surfaceMode: ATTACHED_SURFACE_MODE,
+                  isUserVisibleSurface: true,
+                  visiblePanelUrl: legacyObservation.url,
+                }
+              : {}),
             evidenceRefs: actionEvidence.evidenceRefs,
           });
           const observationEvidence = await Effect.runPromise(
@@ -1233,8 +1302,15 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             ...actionEvidence.evidenceRefs,
             ...observationEvidence.evidenceRefs,
           ];
-          const observation = withRuntimeTruth(legacyResult.observation, {
+          const observation = withRuntimeTruth(legacyObservation, {
             previewTarget: session.previewTarget,
+            ...(isAttachedPlaywrightSession(session)
+              ? {
+                  surfaceMode: ATTACHED_SURFACE_MODE,
+                  isUserVisibleSurface: true,
+                  visiblePanelUrl: legacyObservation.url,
+                }
+              : {}),
             ...(observationEvidence.screenshotArtifactRef
               ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
               : {}),
@@ -1251,8 +1327,15 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             }),
           );
           const allEvidenceRefs = [...evidenceRefs, ...claimGateEvidence.evidenceRefs];
-          const finalObservation = withRuntimeTruth(legacyResult.observation, {
+          const finalObservation = withRuntimeTruth(legacyObservation, {
             previewTarget: session.previewTarget,
+            ...(isAttachedPlaywrightSession(session)
+              ? {
+                  surfaceMode: ATTACHED_SURFACE_MODE,
+                  isUserVisibleSurface: true,
+                  visiblePanelUrl: legacyObservation.url,
+                }
+              : {}),
             ...(observationEvidence.screenshotArtifactRef
               ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
               : {}),
@@ -1274,7 +1357,11 @@ export const BrowserRuntimeServiceLive = Layer.effect(
     const closeSession: BrowserRuntimeServiceShape["closeSession"] = (input) =>
       Effect.tryPromise({
         try: async () => {
-          if (input.sessionId.startsWith("electron-visible-")) {
+          const session = sessions.get(input.sessionId);
+          if (!session) {
+            throw new Error(`Unknown browser runtime session: ${input.sessionId}`);
+          }
+          if (isDirectElectronSession(session)) {
             await Effect.runPromise(desktopBridge.closeSession(input));
             return;
           }
@@ -1297,7 +1384,7 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             throw new Error(`Unknown browser runtime session: ${input.sessionId}`);
           }
 
-          if (input.sessionId.startsWith("electron-visible-")) {
+          if (isDirectElectronSession(session)) {
             const rawObservation = await Effect.runPromise(desktopBridge.observeSession(input));
             const recorded = await recordElectronObservation({
               previewTarget: session.previewTarget,
@@ -1315,14 +1402,25 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             } satisfies BrowserActResult;
           }
 
-          const legacyResult = await Effect.runPromise(
-            browserAutomation.act({
-              sessionId: input.sessionId,
-              action: { kind: "wait", ms: 0 },
-            }),
-          );
-          const provisionalObservation = withRuntimeTruth(legacyResult.observation, {
+          const legacyObservation = isAttachedPlaywrightSession(session)
+            ? await runtime.observeObservation({ browserSessionId: input.sessionId })
+            : (
+                await Effect.runPromise(
+                  browserAutomation.act({
+                    sessionId: input.sessionId,
+                    action: { kind: "wait", ms: 0 },
+                  }),
+                )
+              ).observation;
+          const provisionalObservation = withRuntimeTruth(legacyObservation, {
             previewTarget: session.previewTarget,
+            ...(isAttachedPlaywrightSession(session)
+              ? {
+                  surfaceMode: ATTACHED_SURFACE_MODE,
+                  isUserVisibleSurface: true,
+                  visiblePanelUrl: legacyObservation.url,
+                }
+              : {}),
           });
           const observationEvidence = await Effect.runPromise(
             evidenceRecorder.recordObservation({
@@ -1333,8 +1431,15 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             }),
           );
           const evidenceRefs = [...observationEvidence.evidenceRefs];
-          const observation = withRuntimeTruth(legacyResult.observation, {
+          const observation = withRuntimeTruth(legacyObservation, {
             previewTarget: session.previewTarget,
+            ...(isAttachedPlaywrightSession(session)
+              ? {
+                  surfaceMode: ATTACHED_SURFACE_MODE,
+                  isUserVisibleSurface: true,
+                  visiblePanelUrl: legacyObservation.url,
+                }
+              : {}),
             ...(observationEvidence.screenshotArtifactRef
               ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
               : {}),
@@ -1353,8 +1458,15 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             }),
           );
           const allEvidenceRefs = [...evidenceRefs, ...claimGateEvidence.evidenceRefs];
-          const finalObservation = withRuntimeTruth(legacyResult.observation, {
+          const finalObservation = withRuntimeTruth(legacyObservation, {
             previewTarget: session.previewTarget,
+            ...(isAttachedPlaywrightSession(session)
+              ? {
+                  surfaceMode: ATTACHED_SURFACE_MODE,
+                  isUserVisibleSurface: true,
+                  visiblePanelUrl: legacyObservation.url,
+                }
+              : {}),
             ...(observationEvidence.screenshotArtifactRef
               ? { screenshotArtifactRef: observationEvidence.screenshotArtifactRef }
               : {}),
@@ -1381,7 +1493,7 @@ export const BrowserRuntimeServiceLive = Layer.effect(
           if (!session) {
             throw new Error(`Unknown browser runtime session: ${input.sessionId}`);
           }
-          if (!input.sessionId.startsWith("electron-visible-")) {
+          if (!isDirectElectronSession(session)) {
             throw new Error(
               "DOM/AX element inspection is only available for Electron visible sessions.",
             );
@@ -1450,7 +1562,7 @@ export const BrowserRuntimeServiceLive = Layer.effect(
             if (!session) {
               throw new Error(`Unknown browser runtime session: ${input.browserSessionId}`);
             }
-            if (!input.browserSessionId.startsWith("electron-visible-")) {
+            if (!isDirectElectronSession(session)) {
               throw new Error(
                 "Annotation target resolution is only available for Electron visible sessions.",
               );

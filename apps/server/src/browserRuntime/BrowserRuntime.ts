@@ -17,6 +17,9 @@ export type BrowserRuntimeSession = {
 export type BrowserRuntimeOpenSessionInput = {
   readonly previewTarget: PreviewTarget;
   readonly viewport?: PreviewViewport;
+  readonly cdpEndpointUrl?: string;
+  readonly cdpTargetId?: string;
+  readonly attachedBrowserSessionId?: BrowserSessionId;
 };
 
 export type BrowserRuntimeActInput = {

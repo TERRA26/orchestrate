@@ -7,6 +7,7 @@ import {
   type BrowserSnapshot,
   BrowserSessionId,
   EvidenceArtifactId,
+  type BrowserOpenSessionResult,
   type PreviewTarget,
 } from "@orchestrate/contracts";
 import { Effect } from "effect";
@@ -24,6 +25,7 @@ import { BrowserActionPolicy } from "./BrowserActionPolicy.ts";
 
 export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
   private readonly sessions = new Map<string, BrowserRuntimeSession>();
+  private readonly automationSessionIds = new Map<string, string>();
 
   constructor(private readonly browserAutomation: BrowserAutomationShape) {}
 
@@ -32,6 +34,8 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
     const result = await Effect.runPromise(
       this.browserAutomation.openSession({
         url: input.previewTarget.canonicalUrl,
+        ...(input.cdpEndpointUrl ? { cdpEndpointUrl: input.cdpEndpointUrl } : {}),
+        ...(input.cdpTargetId ? { cdpTargetId: input.cdpTargetId } : {}),
         ...(firstViewport
           ? {
               viewportWidth: firstViewport.width,
@@ -41,17 +45,18 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
       }),
     );
     const snapshot = toBrowserSnapshot({
-      observation: result.observation,
+      observation: withBrowserSessionId(result.observation, sessionBrowserSessionId(input, result)),
       previewTarget: input.previewTarget,
       runtimeKind: "playwright-headless",
     });
     const session: BrowserRuntimeSession = {
-      browserSessionId: result.sessionId,
+      browserSessionId: sessionBrowserSessionId(input, result),
       previewTarget: input.previewTarget,
       runtimeKind: "playwright-headless",
       lastSnapshot: snapshot,
     };
-    this.sessions.set(result.sessionId, session);
+    this.sessions.set(session.browserSessionId, session);
+    this.automationSessionIds.set(session.browserSessionId, result.sessionId);
     return session;
   }
 
@@ -59,16 +64,21 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
     return this.captureSnapshot(input);
   }
 
-  async captureSnapshot(input: BrowserRuntimeObserveInput): Promise<BrowserSnapshot> {
-    const session = this.requireSession(input.browserSessionId);
+  async observeObservation(input: BrowserRuntimeObserveInput): Promise<BrowserObservation> {
     const result = await Effect.runPromise(
       this.browserAutomation.act({
-        sessionId: input.browserSessionId,
+        sessionId: this.requireAutomationSessionId(input.browserSessionId),
         action: { kind: "wait", ms: 0 },
       }),
     );
+    return withBrowserSessionId(result.observation, input.browserSessionId);
+  }
+
+  async captureSnapshot(input: BrowserRuntimeObserveInput): Promise<BrowserSnapshot> {
+    const session = this.requireSession(input.browserSessionId);
+    const observation = await this.observeObservation(input);
     const snapshot = toBrowserSnapshot({
-      observation: result.observation,
+      observation,
       previewTarget: session.previewTarget,
       runtimeKind: session.runtimeKind,
     });
@@ -88,12 +98,12 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
 
     const result = await Effect.runPromise(
       this.browserAutomation.act({
-        sessionId: input.browserSessionId,
+        sessionId: this.requireAutomationSessionId(input.browserSessionId),
         action: input.action,
       }),
     );
     const snapshot = toBrowserSnapshot({
-      observation: result.observation,
+      observation: withBrowserSessionId(result.observation, input.browserSessionId),
       previewTarget: session.previewTarget,
       runtimeKind: session.runtimeKind,
     });
@@ -106,9 +116,12 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
 
   async closeSession(input: BrowserRuntimeObserveInput): Promise<void> {
     await Effect.runPromise(
-      this.browserAutomation.closeSession({ sessionId: input.browserSessionId }),
+      this.browserAutomation.closeSession({
+        sessionId: this.requireAutomationSessionId(input.browserSessionId),
+      }),
     );
     this.sessions.delete(input.browserSessionId);
+    this.automationSessionIds.delete(input.browserSessionId);
   }
 
   private requireSession(browserSessionId: BrowserSessionId): BrowserRuntimeSession {
@@ -118,6 +131,31 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
     }
     return session;
   }
+
+  private requireAutomationSessionId(browserSessionId: BrowserSessionId): string {
+    const sessionId = this.automationSessionIds.get(browserSessionId);
+    if (!sessionId) {
+      throw new Error(`Unknown browser automation session: ${browserSessionId}`);
+    }
+    return sessionId;
+  }
+}
+
+function sessionBrowserSessionId(
+  input: BrowserRuntimeOpenSessionInput,
+  result: BrowserOpenSessionResult,
+): BrowserSessionId {
+  return input.attachedBrowserSessionId ?? BrowserSessionId.makeUnsafe(result.sessionId);
+}
+
+function withBrowserSessionId(
+  observation: BrowserObservation,
+  browserSessionId: BrowserSessionId,
+): BrowserObservation {
+  return {
+    ...observation,
+    sessionId: browserSessionId,
+  };
 }
 
 function toBrowserSnapshot(input: {

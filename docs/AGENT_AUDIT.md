@@ -1601,7 +1601,7 @@ I kept shell commands ahead of mapper phases because command rows are not orches
 - **Re-greped for remaining `orchestrate_` leaks in production tsx/ts (excluding tests):**
   - `session-logic.ts:930-933` — equality comparisons for control flow, not user-visible text.
   - `BrowserPanel.tsx:970` — `api.browser.openSession({})` API call, runtime not text.
-  - `WorkEntryRow.tsx:51-60` — `ORCH_TOOL_DISPLAY_LABELS` map. Most entries are now semantic (`"Stopped worker"`, `"Sent instruction"`, `"Focused worker"`); four legacy browser entries (`open browser preview`, `capture browser screenshot`, `browser observation`, `close browser session`) are still mechanical/raw — but these are *only* hit when `WorkEntryRow` doesn't dispatch to a browser-specific card, and inspection of [`WorkEntryRow.tsx:777-788, 1124-1166`](apps/web/src/components/chat/WorkEntryRow.tsx:777) shows browser tools route to dedicated `BrowserBareCard`/`BrowserEvidenceCard` paths that bypass the static map. The stale entries are not user-visible in practice — but worth cleaning up. **Tracked as cleanup item below.**
+  - `WorkEntryRow.tsx:51-60` — `ORCH_TOOL_DISPLAY_LABELS` map. Most entries are now semantic (`"Stopped worker"`, `"Sent instruction"`, `"Focused worker"`); four legacy browser entries (`open browser preview`, `capture browser screenshot`, `browser observation`, `close browser session`) are still mechanical/raw — but these are _only_ hit when `WorkEntryRow` doesn't dispatch to a browser-specific card, and inspection of [`WorkEntryRow.tsx:777-788, 1124-1166`](apps/web/src/components/chat/WorkEntryRow.tsx:777) shows browser tools route to dedicated `BrowserBareCard`/`BrowserEvidenceCard` paths that bypass the static map. The stale entries are not user-visible in practice — but worth cleaning up. **Tracked as cleanup item below.**
   - `OrchestrationToolCallCard.tsx` — switch cases on tool names for control flow + dedicated cards. Already routes the visible label through `phaseForToolEvent`.
   - All other matches are `<details>`-wrapped raw-name displays (acceptable per spec) or `data-*` attributes (`data-work-entry-tool-name` etc.) which are non-rendered.
 
@@ -1660,6 +1660,7 @@ The user's original audit listed Bundle 17D as "queued, do not start until 17A/B
    - Note for FU-1 (move `EvidenceArtifactId` to `baseSchemas.ts`) and FU-2 (typed `browser-dom-snapshot` artifact) — these stay queued and orthogonal.
 
 **Out of scope for 17D:**
+
 - 17B-F-3 follow-ups (FU-1, FU-2, FU-3) — small cleanups, separate bundle.
 - Stale `ORCH_TOOL_DISPLAY_LABELS` browser entries in `WorkEntryRow.tsx:57-60` — small cleanup.
 - Bundle 17V (UI verification round) — once 17D lands, run the dev server and verify the calm-thread story end-to-end visually.
@@ -1683,10 +1684,36 @@ After 17D lands, sweep these into a small cleanup bundle:
 - **FU-1**: Move `EvidenceArtifactId` brand to `baseSchemas.ts` so `orchestration.ts` can use the branded type instead of the structural-string workaround.
 - **FU-2**: Add a typed `browser-dom-snapshot` evidence artifact kind so `browserAfterDomRef` matches by kind explicitly.
 - **FU-3**: Add a `@testing-library/react`-style test for `BrowserArtifactScreenshotPreview`'s `useEffect`/Loaded/Failed states (current SSR test doesn't run effects).
-- **FU-4** *(new)*: Update the four stale entries in `ORCH_TOOL_DISPLAY_LABELS` ([`WorkEntryRow.tsx:57-60`](apps/web/src/components/chat/WorkEntryRow.tsx:57)) — `orchestrate_open_browser_preview`, `orchestrate_browser_open_session`, `orchestrate_browser_act`, `orchestrate_browser_close_session` — to match the semantic style of the other entries (`"Browser preview"`, `"Checking browser"`, etc.). Currently mechanical/raw, even though the static map is rarely hit for browser tools because dedicated cards intercept first.
+- **FU-4** _(new)_: Update the four stale entries in `ORCH_TOOL_DISPLAY_LABELS` ([`WorkEntryRow.tsx:57-60`](apps/web/src/components/chat/WorkEntryRow.tsx:57)) — `orchestrate_open_browser_preview`, `orchestrate_browser_open_session`, `orchestrate_browser_act`, `orchestrate_browser_close_session` — to match the semantic style of the other entries (`"Browser preview"`, `"Checking browser"`, etc.). Currently mechanical/raw, even though the static map is rarely hit for browser tools because dedicated cards intercept first.
 
 #### Iteration log update
 
 - **2026-04-29 — Agent Report — Bundle 17C re-do** — implemented; pushed at `9c61980b`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17C re-do** — accepted. RF-1 closed. Bundle 17C complete. Definition of Done satisfied.
 - **2026-04-29 — Bundle 17D activated** — CDP attach to running Electron (structural fix for two-browser substitution risk).
+
+## Agent Report — 2026-04-30T02:21:57Z — Bundle 17D
+
+Implemented the CDP attach substrate for `playwright-headless` without reintroducing a second browser process.
+
+- Electron now enables a remote debugging port before app readiness in `apps/desktop/src/main.ts` and exposes the endpoint through `desktop:browser-cdp-endpoint` IPC in `apps/desktop/src/main.ts` and `apps/desktop/src/preload.ts`.
+- Desktop browser state now reports CDP endpoint metadata from `apps/desktop/src/browserManager.ts`, including visible session id, `webContentsId`, optional `targetId`, URL, and title. Target id is read through Electron's debugger API and fails closed when unavailable.
+- Contracts now model `BrowserCdpEndpointInfo` and the new `playwright-attached` surface mode in `packages/contracts/src/browser.ts`, plus the broker/IPC request shape in `packages/contracts/src/ws.ts` and `packages/contracts/src/ipc.ts`.
+- The web/native bridge passes `getCdpEndpoint` through in `apps/web/src/wsTransport.ts` and fails closed outside the desktop bridge in `apps/web/src/wsNativeApi.ts`.
+- Server bridge plumbing in `apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.ts` brokers and decodes `getCdpEndpoint`; tests cover the broker path in `apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.test.ts`.
+- `apps/server/src/browser/Layers/BrowserAutomation.ts` uses `chromium.connectOverCDP(...)` when a CDP endpoint is supplied, resolves the page by CDP `targetId`, refuses URL-based attach, and avoids closing the Electron-owned browser/context on session close.
+- `apps/server/src/browserRuntime/PlaywrightHeadlessBrowserRuntime.ts` preserves the visible Electron session id externally while tracking the internal automation session id for observe/act/close. It also exposes `observeObservation` so evidence keeps real screenshot/DOM observation data after attach.
+- `apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts` now opens the visible Electron session first for explicit `playwright-headless`, resolves the CDP page by visible session id and target id, records `surfaceMode: "playwright-attached"`, and stores session metadata so later actions/observes route through Playwright/CDP instead of prefix-matching the visible session id back to the direct Electron bridge.
+- `docs/browser-runtime-notes.md` documents the architecture and compatibility semantics: `runtimeKind: "playwright-headless"` remains stable, while `surfaceMode: "playwright-attached"` identifies the same-WebContents substrate.
+
+Verification:
+
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` passed.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/browserRuntime/Layers/BrowserRuntimeService.test.ts src/browserRuntime/PlaywrightHeadlessBrowserRuntime.test.ts src/browserRuntime/Layers/DesktopBrowserBridge.test.ts` passed in `apps/server` (34 tests).
+- Earlier targeted contract check passed: `bun run test src/browser.test.ts` in `packages/contracts` (9 tests).
+
+Reviewer notes:
+
+- The attach path intentionally opens the visible Electron session first, then joins it by session identity. URL is never used for correlation in the server path.
+- The debug port is fixed at `9333` by default with `ORCHESTRATE_ELECTRON_CDP_PORT` override; this is documented in `docs/browser-runtime-notes.md`.
+- The direct `electron-visible` bridge path remains a separate `surfaceMode: "live-shared-browser"` path. Attached sessions reuse the visible session id externally but are stored with runtime metadata to prevent prefix-based misrouting.

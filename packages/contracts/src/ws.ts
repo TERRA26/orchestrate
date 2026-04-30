@@ -236,6 +236,7 @@ export const DesktopBrowserBridgeRequestKind = Schema.Literals([
   "resolveAnnotationTargetAtPoint",
   "actSession",
   "closeSession",
+  "getCdpEndpoint",
 ]);
 export type DesktopBrowserBridgeRequestKind = typeof DesktopBrowserBridgeRequestKind.Type;
 
@@ -250,6 +251,7 @@ export const DesktopBrowserBridgeRequestPayload = Schema.Struct({
     BrowserAnnotationResolveTargetAtPointInput,
     BrowserActInput,
     BrowserCloseSessionInput,
+    Schema.Struct({}),
   ]),
   timeoutMs: NonNegativeInt,
 });

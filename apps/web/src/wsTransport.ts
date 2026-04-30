@@ -356,7 +356,9 @@ export class WsTransport {
                     )
                   : request.kind === "actSession"
                     ? await bridge.actSession(request.input as BrowserActInput)
-                    : await bridge.closeSession(request.input as BrowserCloseSessionInput);
+                    : request.kind === "closeSession"
+                      ? await bridge.closeSession(request.input as BrowserCloseSessionInput)
+                      : await bridge.getCdpEndpoint();
       await this.request(WS_METHODS.desktopBrowserBridgeResponse, {
         requestId: request.requestId,
         status: "ok",

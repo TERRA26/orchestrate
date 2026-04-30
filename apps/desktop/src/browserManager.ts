@@ -8,6 +8,7 @@ import type {
   BrowserActInput,
   BrowserAnnotationResolveTargetAtPointInput,
   BrowserAnnotationResolveTargetAtPointResult,
+  BrowserCdpEndpointInfo,
   BrowserElementSummary,
   BrowserResolvedElementDomSnippet,
   BrowserResolvedElementStyleSummary,
@@ -102,6 +103,28 @@ function defaultTitleForUrl(url: string): string {
     return parsed.hostname || url;
   } catch {
     return url;
+  }
+}
+
+async function readCdpTargetId(
+  webContents: WebContents,
+): Promise<{ targetId: string } | Record<string, never>> {
+  if (webContents.debugger.isAttached()) {
+    return {};
+  }
+  try {
+    webContents.debugger.attach("1.3");
+    const targetInfo = (await webContents.debugger.sendCommand("Target.getTargetInfo")) as {
+      targetInfo?: { targetId?: unknown };
+    };
+    const targetId = targetInfo.targetInfo?.targetId;
+    return typeof targetId === "string" && targetId.length > 0 ? { targetId } : {};
+  } catch {
+    return {};
+  } finally {
+    if (webContents.debugger.isAttached()) {
+      webContents.debugger.detach();
+    }
   }
 }
 
@@ -571,6 +594,33 @@ export class DesktopBrowserManager {
       observation,
       ...(observation.runtimeTruth ? { runtimeTruth: observation.runtimeTruth } : {}),
       evidenceRefs: [],
+    };
+  }
+
+  async getCdpEndpoint(port: number): Promise<BrowserCdpEndpointInfo> {
+    const maybeSessions: Array<BrowserCdpEndpointInfo["sessions"][number] | null> =
+      await Promise.all(
+        [...this.runtimeSessions.entries()].map(async ([sessionId, ref]) => {
+          const runtime = this.runtimes.get(buildRuntimeKey(ref.threadId, ref.tabId));
+          if (!runtime || runtime.view.webContents.isDestroyed()) {
+            return null;
+          }
+          const webContents = runtime.view.webContents;
+          return {
+            sessionId,
+            webContentsId: webContents.id,
+            ...(await readCdpTargetId(webContents)),
+            url: webContents.getURL() || ABOUT_BLANK_URL,
+            title: webContents.getTitle() || defaultTitleForUrl(webContents.getURL()),
+          };
+        }),
+      );
+    return {
+      endpointUrl: `http://127.0.0.1:${port}`,
+      port,
+      sessions: maybeSessions.filter(
+        (session): session is BrowserCdpEndpointInfo["sessions"][number] => session !== null,
+      ),
     };
   }
 

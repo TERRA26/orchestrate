@@ -1,5 +1,15 @@
 # Browser Runtime Notes
 
+## CDP-Attached Playwright Validation
+
+- Electron main enables a Chromium remote debugging port before `app.whenReady()`. The port defaults to `9333` and can be overridden with `ORCHESTRATE_ELECTRON_CDP_PORT`.
+- The desktop bridge exposes the current CDP endpoint plus each live browser session's `sessionId`, `webContentsId`, optional CDP `targetId`, URL, and title.
+- The `playwright-headless` runtime kind now attaches to the running Electron browser with `chromium.connectOverCDP(...)` instead of launching a separate browser process.
+- `BrowserRuntimeService` first opens the user-visible Electron session, then resolves the CDP page by that visible session id and target id. URL matching is intentionally not used because navigation can change URLs while the WebContents identity stays stable.
+- If the desktop bridge, CDP endpoint, browser context, or target id is unavailable, the runtime fails closed. There is no fallback path that launches a separate validation browser.
+- Attached Playwright evidence keeps `runtimeKind: "playwright-headless"` for compatibility and uses `surfaceMode: "playwright-attached"` to distinguish it from both direct Electron-visible control and the old separate-process headless validation mirror.
+- Direct `electron-visible` bridge behavior remains unchanged. The attached validator reuses the visible browser substrate, but actions still flow through Playwright after attachment.
+
 ## Electron-Visible Target Actions
 
 - Electron-visible inspection uses controlled internal scripts from `apps/desktop/src/browser/domInspectionScripts.ts`.

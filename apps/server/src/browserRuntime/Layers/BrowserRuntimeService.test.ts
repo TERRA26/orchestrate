@@ -69,12 +69,72 @@ const evidenceRecorderLayer = BrowserEvidenceRecorderLive.pipe(
 const controlLeaseLayer = BrowserControlLeaseServiceLive.pipe(
   Layer.provide(evidenceRepositoryLayer),
 );
+const headlessAttachBridgeLayer = Layer.succeed(DesktopBrowserBridge, {
+  openSession: (input) =>
+    Effect.succeed({
+      sessionId: "electron-visible-thread-runtime-service-tab-main",
+      url: input.url,
+      title: "Visible fixture",
+      readyState: "complete",
+      textSummary: "Visible fixture page",
+      screenshotDataUrl: "data:image/png;base64,electron",
+      targets: [],
+      consoleErrors: [],
+      networkErrors: [],
+      runtimeKind: "electron-visible" as const,
+      surfaceMode: "live-shared-browser" as const,
+      isUserVisibleSurface: true,
+      observedUrl: input.url,
+      visiblePanelUrl: input.url,
+      urlAgreement: "same" as const,
+      observedAt: "2026-04-28T00:00:02.000Z",
+    }),
+  observeSession: (input) =>
+    Effect.succeed({
+      sessionId: input.sessionId,
+      url: "http://127.0.0.1:5173/",
+      title: "Visible fixture observed",
+      readyState: "complete",
+      textSummary: "Visible fixture observed page",
+      screenshotDataUrl: "data:image/png;base64,electron-observed",
+      targets: [],
+      consoleErrors: [],
+      networkErrors: [],
+      runtimeKind: "electron-visible" as const,
+      surfaceMode: "live-shared-browser" as const,
+      isUserVisibleSurface: true,
+      observedUrl: "http://127.0.0.1:5173/",
+      visiblePanelUrl: "http://127.0.0.1:5173/",
+      urlAgreement: "same" as const,
+      observedAt: "2026-04-28T00:00:03.000Z",
+    }),
+  inspectSession: () => Effect.fail(new Error("inspectSession not used by attach tests")),
+  resolveTargetSession: () =>
+    Effect.fail(new Error("resolveTargetSession not used by attach tests")),
+  actSession: () => Effect.fail(new Error("actSession not used by attach tests")),
+  closeSession: () => Effect.void,
+  getSessionOwnerClientId: () => Effect.succeed("desktop-client-runtime-test"),
+  getCdpEndpoint: () =>
+    Effect.succeed({
+      endpointUrl: "http://127.0.0.1:9333",
+      port: 9333,
+      sessions: [
+        {
+          sessionId: "electron-visible-thread-runtime-service-tab-main",
+          webContentsId: 42,
+          targetId: "target-visible-runtime-service",
+          url: "http://127.0.0.1:5173/",
+          title: "Visible fixture",
+        },
+      ],
+    }),
+});
 const layer = it.layer(
   Layer.mergeAll(
     BrowserRuntimeServiceLive.pipe(
       Layer.provide(browserAutomationLayer),
       Layer.provide(evidenceRecorderLayer),
-      Layer.provide(DesktopBrowserBridgeUnavailableLive),
+      Layer.provide(headlessAttachBridgeLayer),
       Layer.provide(controlLeaseLayer),
       Layer.provide(evidenceRepositoryLayer),
     ),
@@ -197,7 +257,7 @@ layer("BrowserRuntimeServiceLive", (it) => {
       const exit = yield* Effect.exit(
         runtime.act({
           sessionId: openResult.sessionId,
-          action: { kind: "evaluate", expression: "document.title" },
+          action: { kind: "navigate", url: "https://blocked.example/" },
         }),
       );
       assert.strictEqual(exit._tag, "Failure");
@@ -206,7 +266,23 @@ layer("BrowserRuntimeServiceLive", (it) => {
       assert.ok(events.some((event) => event.type === "BrowserPolicyDecisionRecorded"));
     }),
   );
+});
 
+const unavailableLayer = it.layer(
+  Layer.mergeAll(
+    BrowserRuntimeServiceLive.pipe(
+      Layer.provide(browserAutomationLayer),
+      Layer.provide(evidenceRecorderLayer),
+      Layer.provide(DesktopBrowserBridgeUnavailableLive),
+      Layer.provide(controlLeaseLayer),
+      Layer.provide(evidenceRepositoryLayer),
+    ),
+    evidenceRepositoryLayer,
+    controlLeaseLayer,
+  ),
+);
+
+unavailableLayer("BrowserRuntimeServiceLive unavailable desktop bridge", (it) => {
   it.effect("refuses default electron-visible sessions instead of falling back to headless", () =>
     Effect.gen(function* () {
       const runtime = yield* BrowserRuntimeService;

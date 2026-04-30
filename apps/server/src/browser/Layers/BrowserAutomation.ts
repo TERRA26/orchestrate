@@ -41,6 +41,7 @@ interface BrowserSessionState {
   browser: Browser;
   context: BrowserContext;
   page: Page;
+  closeBrowserOnClose: boolean;
   targetDescriptorsById: Map<string, BrowserTargetDescriptor>;
   consoleBuffer: BrowserConsoleEntry[];
   networkErrorBuffer: BrowserNetworkError[];
@@ -187,6 +188,43 @@ async function launchBrowser(playwright: PlaywrightModule): Promise<Browser> {
       executablePath: fallbackExecutablePath,
     });
   }
+}
+
+async function connectOverCdp(playwright: PlaywrightModule, endpointUrl: string): Promise<Browser> {
+  return playwright.chromium.connectOverCDP(endpointUrl);
+}
+
+async function pageTargetId(page: Page): Promise<string | null> {
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const result = (await session.send("Target.getTargetInfo")) as {
+        targetInfo?: { targetId?: unknown };
+      };
+      const targetId = result.targetInfo?.targetId;
+      return typeof targetId === "string" && targetId.length > 0 ? targetId : null;
+    } finally {
+      await session.detach().catch(() => undefined);
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function findAttachedPage(input: {
+  readonly browser: Browser;
+  readonly cdpTargetId?: string;
+}): Promise<Page> {
+  const pages = input.browser.contexts().flatMap((context) => context.pages());
+  if (!input.cdpTargetId) {
+    throw new Error("Desktop CDP endpoint did not include a targetId; refusing URL-based attach.");
+  }
+  for (const page of pages) {
+    if ((await pageTargetId(page)) === input.cdpTargetId) {
+      return page;
+    }
+  }
+  throw new Error(`CDP target not found for Electron WebContents targetId ${input.cdpTargetId}.`);
 }
 
 function waitForSettled(page: Page): Promise<void> {
@@ -615,8 +653,10 @@ const makeBrowserAutomation = () =>
     const closeSessionState = (session: BrowserSessionState) =>
       Effect.tryPromise({
         try: async () => {
-          await session.context.close().catch(() => undefined);
-          await session.browser.close().catch(() => undefined);
+          if (session.closeBrowserOnClose) {
+            await session.context.close().catch(() => undefined);
+            await session.browser.close().catch(() => undefined);
+          }
         },
         catch: (cause) =>
           toBrowserAutomationError(
@@ -644,40 +684,70 @@ const makeBrowserAutomation = () =>
       return Effect.succeed(session);
     };
 
-    const openSession = (input: { url: string; viewportWidth?: number; viewportHeight?: number }) =>
+    const openSession = (input: {
+      url: string;
+      viewportWidth?: number;
+      viewportHeight?: number;
+      cdpEndpointUrl?: string;
+      cdpTargetId?: string;
+    }) =>
       Effect.gen(function* () {
         const playwright = yield* loadPlaywright;
         const browser = yield* Effect.tryPromise({
-          try: () => launchBrowser(playwright),
-          catch: (cause) =>
-            toBrowserAutomationError(
-              "browser.openSession",
-              "Failed to launch the browser automation runtime. Install Playwright browsers or make an existing Chromium cache available for fallback launch.",
-              cause,
-            ),
-        });
-        const context = yield* Effect.tryPromise({
           try: () =>
-            browser.newContext({
-              ignoreHTTPSErrors: true,
-              viewport: {
-                width: input.viewportWidth ?? DEFAULT_VIEWPORT.width,
-                height: input.viewportHeight ?? DEFAULT_VIEWPORT.height,
-              },
-            }),
+            input.cdpEndpointUrl
+              ? connectOverCdp(playwright, input.cdpEndpointUrl)
+              : launchBrowser(playwright),
           catch: (cause) =>
             toBrowserAutomationError(
               "browser.openSession",
-              "Failed to create a browser context.",
+              input.cdpEndpointUrl
+                ? "Failed to attach to the running Electron browser through CDP."
+                : "Failed to launch the browser automation runtime. Install Playwright browsers or make an existing Chromium cache available for fallback launch.",
               cause,
             ),
         });
+        const context = input.cdpEndpointUrl
+          ? yield* Effect.sync(() => {
+              const attachedContext = browser.contexts()[0];
+              if (!attachedContext) {
+                throw toBrowserAutomationError(
+                  "browser.openSession",
+                  "CDP attach returned no browser contexts for the running Electron app.",
+                );
+              }
+              return attachedContext;
+            })
+          : yield* Effect.tryPromise({
+              try: () =>
+                browser.newContext({
+                  ignoreHTTPSErrors: true,
+                  viewport: {
+                    width: input.viewportWidth ?? DEFAULT_VIEWPORT.width,
+                    height: input.viewportHeight ?? DEFAULT_VIEWPORT.height,
+                  },
+                }),
+              catch: (cause) =>
+                toBrowserAutomationError(
+                  "browser.openSession",
+                  "Failed to create a browser context.",
+                  cause,
+                ),
+            });
         const page = yield* Effect.tryPromise({
-          try: () => context.newPage(),
+          try: () =>
+            input.cdpEndpointUrl
+              ? findAttachedPage({
+                  browser,
+                  ...(input.cdpTargetId ? { cdpTargetId: input.cdpTargetId } : {}),
+                })
+              : context.newPage(),
           catch: (cause) =>
             toBrowserAutomationError(
               "browser.openSession",
-              "Failed to create a browser page.",
+              input.cdpEndpointUrl
+                ? "Failed to resolve the Electron WebContents CDP target."
+                : "Failed to create a browser page.",
               cause,
             ),
         });
@@ -689,7 +759,9 @@ const makeBrowserAutomation = () =>
         yield* Effect.tryPromise({
           try: async () => {
             try {
-              await page.goto(input.url, { waitUntil: "domcontentloaded" });
+              if (!input.cdpEndpointUrl) {
+                await page.goto(input.url, { waitUntil: "domcontentloaded" });
+              }
             } catch (navError) {
               openNavigationError = truncateText(
                 navError instanceof Error ? navError.message : String(navError),
@@ -710,6 +782,7 @@ const makeBrowserAutomation = () =>
               browser,
               context,
               page,
+              closeBrowserOnClose: !input.cdpEndpointUrl,
               targetDescriptorsById: new Map(),
               consoleBuffer: [],
               networkErrorBuffer: [],
@@ -747,6 +820,7 @@ const makeBrowserAutomation = () =>
           browser,
           context,
           page,
+          closeBrowserOnClose: !input.cdpEndpointUrl,
           targetDescriptorsById: new Map(),
           consoleBuffer,
           networkErrorBuffer,

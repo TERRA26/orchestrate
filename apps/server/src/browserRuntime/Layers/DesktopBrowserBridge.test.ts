@@ -80,6 +80,45 @@ layer("DesktopBrowserBridgeBrokerLive", (it) => {
     }),
   );
 
+  it.effect("resolves getCdpEndpoint through the connected desktop client", () =>
+    Effect.gen(function* () {
+      const bridge = yield* DesktopBrowserBridge;
+      const requests: string[] = [];
+      registerDesktopBrowserBridgeClient("desktop-client-cdp");
+      setDesktopBrowserBridgePublisher((clientId, _channel, data) =>
+        Effect.sync(() => {
+          requests.push(`${data.kind}:${clientId}`);
+          handleDesktopBrowserBridgeResponse({
+            requestId: data.requestId,
+            status: "ok",
+            result: {
+              endpointUrl: "http://127.0.0.1:9333",
+              port: 9333,
+              sessions: [
+                {
+                  sessionId: "electron-visible-thread-bridge-tab-main",
+                  webContentsId: 42,
+                  targetId: "target-visible-42",
+                  url: "http://127.0.0.1:5173/",
+                  title: "Bridge fixture",
+                },
+              ],
+            },
+          });
+          return true;
+        }),
+      );
+
+      const endpoint = yield* bridge.getCdpEndpoint();
+
+      assert.deepStrictEqual(requests, ["getCdpEndpoint:desktop-client-cdp"]);
+      assert.strictEqual(endpoint.endpointUrl, "http://127.0.0.1:9333");
+      assert.strictEqual(endpoint.sessions[0]?.targetId, "target-visible-42");
+      unregisterDesktopBrowserBridgeClient("desktop-client-cdp");
+      setDesktopBrowserBridgePublisher(null);
+    }),
+  );
+
   it.effect("routes follow-up session requests to the owning desktop client", () =>
     Effect.gen(function* () {
       const bridge = yield* DesktopBrowserBridge;

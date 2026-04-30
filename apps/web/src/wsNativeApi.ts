@@ -531,6 +531,12 @@ export function createWsNativeApi(): NativeApi {
       closeSession: async (input) => {
         await transport.request(WS_METHODS.browserCloseSession, input, { timeoutMs: 30_000 });
       },
+      getCdpEndpoint: async () => {
+        if (window.desktopBridge) {
+          return window.desktopBridge.browser.getCdpEndpoint();
+        }
+        throw new Error("Desktop browser CDP endpoint is unavailable outside the desktop app.");
+      },
       addAnnotation: (input) => transport.request(WS_METHODS.browserAddAnnotation, input),
       resolveAnnotationTargetAtPoint: (input) =>
         transport.request(WS_METHODS.browserResolveAnnotationTargetAtPoint, input, {

@@ -77,6 +77,7 @@ import type {
   BrowserObservation,
   BrowserOpenSessionInput,
   BrowserOpenSessionResult,
+  BrowserCdpEndpointInfo,
   BrowserResolveTargetSessionInput,
   BrowserResolveTargetSessionResult,
 } from "./browser";
@@ -308,6 +309,7 @@ export interface DesktopBridge {
     ) => Promise<BrowserAnnotationResolveTargetAtPointResult>;
     actSession: (input: BrowserActInput) => Promise<BrowserObservation>;
     closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
+    getCdpEndpoint: () => Promise<BrowserCdpEndpointInfo>;
     onState: (listener: (state: ThreadBrowserState) => void) => () => void;
     onObservation: () => () => void;
   };
@@ -418,6 +420,7 @@ export interface NativeApi {
     ) => Promise<BrowserAnnotationResolveTargetAtPointResult>;
     act: (input: BrowserActInput) => Promise<BrowserActResult>;
     closeSession: (input: BrowserCloseSessionInput) => Promise<void>;
+    getCdpEndpoint: () => Promise<BrowserCdpEndpointInfo>;
     addAnnotation: (input: BrowserAddAnnotationInput) => Promise<BrowserAnnotationResult>;
     listAnnotations: (input: BrowserListAnnotationsInput) => Promise<BrowserAnnotationsResult>;
     getAnnotation: (input: BrowserAnnotationInput) => Promise<BrowserAnnotationResult>;
