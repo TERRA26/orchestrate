@@ -2823,3 +2823,42 @@ c. **17X-1 micro-followup**: add a boot-log line to `orchestrate-mcp-server.ts` 
 - **2026-04-30 — Agent Report — Bundle 17X-1** — Codex MCP env regression fixed; pushed at `f9ef0aa9`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17X-1** — accepted. Diagnosis sharp, fix symmetric with 17V-F1, test locks the asymmetry, no scope creep.
 - **2026-04-30 — Bundle 17X-2 activated** — live confirmation of `browser_open_session` + next smoke pass.
+
+## Agent Report — 2026-04-30T15:43:39Z — Bundle 17X-2
+
+### What I tried
+
+Started the requested live confirmation for 17X-1. The current Codex-hosted MCP call still fails:
+
+```text
+orchestrate_browser_open_session({ url: "https://example.com" })
+=> Cannot connect to orchestration server at ws://localhost:3773
+```
+
+This confirms a remaining operational ambiguity rather than disproving 17X-1: the Codex session running this audit was already launched without `ORCHESTRATE_WS_PORT`, `ORCHESTRATE_AUTH_TOKEN`, or `ORCHESTRATE_PARENT_THREAD_ID`, so it is still using the fallback path from `scripts/orchestrate-mcp-server.ts:471-487`. The process list also showed Orchestrate-spawned Claude MCP subprocesses with the correct env (`ORCHESTRATE_WS_PORT`, `ORCHESTRATE_AUTH_TOKEN`, and `ORCHESTRATE_PARENT_THREAD_ID`), which reinforces that stale/unmanaged MCP sessions are currently hard to distinguish from freshly managed ones.
+
+### Bug fixed
+
+**17X-2 diagnostic gap:** when the MCP script is loaded without Orchestrate env, the first visible symptom is a later tool failure against fallback `ws://localhost:3773`. There was no boot-time proof of whether the loaded MCP process had the expected port/token/thread env, which made stale-session live confirmation ambiguous.
+
+### What changed
+
+- Added `buildMcpBootDiagnostic` at `scripts/orchestrate-mcp-server.ts:492-499`. It reports the loaded MCP connection shape as:
+  - configured port or `fallback`
+  - auth `present`/`missing`
+  - parent thread `present`/`missing`
+- Emitted that diagnostic at script startup in `scripts/orchestrate-mcp-server.ts:1463-1466` via `console.error(...)`, which is the MCP stdio-safe diagnostic stream.
+- Added tests at `scripts/orchestrate-mcp-server.test.ts:34-50` proving:
+  - the diagnostic reports configured port/auth/thread without exposing the token value
+  - an unmanaged/stale session reports `port=fallback; auth=missing; parentThread=missing`
+
+### Verification
+
+- `cd scripts && bun run test orchestrate-mcp-server.test.ts` — passed, 9/9.
+- `bun fmt` — passed.
+- `bun lint` — passed with warnings and 0 errors. The warning output includes noise from the untracked `.claude/worktrees/` directory that Claude created; I left that user/tool-owned directory untouched.
+- `PATH=/opt/homebrew/Cellar/node@24/24.15.0/bin:$PATH bun typecheck` — passed, 10/10 tasks.
+
+### Current status
+
+17X-2 did not complete a positive live browser confirmation from the current Codex session because this session itself is the stale/unmanaged MCP case. The shipped diagnostic makes the next fresh Orchestrate-spawned Codex provider session auditable: its logs should show `orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present` before `orchestrate_browser_open_session` is attempted. If that fresh managed session still connects to `ws://localhost:3773`, the next layer is not stale process state and should be treated as a new P1 regression.

@@ -489,6 +489,15 @@ export function buildOrchestrationWsUrls(env: NodeJS.ProcessEnv): ReadonlyArray<
 
 const ORCH_WS_URLS = buildOrchestrationWsUrls(process.env);
 
+export function buildMcpBootDiagnostic(env: NodeJS.ProcessEnv): string {
+  return [
+    "orchestrate-mcp-server loaded",
+    `port=${env.ORCHESTRATE_WS_PORT ?? "fallback"}`,
+    `auth=${env.ORCHESTRATE_AUTH_TOKEN ? "present" : "missing"}`,
+    `parentThread=${env.ORCHESTRATE_PARENT_THREAD_ID ? "present" : "missing"}`,
+  ].join("; ");
+}
+
 let wsConnection: WebSocket | null = null;
 let wsRequestId = 0;
 const wsPending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
@@ -1452,6 +1461,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 if ((import.meta as ImportMeta & { readonly main?: boolean }).main === true) {
+  console.error(buildMcpBootDiagnostic(process.env));
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

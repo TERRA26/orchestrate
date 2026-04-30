@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildMcpBootDiagnostic,
   buildOrchestrationWsUrls,
   buildWorkerFollowUpTurnStartCommand,
   summarizeBrowserObservation,
@@ -27,6 +28,24 @@ describe("buildOrchestrationWsUrls", () => {
       "ws://localhost:3773/?token=secret",
       "ws://localhost:3774/?token=secret",
     ]);
+  });
+});
+
+describe("buildMcpBootDiagnostic", () => {
+  it("reports the loaded MCP connection shape without exposing the token", () => {
+    expect(
+      buildMcpBootDiagnostic({
+        ORCHESTRATE_WS_PORT: "59685",
+        ORCHESTRATE_AUTH_TOKEN: "secret-token",
+        ORCHESTRATE_PARENT_THREAD_ID: "thread-1",
+      }),
+    ).toBe("orchestrate-mcp-server loaded; port=59685; auth=present; parentThread=present");
+  });
+
+  it("makes stale sessions without Orchestrate env obvious", () => {
+    expect(buildMcpBootDiagnostic({})).toBe(
+      "orchestrate-mcp-server loaded; port=fallback; auth=missing; parentThread=missing",
+    );
   });
 });
 
