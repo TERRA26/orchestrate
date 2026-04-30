@@ -3180,3 +3180,43 @@ Primary goal: ship one of two outcomes this batch — no third deferral.
 - **2026-04-30 — Agent Report — Bundle 17X-4 (secondary)** — X-3-N1 defensive redaction closed via `buildOrchestrationConnectionFallbackError`; pushed at `3c145ce8`. Live confirmation still pending.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17X-4** — accepted as partial. All redaction notes closed. X-2-N2 deferred.
 - **2026-04-30 — Bundle 17X-5 activated** — decisive live confirmation OR annotation→rework smoke; no further deferral.
+
+---
+
+## Agent Report — 2026-04-30T16:43:37Z — Bundle 17X-5
+
+### Chosen path
+
+Chose **Path B — annotation→rework smoke** because Path A requires a hard restart of the desktop stack outside this stale Codex MCP host. I did not kill the active Claude/Codex review loop.
+
+### Smoke blocker
+
+The smoke could not reach worker spawn. `orchestrate_spawn_agent` immediately failed with the stale pre-diagnostic MCP error:
+
+```text
+Cannot connect to orchestration server at ws://localhost:3773
+at scripts/orchestrate-mcp-server.ts:504:35
+```
+
+That stack line is not current source and confirms the MCP host serving this Codex session is still stale. I did not claim an annotation→rework confirmation.
+
+### Product fix shipped in this batch
+
+I used the fallback SaaS surface requested for the smoke and fixed concrete demo/runtime bugs there:
+
+- `apps/demo-fullstack/server/src/app.ts`: added optional seeded LedgerPilot data for runtime demos while preserving empty stores for tests, and fixed CORS to allow the actual Vite dev server origins `http://localhost:5175` and `http://127.0.0.1:5175` instead of stale `5173`.
+- `apps/demo-fullstack/server/src/main.ts`: starts the demo API with seeded data and corrected the boot log from the old Todos label to LedgerPilot.
+- `apps/demo-fullstack/web/src/App.tsx`: replaced the arcade-styled surface with a restrained B2B SaaS dashboard: MRR/churn/expansion/NRR KPI cards, plan mix breakdown, accounts table, and billing-risk alerts.
+- `apps/demo-fullstack/web/index.html`, `apps/demo-fullstack/web/src/index.css`, `apps/demo-fullstack/web/tailwind.config.js`: renamed the page to LedgerPilot and moved the demo shell from the old dark arcade palette/fonts to a clean SaaS visual system.
+
+### Verification
+
+- `cd apps/demo-fullstack && bun run test server/src/app.test.ts` passed, 5/5.
+- `cd apps/demo-fullstack && bun run typecheck` passed.
+- `cd apps/demo-fullstack && bun run build:web` passed.
+- `curl http://localhost:4000/api/ledger` returned the seeded LedgerPilot account data from the running dev stack.
+- `curl http://localhost:5175/` confirmed the updated LedgerPilot title, Inter font, and light SaaS shell.
+
+### Next target
+
+The decisive 17X-5 review should decide whether the local demo fix is acceptable as partial progress. The primary product blocker remains the stale MCP host: worker spawn, browser preview, and annotation/rework tools all fail before reaching Orchestrate.

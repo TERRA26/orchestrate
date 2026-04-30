@@ -10,18 +10,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        arcade: {
-          bg: "#080810",
-          surface: "#0d0d1a",
-          card: "#0f0f20",
-          border: "#1e1e3a",
-          cyan: "#00f5ff",
-          magenta: "#ff2d78",
-          yellow: "#ffd700",
-          muted: "#4a4a7a",
-          dim: "#252540",
-          text: "#d4d0f0",
-          subdued: "#6060a0",
+        saas: {
+          bg: "#f6f8fb",
+          border: "#dbe3ef",
+          ink: "#172033",
+          muted: "#64748b",
+          blue: "#2563eb",
+          emerald: "#059669",
+          amber: "#d97706",
+          rose: "#e11d48",
         },
       },
       fontFamily: {

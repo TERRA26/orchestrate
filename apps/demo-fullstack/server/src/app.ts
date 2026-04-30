@@ -16,15 +16,52 @@ export interface LedgerSummary {
   totalDebits: number;
 }
 
-export function createApp() {
+const seedEntries: LedgerEntry[] = [
+  {
+    id: "acme",
+    description: "Acme Industrial",
+    amount: 42000,
+    category: "enterprise",
+    date: new Date("2026-05-14").toISOString(),
+  },
+  {
+    id: "northstar",
+    description: "Northstar Clinics",
+    amount: 18500,
+    category: "scale",
+    date: new Date("2026-05-22").toISOString(),
+  },
+  {
+    id: "atlas",
+    description: "Atlas Supply Co.",
+    amount: -3200,
+    category: "risk",
+    date: new Date("2026-05-29").toISOString(),
+  },
+  {
+    id: "relay",
+    description: "RelayWorks",
+    amount: 9800,
+    category: "growth",
+    date: new Date("2026-06-07").toISOString(),
+  },
+];
+
+export function createApp(options: { seed?: boolean } = {}) {
   const app = express();
   const store = new Map<string, LedgerEntry>();
   const order: string[] = [];
+  if (options.seed) {
+    for (const entry of seedEntries) {
+      store.set(entry.id, entry);
+      order.push(entry.id);
+    }
+  }
 
   app.use(express.json());
   app.use(
     cors({
-      origin: "http://localhost:5173",
+      origin: ["http://localhost:5175", "http://127.0.0.1:5175"],
     }),
   );
 
