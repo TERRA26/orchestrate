@@ -2,7 +2,7 @@
 
 ## CDP-Attached Playwright Validation
 
-- Electron main enables a Chromium remote debugging port before `app.whenReady()`. The port defaults to `9333` and can be overridden with `ORCHESTRATE_ELECTRON_CDP_PORT`.
+- Electron main reserves a loopback Chromium remote debugging port before `app.whenReady()` and enables it with `app.commandLine.appendSwitch("remote-debugging-port", ...)`. The port is dynamically allocated by default so multiple Orchestrate instances can coexist. `ORCHESTRATE_ELECTRON_CDP_PORT` remains available as an explicit debug override; if that port cannot be reserved, startup fails with a clear error.
 - The desktop bridge exposes the current CDP endpoint plus each live browser session's `sessionId`, `webContentsId`, optional CDP `targetId`, URL, and title.
 - The `playwright-headless` runtime kind now attaches to the running Electron browser with `chromium.connectOverCDP(...)` instead of launching a separate browser process.
 - `BrowserRuntimeService` first opens the user-visible Electron session, then resolves the CDP page by that visible session id and target id. URL matching is intentionally not used because navigation can change URLs while the WebContents identity stays stable.

@@ -44,6 +44,7 @@ import { RotatingFileSink } from "@orchestrate/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
+import { reserveElectronCdpPort } from "./electronCdpPort";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -115,12 +116,14 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
-const ELECTRON_CDP_PORT = Number.parseInt(
-  process.env.ORCHESTRATE_ELECTRON_CDP_PORT?.trim() || "9333",
-  10,
-);
-
-app.commandLine.appendSwitch("remote-debugging-port", String(ELECTRON_CDP_PORT));
+let electronCdpPort = 0;
+const electronCdpPortReady = reserveElectronCdpPort({
+  envPort: process.env.ORCHESTRATE_ELECTRON_CDP_PORT,
+}).then((port) => {
+  electronCdpPort = port;
+  app.commandLine.appendSwitch("remote-debugging-port", String(port));
+  return port;
+});
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
@@ -1457,7 +1460,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(BROWSER_CDP_ENDPOINT_CHANNEL);
   ipcMain.handle(BROWSER_CDP_ENDPOINT_CHANNEL, async () =>
-    browserManager.getCdpEndpoint(ELECTRON_CDP_PORT),
+    browserManager.getCdpEndpoint(electronCdpPort),
   );
 
   ipcMain.removeHandler(BROWSER_OBSERVE_SESSION_CHANNEL);
@@ -1630,8 +1633,8 @@ app.on("before-quit", () => {
   restoreStdIoCapture?.();
 });
 
-app
-  .whenReady()
+electronCdpPortReady
+  .then(() => app.whenReady())
   .then(() => {
     writeDesktopLogHeader("app ready");
     configureAppIdentity();

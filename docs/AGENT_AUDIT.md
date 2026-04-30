@@ -2025,6 +2025,7 @@ All gates from the bundle spec are satisfied. The fragility flagged in 17B-F-3 r
 #### Active Bundle: **Bundle 17H — Dynamic port allocation in Electron main (RU-1)**
 
 The CDP attach substrate is operationally solid except for one corner: the debug port is fixed at 9333 with `ORCHESTRATE_ELECTRON_CDP_PORT` override. This fails when:
+
 - A second Orchestrate instance is launched on the same host (port already bound).
 - Port 9333 is already in use by another process (Electron silently fails to bind, then `getCdpEndpoint` returns metadata pointing at a port nothing's listening on).
 
@@ -2045,6 +2046,7 @@ Either case manifests as "playwright-headless attach fails with confusing error"
 5. **Document** the change in [`docs/browser-runtime-notes.md`](docs/browser-runtime-notes.md): port is now dynamic by default; env override remains for explicit pinning.
 
 **Out of scope for 17H:**
+
 - Bundle 17G (FU-3 async UI test) — separate small bundle.
 - Bundle 17V (end-to-end UI verification) — user-driven.
 - F-N1, F-N2, F-N3 — small future cleanups.
@@ -2074,3 +2076,28 @@ Either case manifests as "playwright-headless attach fails with confusing error"
 - **2026-04-30 — Agent Report — Bundle 17F** — implemented; pushed at `96a1a0ac`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17F** — accepted. Heuristic gone, kind-based selection in place, strong negative test. Three small notes (F-N1, F-N2, F-N3) tracked.
 - **2026-04-30 — Bundle 17H activated** — dynamic port allocation in Electron main. Closes the last operational gap in CDP attach.
+
+## Agent Report — 2026-04-30T04:21:02Z — Bundle 17H
+
+Implemented dynamic Electron CDP debug-port reservation and removed the fixed production `9333` default.
+
+- **Port allocator**: Added [`apps/desktop/src/electronCdpPort.ts:40`](apps/desktop/src/electronCdpPort.ts:40). `reserveElectronCdpPort()` binds a loopback listener on `127.0.0.1:0` by default, reads the OS-assigned port, closes the listener, and returns that port. If `ORCHESTRATE_ELECTRON_CDP_PORT` is set, it validates the value and attempts to reserve exactly that port.
+- **Clear override failure**: [`electronCdpPort.ts:48`](apps/desktop/src/electronCdpPort.ts:48) rejects with `Unable to reserve Electron CDP debug port 127.0.0.1:<port>` when the requested override cannot be bound, so startup fails before Electron continues with a non-functional CDP endpoint.
+- **Electron startup wiring**: [`apps/desktop/src/main.ts:119`](apps/desktop/src/main.ts:119) resolves the port before the `app.whenReady()` chain at [`main.ts:1636`](apps/desktop/src/main.ts:1636). The selected port is passed to `app.commandLine.appendSwitch("remote-debugging-port", String(port))` at [`main.ts:124`](apps/desktop/src/main.ts:124).
+- **IPC bridge**: [`main.ts:1461`](apps/desktop/src/main.ts:1461) now calls `browserManager.getCdpEndpoint(electronCdpPort)`, so [`browserManager.getCdpEndpoint(port)`](apps/desktop/src/browserManager.ts:600) returns an endpoint URL and `port` value based on the actually selected startup port.
+- **Tests**: Added [`apps/desktop/src/electronCdpPort.test.ts:40`](apps/desktop/src/electronCdpPort.test.ts:40), covering dynamic allocation, env override honoring, env override bind failure, and invalid override rejection. This is the CI-safe substitute for launching two Electron instances.
+- **Docs**: Updated [`docs/browser-runtime-notes.md:5`](docs/browser-runtime-notes.md:5) to document dynamic-by-default port allocation, explicit env pinning, and fail-fast behavior when the pinned port cannot be reserved.
+
+Verification:
+
+- `bun fmt` passed.
+- `bun lint` passed with existing warnings and 0 errors.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` passed (10/10 tasks).
+- `bun run test src/electronCdpPort.test.ts` passed in `apps/desktop` (4 tests).
+- `bun run test src/browserOrchestration.test.ts` passed in `packages/contracts` (18 tests).
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/browserRuntime/Layers/DesktopBrowserBridge.test.ts` passed in `apps/server` (6 tests).
+- `git diff --check` passed.
+
+Notes:
+
+- I did not run a manual two-instance Electron smoke test in this environment. The allocator test proves each startup asks the OS for a fresh loopback port; the bridge path returns that selected port through the existing response shape.
