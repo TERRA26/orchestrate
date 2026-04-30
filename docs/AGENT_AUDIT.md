@@ -2885,3 +2885,77 @@ Additional verification:
 - `bun fmt` — passed.
 - `bun lint` — passed with warnings and 0 errors.
 - `PATH=/opt/homebrew/Cellar/node@24/24.15.0/bin:$PATH bun typecheck` — passed, 10/10 tasks.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17X-2 (boot diagnostic + failure-message diagnostic)
+
+**Verdict: ACCEPTED.** Both commits (`5d36bf46` boot diagnostic + `543cab7f` failure-message follow-up) are in scope, well-tested, and directly address the 17X-2 ambiguity I called out in `0cdfd129`. The agent correctly chose stderr for the boot line, redacted the token in the diagnostic shape, and pulled the same shape into the thrown error so the diagnostic is visible whether the host captures stderr or only the tool error.
+
+#### What I verified
+
+- Both commits reviewed as a unit. Combined diff (excluding doc): 2 files, +33/−2.
+- **Boot diagnostic** at [`scripts/orchestrate-mcp-server.ts:492-499`](scripts/orchestrate-mcp-server.ts:492). Pure function. Reports `port=<configured|fallback>`, `auth=<present|missing>`, `parentThread=<present|missing>`. Token value is never serialized. Format is grep-friendly for log-tail diagnosis.
+- **Boot emission** at [`scripts/orchestrate-mcp-server.ts:1474-1475`](scripts/orchestrate-mcp-server.ts:1474). Single `console.error(...)` line at script-as-main entry. Stderr is the correct stream for MCP stdio (stdout is reserved for JSON-RPC framing; hosts capture stderr as diagnostics). A single line at boot is low cost; no env-flag gating needed at this volume.
+- **Failure-message diagnostic** at [`scripts/orchestrate-mcp-server.ts:501-506, 525-529`](scripts/orchestrate-mcp-server.ts:501). The thrown error after URL exhaustion now embeds the same redacted shape, so the orchestrator-visible error answers "did the MCP have port/token/thread?" without requiring host-side stderr capture. This directly addresses my reviewer-focus question 4 in the agent's report.
+- **Tests** at [`scripts/orchestrate-mcp-server.test.ts:34-65`](scripts/orchestrate-mcp-server.test.ts:34) lock both directions: managed env produces `port=<n>; auth=present; parentThread=present`, unmanaged env produces `port=fallback; auth=missing; parentThread=missing`, and connection failures append the diagnostic to the error message.
+- Re-ran on my machine: `cd scripts && bun run test orchestrate-mcp-server.test.ts` — 10/10. `bun fmt` — clean. `bun lint` — 131 warnings (preexisting), 0 errors.
+
+#### Answers to the agent's reviewer-focus questions
+
+1. **stderr safe + useful?** Yes. stderr is the correct MCP-stdio diagnostic stream. Single boot line is high-value, low-cost; no env-flag gating needed.
+2. **Token leakage in diagnostic?** The new diagnostic itself never serializes the token. ✓ See **X-2-N1** below for an inherited token leak that pre-exists 17X-2.
+3. **Next bundle: fresh managed Codex session?** Yes. Now that the diagnostic is in place, the next bundle's primary task is the live confirmation that 17X-1 originally requested.
+4. **Should the error itself include diagnostic?** Already done in the follow-up commit (`543cab7f`). Complete for the diagnostic gap.
+
+#### Pre-existing issues surfaced during review (not blocking 17X-2)
+
+- **X-2-N1 — Token-in-URL leak in connection-failure message.** [`scripts/orchestrate-mcp-server.ts:472-487, 539`](scripts/orchestrate-mcp-server.ts:472) build URLs of the form `ws://localhost:<port>/?token=<secret>` via `withAuth`. When `connectWs` throws `Cannot connect to orchestration server at ${url}`, that URL — including the `?token=` parameter — is the literal `lastError.message` that 17X-2's `buildMcpConnectionFailureMessage` then prefixes. So while the new diagnostic field redacts correctly, the inherited URL portion of the error still contains the token when auth is configured. Pre-existing on main; not introduced by 17X-2. Track as a small hardening: redact the `token` query parameter from the URL before constructing the connection-failure error message.
+- **X-2-N2 — `@orchestrate/scripts:typecheck` failures on pristine main.** `scripts/live-orchestrator-smoke.ts` and `scripts/scenario-runner.ts` import `WebSocket from "ws"` but `scripts/package.json` does not declare `ws` or `@types/ws`. After a fresh `bun install` on a clean checkout these files fail `tsc --noEmit` with `TS2307: Cannot find module 'ws'` and three `TS7006` implicit-any errors. Last-touched `2026-04-12` (commit `92452ea4`), well before any 17X work. The agent reported `bun typecheck` 10/10 — likely a stale turbo cache or a different `node_modules` state at the time of their run. Pre-existing on current main on my machine; not introduced by 17X-2. Track as a separate cleanup: either add `@types/ws` to `scripts/devDependencies` or migrate these scripts to Node 22's built-in `WebSocket`.
+
+Neither note blocks 17X-2. Both are queued for a future small batch.
+
+#### Bundle 17X-2 status — COMPLETE
+
+The diagnostic gap is closed. Future stale-vs-managed MCP sessions are now self-identifying both at boot (stderr) and at failure (thrown error message). The original "is 17X-1 actually working in production" question can now be answered cleanly by spawning a fresh managed Codex session and reading either signal.
+
+#### Active Bundle: **Bundle 17X-3 — Fresh managed Codex live confirmation + redact-token URL hardening**
+
+**Primary task: live confirmation of 17X-1 from a fresh Orchestrate-spawned Codex provider session.**
+
+1. Hard-restart the desktop stack: kill any stale `codex app-server` processes (the agent noted that the current MCP host was launched without env, so any in-process Codex MCP is unfit for verification).
+2. Start the dev server fresh, open a new orchestrator thread, and let Orchestrate spawn the Codex provider itself (not from a stale CLI shell).
+3. Tail `apps/server`/Codex stderr. The first thing the spawned MCP subprocess prints **must** be:
+
+   ```text
+   orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present
+   ```
+
+   If any of those three fields is `fallback`/`missing`, 17X-1's env-passing fix is wrong or incomplete and that's the primary bug to fix in this batch (no further investigation needed — the diagnostic told us).
+
+4. Send a small browser task that invokes `orchestrate_browser_open_session` with `https://example.com`. Confirm:
+   - The MCP subprocess connects successfully (no fallback `ws://localhost:3773` failure).
+   - The returned `sessionId` is `electron-visible-…` (proves the live shared browser path is reached).
+5. If `browser_open_session` succeeds, capture the success in the agent report. If it fails, paste the new diagnostic-enriched error message into the report and root-cause the next layer.
+
+**Secondary task (small hardening, ship in same bundle): X-2-N1 — redact token from connection-failure URL.**
+
+- In `scripts/orchestrate-mcp-server.ts`, before constructing the `Cannot connect to orchestration server at ${url}` error string, drop the `token` query parameter from the URL (e.g. via `URL` mutation or a regex on the trailing query string). Add a unit test that the thrown error never contains the token value when auth is configured.
+
+**Optional (only if the live confirmation completes quickly): X-2-N2 cleanup.**
+
+- Either add `@types/ws` to `scripts/devDependencies` or migrate `scripts/live-orchestrator-smoke.ts` and `scripts/scenario-runner.ts` to Node 22's built-in `WebSocket`. Goal: `cd scripts && bun run typecheck` passes from a clean `bun install` on main.
+
+**Acceptance gates per batch (unchanged from 17X):**
+
+- [ ] At least one identified bug fixed; bug + fix described with file:line citations.
+- [ ] Targeted tests for any new code paths.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted suites pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17X-3` with what was tried, what broke, what was fixed, and what's the next obvious target.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17X-2** — boot diagnostic + failure-message diagnostic; pushed at `5d36bf46` and `543cab7f`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17X-2** — accepted. Diagnostic gap closed at both boot (stderr) and failure (error message). Two pre-existing notes tracked: X-2-N1 (token-in-URL leak) and X-2-N2 (scripts typecheck on `ws` import).
+- **2026-04-30 — Bundle 17X-3 activated** — fresh managed Codex live confirmation + token-in-URL redaction (X-2-N1).
