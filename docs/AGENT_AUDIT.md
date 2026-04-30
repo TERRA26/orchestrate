@@ -3000,3 +3000,85 @@ That line number no longer matches the current script, so the current Codex MCP 
 ### Current status
 
 The X-2-N1 hardening is fixed and covered. The primary 17X-3 live confirmation still needs a truly fresh Orchestrate-spawned Codex provider session. This current Codex tool process is demonstrably stale because it still reports the old `scripts/orchestrate-mcp-server.ts:504` stack line instead of the new diagnostic-enriched error path.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17X-3 (partial — token-in-URL redaction)
+
+**Verdict: ACCEPTED as partial.** The X-2-N1 secondary task is correctly closed: token values can no longer reach orchestrator-visible error messages from either `connectWs` or `ensureWs`. The primary 17X-3 task — fresh managed Codex live confirmation of 17X-1 — remains carried forward, because it can only be performed from a hard-restarted desktop stack that the agent inside a stale MCP host cannot self-trigger.
+
+#### What I verified
+
+- Commit `e094c3f2` reviewed in isolation. Diff: 2 files, +37/−2 (excluding doc).
+- **Helper purity** at [`scripts/orchestrate-mcp-server.ts:492-500`](scripts/orchestrate-mcp-server.ts:492). `redactOrchestrationWsUrlForLog` parses with WHATWG `URL`, deletes only the `token` searchParam, falls back to a regex (`/([?&]token=)[^&]*/i`) for unparseable strings. Pure, no shared state, three test cases lock token removal, non-token preservation, and the malformed-string fallback.
+- **`connectWs` onerror** at [`scripts/orchestrate-mcp-server.ts:550-555`](scripts/orchestrate-mcp-server.ts:550) — applies the redactor before constructing the rejection error. ✓
+- **`ensureWs` non-Error wrap** at [`scripts/orchestrate-mcp-server.ts:529-533`](scripts/orchestrate-mcp-server.ts:529) — applies the redactor before constructing the wrapped error. ✓
+- **`ensureWs` final throw** at [`scripts/orchestrate-mcp-server.ts:536-540`](scripts/orchestrate-mcp-server.ts:536) — the `lastError` value used here is always one of: an Error returned by `connectWs` (already redacted) or the wrapped non-Error (already redacted). The `lastError ?? new Error(\`...${ORCH_WS_URLS[0]}\`)`fallback uses a raw tokenized URL, but it is unreachable in current code because`buildOrchestrationWsUrls`always returns ≥1 URL and the loop always assigns`lastError` before reaching the throw. Tracked as **X-3-N1** below — defensive nit, not blocking.
+- **Tests** at [`scripts/orchestrate-mcp-server.test.ts:33-52`](scripts/orchestrate-mcp-server.test.ts:33) — 3/3 lock the redactor. Whole suite still 13/13 on my machine.
+- Re-ran on my machine: `cd scripts && bun run test orchestrate-mcp-server.test.ts` 13/13. `bun fmt` clean. `bun lint` 131 warnings (preexisting), 0 errors.
+- Empirically confirmed the URL-trailing-slash behavior the agent flagged in reviewer-focus question 3:
+
+  ```text
+  new URL("ws://localhost:3773").toString()      → "ws://localhost:3773/"
+  withAuth("ws://localhost:3773") with token=…   → "ws://localhost:3773/?token=secret"
+  redactOrchestrationWsUrlForLog(...)            → "ws://localhost:3773/"
+  ```
+
+  The trailing slash is WHATWG-spec-correct — it's the URL's normalized path. The agent's test at [`orchestrate-mcp-server.test.ts:38`](scripts/orchestrate-mcp-server.test.ts:38) acknowledges and locks this. Error messages will read `ws://localhost:3773/` instead of `ws://localhost:3773` — accurate, not a bug.
+
+#### Answers to the agent's reviewer-focus questions
+
+1. **Token values can no longer appear in `connectWs`/`ensureWs` connection failure messages.** Confirmed for all reachable paths. Both error sources are routed through the redactor before any string interpolation. The single residual interpolation at line 538 references the raw tokenized `ORCH_WS_URLS[0]` but is unreachable in current code; tracked as a defensive cleanup (**X-3-N1**) rather than a blocker.
+2. **Live confirmation stays primary for 17X-4; defer X-2-N2.** We've now spent 17X-2 + 17X-3 specifically to enable the live confirmation. Pivoting to typecheck-hygiene now would be sunk-cost waste. X-2-N2 (`scripts/typecheck` `ws` import) is non-functional cleanup and can sit as a tracked side task. The harder problem is operational: the agent cannot perform the live confirmation from inside a stale Codex MCP host. 17X-4 needs an explicit hard-restart step performed outside the MCP context.
+3. **`URL.toString()` trailing slash for bare `ws://host:port`.** Confirmed empirically; behavior is locked in tests at line 38; not a problem for ops or for the redaction guarantee.
+
+#### Pre-existing / new notes (none blocking)
+
+- **X-3-N1 — Defensive redaction in unreachable `ensureWs` fallback.** [`scripts/orchestrate-mcp-server.ts:536-540`](scripts/orchestrate-mcp-server.ts:536) constructs `new Error(\`Cannot connect to orchestration server at ${ORCH_WS_URLS[0]}\`)`if`lastError`is null.`ORCH_WS_URLS[0]`is the raw tokenized URL from`withAuth`. This branch is unreachable in current code because the loop always sets `lastError`when`ORCH_WS_URLS`is non-empty (which`buildOrchestrationWsUrls`guarantees). If a future change makes the array possibly empty, this branch would leak the token. Cheap to harden: wrap with`redactOrchestrationWsUrlForLog(...)`here too, and assert`ORCH_WS_URLS.length > 0` at module load. Track for 17X-4 as a one-line follow-up.
+- **X-2-N1 — CLOSED.** Replaced by `e094c3f2`.
+- **X-2-N2 — STILL TRACKED.** `scripts/typecheck` `ws` import hygiene. Defer.
+
+#### Bundle 17X-3 status — PARTIAL ACCEPT
+
+Token-in-URL redaction (X-2-N1) is closed. The primary live-confirmation goal carries forward into 17X-4 because it requires an external hard-restart that the agent's session cannot self-perform.
+
+#### Active Bundle: **Bundle 17X-4 — Fresh managed Codex live confirmation (operator-driven)**
+
+**Primary task (carried forward, requires operator action):**
+
+1. **Operator must hard-restart the desktop stack outside any Codex MCP host context.** Kill any stale `codex app-server` processes, kill any stale dev server, restart fresh. The agent inside the current stale MCP cannot self-trigger this.
+2. Open a new orchestrator thread; let Orchestrate spawn the Codex provider itself.
+3. Tail `apps/server`/Codex stderr. The first MCP-subprocess line **must** be:
+
+   ```text
+   orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present
+   ```
+
+   Any `fallback`/`missing` field means 17X-1's env-passing fix is incomplete and that's the primary bug to fix in this batch.
+
+4. Send `orchestrate_browser_open_session({ url: "https://example.com" })`. Confirm:
+   - No fallback `ws://localhost:3773/` failure.
+   - Returned `sessionId` is `electron-visible-…`.
+5. If `browser_open_session` fails, paste the new diagnostic-enriched (and now token-redacted) error message into the agent report and root-cause the next layer.
+
+**Secondary task (small one-line hardening, ship in same bundle): X-3-N1 defensive redaction.**
+
+- In `scripts/orchestrate-mcp-server.ts:536-540`, wrap the unreachable fallback URL in `redactOrchestrationWsUrlForLog(...)` so future refactors of `buildOrchestrationWsUrls` cannot reintroduce the leak. Add a tiny test that constructs the failure path with an empty URL list (or simulates it) and asserts no token in the message. Cheap, defensive, fits the 17X-3 mission.
+
+**Optional fallback if a fresh managed Codex restart is operationally blocked:**
+
+- If the operator cannot hard-restart in this batch window, pivot to the **annotation → rework → submit cycle smoke** (the most product-critical scenario that hasn't been smoke-verified end-to-end — see 17X-2 Active Bundle list). Do **not** silently downgrade live confirmation to "tested in stale session" — the diagnostic line is the contract; either it appears in a fresh session or 17X-1 isn't proven.
+
+**Acceptance gates per batch (unchanged from 17X):**
+
+- [ ] At least one identified bug fixed; bug + fix described with file:line citations.
+- [ ] Targeted tests for any new code paths.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted suites pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17X-4` with what was tried, what broke, what was fixed, and what's the next obvious target. **If the live confirmation could not be performed because of an operational restart blocker, say so explicitly — don't claim confirmation from a stale session.**
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17X-3 (partial)** — token-in-URL redaction (`redactOrchestrationWsUrlForLog`); pushed at `e094c3f2`. Live confirmation still pending — current Codex MCP host is stale.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17X-3** — accepted as partial. X-2-N1 closed. Two small notes tracked: X-3-N1 (defensive redaction in unreachable fallback) and X-2-N2 (deferred).
+- **2026-04-30 — Bundle 17X-4 activated** — operator-driven fresh managed Codex live confirmation + X-3-N1 defensive redaction.
