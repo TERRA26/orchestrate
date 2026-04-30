@@ -1424,14 +1424,15 @@ if (rawToolName === "orchestrate_browser_open_session") return "→ screenshot +
 if (rawToolName === "orchestrate_browser_act") return "→ browser observation";
 if (isOrchTool && rawToolName) {
   const verb = rawToolName.replace(/^orchestrate_/, "").replace(/_/g, " ");
-  return `→ ${verb}${target}`;   // ← "accept work", "spawn agent", "wait agent", "review agent work"
+  return `→ ${verb}${target}`; // ← "accept work", "spawn agent", "wait agent", "review agent work"
 }
 if (rawToolName) {
-  return `· ${rawToolName.toLowerCase()}`;   // ← raw tool name leaks straight through
+  return `· ${rawToolName.toLowerCase()}`; // ← raw tool name leaks straight through
 }
 ```
 
 This means a user sending a message in the orchestrator panel still sees:
+
 - `→ accept work @abc12345` (mechanically derived from `orchestrate_accept_work`)
 - `→ spawn agent` (from `orchestrate_spawn_agent`)
 - `→ wait agent` (from `orchestrate_wait_agent`)
@@ -1473,9 +1474,9 @@ That's true for `controlRoomMode={false}` rendering paths, but `OrchestratorPane
    })();
    ```
 
-   This routes `orchestrate_accept_work` → `"Reviewing evidence @abc12345"`, `orchestrate_spawn_agent` → `"Started worker"`, `orchestrate_wait_agent` → `"Waiting @abc12345"`, etc. The browser-specific labels (`"→ screenshot + aria"`, `"→ browser observation"`) — these are *also* raw-derived; replace with the existing browser-presentation helpers (`browserActionStatusLabel`, `browserObservationTitle`) for consistency, OR keep them and just remove the fallthrough at line 414.
+   This routes `orchestrate_accept_work` → `"Reviewing evidence @abc12345"`, `orchestrate_spawn_agent` → `"Started worker"`, `orchestrate_wait_agent` → `"Waiting @abc12345"`, etc. The browser-specific labels (`"→ screenshot + aria"`, `"→ browser observation"`) — these are _also_ raw-derived; replace with the existing browser-presentation helpers (`browserActionStatusLabel`, `browserObservationTitle`) for consistency, OR keep them and just remove the fallthrough at line 414.
 
-2. **Remove the raw-name fallthrough at line 414**: `return \`· ${rawToolName.toLowerCase()}\`` is the worst offender — it directly puts the tool name into user-visible text. Replace with `"activity"` or hide the row entirely.
+2. **Remove the raw-name fallthrough at line 414**: `return \`· ${rawToolName.toLowerCase()}\``is the worst offender — it directly puts the tool name into user-visible text. Replace with`"activity"` or hide the row entirely.
 
 3. **Add a regression test in `OrchestratorMessages.test.tsx`** (or create one if missing) that renders `CompactActivityRow` for each of `orchestrate_accept_work`, `orchestrate_spawn_agent`, `orchestrate_wait_agent`, `orchestrate_review_agent_work`, and an unknown tool — and asserts the output does NOT contain `orchestrate_` and does NOT contain the raw tool name as user-visible text. The grep test the original spec called for.
 
@@ -1531,3 +1532,43 @@ One required fix; existing implementation is otherwise accepted. Push as a singl
 
 - **2026-04-29 — Agent Report — Bundle 17C** — implemented; pushed at `a55f6976`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17C** — BLOCKED on RF-1 (`CompactActivityRow` in `OrchestratorMessages.tsx` bypasses the new mapper; the orchestrator-panel default render path still shows raw-derived tool names like `→ accept work` and `· orchestrate_wait_agent`). The mapper, `WorkEntryRow`, `OrchestrationToolCallCard`, and the agent-state pill are otherwise solid.
+
+## Agent Report — 2026-04-29T21:02:53-04:00 — Bundle 17C re-do
+
+### Summary
+
+Implemented RF-1. The orchestrator panel's default `controlRoomMode` path no longer builds `CompactActivityRow` labels by mechanically stripping `orchestrate_` tool names. The compact row now uses the shared `phaseForToolEvent` presentation mapper before falling back to non-orchestration labels, and it no longer emits raw orchestration tool names in the rendered markup.
+
+### Files changed
+
+- `apps/web/src/components/orchestrator/CompactActivityRow.tsx`
+  - Extracted `CompactActivityRow`, `extractToolArgsPreview`, and `BrowserScreenshotThumb` out of `OrchestratorMessages.tsx` so the compact activity surface has an isolated component and a direct regression test.
+  - Added `phaseForToolEvent(...)` as the first semantic label path after shell-command labels.
+  - Preserved worker/thread short suffixes (`@12345678`) for mapped orchestration phases.
+  - Replaced browser raw-derived labels with semantic labels: `Browser preview`, `Checking browser`, `Scrolling browser`, `Evaluating page`, and `Closing browser`.
+  - Removed the raw tool-name fallback (`· ${rawToolName.toLowerCase()}`).
+  - Sanitized the `data-activity-row` attribute for orchestration tools to `orchestration`, after the regression test caught that the old attribute still leaked `orchestrate_` in rendered markup.
+
+- `apps/web/src/components/orchestrator/OrchestratorMessages.tsx`
+  - Removed the embedded compact-row implementation.
+  - Imports and renders `CompactActivityRow` from the new focused module.
+  - This keeps the control-room timeline behavior unchanged while removing the duplicate presentation logic from the larger transcript component.
+
+- `apps/web/src/components/orchestrator/OrchestratorMessages.test.tsx`
+  - Added focused regression coverage for the actual default orchestrator-panel surface.
+  - Renders compact rows for `orchestrate_accept_work`, `orchestrate_spawn_agent`, `orchestrate_wait_agent`, `orchestrate_review_agent_work`, and `orchestrate_unknown_future_tool`.
+  - Asserts the semantic labels (`Reviewing evidence`, `Started worker`, `Waiting`) render and that the output contains neither `orchestrate_` nor mechanical stripped labels like `accept work`, `spawn agent`, `wait agent`, or `review agent work`.
+
+### Verification
+
+- `cd apps/web && bun run test src/components/orchestrator/OrchestratorMessages.test.tsx src/orchestratorPresentation.test.ts` — PASS, 2 files, 9 tests.
+- `cd apps/web && bun run test src/orchestratorPresentation.test.ts src/components/chat/WorkEntryRow.test.tsx src/components/orchestrator/OrchestratorComposer.test.tsx src/components/orchestrator/OrchestrationToolCallCard.test.tsx src/components/orchestrator/OrchestratorMessages.test.tsx` — PASS, 5 files, 28 tests.
+- `bun fmt` — PASS.
+- `bun lint` — PASS, 131 existing warnings, 0 errors.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` — PASS, 10/10 tasks.
+
+### Notes for reviewer
+
+The first targeted test run failed because `data-activity-row={rawToolName}` still exposed `orchestrate_` in server-rendered markup. I treated that as a legitimate leak under the acceptance gate and changed orchestration rows to emit `data-activity-row="orchestration"`. Visible text and rendered attributes are now both covered by the regression assertion.
+
+I kept shell commands ahead of mapper phases because command rows are not orchestration control labels; they are the actual user-relevant command preview. I kept non-orchestration fallback labels (`workEntry.label ?? workEntry.toolTitle ?? "activity"`) so generic provider work-log entries remain visible without inventing new semantic mappings.
