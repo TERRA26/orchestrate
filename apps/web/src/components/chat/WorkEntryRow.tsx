@@ -19,7 +19,7 @@ import {
 import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
 import { cn } from "~/lib/utils";
 import { ensureNativeApi } from "~/nativeApi";
-import { browserRuntimeKindLabel } from "~/orchestratorPresentation";
+import { browserRuntimeKindLabel, phaseForToolEvent } from "~/orchestratorPresentation";
 import { normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { isOrchestrationToolCall } from "../orchestrator/OrchestrationToolCallCard";
 import {
@@ -45,15 +45,15 @@ export interface WorkEntryRowProps {
 }
 
 const ORCH_TOOL_DISPLAY_LABELS: Record<string, string> = {
-  orchestrate_spawn_agent: "orchestrate_spawn_agent",
-  orchestrate_accept_work: "orchestrate_accept_work",
-  orchestrate_reject_work: "orchestrate_reject_work",
-  orchestrate_terminate_agent: "orchestrate_terminate_agent",
-  orchestrate_wait_agent: "orchestrate_wait_agent",
-  orchestrate_wait_all: "orchestrate_wait_all",
-  orchestrate_review_agent_work: "orchestrate_review_agent_work",
-  orchestrate_send_to_agent: "orchestrate_send_to_agent",
-  orchestrate_focus_agent: "orchestrate_focus_agent",
+  orchestrate_spawn_agent: "Started worker",
+  orchestrate_accept_work: "Reviewing evidence",
+  orchestrate_reject_work: "Reviewing evidence",
+  orchestrate_terminate_agent: "Stopped worker",
+  orchestrate_wait_agent: "Waiting",
+  orchestrate_wait_all: "Waiting",
+  orchestrate_review_agent_work: "Reviewing evidence",
+  orchestrate_send_to_agent: "Sent instruction",
+  orchestrate_focus_agent: "Focused worker",
   orchestrate_open_browser_preview: "open browser preview",
   orchestrate_browser_open_session: "capture browser screenshot",
   orchestrate_browser_act: "browser observation",
@@ -116,6 +116,28 @@ function workEntryPreview(
   return workEntry.changedFiles!.length === 1
     ? firstPath
     : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+}
+
+function toolPhaseForWorkEntry(workEntry: WorkLogEntry): ReturnType<typeof phaseForToolEvent> {
+  return phaseForToolEvent({
+    toolName: workEntry.toolName,
+    itemType: workEntry.itemType,
+    requestKind: workEntry.requestKind,
+    label: workEntry.label,
+    tone: workEntry.tone,
+    command: workEntry.command,
+    changedFiles: workEntry.changedFiles,
+  });
+}
+
+function rawToolDetails(toolName: string | undefined) {
+  if (!toolName) return null;
+  return (
+    <details className="mt-1 text-[10px] text-muted-foreground/55">
+      <summary className="cursor-pointer select-none">Tool details</summary>
+      <div className="mt-1 font-mono">{toolName}</div>
+    </details>
+  );
 }
 
 function BrowserScreenshotPreview({
@@ -874,6 +896,7 @@ function OrchSpawnCard({
             <span className="orch-id-chip">{threadId.slice(-8)}</span>
           </div>
         ) : null}
+        {rawToolDetails("orchestrate_spawn_agent")}
       </div>
     </div>
   );
@@ -910,6 +933,7 @@ function OrchAcceptCard({
         </span>
       </div>
       <div className="orch-accept-title">{title}</div>
+      {rawToolDetails(isReject ? "orchestrate_reject_work" : "orchestrate_accept_work")}
     </div>
   );
 }
@@ -1014,6 +1038,9 @@ function OrchInstrumentBlock({
         {variant === "file" && changedFiles && changedFiles[0] ? (
           <span className="orch-instrument-path">{changedFiles[0]}</span>
         ) : null}
+        {variant === "file" && (!changedFiles || changedFiles.length === 0) && command ? (
+          <span className="orch-instrument-path">{command}</span>
+        ) : null}
         {duration ? <span className="orch-instrument-dur">{duration}</span> : null}
         {diffCount ? (
           <span className="orch-instrument-dur">
@@ -1089,14 +1116,15 @@ export const WorkEntryRow = memo(function WorkEntryRow({
   // ---------------- Orchestration tool calls — render as design cards ---------------- //
   if (orchTool || (workEntry.toolName && isOrchestrationToolCall(workEntry.toolName))) {
     const baseTool = orchTool ?? workEntry.toolName!;
-    const toolDisplay = ORCH_TOOL_DISPLAY_LABELS[baseTool] ?? baseTool;
+    const toolDisplay = toolPhaseForWorkEntry(workEntry) ?? ORCH_TOOL_DISPLAY_LABELS[baseTool];
+    const semanticToolDisplay = toolDisplay ?? "Working";
     const workerBadge = shortWorkerId(workEntry.workerId);
     const taskTitle = workEntry.toolTitle ?? workEntry.detail ?? workEntry.label;
 
     if (baseTool === "orchestrate_spawn_agent") {
       return wrap(
         <OrchSpawnCard
-          toolDisplay={toolDisplay}
+          toolDisplay={semanticToolDisplay}
           workerBadge={workerBadge}
           title={taskTitle}
           isLoading={isLoading}
@@ -1108,7 +1136,7 @@ export const WorkEntryRow = memo(function WorkEntryRow({
     if (baseTool === "orchestrate_accept_work" || baseTool === "orchestrate_reject_work") {
       return wrap(
         <OrchAcceptCard
-          toolDisplay={toolDisplay}
+          toolDisplay={semanticToolDisplay}
           title={taskTitle}
           isLoading={isLoading}
           isReject={baseTool === "orchestrate_reject_work"}
@@ -1123,9 +1151,10 @@ export const WorkEntryRow = memo(function WorkEntryRow({
               ×
             </span>
             <span className="orch-accept-label" style={{ color: "var(--destructive)" }}>
-              {toolDisplay}
+              {semanticToolDisplay}
             </span>
           </div>
+          {rawToolDetails(baseTool)}
           {taskTitle ? <div className="orch-accept-title">{taskTitle}</div> : null}
         </div>,
       );
@@ -1160,7 +1189,12 @@ export const WorkEntryRow = memo(function WorkEntryRow({
         </div>,
       );
     }
-    return wrap(<OrchThinkRow label={toolDisplay} isLoading={isLoading} />);
+    return wrap(
+      <div>
+        <OrchThinkRow label={semanticToolDisplay} isLoading={isLoading} />
+        {rawToolDetails(baseTool)}
+      </div>,
+    );
   }
 
   // ---------------- Bash / file events — render as instrument readouts ---------------- //
@@ -1187,8 +1221,7 @@ export const WorkEntryRow = memo(function WorkEntryRow({
 
   if (isCommand) {
     const command = workEntry.command ?? workEntry.detail ?? workEntry.toolTitle;
-    const badge =
-      lowerLabel === "command run" ? "RAN COMMAND" : (workEntry.label ?? "COMMAND").toUpperCase();
+    const badge = toolPhaseForWorkEntry(workEntry) ?? "Running command";
     return wrap(
       <OrchInstrumentBlock
         variant="command"
@@ -1199,14 +1232,7 @@ export const WorkEntryRow = memo(function WorkEntryRow({
     );
   }
   if (isFile) {
-    const badge =
-      lowerLabel === "file change" || lowerToolName === "write"
-        ? "CREATED FILE"
-        : lowerToolName === "edit"
-          ? "EDITED FILE"
-          : lowerLabel === "file read" || lowerToolName === "read"
-            ? "READ FILE"
-            : (workEntry.label ?? "FILE").toUpperCase();
+    const badge = toolPhaseForWorkEntry(workEntry) ?? "Reading files";
     const filePath =
       changedFiles.length > 0 ? changedFiles[0] : (workEntry.detail ?? workEntry.toolTitle);
     return wrap(

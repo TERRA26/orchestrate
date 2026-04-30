@@ -11,6 +11,103 @@ export type BrowserPresentationStatusInput = {
   readonly hasScreenshot: boolean;
 };
 
+export type OrchestratorToolPhase =
+  | "Planning"
+  | "Reading files"
+  | "Editing"
+  | "Running command"
+  | "Reviewing evidence"
+  | "Waiting"
+  | "Started worker"
+  | "Done"
+  | "Blocked";
+
+export type ToolPhaseEvent = {
+  readonly toolName?: string | null | undefined;
+  readonly itemType?: string | null | undefined;
+  readonly requestKind?: string | null | undefined;
+  readonly label?: string | null | undefined;
+  readonly tone?: string | null | undefined;
+  readonly command?: string | null | undefined;
+  readonly changedFiles?: ReadonlyArray<string> | null | undefined;
+};
+
+function normalizeToolName(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/^mcp__orchestrate__/, "")
+    .replace(/^functions\./, "")
+    .trim()
+    .toLowerCase();
+}
+
+export function phaseForToolEvent(event: ToolPhaseEvent): OrchestratorToolPhase | null {
+  if (event.tone === "error") return "Blocked";
+
+  const toolName = normalizeToolName(event.toolName);
+  const itemType = normalizeToolName(event.itemType);
+  const requestKind = normalizeToolName(event.requestKind);
+  const label = normalizeToolName(event.label);
+
+  if (event.changedFiles && event.changedFiles.length > 0) return "Editing";
+  if (event.command || requestKind === "command" || itemType === "command_execution") {
+    return "Running command";
+  }
+
+  if (
+    toolName === "read" ||
+    toolName === "read_file" ||
+    requestKind === "file-read" ||
+    label === "file read"
+  ) {
+    return "Reading files";
+  }
+
+  if (
+    toolName === "edit" ||
+    toolName === "write" ||
+    toolName === "write_file" ||
+    requestKind === "file-change" ||
+    itemType === "file_change" ||
+    label === "file change"
+  ) {
+    return "Editing";
+  }
+
+  if (toolName === "bash" || toolName === "terminal" || toolName === "shell") {
+    return "Running command";
+  }
+
+  if (toolName === "plan_update" || toolName === "todowrite" || itemType === "plan_update") {
+    return "Planning";
+  }
+
+  if (
+    toolName === "wait_agent" ||
+    toolName === "orchestrate_wait_agent" ||
+    toolName === "orchestrate_wait_all" ||
+    label.includes("sleep")
+  ) {
+    return "Waiting";
+  }
+
+  if (toolName === "orchestrate_spawn_agent" || toolName === "spawn_agent") {
+    return "Started worker";
+  }
+
+  if (
+    toolName === "orchestrate_accept_work" ||
+    toolName === "orchestrate_reject_work" ||
+    toolName === "orchestrate_review_agent_work" ||
+    toolName === "reviewer.decision.create"
+  ) {
+    return "Reviewing evidence";
+  }
+
+  if (label === "done" || label === "completed") return "Done";
+
+  return null;
+}
+
 export function browserSurfaceModeLabel(surfaceMode: BrowserSurfaceMode): string {
   if (surfaceMode === "live-shared-browser") return "Live shared browser";
   if (surfaceMode === "headless-validation-mirror") return "Headless validation mirror";

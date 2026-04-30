@@ -1314,7 +1314,7 @@ Three follow-ups (FU-1, FU-2, FU-3) tracked; none blocking.
 
 #### Active Bundle: **Bundle 17C — Calm thread (non-browser semantic phases)**
 
-This is the bundle the user originally raised: *"when I send a message in an orchestrator thread, it's not clear what the orchestrator is doing."* Browser-phase UX is now solid; the remaining gap is non-browser work (file edits, terminal commands, planning, agent state).
+This is the bundle the user originally raised: _"when I send a message in an orchestrator thread, it's not clear what the orchestrator is doing."_ Browser-phase UX is now solid; the remaining gap is non-browser work (file edits, terminal commands, planning, agent state).
 
 **Scope:**
 
@@ -1338,6 +1338,7 @@ This is the bundle the user originally raised: *"when I send a message in an orc
    - Component test asserting the agent-state pill renders the right state for each driver scenario.
 
 **Out of scope for 17C:**
+
 - Bundle 17D (CDP attach) — orthogonal architectural fix; not user-visible UX.
 - FU-1, FU-2, FU-3 from F-3 review — tracked but separate.
 - Redesigning the composer or thread layout. Pill addition only.
@@ -1360,3 +1361,34 @@ This is the bundle the user originally raised: *"when I send a message in an orc
 - **2026-04-29 — Agent Report — Bundle 17B-F-3** — implemented; pushed at `10638270`.
 - **2026-04-29 — Reviewer Scrutiny — Bundle 17B-F-3** — accepted with three follow-ups (FU-1 move EvidenceArtifactId to baseSchemas, FU-2 typed browser-dom-snapshot artifact, FU-3 async UI test). Bundle 17B fully complete.
 - **2026-04-29 — Bundle 17C activated** — calm thread for non-browser semantic phases.
+
+## Agent Report — 2026-04-29T20:40:00-04:00 — Bundle 17C
+
+Implemented the calm-thread pass for non-browser semantic phases.
+
+### What changed
+
+- Added `phaseForToolEvent(event)` and supporting types to the shared presentation mapper. It maps read/read_file, edit/write, bash/terminal, plan_update/TodoWrite, wait_agent, spawn, accept/reject/reviewer decisions, done, and blocked/error into user-facing phases and returns `null` for unknown tools: [`apps/web/src/orchestratorPresentation.ts:14`](apps/web/src/orchestratorPresentation.ts:14), [`apps/web/src/orchestratorPresentation.ts:43`](apps/web/src/orchestratorPresentation.ts:43).
+- Wired `WorkEntryRow` through the shared mapper for orchestration tools and command/file rows, so read/edit/bash headlines render as `Reading files`, `Editing`, and `Running command` instead of raw tool identifiers. Raw orchestration tool names are retained only in collapsed `Tool details`: [`apps/web/src/components/chat/WorkEntryRow.tsx:121`](apps/web/src/components/chat/WorkEntryRow.tsx:121), [`apps/web/src/components/chat/WorkEntryRow.tsx:133`](apps/web/src/components/chat/WorkEntryRow.tsx:133), [`apps/web/src/components/chat/WorkEntryRow.tsx:1118`](apps/web/src/components/chat/WorkEntryRow.tsx:1118), [`apps/web/src/components/chat/WorkEntryRow.tsx:1222`](apps/web/src/components/chat/WorkEntryRow.tsx:1222).
+- Updated the separate orchestration tool-call card path to use the same semantic phase label and hide raw tool names behind `Tool details`: [`apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:43`](apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:43), [`apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:45`](apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:45), [`apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:74`](apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:74), [`apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:215`](apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:215).
+- Added a small composer agent-state pill with labels `thinking`, `working`, `waiting for approval`, `done`, and `blocked`, derived from the existing orchestrator status and passed from the engine through the panel: [`apps/web/src/components/orchestrator/OrchestratorAgentStatePill.tsx:4`](apps/web/src/components/orchestrator/OrchestratorAgentStatePill.tsx:4), [`apps/web/src/components/orchestrator/OrchestratorComposer.tsx:47`](apps/web/src/components/orchestrator/OrchestratorComposer.tsx:47), [`apps/web/src/components/orchestrator/OrchestratorComposer.tsx:333`](apps/web/src/components/orchestrator/OrchestratorComposer.tsx:333), [`apps/web/src/components/OrchestratorPanel.tsx:97`](apps/web/src/components/OrchestratorPanel.tsx:97).
+
+### Tests added
+
+- Mapper coverage for all requested non-browser phases plus `null` fallthrough: [`apps/web/src/orchestratorPresentation.test.ts:53`](apps/web/src/orchestratorPresentation.test.ts:53).
+- Work-entry component coverage for read/edit/bash semantic headings and raw tool names only behind details: [`apps/web/src/components/chat/WorkEntryRow.test.tsx:392`](apps/web/src/components/chat/WorkEntryRow.test.tsx:392), [`apps/web/src/components/chat/WorkEntryRow.test.tsx:412`](apps/web/src/components/chat/WorkEntryRow.test.tsx:412), [`apps/web/src/components/chat/WorkEntryRow.test.tsx:433`](apps/web/src/components/chat/WorkEntryRow.test.tsx:433), [`apps/web/src/components/chat/WorkEntryRow.test.tsx:453`](apps/web/src/components/chat/WorkEntryRow.test.tsx:453).
+- Agent-state pill coverage for each state family: [`apps/web/src/components/orchestrator/OrchestratorComposer.test.tsx:6`](apps/web/src/components/orchestrator/OrchestratorComposer.test.tsx:6).
+- Orchestration tool-call card semantic-label regression coverage: [`apps/web/src/components/orchestrator/OrchestrationToolCallCard.test.tsx:6`](apps/web/src/components/orchestrator/OrchestrationToolCallCard.test.tsx:6).
+
+### Verification
+
+- PASS: `bun fmt` (`oxfmt`, 1000 files).
+- PASS: `bun lint` (exit 0; 131 pre-existing warnings, 0 errors).
+- PASS: `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` (10/10 tasks). The explicit Node 24 path is still required in this shell; default Node 20 is too old for the Astro typecheck dependency.
+- PASS: `cd apps/web && bun run test src/orchestratorPresentation.test.ts src/components/chat/WorkEntryRow.test.tsx src/components/orchestrator/OrchestratorComposer.test.tsx src/components/orchestrator/OrchestrationToolCallCard.test.tsx` (4 files, 23 tests).
+
+### Notes / caveats
+
+- I did not redesign the composer or thread layout; the pill is deliberately small and placed in the existing bottom toolbar.
+- Raw tool identifiers remain in DOM markup inside collapsed `<details>` blocks for debugging/auditability. They are no longer used as the visible headline for the updated work-entry and orchestration-card paths.
+- FU-1, FU-2, FU-3 from Bundle 17B-F-3 remain queued and untouched.

@@ -387,4 +387,85 @@ describe("WorkEntryRow browser evidence", () => {
     expect(markup).toContain("Approval details unavailable");
     expect(markup).toContain("Browser session unavailable");
   });
+
+  it("renders read work entries with semantic headings and no raw tool headline", () => {
+    const markup = renderToStaticMarkup(
+      <WorkEntryRow
+        workEntry={{
+          ...BASE_WORK_ENTRY,
+          id: "activity-read-1",
+          label: "file read",
+          tone: "tool",
+          toolName: "read",
+          requestKind: "file-read",
+          detail: "apps/web/src/Settings.tsx",
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Reading files");
+    expect(markup).toContain("apps/web/src/Settings.tsx");
+    expect(markup).not.toContain(">read<");
+  });
+
+  it("renders edit work entries with semantic headings and no raw tool headline", () => {
+    const markup = renderToStaticMarkup(
+      <WorkEntryRow
+        workEntry={{
+          ...BASE_WORK_ENTRY,
+          id: "activity-edit-1",
+          label: "file change",
+          tone: "tool",
+          toolName: "edit",
+          requestKind: "file-change",
+          changedFiles: ["apps/web/src/Settings.tsx"],
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Editing");
+    expect(markup).toContain("apps/web/src/Settings.tsx");
+    expect(markup).not.toContain(">edit<");
+  });
+
+  it("renders bash work entries with semantic headings and no raw tool headline", () => {
+    const markup = renderToStaticMarkup(
+      <WorkEntryRow
+        workEntry={{
+          ...BASE_WORK_ENTRY,
+          id: "activity-bash-1",
+          label: "command run",
+          tone: "tool",
+          toolName: "bash",
+          requestKind: "command",
+          command: "bun lint",
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Running command");
+    expect(markup).toContain("bun lint");
+    expect(markup).not.toContain(">bash<");
+  });
+
+  it("keeps orchestration raw tool names behind details only", () => {
+    const markup = renderToStaticMarkup(
+      <WorkEntryRow
+        workEntry={{
+          ...BASE_WORK_ENTRY,
+          id: "activity-spawn-1",
+          label: "tool call",
+          tone: "tool",
+          toolName: "orchestrate_spawn_agent",
+          toolTitle: "Implement settings screen",
+          threadId: "thread_worker_12345678",
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Started worker");
+    expect(markup).toContain("Tool details");
+    expect(markup).toContain("orchestrate_spawn_agent");
+    expect(markup).not.toContain('class="orch-spawn-tool">orchestrate_spawn_agent');
+  });
 });

@@ -37,6 +37,8 @@ import {
   providerComposerCapabilitiesQueryOptions,
 } from "~/lib/providerDiscoveryReactQuery";
 import { useTheme } from "~/hooks/useTheme";
+import type { OrchestratorStatus } from "./useOrchestratorEngine";
+import { AgentStatePill } from "./OrchestratorAgentStatePill";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -46,6 +48,7 @@ export interface OrchestratorComposerProps {
   input: string;
   canSend: boolean;
   isBusy: boolean;
+  agentState: OrchestratorStatus;
   selectedProvider: ProviderKind;
   selectedModel: string;
   selectedProviderModels: ReadonlyArray<ServerProviderModel>;
@@ -84,6 +87,7 @@ export function OrchestratorComposer({
   input,
   canSend,
   isBusy,
+  agentState,
   selectedProvider,
   selectedModel,
   selectedProviderModels,
@@ -327,6 +331,8 @@ export function OrchestratorComposer({
             {/* Bottom toolbar */}
             <div className="flex items-end justify-between gap-1.5 px-3 pb-2.5">
               <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <AgentStatePill status={agentState} />
+                <Separator orientation="vertical" className="mx-0.5 h-3 shrink-0 bg-border/40" />
                 <ProviderModelPicker
                   compact
                   provider={selectedProvider}

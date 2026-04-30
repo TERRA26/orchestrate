@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ORCHESTRATION_TOOL_NAMES } from "@orchestrate/contracts";
 import { useOrchestratorPaneStore } from "~/lib/orchestratorPaneStore";
+import { phaseForToolEvent } from "~/orchestratorPresentation";
 
 interface OrchestrationToolCallCardProps {
   toolName: string;
@@ -39,6 +40,14 @@ export function OrchestrationToolCallCard({
     }
   }, [toolName, input, result, isLoading, focusAgent, collapseAgent]);
   const parsed = input as Record<string, unknown>;
+  const phaseLabel = phaseForToolEvent({ toolName }) ?? "Tool";
+
+  const rawToolDetails = (
+    <details className="mt-1 text-[10px] text-muted-foreground/55">
+      <summary className="cursor-pointer select-none">Tool details</summary>
+      <div className="mt-1 font-mono">{toolName}</div>
+    </details>
+  );
 
   switch (toolName) {
     case "orchestrate_spawn_agent": {
@@ -62,7 +71,7 @@ export function OrchestrationToolCallCard({
       return (
         <div className="orch-spawn-card">
           <div className="orch-spawn-head">
-            <span className="orch-spawn-tool">orchestrate_spawn_agent</span>
+            <span className="orch-spawn-tool">{phaseLabel}</span>
             <span className={`orch-spawn-status ${statusClass}`}>
               <span
                 className={`orch-status-dot ${isLoading ? "orch-pulsing" : ""}`}
@@ -86,6 +95,7 @@ export function OrchestrationToolCallCard({
                 </>
               ) : null}
             </div>
+            {rawToolDetails}
           </div>
         </div>
       );
@@ -104,6 +114,7 @@ export function OrchestrationToolCallCard({
           {parsed.reason ? (
             <div className="text-xs text-muted-foreground">{String(parsed.reason)}</div>
           ) : null}
+          {rawToolDetails}
         </div>
       );
     }
@@ -114,6 +125,7 @@ export function OrchestrationToolCallCard({
             <span className="orch-accept-icon">{"\u2713"}</span>
             <span className="orch-accept-label">Work accepted</span>
           </div>
+          {rawToolDetails}
         </div>
       );
     }
@@ -131,6 +143,7 @@ export function OrchestrationToolCallCard({
           {parsed.reason ? (
             <div className="text-xs text-muted-foreground">{String(parsed.reason)}</div>
           ) : null}
+          {rawToolDetails}
         </div>
       );
     }
@@ -202,8 +215,8 @@ export function OrchestrationToolCallCard({
     default: {
       return (
         <div className="orch-think-row">
-          <span className="orch-section-label">Tool</span>
-          <span className="font-mono text-[11.5px]">{toolName}</span>
+          <span className="orch-section-label">{phaseLabel}</span>
+          {rawToolDetails}
           {isLoading ? <span className="animate-pulse text-muted-foreground">…</span> : null}
         </div>
       );

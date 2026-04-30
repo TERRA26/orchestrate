@@ -6,6 +6,7 @@ import {
   browserRuntimeEvidenceLabel,
   browserRuntimeKindLabel,
   browserSurfaceModeLabel,
+  phaseForToolEvent,
 } from "./orchestratorPresentation";
 
 describe("orchestratorPresentation", () => {
@@ -49,5 +50,22 @@ describe("orchestratorPresentation", () => {
         hasScreenshot: true,
       }),
     ).toBe("Screenshot captured");
+  });
+
+  it("maps non-browser tool events to calm semantic phases", () => {
+    expect(phaseForToolEvent({ toolName: "read" })).toBe("Reading files");
+    expect(phaseForToolEvent({ toolName: "read_file" })).toBe("Reading files");
+    expect(phaseForToolEvent({ toolName: "Edit" })).toBe("Editing");
+    expect(phaseForToolEvent({ toolName: "write" })).toBe("Editing");
+    expect(phaseForToolEvent({ toolName: "Bash" })).toBe("Running command");
+    expect(phaseForToolEvent({ toolName: "terminal" })).toBe("Running command");
+    expect(phaseForToolEvent({ toolName: "plan_update" })).toBe("Planning");
+    expect(phaseForToolEvent({ toolName: "TodoWrite" })).toBe("Planning");
+    expect(phaseForToolEvent({ toolName: "wait_agent" })).toBe("Waiting");
+    expect(phaseForToolEvent({ toolName: "orchestrate_spawn_agent" })).toBe("Started worker");
+    expect(phaseForToolEvent({ toolName: "orchestrate_accept_work" })).toBe("Reviewing evidence");
+    expect(phaseForToolEvent({ toolName: "orchestrate_reject_work" })).toBe("Reviewing evidence");
+    expect(phaseForToolEvent({ toolName: "reviewer.decision.create" })).toBe("Reviewing evidence");
+    expect(phaseForToolEvent({ toolName: "unknown_future_tool" })).toBeNull();
   });
 });

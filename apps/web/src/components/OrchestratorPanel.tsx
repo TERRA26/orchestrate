@@ -98,6 +98,7 @@ function OrchestratorPanelInner({ hideHeader = false }: { hideHeader?: boolean }
             input={engine.input}
             canSend={engine.canSend}
             isBusy={engine.isBusy}
+            agentState={engine.status}
             selectedProvider={engine.selectedProvider}
             selectedModel={engine.selectedModel}
             selectedProviderModels={engine.selectedProviderModels}
