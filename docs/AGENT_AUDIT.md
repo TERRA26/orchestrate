@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `bb458ed1` (`fix(reviewer): kick off rework worker turns`) — Bundle 17B Sub-scope B re-do reviewed; **ACCEPTED**. Bundle 17B as a whole (Hardening + Annotation→Rework) is now complete.
-**Active bundle:** **Bundle 17B-F-3 — Visual after-evidence at submit** (deferred from Sub-scope B; see iteration log for spec). Bundles 17C (non-browser semantic phases) and 17D (CDP attach) remain queued.
+**Latest reviewed commit:** `10638270` (`feat(reviewer): capture visual after evidence`) — Bundle 17B-F-3 reviewed; **ACCEPTED** with three documented follow-ups (none blocking the next bundle). Bundle 17B is fully complete.
+**Active bundle:** **Bundle 17C — Calm thread: non-browser semantic phases** (the spec the user originally raised — "when I send a message it's not clear what the orchestrator is doing"). Bundle 17D (CDP attach to running Electron) and the three 17B-F-3 follow-ups remain queued.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -1239,3 +1239,124 @@ Implemented visual after-evidence at the task submit boundary. The integration p
 - I did not implement a parser for the worker's final REPORT block because this codebase still intentionally has workers submit through supervisor/orchestrator tooling. The capture now happens at the same durable boundary that creates the submit event.
 - `browserAfterDomRef` is the durable browser observation artifact returned by `BrowserRuntimeService.observe`. The current recorder does not emit a separately named DOM snapshot artifact for this path; the observation artifact is the closest durable DOM/page-state ref available without changing the evidence recorder taxonomy.
 - I did not rename the supplemental `browser-comment` submit artifact kind; that was explicitly out of scope/cosmetic.
+
+---
+
+### Reviewer Scrutiny — 2026-04-29 — Bundle 17B-F-3
+
+**Verdict: ACCEPTED.** Three documented follow-ups (FU-1..FU-3); none block the next bundle. Bundle 17B is fully complete.
+
+#### What I verified directly
+
+- `git diff 3393eec9..10638270` — 13 files, +487/−52, all in scope. No `as any`/`@ts-expect-error`/`eslint-disable` introduced in production diffs.
+- **Schema fields and circular-import workaround.** Verified the cycle is real ([`packages/contracts/src/browserOrchestration.ts:12`](packages/contracts/src/browserOrchestration.ts:12) imports `OrchestratorRunId` from `./orchestration`, so `orchestration.ts` cannot import `EvidenceArtifactId` back). The local `OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(Schema.isMaxLength(128))` at [`orchestration.ts:19`](packages/contracts/src/orchestration.ts:19) is a defensible workaround. **Tradeoff documented as FU-1**: structural string vs branded `EvidenceArtifactId` — fix later by moving the brand to `baseSchemas.ts`.
+- **`AcceptWorkInput.taskId` made optional** ([`orchestrationTools.ts:371`](packages/contracts/src/orchestrationTools.ts:371)). Sole consumer is `handleAcceptWork`, which already had `decoded.taskId ?? worker?.activeTaskId` fallback and a `if (!taskId) return error` short-circuit. The schema/tool-shape mismatch with ClaudeAdapter (which already described `task_id` as optional) is now closed. Backward compatible — existing callers passing taskId still work.
+- **`accept_work` auto-submit semantics**. The new behavior is gated on `task.status === "assigned" || task.status === "running"` ([`OrchestrationToolRouter.ts:944`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:944)). Already-submitted tasks fall through to the existing accept dispatch — no behavior change. Workers that finish without a separate submit tool now get a fresh observe + dispatch + accept atomically. The semantics expansion is well-scoped.
+- **Decider forwarding** ([`decider.ts:1158-1167`](apps/server/src/orchestration/decider.ts:1158)) — clean conditional-spread of both refs from command to submitted payload.
+- **Projection writes to BOTH tables.** [`ProjectionPipeline.ts:1335-1413`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1335) — at submit:
+  - De-dupes the three refs (screenshot, DOM/observation, JSON metadata) with visual-first ordering via the new `uniqueStrings` helper.
+  - Updates `rework_tasks.after_evidence_refs_json` with the deduped array.
+  - For each `rework_tasks` row matching the orchestrator_task_id, parses `annotation_targets_json`, looks up each annotation row, mutates `annotation_json` to add `afterScreenshotArtifactRef` / `afterDomArtifactRef`, and saves it back.
+  - Defensive parsing (try/catch on JSON, type guards on object/array shape, skip on missing rows). Idempotent under retry.
+- **UI before/after rendering**. [`WorkEntryRow.tsx:135-209`](apps/web/src/components/chat/WorkEntryRow.tsx:135) replaces the previous text-only side-by-side with `BrowserBeforeAfterEvidence` that contains `BrowserArtifactScreenshotPreview` for both refs. The preview uses `useState` + `useEffect` + `fetchEvidenceArtifactImageDataUrl(ensureNativeApi(), ref)` with three states (Loading / Loaded → `BrowserScreenshotPreview` / Failed → "Preview unavailable"). Cancellation handled via the `cancelled` flag in cleanup.
+- **Tests:**
+  - [`OrchestrationToolRouter.test.ts:478-572`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts:478) — new test "auto-submits running work with fresh browser after-evidence" exhaustively covers the flow: worker has `browserSessionId` in workspace, task is `running`, accept_work called with no taskId/sessionId → asserts `observe` was called with the workspace's session, asserts dispatched commands are exactly `["orchestrator.task.submit", "orchestrator.task.accept"]`, asserts the submit command contains `browserAfterScreenshotRef` and `browserAfterDomRef`, asserts the result echoes them.
+  - [`decider.orchestrator.test.ts:328`](apps/server/src/orchestration/decider.orchestrator.test.ts:328) — submit command with both refs → submitted event carries both refs through.
+  - [`ProjectionPipeline.test.ts:2057-2189`](apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts:2057) — extends the existing rework lifecycle test with annotation row seeding, submit with both refs, asserts `after_evidence_refs_json` contains 3 entries (screenshot, DOM, rework-after-…), evidence_artifact row exists, **and the annotation_json row was mutated to include `afterScreenshotArtifactRef` / `afterDomArtifactRef`**. This is the gate that confirms refs propagate to the annotation row.
+  - [`orchestration.contracts.test.ts:238`](packages/contracts/src/orchestration.contracts.test.ts:238) — submit command schema decodes and preserves both fields.
+- Re-ran on my machine: lint exit 0, typecheck 10/10, server router tests 29/29, projection lifecycle test PASS, web WorkEntryRow tests 12/12, contracts 18/18.
+
+#### Three documented follow-ups (queued, not blocking next bundle)
+
+**FU-1: Move `EvidenceArtifactId` to `baseSchemas.ts` to break the import cycle.**
+The local `OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(...)` at [`orchestration.ts:19`](packages/contracts/src/orchestration.ts:19) is structural-only; the branded `EvidenceArtifactId` lives in `browserOrchestration.ts` and can't be imported here without a cycle. Move the brand to `baseSchemas.ts` (no cycle, fits the file's purpose), then both schemas can use the same branded type. Mechanical — no runtime change.
+
+**FU-2: Add a typed `browser-dom-snapshot` artifact kind.**
+Today `browserAfterDomRef` is extracted via the heuristic `evidenceRefs.find((ref) => ref !== screenshotRef && !ref.includes("url-agreement"))` at [`OrchestrationToolRouter.ts:967`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:967). It happens to grab the durable browser-observation artifact, which is a JSON observation, not a typed DOM snapshot. If the recorder ever changes the order of evidence refs or adds a new kind, this find could pick the wrong one. Long-term: extend `BrowserEvidenceRecorder.recordObservation` to emit a separately-typed `"browser-dom-snapshot"` artifact (kind addition), and have the `find` match on that kind explicitly. Until then, current behavior is "something durable" — non-zero, just not specifically a DOM snapshot.
+
+**FU-3: Add a real React component test that exercises the async preview path.**
+The existing test at [`WorkEntryRow.test.tsx:200`](apps/web/src/components/chat/WorkEntryRow.test.tsx:200) uses `renderToStaticMarkup`, which does not run `useEffect`. So the `BrowserArtifactScreenshotPreview` Loading / Loaded / Failed states are not exercised — only the static text labels (`Screenshot before-shot-1` etc.) are asserted. This means a regression where `fetchEvidenceArtifactImageDataUrl` is broken or `ensureNativeApi()` returns the wrong shape would silently render "Preview unavailable" with no test catching it. Add a test using `@testing-library/react` (or whatever the codebase already uses for client-rendered tests — e.g. `BrowserPanel` likely has a precedent) that renders `BrowserArtifactScreenshotPreview` with a mocked `fetchEvidenceArtifactImageDataUrl` and asserts the three states. The agent flagged this themselves in their report.
+
+**None of these block Bundle 17C.** They are tracked here so they don't get lost.
+
+#### Answers to your four scrutiny questions
+
+1. **Is supervisor-boundary capture acceptable for F-3?** Yes. The agent verified the worker integration point first (no worker-side submit tool exists), and capture at the supervisor's `accept_work` is the correct durable boundary in this codebase. The auto-submit gate (`assigned|running`) keeps it backward compatible. Documenting an alternative (worker-side capture) is fine — but the supervisor approach is structurally sound.
+
+2. **Is `browserAfterDomRef = browser-observation artifact` acceptable?** Yes, as a stub. The field name is "Dom" but the content is the JSON page-state observation. This is non-zero durable evidence. **FU-2** above tracks the cleanup. Don't block on this.
+
+3. **Are `accept_work` auto-submit semantics too broad?** No, well-scoped. The `task.status === "assigned" || task.status === "running"` guard means already-submitted tasks fall through unchanged. Only the worker-finishes-without-submit case (the only case in this codebase, since workers have no submit tool) goes through the new path. Backward compatible.
+
+4. **Should the UI preview path have a stronger async test?** Yes — see **FU-3**. The current SSR test asserts text labels are present but doesn't exercise `useEffect`/fetch. Track as a follow-up; not blocking.
+
+#### Things I checked that are clean
+
+- No silent fallbacks. The `if (browserSessionId && Option.isSome(browserRuntime))` guard in `handleAcceptWork` correctly skips observe (and the after-refs are simply `undefined`, dispatched conditionally) when either is missing. The submit still happens; just without visual evidence — acceptable degradation.
+- No schema lies. `Schema.optional(OrchestratorEvidenceArtifactId)` accepts undefined; the structural-string vs branded tradeoff is FU-1.
+- Decider's conditional spread `...(command.browserAfterScreenshotRef !== undefined ? { browserAfterScreenshotRef: command.browserAfterScreenshotRef } : {})` matches the existing pattern in the same file. No spread bugs.
+- The `uniqueStrings` helper is a small, well-contained utility. Visual-first ordering is intentional ([`screenshot, dom, jsonMetadata`]) and the test asserts that exact order.
+- No `// @ts-expect-error`, no `as any`, no test deletions/skips. The `// @ts-ignore`-shaped comments don't appear anywhere in the diff.
+- Auto-submit and observe failures fail closed cleanly: `Effect.mapError(...)` wraps dispatch errors, observe errors propagate up.
+
+#### Bundle 17B — fully COMPLETE
+
+All gates from the original Bundle 17B definition (Hardening sub-scope, Annotation→Rework sub-scope, F-3 visual after-evidence) are now satisfied:
+
+- [x] Schema fields, migration, before-evidence at annotation creation.
+- [x] `start-agent-run` spawns task + dispatches `thread.turn.start` with reminder.
+- [x] State machine with five transitions tested end-to-end.
+- [x] After-evidence captured at submit (visual screenshot + DOM-shaped observation ref).
+- [x] After-evidence written to BOTH `rework_tasks` AND the annotation row.
+- [x] UI renders actual `BrowserScreenshotPreview` for the paired before/after view.
+- [x] Lint, typecheck, in-scope tests all pass. No `as any`/cheats.
+
+Three follow-ups (FU-1, FU-2, FU-3) tracked; none blocking.
+
+#### Active Bundle: **Bundle 17C — Calm thread (non-browser semantic phases)**
+
+This is the bundle the user originally raised: *"when I send a message in an orchestrator thread, it's not clear what the orchestrator is doing."* Browser-phase UX is now solid; the remaining gap is non-browser work (file edits, terminal commands, planning, agent state).
+
+**Scope:**
+
+1. **Extend `apps/web/src/orchestratorPresentation.ts`** with a `phaseForToolEvent(event)` mapper covering non-browser tools. Initial taxonomy:
+   - `read` / `read_file` / `Read` → "Reading files"
+   - `edit` / `write` / `Edit` / `Write` → "Editing"
+   - `bash` / `terminal` / `Bash` → "Running command"
+   - `plan_update` / `TodoWrite` → "Planning"
+   - `wait_agent` / sleeping → "Waiting"
+   - `orchestrate_spawn_agent` → "Started worker"
+   - `orchestrate_accept_work` / `orchestrate_reject_work` → "Reviewing evidence"
+   - `reviewer.decision.create` → "Reviewing evidence"
+   - Already-handled browser phases stay unchanged.
+   - Unknown tools → null (don't fall through to raw tool name).
+2. **Wire it into `apps/web/src/components/chat/WorkEntryRow.tsx` for non-browser entries.** Use the same pattern as the existing browser path: semantic phase as the headline, raw tool name only inside expanded details. Audit `MessagesTimeline.tsx` and `OrchestratorMessages.tsx` for similar callsites and unify.
+3. **Add an "agent state pill" to the composer area.** A small chip near the message composer that reads "thinking" / "working" / "waiting for approval" / "done" / "blocked" based on the current run state. Use the existing data sources (`useOrchestratorEngine`, work-log entries, browser-control state). Don't redesign the composer — just add the pill.
+4. **Hide raw tool names from default thread view.** Audit anywhere a raw tool name (`orchestrate_*`, `browser.*`, `read`, `edit`, `bash`) leaks into a user-facing surface (chat row headline, status text, card title). Move them into expandable `<details>` blocks. Browser-phase already does this; replicate the pattern for non-browser.
+5. **Tests.**
+   - Mapper unit test covering each phase with the expected user-facing label, plus `null` fallthrough for unknown tools.
+   - Component tests verifying the WorkEntryRow renders a semantic phase as the headline (e.g. "Editing apps/web/src/Settings.tsx" not "edit apps/web/src/Settings.tsx").
+   - Component test asserting the agent-state pill renders the right state for each driver scenario.
+
+**Out of scope for 17C:**
+- Bundle 17D (CDP attach) — orthogonal architectural fix; not user-visible UX.
+- FU-1, FU-2, FU-3 from F-3 review — tracked but separate.
+- Redesigning the composer or thread layout. Pill addition only.
+- Renaming `"browser-comment"` artifact kind. Cosmetic.
+
+**Acceptance gates:**
+
+- [ ] `orchestratorPresentation.ts` exports a `phaseForToolEvent(event)` covering at minimum: read/edit/bash/plan_update/wait_agent/spawn/accept/reject. Returns `null` for unknown tools (no raw-name fallthrough).
+- [ ] `WorkEntryRow` (or the equivalent rendering point) uses `phaseForToolEvent` as the headline for non-browser entries. Raw tool name appears only in `<details>` expansion.
+- [ ] Composer shows an agent-state pill (thinking / working / waiting for approval / done / blocked) reflecting the current run.
+- [ ] Mapper unit tests cover at least the phases listed above plus `null` fallthrough.
+- [ ] Component tests assert: a `read` work entry renders "Reading files" as headline; an `edit` entry renders "Editing"; a `bash` entry renders "Running command"; raw tool names appear only behind expansion.
+- [ ] No raw tool names visible in the headline of any work-entry card type. Grep test: rendered output of every test fixture in this file should not contain `orchestrate_` or `browser.openSession` or `browser.observe` as user-visible text.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass for in-scope packages. Targeted tests pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17C` to this file with file:line for each gate.
+
+#### Iteration log update
+
+- **2026-04-29 — Agent Report — Bundle 17B-F-3** — implemented; pushed at `10638270`.
+- **2026-04-29 — Reviewer Scrutiny — Bundle 17B-F-3** — accepted with three follow-ups (FU-1 move EvidenceArtifactId to baseSchemas, FU-2 typed browser-dom-snapshot artifact, FU-3 async UI test). Bundle 17B fully complete.
+- **2026-04-29 — Bundle 17C activated** — calm thread for non-browser semantic phases.
