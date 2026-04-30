@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `a55f6976` (`feat(orchestrator): calm non-browser thread phases`) — Bundle 17C reviewed; **BLOCKED on one required fix**: `CompactActivityRow` in `OrchestratorMessages.tsx` is the **default user-visible orchestrator-panel render path** (`controlRoomMode={true}` in `OrchestratorPanel.tsx:94`), and it still derives labels mechanically from raw tool names — bypassing the new mapper. The mapper, `WorkEntryRow`, `OrchestrationToolCallCard`, and the agent-state pill are otherwise solid.
-**Active bundle:** **Bundle 17C re-do (focused fix)** — wire `CompactActivityRow` through `phaseForToolEvent` so the orchestrator panel shows semantic phases instead of `→ accept work` / `· orchestrate_wait_agent`. See iteration log for details. Bundle 17D and 17B-F-3 follow-ups remain queued.
+**Latest reviewed commit:** `9c61980b` (`fix(orchestrator): route compact activity rows through phase mapper`) — Bundle 17C re-do reviewed; **ACCEPTED**. The original 10-point Definition of Done at §9 is now satisfied end-to-end.
+**Active bundle:** **Bundle 17D — CDP attach to running Electron** (the structural fix to "two browsers" — replaces the policy-only routing with substrate-level guarantee that the headless validator attaches to the same `webContents` the user sees). Cleanup follow-ups (FU-1, FU-2, FU-3, stale `ORCH_TOOL_DISPLAY_LABELS` browser entries) remain queued.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -1572,3 +1572,121 @@ Implemented RF-1. The orchestrator panel's default `controlRoomMode` path no lon
 The first targeted test run failed because `data-activity-row={rawToolName}` still exposed `orchestrate_` in server-rendered markup. I treated that as a legitimate leak under the acceptance gate and changed orchestration rows to emit `data-activity-row="orchestration"`. Visible text and rendered attributes are now both covered by the regression assertion.
 
 I kept shell commands ahead of mapper phases because command rows are not orchestration control labels; they are the actual user-relevant command preview. I kept non-orchestration fallback labels (`workEntry.label ?? workEntry.toolTitle ?? "activity"`) so generic provider work-log entries remain visible without inventing new semantic mappings.
+
+---
+
+### Reviewer Scrutiny — 2026-04-29 — Bundle 17C re-do
+
+**Verdict: ACCEPTED.** RF-1 is closed. Bundle 17C is now complete. The original 10-point Definition of Done at §9 is satisfied end-to-end.
+
+#### What I verified
+
+- `git diff 00445154..9c61980b` — 4 files, +275/−167 lines. All in scope. The diff is exactly the shape requested: `CompactActivityRow` extracted to its own file (160 lines), removed from `OrchestratorMessages.tsx` (164 lines), regression test added (69 lines), audit updated (49 lines). No drive-by changes.
+- **`CompactActivityRow.tsx`** — verified the production logic at [`apps/web/src/components/orchestrator/CompactActivityRow.tsx:67-117`](apps/web/src/components/orchestrator/CompactActivityRow.tsx:67):
+  - `phaseForToolEvent({ toolName, itemType, requestKind, label, tone, command, changedFiles })` is called with the full event shape (line 71-79).
+  - Command rows short-circuit first (`$ ${first 4 words}`) — preserves the existing UX for shell commands.
+  - When `phase` is non-null, render `${phase}${target}` where target is `@${workerId.slice(-8)}` or `@${threadId.slice(-8)}`. This keeps the worker correlation suffix the user already relied on.
+  - Browser-specific tools (`orchestrate_open_browser_preview`, `orchestrate_browser_open_session`, `orchestrate_browser_act` with scroll/evaluate detection, `orchestrate_browser_close_session`) get hand-mapped semantic labels (`Browser preview`, `Checking browser`, `Scrolling browser`, `Evaluating page`, `Closing browser`) rather than going through the agent-lifecycle phase mapper. Defensible — these are presentation-only labels, not raw tool names; the agent's design boundary between phase-mapper and browser-presentation is consistent with how the codebase already separates the two domains.
+  - **The raw-name fallthrough is gone.** The new fallback is `workEntry.label ?? workEntry.toolTitle ?? "activity"` — semantic strings only.
+  - **`data-activity-row` is sanitized** for orchestration tools (`isOrchTool ? "orchestration" : (rawToolName ?? "x")`). The agent caught this themselves on their first test run when `expect(markup).not.toContain("orchestrate_")` failed against the data attribute. They treated it as a real gate failure. Right call.
+- **`OrchestratorMessages.test.tsx`** — verified at [`apps/web/src/components/orchestrator/OrchestratorMessages.test.tsx:25-66`](apps/web/src/components/orchestrator/OrchestratorMessages.test.tsx:25):
+  - `it.each` over 4 mapped cases: `orchestrate_accept_work` → `Reviewing evidence`, `orchestrate_spawn_agent` → `Started worker`, `orchestrate_wait_agent` → `Waiting`, `orchestrate_review_agent_work` → `Reviewing evidence`. For each: assert the expected label, assert `@12345678` (worker-suffix verification), assert `not.toContain("orchestrate_")`, assert `not.toContain(<mechanical-strip>)` case-insensitively. The case-insensitive check is the right shape — catches both `accept work` and `Accept Work`.
+  - Separate test for unknown tool: `orchestrate_unknown_future_tool` with `label: "tool call"` → asserts `tool call` is shown, `not.toContain("orchestrate_")`, `not.toContain("unknown future tool")`.
+  - This matches every assertion I specified in the RF-1 gate.
+- **Extraction is well-justified.** The agent explained: importing `OrchestratorMessages.tsx` for the test pulled in unrelated transcript/markdown/theme code with `window`/`localStorage` globals that broke the test environment. Extracting the compact row to its own module gives the test a focused entry point. The extraction removes 160+ lines from a 700+ line file — net cleanup. No behavior change to timeline ordering or hiding rules.
+- **Re-ran on my machine:**
+  - 5 web test files: 28/28 PASS (`OrchestratorMessages.test.tsx`, `orchestratorPresentation.test.ts`, `WorkEntryRow.test.tsx`, `OrchestratorComposer.test.tsx`, `OrchestrationToolCallCard.test.tsx`).
+  - `bun lint` — exit 0, 131 pre-existing warnings, 0 errors.
+  - `bun typecheck` — 10/10 tasks PASS.
+- **Re-greped for remaining `orchestrate_` leaks in production tsx/ts (excluding tests):**
+  - `session-logic.ts:930-933` — equality comparisons for control flow, not user-visible text.
+  - `BrowserPanel.tsx:970` — `api.browser.openSession({})` API call, runtime not text.
+  - `WorkEntryRow.tsx:51-60` — `ORCH_TOOL_DISPLAY_LABELS` map. Most entries are now semantic (`"Stopped worker"`, `"Sent instruction"`, `"Focused worker"`); four legacy browser entries (`open browser preview`, `capture browser screenshot`, `browser observation`, `close browser session`) are still mechanical/raw — but these are *only* hit when `WorkEntryRow` doesn't dispatch to a browser-specific card, and inspection of [`WorkEntryRow.tsx:777-788, 1124-1166`](apps/web/src/components/chat/WorkEntryRow.tsx:777) shows browser tools route to dedicated `BrowserBareCard`/`BrowserEvidenceCard` paths that bypass the static map. The stale entries are not user-visible in practice — but worth cleaning up. **Tracked as cleanup item below.**
+  - `OrchestrationToolCallCard.tsx` — switch cases on tool names for control flow + dedicated cards. Already routes the visible label through `phaseForToolEvent`.
+  - All other matches are `<details>`-wrapped raw-name displays (acceptable per spec) or `data-*` attributes (`data-work-entry-tool-name` etc.) which are non-rendered.
+
+#### Things I checked that are clean
+
+- No silent fallback. The `phaseForToolEvent` returns null for unknown tools, the IIFE falls through to `workEntry.label ?? workEntry.toolTitle ?? "activity"` — semantic strings only, never raw tool names.
+- No `as any`, no `// @ts-expect-error`, no `// eslint-disable` introduced.
+- No tests deleted or `.skip`'d.
+- The shell-command short-circuit (`$ ${first four words}`) is the right call — command rows ARE the relevant user-facing preview, not lifecycle phases. Keeping them ahead of the mapper preserves a useful signal.
+- Browser-specific compact labels remain hand-mapped semantic strings; consistent with the rest of the codebase's browser-presentation domain. The phase mapper is for agent lifecycle (planning/reading/editing/etc.), not browser actions.
+- The `data-activity-row` sanitization is a real catch. The agent went beyond what I asked; well done.
+
+#### Definition of Done — fully satisfied
+
+Re-checking the 10-point list at §9 against the current state of `main`:
+
+1. ✅ User-facing browser tasks always use the visible Electron WebContentsView by default — verified by `wsServer` integration test in 17B Hardening.
+2. ✅ Headless validation only runs when explicitly requested + clearly labeled — `Match.exhaustive` in `BrowserRuntimeService.openSession`; `"Headless validation mirror"` label in UI.
+3. ✅ Agent can act in the visible browser — pre-existing infrastructure verified in earlier bundles.
+4. ✅ Human can take over and pause/resume safely — `BrowserControlLeaseService` enforces fresh-observation requirement.
+5. ✅ Risky actions require approval — `BrowserApprovalRequest` lifecycle is single-use, durable, consumed.
+6. ✅ Every browser claim has durable evidence; runtime kind recorded honestly — `?? "unknown"` instead of `?? "playwright-headless"` lies in `BrowserEvidenceRecorder`.
+7. ✅ Browser comments become orchestrator rework tasks — `mode: "start-agent-run"` dispatches the five-event sequence including `thread.turn.start`.
+8. ✅ Rework captures before/after evidence — `accept_work` auto-submits with fresh `BrowserRuntimeService.observe` capture; projection writes refs to both `rework_tasks` and the annotation row; UI renders paired `BrowserScreenshotPreview`.
+9. ✅ Reviewer decisions cite hard gates and the user-visible summary explains the decision in plain English — pre-existing `ReviewerDecisionService` infrastructure.
+10. ✅ Thread reads like Codex — `phaseForToolEvent` mapper wired into `WorkEntryRow`, `OrchestrationToolCallCard`, and now `CompactActivityRow` (the default orchestrator-panel render path). Raw tool names appear only inside `<details>` blocks (or are dropped entirely from the compact path). No `orchestrate_` leaks in user-visible markup.
+
+The infinite loop the user defined ("till everything's working as intended") has hit its declared end-state. From here, all remaining work is hardening, cleanup, and structural improvement — not new feature gates against the original spec.
+
+#### Active Bundle: **Bundle 17D — CDP attach to running Electron**
+
+The user's original audit listed Bundle 17D as "queued, do not start until 17A/B/C are landed and 17A's policy fix is validated end-to-end." Both conditions are now met. 17D is the structural fix to the two-browser problem: instead of relying on policy (`preferredRuntimeKind` defaulting to `electron-visible`), make Playwright-style automation attach to the running Electron app's `webContents` via CDP. Even when the agent or a future caller forgets the policy, they can't end up in a separate browser because there's no separate browser to end up in — the headless validator IS the user's browser.
+
+**Why now.** Today, the two-browser regression is policy-prevented (multiple defaults at the boundary, plus a `Match.exhaustive` backstop). That's correct, but a future contributor could regress it by adding a new entry point that doesn't go through the policy. CDP attach makes the policy structurally enforced — there's only one browser process under the hood, so substitution is impossible.
+
+**Scope:**
+
+1. **Electron main: enable CDP debug port before `app.whenReady()`.**
+   - In `apps/desktop/src/main.ts`, call `app.commandLine.appendSwitch("remote-debugging-port", String(port))` before `app.whenReady()`. Allocate `port` dynamically (or pin to a fixed port if you prefer; document the choice).
+   - Surface the chosen port to the server via the existing IPC bridge so the server knows where to attach.
+2. **Server: replace `playwright._electron.launch()` with `chromium.connectOverCDP("http://localhost:${port}")`.**
+   - The current `PlaywrightHeadlessBrowserRuntime` (the headless validator) should attach to the running Electron rather than spawning its own browser.
+   - Each `WebContentsView` in Electron appears as its own `Page` in `context.pages()`. Correlate by `webContents.id` (from main) ↔ `targetId` (via CDP `Target.getTargets`). Don't correlate by URL (changes during navigation).
+3. **Validation backend now operates on the SAME WebContents the user sees.**
+   - `BrowserRuntimeService.openSession({ preferredRuntimeKind: "playwright-headless" })` resolves to a Playwright `Page` attached to the user-visible `webContents`. The "headless validation mirror" label still applies (because Playwright is doing the automation) but the surface is the same as the live shared browser. Update `BrowserRuntimeTruth.surfaceMode` semantics — there's now a third option: `"playwright-attached"` or similar, distinct from both `"live-shared-browser"` (direct Electron-visible) and `"headless-validation-mirror"` (separate process).
+   - **Decision required**: do we keep `"playwright-headless"` as a runtime kind that means "attach to the user's WebContents via CDP", or rename to `"playwright-attached"`? The literal kind name affects existing tests and serialized evidence. Recommendation: **keep the kind name but update the semantics**, document the change in a migration note. New name confuses upstream tests; old name can carry the new meaning.
+4. **No silent regressions on Electron-visible direct path.**
+   - The existing `electron-visible` runtime path (via desktop bridge) MUST continue to work. CDP attach is an alternative validator path, not a replacement for the direct path.
+   - Add a startup check: if CDP port is unreachable (e.g., desktop hasn't started yet), fail closed with a clear error rather than falling back to launching a separate browser.
+5. **Tests:**
+   - Integration test: server connects to a local Electron-CDP-style endpoint, observes a `WebContentsView`, asserts the `Page` URL matches the user-visible URL.
+   - Failure case: CDP port unreachable → `Effect.fail`, no fallback to `_electron.launch()`.
+   - Behavior preserved: `electron-visible` direct-bridge path unchanged.
+6. **Documentation:**
+   - Update `docs/browser-runtime-notes.md` with the new architecture diagram (Electron main owns the WebContents; server attaches via CDP; the desktop bridge handles the direct user-visible path).
+   - Note for FU-1 (move `EvidenceArtifactId` to `baseSchemas.ts`) and FU-2 (typed `browser-dom-snapshot` artifact) — these stay queued and orthogonal.
+
+**Out of scope for 17D:**
+- 17B-F-3 follow-ups (FU-1, FU-2, FU-3) — small cleanups, separate bundle.
+- Stale `ORCH_TOOL_DISPLAY_LABELS` browser entries in `WorkEntryRow.tsx:57-60` — small cleanup.
+- Bundle 17V (UI verification round) — once 17D lands, run the dev server and verify the calm-thread story end-to-end visually.
+
+**Acceptance gates:**
+
+- [ ] `apps/desktop/src/main.ts` enables `remote-debugging-port` before `app.whenReady()`. The chosen port is surfaced to the server via IPC.
+- [ ] `apps/server/src/browserRuntime/...PlaywrightHeadlessBrowserRuntime.ts` uses `chromium.connectOverCDP(...)` instead of `_electron.launch()`. Targets are correlated by `webContents.id`/`targetId`, not URL.
+- [ ] When CDP attach fails, the runtime returns `Effect.fail` (no fallback to `_electron.launch()`).
+- [ ] The `electron-visible` direct path is unchanged; integration test for that path still passes.
+- [ ] New integration test verifies that a `playwright-headless` session opened against a running Electron sees the user-visible `WebContentsView`.
+- [ ] `BrowserRuntimeTruth.surfaceMode` semantics updated; documentation in `docs/browser-runtime-notes.md` reflects the new substrate-level guarantee.
+- [ ] All of `bun fmt && bun lint && bun typecheck && bun run test` pass for in-scope packages.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17D` to this file with file:line for each gate.
+
+#### Cleanup follow-ups (queued, NOT in 17D)
+
+After 17D lands, sweep these into a small cleanup bundle:
+
+- **FU-1**: Move `EvidenceArtifactId` brand to `baseSchemas.ts` so `orchestration.ts` can use the branded type instead of the structural-string workaround.
+- **FU-2**: Add a typed `browser-dom-snapshot` evidence artifact kind so `browserAfterDomRef` matches by kind explicitly.
+- **FU-3**: Add a `@testing-library/react`-style test for `BrowserArtifactScreenshotPreview`'s `useEffect`/Loaded/Failed states (current SSR test doesn't run effects).
+- **FU-4** *(new)*: Update the four stale entries in `ORCH_TOOL_DISPLAY_LABELS` ([`WorkEntryRow.tsx:57-60`](apps/web/src/components/chat/WorkEntryRow.tsx:57)) — `orchestrate_open_browser_preview`, `orchestrate_browser_open_session`, `orchestrate_browser_act`, `orchestrate_browser_close_session` — to match the semantic style of the other entries (`"Browser preview"`, `"Checking browser"`, etc.). Currently mechanical/raw, even though the static map is rarely hit for browser tools because dedicated cards intercept first.
+
+#### Iteration log update
+
+- **2026-04-29 — Agent Report — Bundle 17C re-do** — implemented; pushed at `9c61980b`.
+- **2026-04-29 — Reviewer Scrutiny — Bundle 17C re-do** — accepted. RF-1 closed. Bundle 17C complete. Definition of Done satisfied.
+- **2026-04-29 — Bundle 17D activated** — CDP attach to running Electron (structural fix for two-browser substitution risk).
