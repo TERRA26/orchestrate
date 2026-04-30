@@ -25,6 +25,7 @@ import {
   EvidenceBundle,
   EvidenceBundleCreateInput,
   EvidenceBundleGetInput,
+  EvidenceArtifactKind,
   LaunchConfigFile,
   PreviewDetectResult,
   PreviewStartResult,
@@ -44,6 +45,7 @@ import {
 const ISO = "2026-04-27T00:00:00.000Z";
 
 const decodeEvidenceBundle = Schema.decodeUnknownEffect(EvidenceBundle);
+const decodeEvidenceArtifactKind = Schema.decodeUnknownEffect(EvidenceArtifactKind);
 const decodeReviewerDecision = Schema.decodeUnknownEffect(ReviewerDecision);
 const decodeReviewerGateResult = Schema.decodeUnknownEffect(ReviewerGateResult);
 const decodeEvidenceBundleCreateInput = Schema.decodeUnknownEffect(EvidenceBundleCreateInput);
@@ -101,6 +103,13 @@ const codeState = {
   diffArtifactRef: "artifact-diff",
   capturedAt: ISO,
 };
+
+it.effect("decodes browser-dom-snapshot evidence artifact kind", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeEvidenceArtifactKind("browser-dom-snapshot");
+    assert.equal(parsed, "browser-dom-snapshot");
+  }),
+);
 
 it.effect("decodes EvidenceBundle with required CodeStateRef", () =>
   Effect.gen(function* () {

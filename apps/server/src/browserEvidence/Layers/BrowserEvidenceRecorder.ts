@@ -64,6 +64,28 @@ function sanitizeObservation(observation: BrowserObservation) {
   };
 }
 
+function domSnapshotPayload(observation: BrowserObservation) {
+  const hasTextSummary = observation.textSummary.trim().length > 0;
+  const hasAriaSnapshot = Boolean(observation.ariaSnapshot?.trim());
+  const hasElements = Boolean(observation.elements?.length);
+
+  if (!hasTextSummary && !hasAriaSnapshot && !hasElements) {
+    return undefined;
+  }
+
+  return {
+    browserSessionId: observation.sessionId,
+    url: observation.url,
+    title: observation.title,
+    readyState: observation.readyState,
+    textSummary: observation.textSummary,
+    ...(observation.ariaSnapshot ? { ariaSnapshot: observation.ariaSnapshot } : {}),
+    ...(observation.elements ? { elements: observation.elements } : {}),
+    ...(observation.pageMetrics ? { pageMetrics: observation.pageMetrics } : {}),
+    observedAt: observation.observedAt,
+  };
+}
+
 function observationSummary(input: {
   readonly observation: BrowserObservation;
   readonly runtimeTruth: BrowserRuntimeTruth | undefined;
@@ -314,6 +336,16 @@ export const BrowserEvidenceRecorderLive = Layer.effect(
           { type: "browser-observation", url: input.observation.url },
         );
         artifactRefs.push(observationRef);
+
+        const domSnapshot = domSnapshotPayload(input.observation);
+        if (domSnapshot) {
+          artifactRefs.push(
+            yield* writeJsonArtifact(input, "browser-dom-snapshot", domSnapshot, {
+              type: "browser-dom-snapshot",
+              url: input.observation.url,
+            }),
+          );
+        }
 
         const urlAgreementRef = yield* writeJsonArtifact(input, "browser-url-agreement", summary, {
           type: "browser-url-agreement",

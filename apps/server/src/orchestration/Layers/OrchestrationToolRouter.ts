@@ -16,7 +16,9 @@ import {
   READ_ONLY_TOOLS,
   UI_DIRECTIVE_TOOLS,
   CommandId,
+  EvidenceArtifactId,
   type BrowserSessionId,
+  type EvidenceArtifactKind,
   type OrchestrationReadModel,
   type OrchestrationThread,
   type OrchestratorTaskId,
@@ -31,6 +33,10 @@ import {
   BrowserRuntimeService,
   type BrowserRuntimeServiceShape,
 } from "../../browserRuntime/Services/BrowserRuntimeService.ts";
+import {
+  BrowserOrchestrationEvidenceRepository,
+  type BrowserOrchestrationEvidenceRepositoryShape,
+} from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
 import { workerKickoffMessage } from "../reportProtocol.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -116,6 +122,28 @@ function readOptionalStringArray(
 
 function normalizeVisibility(value: string | undefined): "foreground" | "background" {
   return value === "background" ? "background" : "foreground";
+}
+
+function findEvidenceRefByKind(
+  repository: Option.Option<BrowserOrchestrationEvidenceRepositoryShape>,
+  refs: ReadonlyArray<string>,
+  kind: EvidenceArtifactKind,
+): Effect.Effect<string | undefined, never> {
+  if (Option.isNone(repository)) {
+    return Effect.succeed(undefined);
+  }
+
+  return Effect.gen(function* () {
+    for (const ref of refs) {
+      const artifact = yield* repository.value
+        .getEvidenceArtifact({ artifactId: EvidenceArtifactId.makeUnsafe(ref) })
+        .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+      if (Option.isSome(artifact) && artifact.value.kind === kind) {
+        return ref;
+      }
+    }
+    return undefined;
+  });
 }
 
 function normalizeProvider(value: string | undefined): "codex" | "claudeAgent" | undefined {
@@ -914,6 +942,7 @@ function handleAcceptWork(
   dispatch: OrchestrationEngineService["Type"]["dispatch"],
   readModel: OrchestrationReadModel,
   browserRuntime: Option.Option<BrowserRuntimeServiceShape>,
+  evidenceRepository: Option.Option<BrowserOrchestrationEvidenceRepositoryShape>,
   input: unknown,
 ): Effect.Effect<unknown, Error> {
   return Effect.gen(function* () {
@@ -945,8 +974,10 @@ function handleAcceptWork(
           observed.runtimeTruth?.screenshotArtifactRef ??
           observed.observation?.runtimeTruth?.screenshotArtifactRef ??
           observed.observation?.screenshotArtifactRef;
-        browserAfterDomRef = observed.evidenceRefs.find(
-          (ref) => ref !== browserAfterScreenshotRef && !ref.includes("url-agreement"),
+        browserAfterDomRef = yield* findEvidenceRefByKind(
+          evidenceRepository,
+          observed.evidenceRefs,
+          "browser-dom-snapshot",
         );
       }
 
@@ -1223,6 +1254,7 @@ function handleWaitAll(
 const makeOrchestrationToolRouter = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const browserRuntime = yield* Effect.serviceOption(BrowserRuntimeService);
+  const evidenceRepository = yield* Effect.serviceOption(BrowserOrchestrationEvidenceRepository);
 
   const isOrchestrationTool: OrchestrationToolRouterShape["isOrchestrationTool"] = (toolName) =>
     ORCHESTRATION_TOOL_NAMES.has(toolName);
@@ -1314,7 +1346,13 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
         case "orchestrate_send_to_agent":
           return yield* handleSendToAgent(engine.dispatch, readModel, toolInput);
         case "orchestrate_accept_work":
-          return yield* handleAcceptWork(engine.dispatch, readModel, browserRuntime, toolInput);
+          return yield* handleAcceptWork(
+            engine.dispatch,
+            readModel,
+            browserRuntime,
+            evidenceRepository,
+            toolInput,
+          );
         case "orchestrate_reject_work":
           return yield* handleRejectWork(engine.dispatch, readModel, toolInput);
         case "orchestrate_wait_agent":

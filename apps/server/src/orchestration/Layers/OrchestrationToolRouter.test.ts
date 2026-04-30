@@ -6,12 +6,18 @@ import {
   type OrchestrationThread,
   type OrchestratorRunId,
   type OrchestratorWorkerId,
+  BROWSER_ORCHESTRATION_SCHEMA_VERSION,
+  type EvidenceArtifactKind,
   EventId,
 } from "@orchestrate/contracts";
-import { describe, expect, it } from "vitest";
-import { Effect, Layer, Stream } from "effect";
+import { describe, expect, it, vi } from "vitest";
+import { Effect, Layer, Option, Stream } from "effect";
 
 import { BrowserRuntimeService } from "../../browserRuntime/Services/BrowserRuntimeService.ts";
+import {
+  BrowserOrchestrationEvidenceRepository,
+  type BrowserOrchestrationEvidenceRepositoryShape,
+} from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
 import { OrchestrationToolRouterLive } from "./OrchestrationToolRouter.ts";
 import { OrchestrationToolRouterService } from "../Services/OrchestrationToolRouter.ts";
 import {
@@ -89,8 +95,59 @@ function makeEngine(readModel: OrchestrationReadModel, commands: OrchestrationCo
   return Layer.succeed(OrchestrationEngineService, engine);
 }
 
-function makeBrowserRuntime() {
+function makeEvidenceRepository(kindsByRef: ReadonlyMap<string, EvidenceArtifactKind>) {
+  const repository: BrowserOrchestrationEvidenceRepositoryShape = {
+    appendSessionEvent: vi.fn(() => Effect.void),
+    getSessionEvents: vi.fn(() => Effect.succeed([])),
+    writeEvidenceArtifact: vi.fn(() => Effect.void),
+    getEvidenceArtifact: ({ artifactId }) => {
+      const kind = kindsByRef.get(String(artifactId));
+      return Effect.succeed(
+        kind
+          ? Option.some({
+              artifactId,
+              schemaVersion: BROWSER_ORCHESTRATION_SCHEMA_VERSION,
+              kind,
+              sha256: "artifact-sha",
+              byteSize: 0,
+              contentType: "application/json",
+              storageUri: `sqlite://evidence_artifact_contents/${artifactId}`,
+              sensitivity: "workspace-internal" as const,
+              access: "safe-for-user-report" as const,
+              redactedArtifactId: null,
+              supersededByArtifactId: null,
+              metadataJson: null,
+              createdAt: NOW,
+            })
+          : Option.none(),
+      );
+    },
+    writeEvidenceArtifactContent: vi.fn(() => Effect.void),
+    getEvidenceArtifactContent: vi.fn(() => Effect.succeed(Option.none())),
+    createEvidenceBundle: vi.fn(() => Effect.void),
+    getEvidenceBundle: vi.fn(() => Effect.succeed(Option.none())),
+    createReviewerDecision: vi.fn(() => Effect.void),
+    getReviewerDecision: vi.fn(() => Effect.succeed(Option.none())),
+    listReviewerDecisions: vi.fn(() => Effect.succeed([])),
+    upsertBrowserControlState: vi.fn(() => Effect.void),
+    getBrowserControlState: vi.fn(() => Effect.succeed(Option.none())),
+    createBrowserApprovalRequest: vi.fn(() => Effect.void),
+    getBrowserApprovalRequest: vi.fn(() => Effect.succeed(Option.none())),
+    listBrowserApprovalRequests: vi.fn(() => Effect.succeed([])),
+    updateBrowserApprovalStatus: vi.fn(() => Effect.void),
+  };
+
+  return Layer.succeed(BrowserOrchestrationEvidenceRepository, repository);
+}
+
+function makeBrowserRuntime(input?: { readonly evidenceRefs?: ReadonlyArray<string> }) {
   const calls: Array<{ name: string; input: unknown }> = [];
+  const afterEvidenceRefs = input?.evidenceRefs ?? [
+    "screenshot-after",
+    "browser-observation-after",
+    "browser-dom-snapshot-after",
+    "browser-url-agreement-after",
+  ];
   const layer = Layer.succeed(BrowserRuntimeService, {
     openSession: (input) =>
       Effect.sync(() => {
@@ -200,17 +257,9 @@ function makeBrowserRuntime() {
               isUserVisibleSurface: true,
               browserSessionId: input.sessionId,
               screenshotArtifactRef: "screenshot-after",
-              evidenceRefs: [
-                "screenshot-after",
-                "browser-observation-after",
-                "browser-url-agreement-after",
-              ],
+              evidenceRefs: afterEvidenceRefs,
             },
-            evidenceRefs: [
-              "screenshot-after",
-              "browser-observation-after",
-              "browser-url-agreement-after",
-            ],
+            evidenceRefs: afterEvidenceRefs,
             observedAt: NOW,
           },
           runtimeTruth: {
@@ -219,17 +268,9 @@ function makeBrowserRuntime() {
             isUserVisibleSurface: true,
             browserSessionId: input.sessionId,
             screenshotArtifactRef: "screenshot-after",
-            evidenceRefs: [
-              "screenshot-after",
-              "browser-observation-after",
-              "browser-url-agreement-after",
-            ],
+            evidenceRefs: afterEvidenceRefs,
           },
-          evidenceRefs: [
-            "screenshot-after",
-            "browser-observation-after",
-            "browser-url-agreement-after",
-          ],
+          evidenceRefs: afterEvidenceRefs,
         };
       }),
     inspect: () => Effect.fail(new Error("inspect not used in router tests")),
@@ -426,7 +467,7 @@ describe("OrchestrationToolRouter", () => {
           filesWritten: ["server/src/app.ts", "server/src/app.test.ts"],
           testsRun: [{ name: "POST then GET roundtrip", passed: true }],
           submitNotes: "CORS pinned to :5173",
-        } as any,
+        } as unknown as OrchestrationReadModel["orchestratorTasks"][number],
       ],
       orchestratorWorkers: [
         {
@@ -447,7 +488,7 @@ describe("OrchestrationToolRouter", () => {
           workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
           createdAt: NOW,
           updatedAt: NOW,
-        } as any,
+        } as unknown as OrchestrationReadModel["orchestratorWorkers"][number],
       ],
     });
     const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
@@ -498,7 +539,7 @@ describe("OrchestrationToolRouter", () => {
           maxIterations: 3,
           createdAt: NOW,
           updatedAt: NOW,
-        } as any,
+        } as unknown as OrchestrationReadModel["orchestratorTasks"][number],
       ],
       orchestratorWorkers: [
         {
@@ -524,12 +565,22 @@ describe("OrchestrationToolRouter", () => {
           },
           createdAt: NOW,
           updatedAt: NOW,
-        } as any,
+        } as unknown as OrchestrationReadModel["orchestratorWorkers"][number],
       ],
     });
     const layer = OrchestrationToolRouterLive.pipe(
       Layer.provide(makeEngine(readModel, commands)),
       Layer.provide(browser.layer),
+      Layer.provide(
+        makeEvidenceRepository(
+          new Map([
+            ["screenshot-after", "browser-screenshot"],
+            ["browser-observation-after", "browser-observation"],
+            ["browser-dom-snapshot-after", "browser-dom-snapshot"],
+            ["browser-url-agreement-after", "browser-url-agreement"],
+          ]),
+        ),
+      ),
     );
 
     const result = (await Effect.runPromise(
@@ -562,13 +613,116 @@ describe("OrchestrationToolRouter", () => {
       workerId,
       summary: "Looks fixed.",
       browserAfterScreenshotRef: "screenshot-after",
-      browserAfterDomRef: "browser-observation-after",
+      browserAfterDomRef: "browser-dom-snapshot-after",
     });
     expect(result).toMatchObject({
       accepted: true,
       browserAfterScreenshotRef: "screenshot-after",
-      browserAfterDomRef: "browser-observation-after",
+      browserAfterDomRef: "browser-dom-snapshot-after",
     });
+  });
+
+  it("orchestrate_accept_work omits browserAfterDomRef when no typed dom-snapshot exists", async () => {
+    const browser = makeBrowserRuntime({
+      evidenceRefs: [
+        "screenshot-after",
+        "browser-observation-after",
+        "browser-url-agreement-after",
+      ],
+    });
+    const commands: OrchestrationCommand[] = [];
+    const workerId = "worker-browser-submit-no-dom";
+    const taskId = "task-browser-submit-no-dom";
+    const threadId = ThreadId.makeUnsafe("thread-browser-submit-no-dom");
+    const readModel = makeReadModel({
+      threads: [makeThread(), { ...makeThread(), id: threadId }],
+      orchestratorTasks: [
+        {
+          taskId,
+          runId: "run-1",
+          title: "Fix annotated UI",
+          objective: "Fix the browser annotation.",
+          status: "running",
+          ownerKind: "worker",
+          assignedWorkerId: workerId,
+          acceptanceCriteria: [],
+          checklist: [],
+          iteration: 1,
+          maxIterations: 3,
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as unknown as OrchestrationReadModel["orchestratorTasks"][number],
+      ],
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId,
+          status: "running",
+          visibility: "foreground",
+          activeTaskId: taskId,
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: {
+            mode: "local",
+            cwd: "/tmp",
+            terminalIds: [],
+            browserSessionId: "electron-visible-after",
+          },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as unknown as OrchestrationReadModel["orchestratorWorkers"][number],
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(
+      Layer.provide(makeEngine(readModel, commands)),
+      Layer.provide(browser.layer),
+      Layer.provide(
+        makeEvidenceRepository(
+          new Map([
+            ["screenshot-after", "browser-screenshot"],
+            ["browser-observation-after", "browser-observation"],
+            ["browser-url-agreement-after", "browser-url-agreement"],
+          ]),
+        ),
+      ),
+    );
+
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_accept_work",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId, notes: "Looks fixed." },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as {
+      accepted: boolean;
+      browserAfterScreenshotRef?: string;
+      browserAfterDomRef?: string;
+    };
+
+    expect(commands[0]).toMatchObject({
+      type: "orchestrator.task.submit",
+      taskId,
+      workerId,
+      summary: "Looks fixed.",
+      browserAfterScreenshotRef: "screenshot-after",
+    });
+    expect(commands[0]).not.toHaveProperty("browserAfterDomRef");
+    expect(result).toMatchObject({
+      accepted: true,
+      browserAfterScreenshotRef: "screenshot-after",
+    });
+    expect(result).not.toHaveProperty("browserAfterDomRef");
   });
 
   it("orchestrate_send_to_agent rejects when target worker is terminated (Gap K)", async () => {

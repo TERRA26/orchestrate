@@ -320,6 +320,7 @@ export const EvidenceArtifactKind = Schema.Literals([
   "browser-screenshot",
   "browser-inspection",
   "browser-observation",
+  "browser-dom-snapshot",
   "browser-action",
   "browser-session",
   "browser-claim-gate",

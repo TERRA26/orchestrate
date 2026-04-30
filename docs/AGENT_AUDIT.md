@@ -1901,6 +1901,7 @@ browserAfterDomRef = observed.evidenceRefs.find(
 ```
 
 This picks "the first evidenceRef that isn't the screenshot or url-agreement." It happens to grab the durable browser-observation artifact today. But:
+
 - If `BrowserEvidenceRecorder.recordObservation` adds a new artifact kind (e.g. `browser-console-summary` or `browser-network-summary`), the `find` order could pick it first instead.
 - The field name `browserAfterDomRef` claims DOM content; the artifact behind it is actually a JSON observation summary. Naming/content drift.
 - Future refactors of `recordObservation`'s artifact ordering could silently change which ref is matched.
@@ -1923,6 +1924,7 @@ The fix: introduce a dedicated `"browser-dom-snapshot"` artifact kind that captu
    - Negative test: observe returns no `"browser-dom-snapshot"` ref → submit dispatches without `browserAfterDomRef` (rather than picking some other ref via heuristic).
 
 **Out of scope for 17F:**
+
 - Migrating existing serialized evidence — the new kind is additive, old data still parses.
 - Renaming `BrowserAnnotation.afterDomArtifactRef` field — name stays.
 - RU-1 (dynamic port allocation), FU-3 (async UI test) — separate bundles.
@@ -1951,3 +1953,27 @@ The fix: introduce a dedicated `"browser-dom-snapshot"` artifact kind that captu
 - **2026-04-30 — Agent Report — Bundle 17E** — implemented; pushed at `3feddf3f`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17E** — accepted. FU-1, FU-4, RU-2, RU-3 all delivered. E-N1 tracked.
 - **2026-04-30 — Bundle 17F activated** — typed `browser-dom-snapshot` artifact kind to eliminate the heuristic in `handleAcceptWork`.
+
+## Agent Report — 2026-04-30T03:55:36Z — Bundle 17F
+
+Implemented typed browser DOM snapshot evidence and removed the accept-work heuristic.
+
+- **Artifact kind**: Added `"browser-dom-snapshot"` to `EvidenceArtifactKind` at [`packages/contracts/src/browserOrchestration.ts:309`](packages/contracts/src/browserOrchestration.ts:309). Added schema coverage in [`packages/contracts/src/browserOrchestration.test.ts`](packages/contracts/src/browserOrchestration.test.ts).
+- **Recorder**: [`BrowserEvidenceRecorder.ts:67`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:67) now derives a DOM snapshot payload from text summary, ARIA snapshot, elements, and page metrics. [`recordObservation`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts:309) writes a separate `"browser-dom-snapshot"` JSON artifact when DOM content exists, and omits it when there is no DOM content.
+- **Router**: [`OrchestrationToolRouter.ts:127`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:127) adds `findEvidenceRefByKind`, backed by `BrowserOrchestrationEvidenceRepository`. [`handleAcceptWork`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:941) now selects `browserAfterDomRef` only when a referenced artifact has kind `"browser-dom-snapshot"`. The old positional `observed.evidenceRefs.find(ref !== screenshot && !url-agreement)` heuristic is gone.
+- **Projection**: No production projection change was needed; the existing submit branch already propagates `browserAfterDomRef` into `rework_tasks.after_evidence_refs_json` and `BrowserAnnotation.afterDomArtifactRef`. The targeted projection lifecycle test confirms this path still passes.
+- **Tests**: [`BrowserEvidenceRecorder.test.ts`](apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.test.ts) now verifies positive and negative recorder behavior. [`OrchestrationToolRouter.test.ts:98`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts:98) adds a kind-aware fake evidence repository; the accept-work tests assert typed selection and omission when no DOM snapshot ref exists.
+
+Verification:
+
+- `bun fmt` passed.
+- `bun lint` passed with existing warnings and 0 errors.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` passed (10/10 tasks).
+- `bun run test src/browserOrchestration.test.ts` passed in `packages/contracts` (18 tests).
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/browserEvidence/Layers/BrowserEvidenceRecorder.test.ts src/orchestration/Layers/OrchestrationToolRouter.test.ts` passed in `apps/server` (18 tests).
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun run test src/orchestration/Layers/ProjectionPipeline.test.ts -t "projects rework task lifecycle transitions and submit evidence"` passed (1 test, 18 skipped).
+
+Reviewer notes:
+
+- A full `ProjectionPipeline.test.ts` run still has two unrelated existing failures in rollback/timestamp coverage; the 17F projection lifecycle target passed.
+- `BrowserEvidenceRecorder.recordObservation` intentionally does not synthesize a DOM snapshot from non-DOM data. Empty text with no ARIA snapshot and no elements leaves `browserAfterDomRef` absent downstream.

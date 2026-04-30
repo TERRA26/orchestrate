@@ -33,6 +33,7 @@ layer("BrowserEvidenceRecorder", (it) => {
           title: "Fixture",
           readyState: "complete",
           textSummary: "Fixture page",
+          ariaSnapshot: "- document: Fixture page",
           screenshotDataUrl: "data:image/png;base64,abc",
           consoleErrors: [],
           networkErrors: [],
@@ -72,6 +73,28 @@ layer("BrowserEvidenceRecorder", (it) => {
         "data:image/png;base64,abc",
       );
 
+      const artifacts = yield* Effect.all(
+        observationResult.evidenceRefs.map((artifactId) =>
+          repository.getEvidenceArtifact({ artifactId }),
+        ),
+      );
+      const domSnapshot = artifacts
+        .filter(Option.isSome)
+        .map((artifact) => artifact.value)
+        .find((artifact) => artifact.kind === "browser-dom-snapshot");
+      assert.ok(domSnapshot);
+
+      const domSnapshotContent = yield* repository.getEvidenceArtifactContent({
+        artifactId: domSnapshot.artifactId,
+      });
+      assert.ok(Option.isSome(domSnapshotContent));
+      const parsedDomSnapshot = JSON.parse(Option.getOrThrow(domSnapshotContent).contentText) as {
+        textSummary: string;
+        ariaSnapshot: string;
+      };
+      assert.strictEqual(parsedDomSnapshot.textSummary, "Fixture page");
+      assert.strictEqual(parsedDomSnapshot.ariaSnapshot, "- document: Fixture page");
+
       const claimGateResult = yield* recorder.recordClaimGate({
         previewTarget,
         browserSessionId,
@@ -100,6 +123,38 @@ layer("BrowserEvidenceRecorder", (it) => {
       const events = yield* repository.getSessionEvents({ sessionId: previewTarget.sessionId });
       assert.ok(events.some((event) => event.type === "BrowserObservationCaptured"));
       assert.ok(events.some((event) => event.type === "BrowserClaimGateEvaluated"));
+    }),
+  );
+
+  it.effect("omits browser-dom-snapshot evidence when observation has no DOM content", () =>
+    Effect.gen(function* () {
+      const recorder = yield* BrowserEvidenceRecorder;
+      const repository = yield* BrowserOrchestrationEvidenceRepository;
+      const previewTarget = makePreviewTarget();
+      const browserSessionId = BrowserSessionId.makeUnsafe("browser-session-no-dom");
+
+      const observationResult = yield* recorder.recordObservation({
+        previewTarget,
+        browserSessionId,
+        observation: {
+          sessionId: browserSessionId,
+          url: "http://127.0.0.1:5173/empty",
+          title: "Empty",
+          readyState: "complete",
+          textSummary: "",
+          targets: [],
+          observedAt: "2026-04-28T00:00:02.000Z",
+        },
+      });
+
+      const artifacts = yield* Effect.all(
+        observationResult.evidenceRefs.map((artifactId) =>
+          repository.getEvidenceArtifact({ artifactId }),
+        ),
+      );
+      const kinds = artifacts.filter(Option.isSome).map((artifact) => artifact.value.kind);
+
+      assert.ok(!kinds.includes("browser-dom-snapshot"));
     }),
   );
 });
