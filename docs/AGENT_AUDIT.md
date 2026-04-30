@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `c18e948f` (`test(web): cover browser screenshot preview states`) — Bundle 17G reviewed; **ACCEPTED**. The visual after-evidence preview path is now under direct async DOM coverage. No new architectural notes.
-**Active bundle:** **Bundle 17J — Small notes batch** (F-N2, F-N3, H-N3, E-N1). Roll up four small mechanical wins: log warnings when evidence repository is `Option.None` and when artifact lookup errors are swallowed; add a remediation hint to the Electron CDP port-reservation error; restore the 128-char max-length constraint on entity IDs in `baseSchemas`. Bundle 17V (end-to-end UI verification, user-driven) remains queued. F-N1 and H-N1 deferred until concrete need surfaces.
+**Latest reviewed commit:** `eca9ec0e` (`chore: address browser evidence cleanup notes`) — Bundle 17J reviewed; **ACCEPTED**. All four small notes (F-N2, F-N3, H-N3, E-N1) closed. No new architectural notes.
+**Active bundle:** **Bundle 17V — End-to-end UI verification** (user-driven). All accumulated agent-doable work is landed. The remaining gate is the user actually exercising the calm-thread story end-to-end in the running dev server. F-N1 (artifact taxonomy split), H-N1 (synchronous port reservation), and H-N2 (post-ready endpoint verification) remain deferred until concrete need surfaces.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -2339,3 +2339,83 @@ Notes:
 
 - I did not add separate log-capture assertions for the `Effect.logWarning` calls. The changes are direct calls in the two documented branches, and the existing router tests prove the returned command/result semantics remain unchanged.
 - I left the local `EntityId` helper in `browserOrchestration.ts` in place. It still enforces the same 128-char limit for browser-only IDs while shared IDs now regain the same bound in `baseSchemas`.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17J
+
+**Verdict: ACCEPTED.** All four notes close cleanly. Diff is tight: 6 files, +75/−8. No new architectural notes.
+
+#### What I verified
+
+- `git diff 32747848..eca9ec0e` — exactly the four pieces and nothing else.
+- **F-N2** ([`OrchestrationToolRouter.ts:131-135`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:131)) — when `Option.isNone(repository)`, emits `Effect.logWarning("OrchestrationToolRouter handleAcceptWork: evidence repository unavailable; browserAfterDomRef will be omitted.").pipe(Effect.as(undefined))`. Type-preserving (`Effect<string | undefined, never>`); behavior unchanged.
+- **F-N3** ([`OrchestrationToolRouter.ts:140-152`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:140)) — replaces the silent `Effect.catch(() => Effect.succeed(Option.none()))` with a logging variant that captures `artifactRef`, `expectedKind`, and `cause` as structured annotations on the warning. Returns `Option.none()` for that ref so the find loop continues — exactly the previous behavior.
+- **H-N3** ([`electronCdpPort.ts:51-56`](apps/desktop/src/electronCdpPort.ts:51)) — error message now ends with `"Set ORCHESTRATE_ELECTRON_CDP_PORT to a different port or unset it for dynamic allocation."`. Allocator test at [`electronCdpPort.test.ts:65`](apps/desktop/src/electronCdpPort.test.ts:65) updated to assert the hint text.
+- **E-N1** ([`baseSchemas.ts:15-16`](packages/contracts/src/baseSchemas.ts:15)) — `makeEntityId` now does `TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(Schema.brand(brand))`. Restores the 128-char bound that was lost when FU-1 moved `EvidenceArtifactId` to `baseSchemas`.
+- **New schema test** ([`packages/contracts/src/baseSchemas.test.ts`](packages/contracts/src/baseSchemas.test.ts)) — uses `ThreadId` as the canonical example, asserts decoding succeeds at exactly 128 chars and fails at 129. Tests the boundary in both directions.
+- Re-ran on my machine: lint exit 0, typecheck 10/10, allocator 4/4, baseSchemas 2/2, server router 16/16. No regressions in any of the targeted suites I sampled.
+
+#### Answers to your four scrutiny questions
+
+1. **Logging location: `findEvidenceRefByKind` vs `handleAcceptWork`?** Acceptable here. `findEvidenceRefByKind` currently has only one caller (`handleAcceptWork`), so the "browserAfterDomRef will be omitted" message is accurate. If a future caller is added that doesn't care about that specific field, generalize the message to "evidence repository unavailable; <kind> ref will be omitted" or move the warning to the call site. Not a blocker.
+
+2. **No log-capture tests.** Acceptable. Effect's log-capture infrastructure (custom `Logger.Logger` layer + capture buffer) is significantly heavier than the value of asserting two specific warning strings. The behavior contract (returns `undefined` / `Option.none()` in the unhealthy paths) is already covered by existing tests. Track as a small future improvement if log assertion ever becomes a recurring need; not now.
+
+3. **Hint wording.** Clear and actionable: names the env var, gives both options (different port / unset for dynamic). I'd accept it as-is. Minor polish opportunity: prefixing with "Hint:" or "To resolve:" would visually separate the cause from the remediation, but it's pure cosmetic.
+
+4. **Shared ID max-length with local `browserOrchestration` `EntityId` left in place.** Acceptable. Both `makeEntityId` (in baseSchemas) and the local `EntityId` (in browserOrchestration) now enforce 128 — consistent constraint, two definitions. The duplication is non-functional and removing it is a separate refactor (would require migrating `TaskSpecId`, `AcceptanceCriteriaId`, `WorkflowRunId`, etc. into baseSchemas). Track as **J-N1**: optional future cleanup to consolidate ID branding into `baseSchemas`.
+
+#### Things I checked that are clean
+
+- The `Effect.logWarning(...).pipe(Effect.as(undefined))` pattern preserves the `Effect<string | undefined, never>` return type without coercion.
+- `Effect.logWarning` accepts the second-argument annotations object (`{ artifactRef, expectedKind, cause }`) — these surface as structured log fields rather than concatenated strings, which is the right shape for diagnostic ingestion.
+- The new test at `baseSchemas.test.ts` uses `ThreadId` as the test subject, but the constraint applies to all `makeEntityId`-built brands uniformly — no need to duplicate the test for every ID type.
+- No `// @ts-expect-error`, no `as any`, no `.skip`/`.only`, no test deletions.
+- The agent re-ran the full contracts suite (`114/114`) — confirms the 128-char constraint doesn't break any existing serialized fixture or test.
+
+#### Bundle 17J status — COMPLETE
+
+All four small notes from the accumulated queue are closed. The agent-doable work in this loop is now exhausted. Tracked future items: F-N1, H-N1, H-N2, J-N1 — all deferred until concrete need.
+
+#### Active Bundle: **Bundle 17V — End-to-end UI verification** (user-driven)
+
+This is the bundle the agent can't run cleanly because it requires:
+- Starting the actual dev server stack (`bun run dev`) — server, web, desktop in concert.
+- Sending a real message in the orchestrator panel and observing the calm-thread story unfold.
+- Triggering a browser observation and verifying the **Live shared browser · evidence captured** label and the screenshot preview render.
+- Filing a browser annotation, calling `Start rework`, watching the focused rework task spawn, observing the worker complete, and seeing the **before/after preview pair** render with actual screenshots.
+- Confirming the **agent-state pill** in the composer transitions through thinking / working / waiting for approval / done.
+- Confirming raw tool names like `orchestrate_*` do not appear in user-visible thread surfaces.
+
+**This is the moment of truth.** All ten Definition-of-Done items are gate-tested individually, but the integrated user experience hasn't been validated end-to-end since Bundle 17A. If you run through the flow and it works cleanly, this loop's primary product goal is met. If anything breaks, that becomes the next bundle's spec.
+
+**Suggested verification script** (you decide what to actually run):
+
+1. **Cold start.** `bun run dev` (or however the desktop+server+web stack starts). Wait for the desktop window. Note the Electron CDP port logged at startup (verifies 17H dynamic allocation working).
+2. **Orchestrator thread.** Open a new project, send a message asking the orchestrator to do a small browser-validation task (e.g., "open the home page and verify the title is correct"). Watch the thread:
+   - Does the **agent-state pill** appear and transition through phases?
+   - Are the rendered work entries semantic (`Opening browser`, `Checking browser`, `Screenshot captured`) rather than raw tool names?
+   - Do `orchestrate_*` strings appear anywhere user-facing? (Should not, unless inside expanded `<details>`.)
+3. **Browser evidence.** When the agent opens a browser session, the `BrowserPanel` should show the page. The work-log entry should be labeled **Live shared browser · evidence captured** (electron-visible) — not **Headless validation mirror**.
+4. **Annotation → rework loop.** Add an annotation comment via the `BrowserPanel` ("move the title left"). Click `Start rework` with `mode: "start-agent-run"`. Confirm:
+   - A new orchestrator worker is spawned (visible in the Tasks panel or whatever surface shows them).
+   - The worker actually starts executing (turn dispatched per 17B-F-1).
+   - On submit, the work-log shows **before/after preview pair** with actual screenshots side-by-side (not just artifact-id text labels).
+5. **Reviewer decision.** When the worker submits, the reviewer evaluates evidence. Watch for the decision card with hard gates (passed/failed bullets) and a user-visible plain-English summary.
+6. **Two-instance check** (optional). Launch a second Orchestrate instance. Both should start without port-9333 collision (verifies 17H dynamic allocation under contention).
+
+**What to report back if anything breaks:**
+
+- Specific symptom (what you saw vs. what was expected).
+- Which surface (orchestrator thread, browser panel, annotation card, reviewer decision card).
+- Console errors from the dev server, if any.
+- Screenshots if visual issues.
+
+I'll convert findings into concrete bundles. If everything works, the loop's primary goal is met and we can declare Phase 17 complete.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17J** — implemented; pushed at `eca9ec0e`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17J** — accepted. All four small notes closed. One small future cleanup (J-N1: consolidate ID branding into `baseSchemas`) tracked.
+- **2026-04-30 — Bundle 17V activated** — end-to-end UI verification, user-driven. All agent-doable work in Phase 17 is landed.
