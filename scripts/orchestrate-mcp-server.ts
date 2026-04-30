@@ -622,6 +622,31 @@ function normalizeBrowserAction(action: Record<string, unknown>): Record<string,
   };
 }
 
+export function buildWorkerFollowUpTurnStartCommand({
+  message,
+  targetThread,
+}: {
+  message: string;
+  targetThread: Record<string, any>;
+}): Record<string, unknown> {
+  return {
+    type: "thread.turn.start",
+    commandId: crypto.randomUUID(),
+    threadId: targetThread.id,
+    message: {
+      messageId: crypto.randomUUID(),
+      role: "user",
+      text: message,
+      attachments: [],
+    },
+    dispatchMode: "queue",
+    assistantDeliveryMode: "buffered",
+    runtimeMode: targetThread.runtimeMode ?? "full-access",
+    interactionMode: targetThread.interactionMode ?? "default",
+    createdAt: new Date().toISOString(),
+  };
+}
+
 async function executeOrchestrationTool(
   toolName: string,
   args: Record<string, unknown>,
@@ -862,6 +887,12 @@ async function executeOrchestrationTool(
     if (!targetWorker) {
       return JSON.stringify({ error: `Unknown agent: ${targetWorkerId}` });
     }
+    const targetThread = targetWorker.threadId
+      ? await findThread(targetWorker.threadId)
+      : undefined;
+    if (!targetThread) {
+      return JSON.stringify({ error: `Agent ${targetWorkerId} has no target thread.` });
+    }
     if (targetWorker.status === "terminated") {
       return JSON.stringify({
         error: `Agent ${targetWorkerId} is terminated; spawn a new agent instead of messaging this one.`,
@@ -894,20 +925,7 @@ async function executeOrchestrationTool(
       //    new user turn on its thread. The decider handles the "thread
       //    mid-turn" case via thread.turn-queued.
       await wsRequest("orchestration.dispatchCommand", {
-        command: {
-          type: "thread.turn.start",
-          commandId: crypto.randomUUID(),
-          threadId: targetWorker.threadId,
-          message: {
-            messageId: crypto.randomUUID(),
-            role: "user",
-            text: message,
-            attachments: [],
-          },
-          dispatchMode: "queue",
-          assistantDeliveryMode: "buffered",
-          createdAt: new Date().toISOString(),
-        },
+        command: buildWorkerFollowUpTurnStartCommand({ message, targetThread }),
       });
       return JSON.stringify({
         queued: true,

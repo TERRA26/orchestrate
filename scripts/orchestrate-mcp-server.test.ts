@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildOrchestrationWsUrls, summarizeBrowserObservation } from "./orchestrate-mcp-server";
+import {
+  buildOrchestrationWsUrls,
+  buildWorkerFollowUpTurnStartCommand,
+  summarizeBrowserObservation,
+} from "./orchestrate-mcp-server";
 
 describe("buildOrchestrationWsUrls", () => {
   it("uses the configured port without auth when no token is configured", () => {
@@ -23,6 +27,45 @@ describe("buildOrchestrationWsUrls", () => {
       "ws://localhost:3773/?token=secret",
       "ws://localhost:3774/?token=secret",
     ]);
+  });
+});
+
+describe("buildWorkerFollowUpTurnStartCommand", () => {
+  it("includes runtime and interaction modes required by the WebSocket client schema", () => {
+    const command = buildWorkerFollowUpTurnStartCommand({
+      message: "Continue the LedgerPilot dashboard.",
+      targetThread: {
+        id: "thread-worker-1",
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      },
+    });
+
+    expect(command).toMatchObject({
+      type: "thread.turn.start",
+      threadId: "thread-worker-1",
+      dispatchMode: "queue",
+      assistantDeliveryMode: "buffered",
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      message: {
+        role: "user",
+        text: "Continue the LedgerPilot dashboard.",
+        attachments: [],
+      },
+    });
+  });
+
+  it("falls back to safe modes for older snapshots without mode fields", () => {
+    const command = buildWorkerFollowUpTurnStartCommand({
+      message: "Continue.",
+      targetThread: { id: "thread-worker-1" },
+    });
+
+    expect(command).toMatchObject({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
   });
 });
 

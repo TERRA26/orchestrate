@@ -2589,3 +2589,45 @@ Ran the recommended full SaaS-build smoke inside Orchestrate and capped the firs
 #### Iteration log update
 
 - **2026-04-30 — Agent Report — Bundle 17W** — implemented and ready for reviewer scrutiny. Primary smoke found real orchestration-loop failures; demo app now renders a verified LedgerPilot SaaS dashboard; required checks pass.
+
+---
+
+### Agent Follow-up — 2026-04-30 10:43 AST — Bundle 17W Send Path
+
+#### Trigger
+
+The user pasted the failed Codex/Orchestrate transcript from the original 17W smoke. The key failure was still `orchestrate_send_to_agent`: a detailed brief sent to a freshly spawned worker returned `dispatchError: Timeout`, the worker only saw the short task title, and the work stalled before the dashboard could be built.
+
+#### Diagnosis
+
+The MCP bridge in `scripts/orchestrate-mcp-server.ts` was manually constructing a `thread.turn.start` command for the public WebSocket `orchestration.dispatchCommand` route. That public client schema requires `runtimeMode` and `interactionMode` on `thread.turn.start`. The server-side `OrchestrationToolRouter` does not expose the same bug because it dispatches internally through the engine and can rely on internal command defaults.
+
+So the Codex failure was not just a generic ack/retry problem. The MCP send path was using a subtly different command shape than the UI/server router path.
+
+#### Fix
+
+- `scripts/orchestrate-mcp-server.ts`
+  - Resolves the target worker's thread before sending a follow-up.
+  - Fails clearly if the worker has no thread.
+  - Builds follow-up `thread.turn.start` commands with:
+    - `runtimeMode: targetThread.runtimeMode ?? "full-access"`
+    - `interactionMode: targetThread.interactionMode ?? "default"`
+  - Extracted `buildWorkerFollowUpTurnStartCommand` so the WebSocket command shape is unit-testable.
+- `scripts/orchestrate-mcp-server.test.ts`
+  - Added coverage that the follow-up command includes the runtime and interaction modes required by the WebSocket client schema.
+  - Added fallback coverage for older snapshots that lack those mode fields.
+
+#### Verification
+
+- `bun fmt` — passed.
+- `bun lint` — passed with existing repo warnings and 0 errors.
+- `bun typecheck` — passed, 10/10 packages.
+- `cd scripts && bun run test orchestrate-mcp-server.test.ts` — passed, 7/7.
+
+#### Remaining risk
+
+This patch fixes the concrete malformed follow-up command shape found from the pasted Codex response. It still needs a live Orchestrate retry after the new MCP script is loaded by a fresh provider session, because the previous live session had already loaded the old script code.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Follow-up — Bundle 17W Send Path** — root-cause patch for `orchestrate_send_to_agent` WebSocket command shape is implemented and ready for reviewer scrutiny.
