@@ -3304,6 +3304,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             args: [mcpServerScript],
             env: {
               ORCHESTRATE_WS_PORT: String(serverConfig.port),
+              ...(serverConfig.authToken ? { ORCHESTRATE_AUTH_TOKEN: serverConfig.authToken } : {}),
               ORCHESTRATE_PARENT_THREAD_ID: threadId,
             },
           };

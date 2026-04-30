@@ -11,6 +11,7 @@ import {
   BrowserObservation,
   type BrowserObserveSessionInput,
   type BrowserOpenSessionInput,
+  BrowserOpenSessionResult,
   BrowserResolveTargetSessionResult,
   type BrowserResolveTargetSessionInput,
   type DesktopBrowserBridgeRequestPayload,
@@ -62,6 +63,7 @@ const pendingRequests = new Map<string, PendingRequest>();
 const desktopBridgeClientIds = new Set<string>();
 const sessionOwnerClientIds = new Map<string, string>();
 const decodeBrowserObservation = Schema.decodeUnknownEffect(BrowserObservation);
+const decodeBrowserOpenSessionResult = Schema.decodeUnknownEffect(BrowserOpenSessionResult);
 const decodeBrowserInspectResult = Schema.decodeUnknownEffect(BrowserInspectResult);
 const decodeBrowserResolveTargetResult = Schema.decodeUnknownEffect(
   BrowserResolveTargetSessionResult,
@@ -184,6 +186,19 @@ function decodeObservationResult(value: unknown): Effect.Effect<BrowserObservati
   );
 }
 
+function decodeOpenSessionObservation(value: unknown): Effect.Effect<BrowserObservation, Error> {
+  return decodeBrowserOpenSessionResult(value).pipe(
+    Effect.map((result) => result.observation),
+    Effect.mapError(
+      (cause) =>
+        bridgeError(
+          `Electron visible browser runtime bridge returned an invalid open-session result: ${cause}`,
+          "desktop-bridge-invalid-open-session-result",
+        ) as Error,
+    ),
+  );
+}
+
 function decodeInspectResult(value: unknown): Effect.Effect<BrowserInspectResult, Error> {
   return decodeBrowserInspectResult(value).pipe(
     Effect.mapError(
@@ -293,7 +308,9 @@ export function clearDesktopBrowserBridgePendingRequests(reason: string): void {
 
 export const DesktopBrowserBridgeBrokerLive = Layer.succeed(DesktopBrowserBridge, {
   openSession: (input) =>
-    requestDesktopBrowserBridge("openSession", input).pipe(Effect.flatMap(decodeObservationResult)),
+    requestDesktopBrowserBridge("openSession", input).pipe(
+      Effect.flatMap(decodeOpenSessionObservation),
+    ),
   observeSession: (input) =>
     requestDesktopBrowserBridge("observeSession", input).pipe(
       Effect.flatMap(decodeObservationResult),

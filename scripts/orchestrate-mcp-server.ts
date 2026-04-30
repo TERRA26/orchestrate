@@ -467,12 +467,27 @@ const TOOLS = [
   },
 ];
 
-// The MCP server connects back to our orchestration WebSocket server to execute tools
-const ORCH_WS_PORT = process.env.ORCHESTRATE_WS_PORT ?? "3773";
-const ORCH_WS_URLS =
-  process.env.ORCHESTRATE_WS_PORT !== undefined
-    ? [`ws://localhost:${ORCH_WS_PORT}`]
-    : ["ws://localhost:3773", "ws://localhost:3774"];
+// The MCP server connects back to our orchestration WebSocket server to execute tools.
+export function buildOrchestrationWsUrls(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+  const authToken = env.ORCHESTRATE_AUTH_TOKEN;
+  const withAuth = (baseUrl: string): string => {
+    if (!authToken) {
+      return baseUrl;
+    }
+
+    const url = new URL(baseUrl);
+    url.searchParams.set("token", authToken);
+    return url.toString();
+  };
+
+  if (env.ORCHESTRATE_WS_PORT !== undefined) {
+    return [withAuth(`ws://localhost:${env.ORCHESTRATE_WS_PORT}`)];
+  }
+
+  return [withAuth("ws://localhost:3773"), withAuth("ws://localhost:3774")];
+}
+
+const ORCH_WS_URLS = buildOrchestrationWsUrls(process.env);
 
 let wsConnection: WebSocket | null = null;
 let wsRequestId = 0;

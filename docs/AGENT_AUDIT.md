@@ -2381,6 +2381,7 @@ All four small notes from the accumulated queue are closed. The agent-doable wor
 #### Active Bundle: **Bundle 17V — End-to-end UI verification** (user-driven)
 
 This is the bundle the agent can't run cleanly because it requires:
+
 - Starting the actual dev server stack (`bun run dev`) — server, web, desktop in concert.
 - Sending a real message in the orchestrator panel and observing the calm-thread story unfold.
 - Triggering a browser observation and verifying the **Live shared browser · evidence captured** label and the screenshot preview render.
@@ -2419,3 +2420,41 @@ I'll convert findings into concrete bundles. If everything works, the loop's pri
 - **2026-04-30 — Agent Report — Bundle 17J** — implemented; pushed at `eca9ec0e`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17J** — accepted. All four small notes closed. One small future cleanup (J-N1: consolidate ID branding into `baseSchemas`) tracked.
 - **2026-04-30 — Bundle 17V activated** — end-to-end UI verification, user-driven. All agent-doable work in Phase 17 is landed.
+
+## Agent Report — 2026-04-30T05:41:44Z — Bundle 17V
+
+Ran the desktop stack end-to-end with the real Electron visible browser and found two integration failures plus two UI polish issues. Fixed the concrete product bugs and verified the YouTube playback workflow through Orchestrate's browser tools.
+
+### Findings and fixes
+
+- **17V-F1 — Desktop MCP auth was missing.** In desktop mode the backend WebSocket has auth enabled, but Claude's orchestration MCP subprocess only received `ORCHESTRATE_WS_PORT`. The MCP client connected to `ws://localhost:<port>` without `?token=...`, so browser tools failed before reaching the bridge. [`ClaudeAdapter.ts`](apps/server/src/provider/Layers/ClaudeAdapter.ts) now passes `ORCHESTRATE_AUTH_TOKEN` into the MCP server environment when configured, and [`orchestrate-mcp-server.ts`](scripts/orchestrate-mcp-server.ts) builds authenticated WebSocket URLs with `URL.searchParams`.
+- **17V-F2 — `openSession` decoded the wrong bridge payload shape.** The desktop browser manager returns `BrowserOpenSessionResult` (`{ sessionId, observation, ... }`), but the server broker decoded `openSession` as a bare `BrowserObservation`, producing `desktop-bridge-invalid-observation` with missing `url`. [`DesktopBrowserBridge.ts`](apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.ts) now decodes `BrowserOpenSessionResult` at the IPC boundary and unwraps `result.observation` for the runtime service. [`DesktopBrowserBridge.test.ts`](apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.test.ts) fixtures now match the real desktop bridge payload shape, so this mismatch cannot hide behind bare-observation tests again.
+- **17V-F3 — Composer idle pill said `done`.** The pill left of the orchestrator input was visually out of place and semantically wrong for an idle composer. [`OrchestratorAgentStatePill.tsx`](apps/web/src/components/orchestrator/OrchestratorAgentStatePill.tsx) now labels idle/completed as `ready` with neutral styling. The unit test was updated accordingly.
+- **17V-F4 — Theme application could be re-applied by every hook consumer.** [`useTheme.ts`](apps/web/src/hooks/useTheme.ts) now de-duplicates DOM/native-theme application by `(stored theme, current system dark)` so normal hook mounts and rerenders do not keep writing the same theme. This directly addresses the light/dark flicker report without changing stored theme semantics.
+- **17V-F5 — Dev CSS warning during HMR.** Vite emitted `@import must precede all other statements` because the Google font import came after Tailwind expansion. [`index.css`](apps/web/src/index.css) now imports the font before Tailwind.
+
+### Live verification
+
+- Repaired the local Electron runtime binary with `node node_modules/.bun/electron@40.6.0/node_modules/electron/install.js` after `bun run dev:desktop` initially failed to find Electron. This was an environment repair only; no committed files.
+- Started `ORCHESTRATE_DEV_INSTANCE=codex-17v ORCHESTRATE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=1 bun run dev:desktop`.
+- Verified initial UI state over Electron CDP: app loaded at `http://localhost:8515/`, composer pill showed `ready`, and the root element was stable in light mode (`dark: false`).
+- Sent a real orchestrator task: navigate to YouTube, open a video, and start playback. The flow reached a real `electron-visible-...` session id, used `orchestrate_browser_act` `navigate` / `evaluate` / `wait` / `close` actions, and reported playback proof.
+- Final live result from the Orchestrate thread: `https://www.youtube.com/watch?v=jNQXAC9IVRw`, title `Me at the zoo - YouTube`, playback confirmed by playhead advancing from `0:01` to `0:03` and then reaching `0:19 / 0:19` with YouTube's up-next countdown. This proves the desktop bridge action channel is no longer blocked by the schema decode failure.
+- Caveat: YouTube's signed-out home/trending/search surfaces redirected to an empty home state in this session, so the agent chose a stable seed video to exercise playback. That is site behavior, not a bridge/tool failure.
+
+### Verification commands
+
+- `cd apps/server && bun run test src/browserRuntime/Layers/DesktopBrowserBridge.test.ts` — 6/6.
+- `cd apps/server && bun run test src/browserRuntime/Layers/DesktopBrowserBridge.test.ts src/browserRuntime/Layers/BrowserRuntimeService.test.ts` — 32/32.
+- `cd scripts && bun run test orchestrate-mcp-server.test.ts` — 5/5.
+- `cd apps/web && bun run test src/components/orchestrator/OrchestratorComposer.test.tsx` — 2/2.
+- `bun fmt` — passed.
+- `bun lint` — passed with the repository's existing 132 warnings and 0 errors.
+- `PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH" bun typecheck` — 10/10 tasks.
+
+### Notes for reviewer
+
+- The `openSession` broker still returns `BrowserObservation` to `BrowserRuntimeService`; only the IPC boundary changed. This keeps the service contract stable while matching the actual desktop bridge contract.
+- The MCP URL builder deliberately uses `new URL("ws://...")`; this preserves valid WebSocket URLs and percent/plus-encodes tokens consistently.
+- I did not attempt to solve YouTube recommendations being unavailable when signed out. The product bug was that automated actions were unavailable; that is fixed and verified.
+- Next loop should move from browser smoke tests into a full SaaS-building scenario inside Orchestrate: create a fresh thread, ask Orchestrate to build a small SaaS feature, watch the work log, inspect UI artifacts, file annotations, and convert any broken UX into the next bundle.

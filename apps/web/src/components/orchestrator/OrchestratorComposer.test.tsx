@@ -9,8 +9,8 @@ describe("AgentStatePill", () => {
     expect(agentStatePillLabel("sending")).toBe("thinking");
     expect(agentStatePillLabel("reviewing")).toBe("working");
     expect(agentStatePillLabel("waiting")).toBe("waiting for approval");
-    expect(agentStatePillLabel("completed")).toBe("done");
-    expect(agentStatePillLabel("idle")).toBe("done");
+    expect(agentStatePillLabel("completed")).toBe("ready");
+    expect(agentStatePillLabel("idle")).toBe("ready");
     expect(agentStatePillLabel("failed")).toBe("blocked");
     expect(agentStatePillLabel("stuck")).toBe("blocked");
   });
@@ -21,7 +21,7 @@ describe("AgentStatePill", () => {
     expect(renderToStaticMarkup(<AgentStatePill status="waiting" />)).toContain(
       "waiting for approval",
     );
-    expect(renderToStaticMarkup(<AgentStatePill status="completed" />)).toContain("done");
+    expect(renderToStaticMarkup(<AgentStatePill status="completed" />)).toContain("ready");
     expect(renderToStaticMarkup(<AgentStatePill status="failed" />)).toContain("blocked");
   });
 });

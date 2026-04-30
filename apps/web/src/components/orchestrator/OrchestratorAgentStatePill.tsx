@@ -5,7 +5,7 @@ export function agentStatePillLabel(status: OrchestratorStatus): string {
   if (status === "thinking" || status === "sending") return "thinking";
   if (status === "reviewing") return "working";
   if (status === "waiting") return "waiting for approval";
-  if (status === "completed" || status === "idle") return "done";
+  if (status === "completed" || status === "idle") return "ready";
   return "blocked";
 }
 
@@ -19,8 +19,8 @@ export function AgentStatePill({ status }: { status: OrchestratorStatus }) {
           ? "border-rose-500/25 text-rose-300"
           : label === "waiting for approval"
             ? "border-amber-500/30 text-amber-300"
-            : label === "done"
-              ? "border-emerald-500/20 text-emerald-300"
+            : label === "ready"
+              ? "border-border/40 text-muted-foreground"
               : "border-border/50 text-muted-foreground",
       )}
       data-agent-state-pill={label}

@@ -1,6 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { summarizeBrowserObservation } from "./orchestrate-mcp-server";
+import { buildOrchestrationWsUrls, summarizeBrowserObservation } from "./orchestrate-mcp-server";
+
+describe("buildOrchestrationWsUrls", () => {
+  it("uses the configured port without auth when no token is configured", () => {
+    expect(buildOrchestrationWsUrls({ ORCHESTRATE_WS_PORT: "58995" })).toEqual([
+      "ws://localhost:58995",
+    ]);
+  });
+
+  it("adds the auth token to the configured websocket URL", () => {
+    expect(
+      buildOrchestrationWsUrls({
+        ORCHESTRATE_WS_PORT: "58995",
+        ORCHESTRATE_AUTH_TOKEN: "token with spaces",
+      }),
+    ).toEqual(["ws://localhost:58995/?token=token+with+spaces"]);
+  });
+
+  it("adds the auth token to fallback websocket URLs", () => {
+    expect(buildOrchestrationWsUrls({ ORCHESTRATE_AUTH_TOKEN: "secret" })).toEqual([
+      "ws://localhost:3773/?token=secret",
+      "ws://localhost:3774/?token=secret",
+    ]);
+  });
+});
 
 describe("summarizeBrowserObservation", () => {
   it("includes compact screenshot proof by default without full screenshot payloads", () => {

@@ -12,6 +12,8 @@ const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let lastDesktopTheme: Theme | null = null;
+let lastAppliedTheme: Theme | null = null;
+let lastAppliedSystemDark: boolean | null = null;
 function emitChange() {
   for (const listener of listeners) listener();
 }
@@ -27,11 +29,19 @@ function getStored(): Theme {
 }
 
 function applyTheme(theme: Theme, suppressTransitions = false) {
+  const systemDark = getSystemDark();
+  const alreadyApplied = lastAppliedTheme === theme && lastAppliedSystemDark === systemDark;
+  if (alreadyApplied && !suppressTransitions) {
+    return;
+  }
+
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+  const isDark = theme === "dark" || (theme === "system" && systemDark);
   document.documentElement.classList.toggle("dark", isDark);
+  lastAppliedTheme = theme;
+  lastAppliedSystemDark = systemDark;
   syncDesktopTheme(theme);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
