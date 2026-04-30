@@ -921,6 +921,10 @@ async function executeOrchestrationTool(
         messageId,
         workerId: targetWorkerId,
         dispatchError: serializeWsError(error),
+        retryable: true,
+        note:
+          "The worker did not acknowledge the queued turn before the dispatch timeout. " +
+          "Do not assume delivery; retry or paste the instruction into the worker pane.",
       });
     }
   }
@@ -948,7 +952,19 @@ async function executeOrchestrationTool(
       level: a.tone === "error" ? "error" : a.tone === "approval" ? "warn" : "info",
       message: a.summary,
     }));
-    return JSON.stringify({ workerId, agentId: workerId, entries });
+    const sawFileChange = windowed.some((a: any) => a.summary === "File change");
+    const checkpoints = thread?.checkpoints ?? [];
+    const latestCheckpoint = checkpoints[checkpoints.length - 1];
+    const filesChanged = Array.isArray(latestCheckpoint?.files) ? latestCheckpoint.files.length : 0;
+    return JSON.stringify({
+      workerId,
+      agentId: workerId,
+      entries,
+      warning:
+        sawFileChange && filesChanged === 0
+          ? "Recent activity includes provider-reported file-change events, but the latest checkpoint has no changed files. Verify with orchestrate_get_agent_diff before accepting work."
+          : null,
+    });
   }
 
   if (toolName === "orchestrate_wait_agent") {
@@ -1015,6 +1031,8 @@ async function executeOrchestrationTool(
             latestActivity: thread?.activities?.at?.(-1)?.summary ?? null,
             sessionStatus: thread?.session?.status ?? null,
             hasRunningSubprocess: thread?.session?.hasRunningSubprocess ?? null,
+            awaitingInstruction: worker.status === "running",
+            needsSubmission: worker.status === "running",
             timedOut: false,
             note:
               "Worker's latest turn completed and its session is no longer running. " +

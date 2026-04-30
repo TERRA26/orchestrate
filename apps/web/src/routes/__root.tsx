@@ -179,10 +179,6 @@ function EventRouter() {
         retainedThreadIds: workspacePages.map((workspace) => workspaceThreadId(workspace.id)),
       });
       removeOrphanedTerminalStates(activeThreadIds);
-      if (pending) {
-        pending = false;
-        await flushSnapshotSync();
-      }
     };
 
     const syncSnapshot = async () => {
@@ -198,6 +194,10 @@ function EventRouter() {
         // Keep prior state and wait for next domain event to trigger a resync.
       }
       syncing = false;
+      if (pending) {
+        pending = false;
+        window.setTimeout(() => void syncSnapshot(), 750);
+      }
     };
 
     const domainEventFlushThrottler = new Throttler(
@@ -212,7 +212,7 @@ function EventRouter() {
         void syncSnapshot();
       },
       {
-        wait: 100,
+        wait: 750,
         leading: false,
         trailing: true,
       },

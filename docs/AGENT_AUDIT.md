@@ -2491,6 +2491,7 @@ Ran the desktop stack end-to-end with the real Electron visible browser and foun
 #### Live verification
 
 The agent's report describes a real end-to-end run:
+
 - `bun run dev:desktop` started successfully (after fixing a local Electron binary install — environment repair only, no committed files).
 - The composer's `ready` pill rendered correctly in light mode at app load.
 - A real orchestrator task drove `orchestrate_browser_act` with `navigate`, `evaluate`, `wait`, and `close` actions through an `electron-visible-...` session.
@@ -2521,6 +2522,7 @@ The end-to-end verification is done, two serious integration bugs are fixed, and
 The agent's suggestion — **Bundle 17W: full SaaS-build scenario inside Orchestrate** — is a strong candidate. It would exercise orchestration beyond browser tooling: file edits, terminal commands, multi-worker coordination, the rework loop end-to-end. It's likely to surface more bugs the way 17V did. Risk: it could become a sprawling bundle if many bugs are found at once.
 
 Alternative paths:
+
 - **Phase 18 net-new feature work**: declare Phase 17 done and move on to whatever the next product priority is.
 - **Bundle 17K (small)**: tackle H-N2 (post-ready CDP endpoint verification) as one more piece of operational hardening before declaring done.
 - **Bundle 17X (cleanup)**: J-N1 (consolidate `EntityId` branding into baseSchemas) + V-N1 (redact tokens from URL logs). Mechanical wins.
@@ -2534,3 +2536,56 @@ But this is your call. Whichever direction you pick, paste the prompt and the lo
 - **2026-04-30 — Agent Report — Bundle 17V** — implemented; pushed at `aa816dfd`. Two serious integration bugs (auth, decode shape) and three UI/dev polish issues caught and fixed during real-Electron verification. YouTube playback verified end-to-end.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17V** — accepted. Phase 17 primary goals met. Tracked V-N1 (redact tokens from URL logs) as small follow-up.
 - **2026-04-30 — Phase 17 sign-off** — no active work; user decides next phase.
+
+---
+
+### Agent Report — 2026-04-30 02:13 AST — Bundle 17W
+
+#### Scope
+
+Ran the recommended full SaaS-build smoke inside Orchestrate and capped the first pass at the first serious workflow failures found. The prompt asked Orchestrate to build a compact B2B SaaS dashboard for a subscription analytics product named **LedgerPilot** in `apps/demo-fullstack`, then report files changed, commands run, and Orchestrate product bugs.
+
+#### What happened in the live Orchestrate run
+
+- Spawned a Claude worker from an Orchestrate thread. The initial detailed brief sent through `orchestrate_send_to_agent` timed out twice and returned `queued: false`; the worker only received the short spawn title.
+- Manually pasted the detailed instruction into the worker pane. This path worked and the worker wrote server-side changes, proving the UI follow-up path can deliver instructions even when the MCP send path fails.
+- The worker converted the Express demo API from `/api/todos` to `/api/ledger`, but did not update the React frontend before stalling. That left the demo in a broken mixed state until this agent completed the frontend and verification locally.
+
+#### Bugs found during 17W
+
+1. **`orchestrate_send_to_agent` timeout/drop is still a blocking loop failure.** The tool returned `queued: false` with a timeout and the detailed brief did not reach the worker. I did not claim this is fully fixed. I added explicit `retryable: true` and a note warning orchestrators not to assume delivery, so the failure is no longer silent. Root fix still needs a server-side delivery/ack retry design.
+2. **Worker status remains ambiguous after a completed no-submit turn.** A worker can be `status: "running"` while `session.status: "ready"`, `activeTurnId: null`, and no task submission exists. I added `awaitingInstruction` and `needsSubmission` fields to `orchestrate_wait_agent`'s soft-completion response so callers have a machine-readable stuck/idle signal.
+3. **Provider-reported file-change activity can disagree with checkpoint diff.** `orchestrate_get_agent_logs` can show `"File change"` while `orchestrate_get_agent_diff` reports zero changed files. I added a warning on `orchestrate_get_agent_logs` when recent file-change activity exists but the latest checkpoint has no files.
+4. **The composer showed `waiting for approval` while work was actively proceeding.** I changed the compact pill label for the generic waiting state to `waiting`; "approval" is too specific and was misleading during the smoke run.
+5. **Projection snapshot pressure was visible under streaming.** The server was repeatedly logging slow `ProjectionSnapshotQuery.getSnapshot` calls while only two projects and ~131 threads existed. I raised the web domain-event snapshot throttle from 100ms to 750ms and replaced immediate recursive pending flushes with a delayed coalesced follow-up.
+6. **The Orchestrate browser MCP was unavailable during verification.** `orchestrate_browser_open_session` failed with `Cannot connect to orchestration server at ws://localhost:3773`. I fell back to direct Playwright against the local Vite server for visual verification. This should be investigated separately from the app code changes.
+
+#### Files changed
+
+- `apps/demo-fullstack/server/src/app.ts` — replaced todo API with a small ledger API: list summary, create ledger entries, delete entries, and total credit/debit/balance aggregation.
+- `apps/demo-fullstack/server/src/app.test.ts` — updated API tests for `/api/ledger` validation and totals.
+- `apps/demo-fullstack/web/src/App.tsx` — replaced stale quest/todo UI with a compact LedgerPilot subscription dashboard: KPI cards, plan-mix bars, accounts table, and billing-risk alerts. It fetches `/api/ledger` and uses seeded operating data when the API has no entries or is offline.
+- `apps/web/src/components/orchestrator/OrchestratorAgentStatePill.tsx` and `OrchestratorComposer.test.tsx` — changed generic waiting pill from `waiting for approval` to `waiting`.
+- `apps/web/src/routes/__root.tsx` — coalesced domain-event snapshot syncing with a 750ms throttle and delayed pending follow-up instead of immediate recursive full snapshots.
+- `scripts/orchestrate-mcp-server.ts` — added retryability/explicit non-delivery guidance for send timeouts, idle/no-submit status hints for wait responses, and file-change/checkpoint mismatch warnings for logs.
+- `docs/AGENT_AUDIT.md` — this report.
+
+#### Verification
+
+- `bun fmt` — passed.
+- `bun lint` — passed with the repo's existing warnings; no new lint errors.
+- `bun typecheck` — passed, 10/10 packages.
+- `cd apps/demo-fullstack && bun run test server/src/app.test.ts` — passed, 5/5.
+- `cd apps/web && bun run test src/components/orchestrator/OrchestratorComposer.test.tsx` — passed, 2/2.
+- Browser visual verification with Playwright against `http://localhost:5175/` — dashboard rendered with LedgerPilot header, KPI cards, plan mix, accounts table, and billing-risk panel. Initial table clipping was found in the screenshot and fixed before this report.
+
+#### Notes for Claude review
+
+- The `send_to_agent` change is intentionally a transparency fix, not a root delivery fix. Please scrutinize whether returning `retryable` and a clear note is enough for this bundle, or whether this must be escalated immediately into the command dispatch/ack path.
+- The snapshot throttle is a pragmatic pressure reduction. It does not replace the larger architectural fix of incremental read-model projection on the client.
+- The demo API is intentionally small and in-memory, consistent with `apps/demo-fullstack`. I did not add persistence/auth/routing because the smoke asked for the smallest safe SaaS surface.
+- The worker's partial server changes were preserved and completed rather than reverted, because they were directly related to the requested LedgerPilot smoke.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17W** — implemented and ready for reviewer scrutiny. Primary smoke found real orchestration-loop failures; demo app now renders a verified LedgerPilot SaaS dashboard; required checks pass.

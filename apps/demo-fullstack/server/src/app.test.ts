@@ -1,94 +1,95 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "./app.js";
 
-describe("Todos API", () => {
-  it("round-trip: POST two todos then GET both back with correct shape", async () => {
+describe("Ledger API", () => {
+  it("round-trip: POST two entries then GET summary with correct totals", async () => {
     const app = createApp();
 
-    // POST first todo
-    const res1 = await request(app)
-      .post("/api/todos")
-      .send({ text: "Buy milk" })
+    const r1 = await request(app)
+      .post("/api/ledger")
+      .send({ description: "Salary", amount: 3000, category: "income" })
       .set("Content-Type", "application/json");
 
-    expect(res1.status).toBe(201);
-    expect(res1.body).toMatchObject({
+    expect(r1.status).toBe(201);
+    expect(r1.body).toMatchObject({
       id: expect.any(String),
-      text: "Buy milk",
-      done: false,
+      description: "Salary",
+      amount: 3000,
+      category: "income",
+      date: expect.any(String),
     });
 
-    // POST second todo
-    const res2 = await request(app)
-      .post("/api/todos")
-      .send({ text: "Write tests" })
+    const r2 = await request(app)
+      .post("/api/ledger")
+      .send({ description: "Groceries", amount: -75.5 })
       .set("Content-Type", "application/json");
 
-    expect(res2.status).toBe(201);
-    expect(res2.body).toMatchObject({
-      id: expect.any(String),
-      text: "Write tests",
-      done: false,
-    });
+    expect(r2.status).toBe(201);
+    expect(r2.body.amount).toBe(-75.5);
+    expect(r2.body.category).toBe("general"); // default
 
-    // GET all todos — both must appear in insertion order
-    const listRes = await request(app).get("/api/todos");
-
+    const listRes = await request(app).get("/api/ledger");
     expect(listRes.status).toBe(200);
-    expect(listRes.body).toHaveLength(2);
-    expect(listRes.body[0]).toMatchObject({
-      id: res1.body.id,
-      text: "Buy milk",
-      done: false,
+    expect(listRes.body.entries).toHaveLength(2);
+    expect(listRes.body.entries[0]).toMatchObject({
+      id: r1.body.id,
+      description: "Salary",
+      amount: 3000,
     });
-    expect(listRes.body[1]).toMatchObject({
-      id: res2.body.id,
-      text: "Write tests",
-      done: false,
-    });
+    expect(listRes.body.totalCredits).toBeCloseTo(3000);
+    expect(listRes.body.totalDebits).toBeCloseTo(75.5);
+    expect(listRes.body.balance).toBeCloseTo(2924.5);
   });
 
-  it("POST /api/todos returns 400 for empty text", async () => {
+  it("POST /api/ledger returns 400 for empty description", async () => {
     const app = createApp();
 
     const res = await request(app)
-      .post("/api/todos")
-      .send({ text: "" })
+      .post("/api/ledger")
+      .send({ description: "", amount: 100 })
       .set("Content-Type", "application/json");
 
     expect(res.status).toBe(400);
   });
 
-  it("POST /api/todos returns 400 when text is missing", async () => {
+  it("POST /api/ledger returns 400 when amount is zero", async () => {
     const app = createApp();
 
     const res = await request(app)
-      .post("/api/todos")
-      .send({})
+      .post("/api/ledger")
+      .send({ description: "Zero", amount: 0 })
       .set("Content-Type", "application/json");
 
     expect(res.status).toBe(400);
   });
 
-  it("DELETE /api/todos/:id returns 204 on success and 404 if missing", async () => {
+  it("POST /api/ledger returns 400 when amount is missing", async () => {
     const app = createApp();
 
-    // Create one todo first
+    const res = await request(app)
+      .post("/api/ledger")
+      .send({ description: "No amount" })
+      .set("Content-Type", "application/json");
+
+    expect(res.status).toBe(400);
+  });
+
+  it("DELETE /api/ledger/:id returns 204 on success and 404 if missing", async () => {
+    const app = createApp();
+
     const created = await request(app)
-      .post("/api/todos")
-      .send({ text: "To be deleted" })
+      .post("/api/ledger")
+      .send({ description: "To be deleted", amount: 50 })
       .set("Content-Type", "application/json");
 
     expect(created.status).toBe(201);
-    const { id } = created.body;
+    const { id } = created.body as { id: string };
 
-    // Delete it
-    const deleteRes = await request(app).delete(`/api/todos/${id}`);
+    const deleteRes = await request(app).delete(`/api/ledger/${id}`);
     expect(deleteRes.status).toBe(204);
 
-    // Try deleting again — should be 404
-    const deleteAgain = await request(app).delete(`/api/todos/${id}`);
+    const deleteAgain = await request(app).delete(`/api/ledger/${id}`);
     expect(deleteAgain.status).toBe(404);
   });
 });
