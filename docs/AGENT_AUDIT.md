@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `6c6affba` (`fix(browser): attach playwright validation to electron cdp`) — Bundle 17D reviewed; **ACCEPTED**. The two-browser substitution risk is now structurally prevented (CDP attach against the running Electron's `webContents`), not just policy-prevented. Three follow-ups documented (RU-1, RU-2, RU-3) — none blocking.
-**Active bundle:** **Bundle 17E — Cleanup sweep** (small, mechanical). Rolls up four follow-ups: FU-1 move `EvidenceArtifactId` to `baseSchemas.ts`; FU-4 refresh stale `ORCH_TOOL_DISPLAY_LABELS` browser entries; RU-2 fail-closed test for "no matching CDP session"; RU-3 test that closing an attached session does not close Electron's browser. FU-2, FU-3, RU-1 (port collision) remain queued as separate bundles.
+**Latest reviewed commit:** `3feddf3f` (`test(browser): cover cdp attach cleanup paths`) — Bundle 17E reviewed; **ACCEPTED**. All four sub-items (FU-1, FU-4, RU-2, RU-3) deliver. One small architectural note (E-N1) tracked but not blocking.
+**Active bundle:** **Bundle 17F — Typed `browser-dom-snapshot` evidence artifact kind (FU-2)**. Eliminates the heuristic `find` in `OrchestrationToolRouter.ts` that picks "any evidenceRef that isn't a screenshot or url-agreement" — currently fragile under future evidence-ref ordering changes. RU-1 (dynamic port allocation) and FU-3 (async UI test) remain queued.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -1842,3 +1842,112 @@ Reviewer notes:
 
 - No production behavior changed in the CDP attach path for RU-2/RU-3; those are test coverage only.
 - The base schema export keeps the existing package barrel behavior because `packages/contracts/src/index.ts` already exports `baseSchemas` before `browserOrchestration`.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17E
+
+**Verdict: ACCEPTED.** All four sub-items deliver. One small architectural note (E-N1) tracked but not blocking.
+
+#### What I verified
+
+- `git diff 390aea26..3feddf3f` — 7 files, +289/−74. Most weight in tests (200 in `BrowserRuntimeService.test.ts`, 108 new in `BrowserAutomation.test.ts`). No `as any`, `@ts-expect-error`, or `eslint-disable` introduced.
+- **FU-1: schema move and cycle elimination.** [`packages/contracts/src/baseSchemas.ts:26-27`](packages/contracts/src/baseSchemas.ts:26) exports `EvidenceArtifactId = makeEntityId("EvidenceArtifactId")`. [`browserOrchestration.ts:1-7,49-50`](packages/contracts/src/browserOrchestration.ts:1) imports it from `baseSchemas` and the local `EvidenceArtifactId = EntityId.pipe(...)` is gone. [`orchestration.ts:9,1937,1938,2200,2201`](packages/contracts/src/orchestration.ts:9) imports the branded type and replaces the structural `OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(...)` workaround at the four submit/submitted call sites. **Cycle verified gone**: `grep -nE 'from "\./browserOrchestration"' orchestration.ts` returns no matches; only `browserOrchestration.ts:18` imports `OrchestratorRunId` from `./orchestration` (one-way). Package barrel export intact: [`packages/contracts/src/index.ts`](packages/contracts/src/index.ts) does `export * from "./baseSchemas"` first, so `import { EvidenceArtifactId } from "@orchestrate/contracts"` resolves to the new branded type. **No deep imports** of `@orchestrate/contracts/browserOrchestration` or `@orchestrate/contracts/baseSchemas` anywhere in `apps/` or `packages/` — `grep` returned no matches.
+- **FU-4: label refresh.** [`apps/web/src/components/chat/WorkEntryRow.tsx:57-60`](apps/web/src/components/chat/WorkEntryRow.tsx:57) — `"Browser preview"`, `"Checking browser"`, `"Acting on browser"`, `"Closing browser"`. Consistent with the rest of the map's semantic style.
+- **RU-2: fail-closed tests.** [`BrowserRuntimeService.test.ts:280-340`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.test.ts:280) — two new layers (`noMatchingCdpSessionLayer` and `missingTargetIdLayer`) configured via the new `makeHeadlessAttachBridgeLayer({ cdpSessionId?, includeTargetId? })` factory. Each test calls `runtime.openSession({ ..., preferredRuntimeKind: "playwright-headless" })`, asserts `exit._tag === "Failure"`, and `String(exit.cause)` matches `/did not expose a targetId/`. Both fixtures hit the same production fail path at [`BrowserRuntimeService.ts:777-782`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:777) but exercise it with different bridge inputs (no matching session id vs. matching session without targetId) — both are valid pre-conditions for the same fail-closed branch.
+- **RU-3: attached close test.** [`apps/server/src/browser/Layers/BrowserAutomation.test.ts`](apps/server/src/browser/Layers/BrowserAutomation.test.ts:1-108) — clean Vitest mock of Playwright's `chromium`. **`launch` is mocked to reject** ("launch should not be used for CDP attach tests") — strong guard against any future code that might fall back to launching a separate browser. The test flow: openSession with `cdpEndpointUrl + cdpTargetId` → closeSession → asserts `Target.getTargetInfo` was called, `cdpDetach` was called once (for the targetId resolution), and **`contextClose` and `browserClose` were NOT called**. This proves `closeBrowserOnClose: false` semantics for attached sessions.
+- **Re-ran on my machine:** `bun lint` exit 0, 131 pre-existing warnings; `bun typecheck` 10/10 PASS; `bun run test` for the three server files: **31/31 PASS**; contracts tests: **26/26 PASS**.
+
+#### Answers to your four scrutiny questions
+
+1. **Downstream compat of removing the local `EvidenceArtifactId` export from `browserOrchestration`.** No issue. Package barrel `packages/contracts/src/index.ts` does `export * from "./baseSchemas"` before `export * from "./browserOrchestration"`, so the symbol is still re-exported at the package level. No deep imports exist (`grep "@orchestrate/contracts/(browserOrchestration|baseSchemas)"` returns nothing). Typecheck 10/10 confirms.
+
+2. **Should the fail-closed assertion match a more precise error than `String(exit.cause)`?** Acceptable as-is. The pattern is consistent with other fail-closed tests in the same file (e.g., the existing "refuses default electron-visible sessions" test uses the same shape). A stricter assertion via `Cause.failureOption` would be marginally tighter — catches the case where the failure is wrapped in an unexpected cause shape — but the current loose match catches: (a) absence of failure entirely, (b) substantively different error message. Not blocking; could be tightened opportunistically if you ever migrate to Cause-based assertions across the suite.
+
+3. **Right layer for RU-3?** Yes, `BrowserAutomation.test.ts` is correct. `closeBrowserOnClose` is private state inside `BrowserAutomationLive` — verifying the close-without-tearing-down behavior at this boundary directly proves the invariant. Extending the existing `PlaywrightHeadlessBrowserRuntime` attached test to cover propagation through the runtime layer would be additive but not necessary. Optional follow-up.
+
+4. **Audit doc specificity.** Yes, sufficient. File:line citations for each sub-item, separate verification per sub-item, scoped reviewer notes. Good.
+
+#### One small architectural note (E-N1, not blocking)
+
+The new `EvidenceArtifactId` from `baseSchemas` uses `makeEntityId(brand) = TrimmedNonEmptyString.pipe(Schema.brand(brand))` — **no max-length constraint**. The old version in `browserOrchestration.ts` was `EntityId.pipe(Schema.brand("EvidenceArtifactId"))` where the local `EntityId = TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_ID_LENGTH))` (128 chars).
+
+Practical impact: artifact IDs are SHA-256 hex (64 chars) or short UUIDs — well under 128. **No real-world regression** in current usage. The constraint loss matters only if a future caller produces a pathologically long string that the schema would have rejected before but now accepts.
+
+This is also true of every other entity ID in `baseSchemas` (`ThreadId`, `ProjectId`, `CommandId`, etc.) — they have no max-length either. The 128-char constraint was specific to `browserOrchestration.ts`'s local `EntityId`. Moving `EvidenceArtifactId` to `baseSchemas` standardizes on the looser shape.
+
+If you want to preserve the bound, the cleanest fix is to add `Schema.isMaxLength(128)` inside `makeEntityId` (would tighten ALL entity IDs uniformly). That's a separate small bundle if/when desired — track as **E-N1**.
+
+#### Things I checked that are clean
+
+- No silent fallback paths introduced (re-greped for `?? "playwright-headless"`, conditional spreads dropping CDP fields, `Layer.orElse`). Clean.
+- No new `as any`, no `@ts-expect-error`, no `// eslint-disable`. Clean.
+- No tests deleted or `.skip`'d. The existing `playwright-headless` tests now go through the CDP attach path via the working `headlessAttachBridgeLayer` fixture — indirect coverage of the full stack.
+- The `chromium.launch` mock-rejection in `BrowserAutomation.test.ts` is an excellent anti-fallback canary. Any future code path that incorrectly tries to launch a separate browser when CDP is supplied will fail this test immediately.
+- The test layers are factored cleanly: `makeHeadlessAttachBridgeLayer({ cdpSessionId?, includeTargetId? })` parameterizes the fixture, three layer instances cover happy path + two fail-closed branches.
+
+#### Bundle 17E status — COMPLETE
+
+All four sub-items from the bundle spec are satisfied. The lingering follow-ups (FU-2 typed dom-snapshot, FU-3 async UI test, RU-1 dynamic port) remain queued as planned.
+
+#### Active Bundle: **Bundle 17F — Typed `browser-dom-snapshot` evidence artifact kind (FU-2)**
+
+The current after-evidence DOM ref is selected via a heuristic at [`OrchestrationToolRouter.ts:967`](apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:967):
+
+```ts
+browserAfterDomRef = observed.evidenceRefs.find(
+  (ref) => ref !== browserAfterScreenshotRef && !ref.includes("url-agreement"),
+);
+```
+
+This picks "the first evidenceRef that isn't the screenshot or url-agreement." It happens to grab the durable browser-observation artifact today. But:
+- If `BrowserEvidenceRecorder.recordObservation` adds a new artifact kind (e.g. `browser-console-summary` or `browser-network-summary`), the `find` order could pick it first instead.
+- The field name `browserAfterDomRef` claims DOM content; the artifact behind it is actually a JSON observation summary. Naming/content drift.
+- Future refactors of `recordObservation`'s artifact ordering could silently change which ref is matched.
+
+The fix: introduce a dedicated `"browser-dom-snapshot"` artifact kind that captures a structured DOM snapshot at observation time, and have the find match on that kind explicitly.
+
+**Scope:**
+
+1. **Add `"browser-dom-snapshot"` to the artifact-kind enumeration.** Find the `EvidenceArtifactKind` literal union (likely in `packages/contracts/src/browserOrchestration.ts` or a related schema file) and add the new kind.
+2. **`BrowserEvidenceRecorder.recordObservation`** — when an observation has a DOM snapshot (text content, ARIA tree, or similar structured representation), write it as a separately-typed `"browser-dom-snapshot"` artifact alongside the existing `"browser-observation"` JSON. The DOM snapshot artifact should be content-addressed (sha256-prefixed). If the observation source doesn't produce a structured DOM snapshot, the recorder may write the existing browser-observation JSON as the dom-snapshot ref AND also as the observation ref — but the typed kind is what enables explicit matching.
+3. **`OrchestrationToolRouter.handleAcceptWork`** — replace the heuristic find with explicit kind-based selection:
+   ```ts
+   browserAfterDomRef = await findEvidenceRefByKind(observed.evidenceRefs, "browser-dom-snapshot");
+   ```
+   The helper queries the evidence repository (or accepts a typed evidenceRefs list shape) and returns the artifact id whose `kind === "browser-dom-snapshot"`. If no such ref exists, leave `browserAfterDomRef` undefined — do NOT fall back to the heuristic.
+4. **Update the projection** in [`ProjectionPipeline.ts`](apps/server/src/orchestration/Layers/ProjectionPipeline.ts) submit branch to write the dom-snapshot ref to `rework_tasks.after_evidence_refs_json` and to `BrowserAnnotation.afterDomArtifactRef`. The current projection logic at the submit branch already handles this via `event.payload.browserAfterDomRef`; verify the typed-kind ref propagates through unchanged.
+5. **Tests:**
+   - Recorder writes a `"browser-dom-snapshot"` artifact alongside `"browser-observation"` when an observation contains DOM content. Schema test for the new kind value.
+   - `OrchestrationToolRouter` accept_work test: with mocked observe returning a `"browser-dom-snapshot"` ref in `evidenceRefs`, asserts the dispatched submit command's `browserAfterDomRef` equals that ref (not whichever ref happens to come first).
+   - Negative test: observe returns no `"browser-dom-snapshot"` ref → submit dispatches without `browserAfterDomRef` (rather than picking some other ref via heuristic).
+
+**Out of scope for 17F:**
+- Migrating existing serialized evidence — the new kind is additive, old data still parses.
+- Renaming `BrowserAnnotation.afterDomArtifactRef` field — name stays.
+- RU-1 (dynamic port allocation), FU-3 (async UI test) — separate bundles.
+- E-N1 (max-length constraint on entity IDs) — small future bundle if/when desired.
+
+**Acceptance gates:**
+
+- [ ] `"browser-dom-snapshot"` is a valid `EvidenceArtifactKind` literal. Schema test passes.
+- [ ] `BrowserEvidenceRecorder.recordObservation` writes a `"browser-dom-snapshot"` artifact when observation contains DOM content; otherwise the field stays absent (no synthetic dom-snapshot from non-DOM data).
+- [ ] `OrchestrationToolRouter.handleAcceptWork` selects `browserAfterDomRef` by kind, not by heuristic position. The heuristic `find((ref) => ref !== screenshotRef && !ref.includes("url-agreement"))` is gone.
+- [ ] When no dom-snapshot ref exists in the observation, the submit command omits `browserAfterDomRef` rather than substituting another ref.
+- [ ] Existing tests still pass (the projection lifecycle test in particular — it asserts the after-refs propagate).
+- [ ] `bun fmt && bun lint && bun typecheck` pass; targeted server/contracts tests pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17F` to this file with file:line for each gate.
+
+**Queued for after 17F:**
+
+- **Bundle 17G**: FU-3 (`@testing-library/react` async UI test for `BrowserArtifactScreenshotPreview`).
+- **Bundle 17H**: RU-1 (dynamic port allocation in Electron main).
+- **Optional Bundle 17V**: end-to-end UI verification with the dev server.
+- **E-N1**: small future cleanup if you want to enforce a max length on entity IDs in `baseSchemas`.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17E** — implemented; pushed at `3feddf3f`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17E** — accepted. FU-1, FU-4, RU-2, RU-3 all delivered. E-N1 tracked.
+- **2026-04-30 — Bundle 17F activated** — typed `browser-dom-snapshot` artifact kind to eliminate the heuristic in `handleAcceptWork`.
