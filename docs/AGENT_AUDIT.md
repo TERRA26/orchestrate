@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `10638270` (`feat(reviewer): capture visual after evidence`) — Bundle 17B-F-3 reviewed; **ACCEPTED** with three documented follow-ups (none blocking the next bundle). Bundle 17B is fully complete.
-**Active bundle:** **Bundle 17C — Calm thread: non-browser semantic phases** (the spec the user originally raised — "when I send a message it's not clear what the orchestrator is doing"). Bundle 17D (CDP attach to running Electron) and the three 17B-F-3 follow-ups remain queued.
+**Latest reviewed commit:** `a55f6976` (`feat(orchestrator): calm non-browser thread phases`) — Bundle 17C reviewed; **BLOCKED on one required fix**: `CompactActivityRow` in `OrchestratorMessages.tsx` is the **default user-visible orchestrator-panel render path** (`controlRoomMode={true}` in `OrchestratorPanel.tsx:94`), and it still derives labels mechanically from raw tool names — bypassing the new mapper. The mapper, `WorkEntryRow`, `OrchestrationToolCallCard`, and the agent-state pill are otherwise solid.
+**Active bundle:** **Bundle 17C re-do (focused fix)** — wire `CompactActivityRow` through `phaseForToolEvent` so the orchestrator panel shows semantic phases instead of `→ accept work` / `· orchestrate_wait_agent`. See iteration log for details. Bundle 17D and 17B-F-3 follow-ups remain queued.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -1392,3 +1392,142 @@ Implemented the calm-thread pass for non-browser semantic phases.
 - I did not redesign the composer or thread layout; the pill is deliberately small and placed in the existing bottom toolbar.
 - Raw tool identifiers remain in DOM markup inside collapsed `<details>` blocks for debugging/auditability. They are no longer used as the visible headline for the updated work-entry and orchestration-card paths.
 - FU-1, FU-2, FU-3 from Bundle 17B-F-3 remain queued and untouched.
+
+---
+
+### Reviewer Scrutiny — 2026-04-29 — Bundle 17C
+
+**Verdict: BLOCKED.** One required fix (RF-1) before Bundle 17C is accepted. The mapper, the `WorkEntryRow` integration, the `OrchestrationToolCallCard` update, the agent-state pill, and the placement decisions are all solid. But the **default render path of the orchestrator panel** — the surface the user originally complained about — was not wired through the new mapper, so users still see labels like `→ accept work` and `· orchestrate_wait_agent`.
+
+#### What's good (verified directly)
+
+- `git diff c8b2b5f1..a55f6976` — 11 files, +382/−29, all in scope.
+- **Mapper covers the spec taxonomy.** [`apps/web/src/orchestratorPresentation.ts:43-109`](apps/web/src/orchestratorPresentation.ts:43) handles all required phases (Planning, Reading files, Editing, Running command, Reviewing evidence, Waiting, Started worker, Done, Blocked). Returns `null` for unknown — no raw-name fallthrough. The `tone === "error"` check first means even known tools that errored render as Blocked, which is correct.
+- **`normalizeToolName`** strips `mcp__orchestrate__` and `functions.` prefixes and lowercases. Defensive against the various tool-name shapes flowing through the system.
+- **`changedFiles.length > 0` and `command` short-circuits to Editing/Running command** before the toolName matches. Good — these are stronger signals than the toolName itself.
+- **`WorkEntryRow` integration** ([`WorkEntryRow.tsx:121-209`](apps/web/src/components/chat/WorkEntryRow.tsx:121)) — `toolPhaseForWorkEntry` adapter wraps the entry into `ToolPhaseEvent`. The cascade `toolPhaseForWorkEntry(entry) ?? ORCH_TOOL_DISPLAY_LABELS[baseTool]` gives mapper preference but keeps the friendly fallback. The static `ORCH_TOOL_DISPLAY_LABELS` map was also updated so its values are now semantic (`"Started worker"`, `"Reviewing evidence"`, `"Waiting"`) instead of literal tool names — defense in depth.
+- **`rawToolDetails(toolName)`** wraps the raw name inside `<details><summary>Tool details</summary>...</details>`. Added to `OrchSpawnCard`, `OrchAcceptCard`, terminate, and the catch-all `OrchThinkRow`. Spec satisfied for these surfaces.
+- **`OrchestrationToolCallCard`** ([`OrchestrationToolCallCard.tsx:43-219`](apps/web/src/components/orchestrator/OrchestrationToolCallCard.tsx:43)) — `phaseLabel = phaseForToolEvent({ toolName }) ?? "Tool"`. The previous default-case `font-mono` raw name is replaced with the phase label + collapsed details. Test added.
+- **`AgentStatePill`** ([`OrchestratorAgentStatePill.tsx`](apps/web/src/components/orchestrator/OrchestratorAgentStatePill.tsx)) — pure mapping function, color-coded chip with 5 states (`thinking | working | waiting for approval | done | blocked`), `data-agent-state-pill={label}` attribute for testing. Clean separation between logic and component.
+- **`OrchestratorComposer`** integrates the pill in the existing bottom toolbar before the model picker, with a `Separator`. No layout redesign. Good restraint.
+- **No `as any`/`@ts-expect-error`/`eslint-disable`** introduced in production diffs (verified via grep).
+- **Tests:** 23/23 PASS for the four new/updated test files. Lint exit 0, typecheck 10/10.
+
+#### RF-1 — REQUIRED FIX (blocking): `CompactActivityRow` is the default orchestrator-panel surface and bypasses the mapper
+
+[`apps/web/src/components/OrchestratorPanel.tsx:94`](apps/web/src/components/OrchestratorPanel.tsx:94) calls `<OrchestratorMessages ... controlRoomMode />`. With `controlRoomMode={true}`, [`OrchestratorMessages.tsx:681-704`](apps/web/src/components/orchestrator/OrchestratorMessages.tsx:681) renders each work-log entry as `<CompactActivityRow ... />` — **NOT** as `<WorkEntryRow ... />`. The new mapper integration in `WorkEntryRow` does not reach this path.
+
+[`CompactActivityRow` lines 375-417`](apps/web/src/components/orchestrator/OrchestratorMessages.tsx:375) builds its own labels:
+
+```ts
+if (rawToolName === "orchestrate_browser_open_session") return "→ screenshot + aria";
+if (rawToolName === "orchestrate_browser_act") return "→ browser observation";
+if (isOrchTool && rawToolName) {
+  const verb = rawToolName.replace(/^orchestrate_/, "").replace(/_/g, " ");
+  return `→ ${verb}${target}`;   // ← "accept work", "spawn agent", "wait agent", "review agent work"
+}
+if (rawToolName) {
+  return `· ${rawToolName.toLowerCase()}`;   // ← raw tool name leaks straight through
+}
+```
+
+This means a user sending a message in the orchestrator panel still sees:
+- `→ accept work @abc12345` (mechanically derived from `orchestrate_accept_work`)
+- `→ spawn agent` (from `orchestrate_spawn_agent`)
+- `→ wait agent` (from `orchestrate_wait_agent`)
+- `→ review agent work` (from `orchestrate_review_agent_work`)
+- `· orchestrate_send_to_agent` for any tool not explicitly handled — straight raw-name leak.
+
+**This is the exact surface the user originally complained about.** The whole point of Bundle 17C is to fix it. The agent's report stated:
+
+> MessagesTimeline itself delegates work-entry cards through WorkEntryRow in this surface, so the visible work-entry path now uses the mapper.
+
+That's true for `controlRoomMode={false}` rendering paths, but `OrchestratorPanel` runs in `controlRoomMode={true}` by default, and that path uses `CompactActivityRow`, not `WorkEntryRow`.
+
+**Fix (small):**
+
+1. In [`OrchestratorMessages.tsx:381-417`](apps/web/src/components/orchestrator/OrchestratorMessages.tsx:381), rebuild the `label` IIFE around `phaseForToolEvent`:
+
+   ```ts
+   const phase = phaseForToolEvent({
+     toolName: workEntry.toolName,
+     itemType: workEntry.itemType,
+     requestKind: workEntry.requestKind,
+     label: workEntry.label,
+     tone: workEntry.tone,
+     command: workEntry.command,
+     changedFiles: workEntry.changedFiles,
+   });
+   const label = (() => {
+     if (workEntry.command) return `$ ${workEntry.command.split(" ").slice(0, 4).join(" ")}`;
+     if (phase) {
+       const target = workEntry.workerId
+         ? ` @${workEntry.workerId.slice(-8)}`
+         : workEntry.threadId
+           ? ` @${workEntry.threadId.slice(-8)}`
+           : "";
+       return `${phase}${target}`;
+     }
+     // Fallback for non-orchestration entries that aren't covered by the mapper.
+     return workEntry.label ?? workEntry.toolTitle ?? "activity";
+   })();
+   ```
+
+   This routes `orchestrate_accept_work` → `"Reviewing evidence @abc12345"`, `orchestrate_spawn_agent` → `"Started worker"`, `orchestrate_wait_agent` → `"Waiting @abc12345"`, etc. The browser-specific labels (`"→ screenshot + aria"`, `"→ browser observation"`) — these are *also* raw-derived; replace with the existing browser-presentation helpers (`browserActionStatusLabel`, `browserObservationTitle`) for consistency, OR keep them and just remove the fallthrough at line 414.
+
+2. **Remove the raw-name fallthrough at line 414**: `return \`· ${rawToolName.toLowerCase()}\`` is the worst offender — it directly puts the tool name into user-visible text. Replace with `"activity"` or hide the row entirely.
+
+3. **Add a regression test in `OrchestratorMessages.test.tsx`** (or create one if missing) that renders `CompactActivityRow` for each of `orchestrate_accept_work`, `orchestrate_spawn_agent`, `orchestrate_wait_agent`, `orchestrate_review_agent_work`, and an unknown tool — and asserts the output does NOT contain `orchestrate_` and does NOT contain the raw tool name as user-visible text. The grep test the original spec called for.
+
+This is ~30 LOC + a regression test. Once shipped, Bundle 17C is acceptable.
+
+#### Answers to your four scrutiny questions
+
+1. **Is the status-to-pill mapping too coarse?** Five states (`thinking | working | waiting for approval | done | blocked`) is fine — matches the spec. Minor concern: the implementation uses a fall-through `return "blocked"` for any status not explicitly matched. This means a future status name added to `OrchestratorStatus` (e.g., `"queued"`) silently maps to `"blocked"`, which is wrong UX. Use `Match.exhaustive` over `OrchestratorStatus` (consistent with the runtime-kind hardening in 17B), or at minimum add a `console.warn` for unknown statuses. Non-blocking; track as a small follow-up.
+
+2. **Do raw names inside collapsed `<details>` satisfy the gate?** Yes. The spec said "raw tool name only inside expanded details/debug view." `<details><summary>Tool details</summary>...</details>` is the right shape — not visible by default, available on click. ✅ for the surfaces the agent updated. **NOT ✅** for `CompactActivityRow`, which doesn't even have a `<details>` block — see RF-1.
+
+3. **Should `phaseForToolEvent` consume a stricter typed event shape?** The current `ToolPhaseEvent` is a permissive structural type with optional string fields. That's appropriate for the call sites (which pass loose `WorkLogEntry` shapes from JSON). Tightening it now would require constructor-style adapters everywhere. Defer.
+
+4. **Any remaining user-visible raw tool path?** **Yes — RF-1 above.** I grepped exhaustively and the only other mentions of raw tool names in user-visible code are inside `<details>` blocks (acceptable per the spec) or in non-rendered data attributes like `data-work-entry-tool-name={workEntry.toolName}` (acceptable). The only blocking leak is `CompactActivityRow`.
+
+#### What I verified end-to-end on my machine
+
+- `bun lint` — exit 0, 131 pre-existing warnings.
+- `bun typecheck` — 10/10 PASS.
+- 4 new/updated test files: 23/23 PASS.
+- The 23 tests cover: mapper unit tests for all phases + null fallthrough + tone=error → Blocked; `WorkEntryRow` rendering of read/edit/bash entries with semantic labels and absence of raw labels in the headline; `OrchestrationToolCallCard` rendering `Started worker` instead of `orchestrate_spawn_agent` in the visible head, with raw name only in `<details>`; agent-state pill mapping for each of the five states.
+- **Test gap (non-blocking):** the new `OrchestrationToolCallCard.test.tsx` only covers `orchestrate_spawn_agent` (the explicit case). The default branch (any other tool name) is not tested. Add a case for an unknown tool name to confirm it renders `phaseLabel = "Tool"` with the raw name inside details.
+
+#### Things I checked that are clean
+
+- No silent fallback in the mapper. `phaseForToolEvent` returns `null` for unknown — callers must explicitly handle the `null` case (and `WorkEntryRow` does, falling back to the static `ORCH_TOOL_DISPLAY_LABELS` map which itself is now semantic).
+- No `as any`, `@ts-expect-error`, `eslint-disable` introduced in production diffs.
+- `AgentStatePill` is properly pure-mapped via `agentStatePillLabel(status)` exported separately from the component — easy to test.
+- `OrchestratorComposer` accepts `agentState` as a typed `OrchestratorStatus`, not a string. Type-safe.
+- The static `ORCH_TOOL_DISPLAY_LABELS` upgrade (raw tool name → semantic label) is a defense-in-depth win — even the tools that don't go through the mapper now render sensibly.
+- `rawToolDetails(toolName)` returns `null` when toolName is undefined, so the details block is conditionally rendered. Won't pollute the DOM with empty `<details>` elements.
+
+#### Active Bundle: **Bundle 17C re-do (focused)**
+
+One required fix; existing implementation is otherwise accepted. Push as a single follow-up commit titled e.g. `fix(orchestrator): route compact activity rows through phase mapper`.
+
+**Acceptance gates for the re-do:**
+
+- [ ] `CompactActivityRow` in [`OrchestratorMessages.tsx:375`](apps/web/src/components/orchestrator/OrchestratorMessages.tsx:375) routes through `phaseForToolEvent`. The orchestrator panel no longer shows `→ accept work`, `→ spawn agent`, `→ wait agent`, `→ review agent work`, or any raw tool name as user-visible text.
+- [ ] The raw-name fallthrough at [`OrchestratorMessages.tsx:414`](apps/web/src/components/orchestrator/OrchestratorMessages.tsx:414) — `return \`· ${rawToolName.toLowerCase()}\`` — is removed or replaced with a semantic fallback (`"activity"` or similar).
+- [ ] A new test (in `OrchestratorMessages.test.tsx` if it exists, otherwise `CompactActivityRow.test.tsx` colocated) renders the row for: `orchestrate_accept_work` → "Reviewing evidence", `orchestrate_spawn_agent` → "Started worker", `orchestrate_wait_agent` → "Waiting", `orchestrate_review_agent_work` → "Reviewing evidence", AND an unknown tool name like `orchestrate_unknown_future_tool`. For each, assert the rendered output **does not contain** `orchestrate_` as user-visible text. Implement as `expect(markup).not.toContain("orchestrate_")` and `expect(markup).not.toContain("accept work")` (the mechanical-stripping result).
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass for in-scope packages. New test passes.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+
+**Out of scope for the re-do:**
+
+- Bundle 17D (CDP attach) — orthogonal architectural fix.
+- 17B-F-3 follow-ups (FU-1, FU-2, FU-3) — still queued.
+- Switching `agentStatePillLabel` to `Match.exhaustive` — small follow-up, non-blocking.
+- Adding the unknown-tool-name test to `OrchestrationToolCallCard.test.tsx` — small follow-up, non-blocking.
+
+#### Iteration log update
+
+- **2026-04-29 — Agent Report — Bundle 17C** — implemented; pushed at `a55f6976`.
+- **2026-04-29 — Reviewer Scrutiny — Bundle 17C** — BLOCKED on RF-1 (`CompactActivityRow` in `OrchestratorMessages.tsx` bypasses the new mapper; the orchestrator-panel default render path still shows raw-derived tool names like `→ accept work` and `· orchestrate_wait_agent`). The mapper, `WorkEntryRow`, `OrchestrationToolCallCard`, and the agent-state pill are otherwise solid.
