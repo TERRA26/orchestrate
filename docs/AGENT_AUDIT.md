@@ -3100,3 +3100,83 @@ Implemented the secondary X-3-N1 defensive redaction while preserving the primar
 ### Notes
 
 The fresh managed Codex live confirmation still requires an operator-driven hard restart outside this stale Codex MCP host. I did not claim live confirmation from the stale session.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17X-4 (X-3-N1 closure)
+
+**Verdict: ACCEPTED as partial.** The secondary X-3-N1 hardening is correctly closed: every URL that reaches an error string in `scripts/orchestrate-mcp-server.ts` now flows through `redactOrchestrationWsUrlForLog`, including the previously-unreachable defensive fallback. The primary live-confirmation goal carries forward unchanged — the agent correctly did not claim confirmation from the stale MCP host.
+
+#### What I verified
+
+- Commit `3c145ce8` reviewed in isolation. Diff: 2 files, +17/−1 (excluding doc).
+- **Helper purity** at [`scripts/orchestrate-mcp-server.ts:518-522`](scripts/orchestrate-mcp-server.ts:518). `buildOrchestrationConnectionFallbackError(url: string | undefined)` constructs `Error` from `redactOrchestrationWsUrlForLog(url ?? "unknown")`. Defensive: handles the empty-array case via `?? "unknown"`. Single source of truth for the redaction.
+- **Fallback wired** at [`scripts/orchestrate-mcp-server.ts:544`](scripts/orchestrate-mcp-server.ts:544). The previously-raw `lastError ?? new Error(\`Cannot connect to orchestration server at ${ORCH_WS_URLS[0]}\`)`is replaced by`lastError ?? buildOrchestrationConnectionFallbackError(ORCH_WS_URLS[0])`. This branch remains unreachable in current code (`buildOrchestrationWsUrls`always returns ≥1 URL → loop always sets`lastError`), but is now redaction-safe under any future refactor of `buildOrchestrationWsUrls`.
+- **Exhaustive-grep audit.** Every `Cannot connect` interpolation in the file:
+  - Line 520 — `buildOrchestrationConnectionFallbackError` → uses redactor ✓
+  - Line 539 — `ensureWs` non-Error wrap → uses pre-redacted `redactedUrl` ✓
+  - Line 559 — `connectWs` onerror → uses redactor inline ✓
+
+  No raw `${url}` or `${ORCH_WS_URLS[…]}` interpolation survives anywhere. Call sites: `connectWs` is only invoked from `ensureWs:533`, and `ensureWs` from a single `await ensureWs()` consumer at line 580. No alternative paths bypass redaction.
+
+- **Test surface** at [`scripts/orchestrate-mcp-server.test.ts:89-94`](scripts/orchestrate-mcp-server.test.ts:89). Locks the redaction at `Error.message` rather than just at the helper return value — this is the right level, since the message is what flows into orchestrator-visible errors.
+- Re-ran on my machine: `cd scripts && bun run test orchestrate-mcp-server.test.ts` 14/14. `bun fmt` clean. `bun lint` 131 warnings (preexisting), 0 errors.
+
+#### Answers to the agent's reviewer-focus questions
+
+1. **X-3-N1 fully closed?** Yes. Reachable and defensive paths both route through `redactOrchestrationWsUrlForLog`. Exhaustive grep confirms no raw URL interpolation in any error construction. ✓
+2. **Next bundle: force operator restart, or pivot to annotation→rework smoke?** Set the explicit fallback policy. Live confirmation **stays the primary task** with a hard-deadline of one batch: if the operator can hard-restart in this batch window, do it; if not, **the agent must pivot to the annotation→rework smoke this batch** (no third deferred batch). The diagnostic + redaction work is fully built; spending more reviewer cycles on "we need a fresh restart" without progress is a smoke-loop stall.
+3. **Test-surface export concerns?** No issue. `buildOrchestrationConnectionFallbackError` is a pure helper export, identical in shape to the existing `buildOrchestrationWsUrls`, `buildMcpBootDiagnostic`, `redactOrchestrationWsUrlForLog`, etc. The script is dual-purpose (executable MCP server + importable testing module) — `if (import.meta.main === true)` already gates the connect-and-serve sequence, so test imports never spawn the WebSocket. ✓
+
+#### Notes status
+
+- **X-3-N1 — CLOSED** by `3c145ce8`.
+- **X-2-N1 — CLOSED** (already, by `e094c3f2`).
+- **X-2-N2 — STILL TRACKED.** `scripts/typecheck` `ws` import hygiene. Defer.
+
+#### Bundle 17X-4 status — PARTIAL ACCEPT (secondary closed; primary still pending)
+
+All tracked redaction notes are now closed. The remaining open item is purely operational: a fresh managed Codex live confirmation, which the agent inside a stale MCP host cannot self-perform.
+
+#### Active Bundle: **Bundle 17X-5 — Live confirmation OR annotation→rework smoke (decisive)**
+
+Primary goal: ship one of two outcomes this batch — no third deferral.
+
+**Path A — Operator-driven live confirmation (preferred if available):**
+
+1. Operator hard-restarts the desktop stack outside any Codex MCP host: kill stale `codex app-server` processes, kill stale dev server, restart fresh.
+2. Open a new orchestrator thread; let Orchestrate spawn the Codex provider itself.
+3. Tail `apps/server`/Codex stderr. The first MCP-subprocess line **must** be:
+
+   ```text
+   orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present
+   ```
+
+   `fallback`/`missing` in any field means 17X-1 is incomplete and that's the primary bug to fix.
+
+4. Send `orchestrate_browser_open_session({ url: "https://example.com" })`. Confirm:
+   - No fallback `ws://localhost:3773/` failure.
+   - Returned `sessionId` is `electron-visible-…`.
+5. Paste the boot line and the success/failure into the agent report.
+
+**Path B — Pivot to annotation→rework cycle smoke (if Path A is operationally blocked at the start of the batch):**
+
+- Launch a small SaaS-shape inside Orchestrate (any of the existing demo shapes works — LedgerPilot, todo, or pick a fresh one).
+- Drive a worker through: spawn → submit → file an annotation in the live browser panel → click Start rework with `mode: "start-agent-run"` → wait for the worker to submit again → confirm the before/after preview pair renders with actual screenshots.
+- This exercises the visual-evidence path that 17B-F-3 added but no smoke has yet end-to-end-verified. Likely surface area for 1–3 real bugs.
+
+**Decision rule:** the agent picks Path A or Path B at the start of the batch and commits to it. Do not switch mid-batch. Report explicitly in the agent header which path was chosen and why.
+
+**Acceptance gates per batch (unchanged from 17X):**
+
+- [ ] At least one identified bug fixed OR a clean live confirmation captured; described with file:line citations or the boot-line + sessionId capture.
+- [ ] Targeted tests for any new code paths.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted suites pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17X-5` with the chosen path, what was tried, what broke, what was fixed.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17X-4 (secondary)** — X-3-N1 defensive redaction closed via `buildOrchestrationConnectionFallbackError`; pushed at `3c145ce8`. Live confirmation still pending.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17X-4** — accepted as partial. All redaction notes closed. X-2-N2 deferred.
+- **2026-04-30 — Bundle 17X-5 activated** — decisive live confirmation OR annotation→rework smoke; no further deferral.
