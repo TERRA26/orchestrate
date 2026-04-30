@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-29 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `9c61980b` (`fix(orchestrator): route compact activity rows through phase mapper`) — Bundle 17C re-do reviewed; **ACCEPTED**. The original 10-point Definition of Done at §9 is now satisfied end-to-end.
-**Active bundle:** **Bundle 17D — CDP attach to running Electron** (the structural fix to "two browsers" — replaces the policy-only routing with substrate-level guarantee that the headless validator attaches to the same `webContents` the user sees). Cleanup follow-ups (FU-1, FU-2, FU-3, stale `ORCH_TOOL_DISPLAY_LABELS` browser entries) remain queued.
+**Latest reviewed commit:** `6c6affba` (`fix(browser): attach playwright validation to electron cdp`) — Bundle 17D reviewed; **ACCEPTED**. The two-browser substitution risk is now structurally prevented (CDP attach against the running Electron's `webContents`), not just policy-prevented. Three follow-ups documented (RU-1, RU-2, RU-3) — none blocking.
+**Active bundle:** **Bundle 17E — Cleanup sweep** (small, mechanical). Rolls up four follow-ups: FU-1 move `EvidenceArtifactId` to `baseSchemas.ts`; FU-4 refresh stale `ORCH_TOOL_DISPLAY_LABELS` browser entries; RU-2 fail-closed test for "no matching CDP session"; RU-3 test that closing an attached session does not close Electron's browser. FU-2, FU-3, RU-1 (port collision) remain queued as separate bundles.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -1717,3 +1717,106 @@ Reviewer notes:
 - The attach path intentionally opens the visible Electron session first, then joins it by session identity. URL is never used for correlation in the server path.
 - The debug port is fixed at `9333` by default with `ORCHESTRATE_ELECTRON_CDP_PORT` override; this is documented in `docs/browser-runtime-notes.md`.
 - The direct `electron-visible` bridge path remains a separate `surfaceMode: "live-shared-browser"` path. Attached sessions reuse the visible session id externally but are stored with runtime metadata to prevent prefix-based misrouting.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17D
+
+**Verdict: ACCEPTED.** The two-browser substitution risk is now structurally prevented at the substrate level, not just policy-prevented. Three follow-ups documented (RU-1, RU-2, RU-3) — none blocking. The five design questions you raised all resolve favorably.
+
+#### What I verified directly
+
+- `git diff cbc05c74..6c6affba` — 20 files, +672/−80, all in scope. No `as any`, `@ts-expect-error`, or `eslint-disable` introduced (re-greped the production diff).
+- **CDP attach refuses URL fallback** ([`BrowserAutomation.ts:findAttachedPage`](apps/server/src/browser/Layers/BrowserAutomation.ts:208-221)). When `cdpTargetId` is missing, the function throws `"Desktop CDP endpoint did not include a targetId; refusing URL-based attach."` There is no URL-matching fallback path — the loop iterates pages and matches purely on CDP `Target.getTargetInfo` result.
+- **Service-level fail-closed when targetId missing** ([`BrowserRuntimeService.ts:777-782`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:777)). Explicit throw `"Electron CDP endpoint did not expose a targetId for the requested visible browser session; refusing to launch a separate browser."` No fallback to `_electron.launch()` exists in the diff (re-greped: `_electron.launch` does not appear in production code; the old `launchBrowser` path is reached only when `cdpEndpointUrl === undefined`, which the service no longer passes for `playwright-headless`).
+- **`isDirectElectronSession(session)` replaces prefix-based routing** ([`BrowserRuntimeService.ts:55-67, 891`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.ts:55)). Now checks the stored `runtimeKind` and `surfaceMode` rather than `sessionId.startsWith("electron-visible-")`. This is the critical fix — attached sessions reuse the visible Electron session id externally, so prefix-matching would have misrouted later `act`/`observe`/`close` calls back through the direct desktop bridge. The new `isAttachedPlaywrightSession(session)` check in the observe path correctly routes attached sessions through `runtime.observeObservation` rather than the legacy `browserAutomation.act({ kind: "wait" })`.
+- **`closeBrowserOnClose: false` for attached sessions** ([`BrowserAutomation.ts:653-665, 782, 820`](apps/server/src/browser/Layers/BrowserAutomation.ts:653)). The flag is `!input.cdpEndpointUrl` — false when attached. `closeSessionState` only calls `context.close()` and `browser.close()` when the flag is true, so closing an attached session does NOT close Electron's browser/context.
+- **`page.goto` skipped for attached sessions** ([`BrowserAutomation.ts:759-761`](apps/server/src/browser/Layers/BrowserAutomation.ts:759)). Attached sessions inherit the URL from the visible Electron session — re-navigating would clobber user state.
+- **Desktop debugger leak prevention** ([`browserManager.ts:108-130`](apps/desktop/src/browserManager.ts:108)). `readCdpTargetId` checks `isAttached()` first (returns `{}` if so → server fails closed); attaches with explicit protocol version `"1.3"`; uses `try/catch/finally` so the debugger is always detached afterward. Race condition: if two `getCdpEndpoint` requests fire concurrently, the second sees "already attached" and returns `{}` for that webContents — the server fails closed for that one but the rest succeed. Acceptable.
+- **Schema additions and decode validation.** `BrowserCdpEndpointSession`, `BrowserCdpEndpointInfo`, and `BrowserSurfaceMode` literal `"playwright-attached"` added to [`packages/contracts/src/browser.ts`](packages/contracts/src/browser.ts). The bridge layer decodes the CDP endpoint response through `Schema.decodeUnknownEffect(BrowserCdpEndpointInfo)` so malformed responses fail with a typed bridge error rather than propagating as runtime errors.
+- **Web bridge fails closed outside desktop** ([`wsNativeApi.ts:534-539`](apps/web/src/wsNativeApi.ts:534)). When `window.desktopBridge` is missing, `getCdpEndpoint` throws `"Desktop browser CDP endpoint is unavailable outside the desktop app."`
+- **Test coverage:**
+  - [`PlaywrightHeadlessBrowserRuntime.test.ts:161-189`](apps/server/src/browserRuntime/PlaywrightHeadlessBrowserRuntime.test.ts:161) — new test "attaches over CDP while exposing the visible Electron session id" verifies the session-id externalization invariant: `session.browserSessionId === "electron-visible-thread-tab-main"` (the visible id), but downstream `act`/`close` calls go to `"automation-session-1"` (the internal id). This is the test that catches the routing regression the agent described.
+  - [`BrowserRuntimeService.test.ts:headlessAttachBridgeLayer`](apps/server/src/browserRuntime/Layers/BrowserRuntimeService.test.ts:73) — provides a working CDP endpoint fixture so the existing playwright-headless tests now go through the attach path. Indirect coverage of the full stack.
+  - [`DesktopBrowserBridge.test.ts:83-118`](apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.test.ts:83) — new test "resolves getCdpEndpoint through the connected desktop client" verifies the broker path including request kind, sessions array, and targetId propagation.
+  - 34/34 server tests pass on my machine.
+  - 9/9 contracts tests pass.
+  - `bun lint` exit 0, `bun typecheck` 10/10 PASS.
+- **Re-greped for hidden fallback or URL-correlation paths.** No matches for:
+  - Any code that compares URLs to find a Playwright Page when a CDP endpoint is supplied.
+  - `_electron.launch` in production code (not used).
+  - `Layer.orElse` between non-substitutable browser layers.
+  - Conditional spreads that drop CDP fields silently.
+
+#### Answers to your five design questions
+
+1. **Keep `runtimeKind: "playwright-headless"` + new `surfaceMode: "playwright-attached"`.** ✅ Accepted. This is what I recommended in the bundle spec. The runtime kind name stays stable across the schema migration; the surface mode tells the user where the session physically lives. Existing serialized evidence and tests don't need data migration. The pair `(runtimeKind: "playwright-headless", surfaceMode: "playwright-attached", isUserVisibleSurface: true)` correctly conveys: "Playwright is automating, but the surface is the user's WebContents."
+
+2. **Fixed port 9333 with env override.** Accept for now, but tracked as **RU-1**. Risks: (a) two Orchestrate instances on one host would conflict at port 9333; (b) port 9333 in use by something else (rare but possible) would silently fail because Electron doesn't surface a port-bind error through `appendSwitch`. Future bundle should allocate dynamically — open a `net` socket to `:0` to get an OS-assigned port, then `appendSwitch("remote-debugging-port", String(port))` before `app.whenReady()`. Surface the chosen port to the server via the existing IPC bridge. Not blocking — current behavior is fine for the single-instance development workflow.
+
+3. **`webContentsId` in the endpoint metadata but server uses `targetId`.** Accept. The asymmetry is real: Playwright can only match `targetId` (via `Target.getTargetInfo`); `webContentsId` is Electron-private. The current server correlation (visible-session-id → targetId, via the desktop's authoritative mapping) is correct. Including `webContentsId` in the metadata is forward-compatible for any future tooling that wants to correlate at the desktop layer.
+
+4. **`readCdpTargetId` declines if debugger already attached.** Accept. Fail-closed is the right call. The "user has DevTools open" case will return no targetId → server throws "did not expose a targetId" → caller gets a clear error. The race-condition risk between concurrent `getCdpEndpoint` calls is small (the second sees "attached" and returns `{}`). If it becomes a real problem, mutex around the debugger attach in `browserManager`. Not blocking.
+
+5. **`visiblePanelUrl` from observed URL on attached observations.** Accept. The agent's reasoning is sound: attached observations and visible-panel observations come from the same WebContents, so by definition the URL is the same. The previous design captured `visiblePanelUrl` separately to detect drift between two browsers; with attached sessions there is no drift. Setting `urlAgreement: "same"` is correct. The only theoretical gap is microsecond drift between two reads of the same WebContents, which is not meaningful for evidence purposes.
+
+#### Three documented follow-ups (none blocking next bundle)
+
+- **RU-1**: Dynamic port allocation. Replace fixed-port-with-env-override with allocating a free port at startup and surfacing it via the existing IPC bridge. Removes the multi-instance/port-conflict risk.
+- **RU-2**: Add an explicit fail-closed test in `BrowserRuntimeService.test.ts` that drives a CDP endpoint response with no matching session (or a matching session with no targetId) and asserts `Effect.fail` with the expected message. The error path exists in the production code but isn't directly exercised by a test.
+- **RU-3**: Add a test for `closeBrowserOnClose: false` semantics — close an attached session and verify `browser.close()` and `context.close()` were NOT called. Mock the Playwright `Browser`/`BrowserContext` to capture the calls.
+
+#### Things I checked that are clean
+
+- The `Match.value(runtimeKind).pipe(...Match.exhaustive)` from Bundle 17B is preserved — `playwright-headless` and `electron-visible` both have explicit branches; `chrome-extension` still throws.
+- `PlaywrightHeadlessBrowserRuntime` correctly maintains a separate internal `automation session id` while exposing the visible Electron session id externally. The test exercises the act/close translation.
+- `runtime.observeObservation()` is the new method used for both attached and non-attached observe paths in the service. It returns real raw observation data (with screenshot/DOM fields) rather than synthesizing from a snapshot — a real improvement for evidence quality.
+- The desktop side filters out destroyed `webContents` before exposing CDP endpoint metadata, avoiding stale entries.
+
+#### Definition of Done — still satisfied (no regressions)
+
+The 10-point list at §9 is unchanged. Bundle 17D **strengthens** items 1 and 2 — instead of policy-prevented two-browser substitution, it's now substrate-prevented (you can't launch a separate browser for `playwright-headless` because the only path goes through CDP attach). The remaining items (3–10) are unaffected.
+
+#### Active Bundle: **Bundle 17E — Cleanup sweep**
+
+Small, mechanical. Rolls up the lowest-risk follow-ups from earlier bundles. Push as a single commit.
+
+**Scope:**
+
+1. **FU-1**: Move `EvidenceArtifactId` brand from [`packages/contracts/src/browserOrchestration.ts:46-47`](packages/contracts/src/browserOrchestration.ts:46) to `packages/contracts/src/baseSchemas.ts`. Update `orchestration.ts:19` to import the branded type and replace the local `OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(...)` with the imported `EvidenceArtifactId`. The local `EvidenceArtifactId` re-export in `browserOrchestration.ts` can stay for backwards compat or be removed; pick the cleaner path.
+2. **FU-4**: Refresh the four stale entries in `ORCH_TOOL_DISPLAY_LABELS` at [`apps/web/src/components/chat/WorkEntryRow.tsx:57-60`](apps/web/src/components/chat/WorkEntryRow.tsx:57). Currently: `"open browser preview"`, `"capture browser screenshot"`, `"browser observation"`, `"close browser session"`. Change to match the semantic style of other entries: `"Browser preview"`, `"Checking browser"`, `"Checking browser"` (or `"Acting on browser"`), `"Closing browser"`. These entries are rarely hit in practice (dedicated browser cards intercept first) but should not be raw/mechanical.
+3. **RU-2**: Add a fail-closed test in `BrowserRuntimeService.test.ts` for the `playwright-headless` attach path when:
+   - The CDP endpoint response has no matching session for the visible session id → asserts `Effect.fail` with the "did not expose a targetId" message.
+   - The matching session has no `targetId` → same assertion.
+   Use the existing `headlessAttachBridgeLayer` shape but provide a fixture that omits the targetId or returns no matching session.
+4. **RU-3**: Add a test that closes an attached `playwright-headless` session and verifies the underlying `browser.close()` and `context.close()` are NOT called. Use a mock automation that records `closeInputs` (already in `PlaywrightHeadlessBrowserRuntime.test.ts`'s `makeAttachedAutomation`); extend the existing CDP attach test or add a new one that asserts `closeBrowserOnClose: false` semantics propagate through.
+
+**Out of scope for 17E:**
+
+- **FU-2** (typed `browser-dom-snapshot` artifact kind) — touches the evidence recorder taxonomy; bigger blast radius. Separate bundle.
+- **FU-3** (`@testing-library/react` async test for `BrowserArtifactScreenshotPreview`) — small but pulls in a new test infrastructure. Separate bundle.
+- **RU-1** (dynamic port allocation) — touches main.ts + IPC plumbing. Separate bundle.
+
+**Acceptance gates:**
+
+- [ ] `EvidenceArtifactId` is exported from `packages/contracts/src/baseSchemas.ts` and imported by both `orchestration.ts` and `browserOrchestration.ts`. The local `OrchestratorEvidenceArtifactId = TrimmedNonEmptyString.check(...)` workaround is gone. `orchestration.ts:1938,1939,2201,2202` use the branded type.
+- [ ] No more circular-import cycle between `orchestration.ts` and `browserOrchestration.ts` (re-grep `import.*from "./orchestration"` in `browserOrchestration.ts` and `import.*from "./browserOrchestration"` in `orchestration.ts` — the latter should still be empty).
+- [ ] The four legacy `ORCH_TOOL_DISPLAY_LABELS` browser entries are now semantic strings consistent with the rest of the map.
+- [ ] New test in `BrowserRuntimeService.test.ts` asserts fail-closed behavior for "no matching session" and "matching session without targetId" — both paths return `Effect.fail` with the documented error message.
+- [ ] New test for `closeBrowserOnClose: false` — close an attached session, assert the Playwright browser/context were not closed.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted server, web, and contracts tests pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17E` to this file with file:line for each gate.
+
+**Queued for after 17E:**
+
+- **Bundle 17F**: FU-2 (typed `browser-dom-snapshot` artifact kind).
+- **Bundle 17G**: FU-3 (async UI test for `BrowserArtifactScreenshotPreview` via `@testing-library/react`).
+- **Bundle 17H**: RU-1 (dynamic port allocation).
+- **Optional Bundle 17V**: end-to-end UI verification by running the dev server and confirming the calm-thread story works visually. The user (not the agent) is best positioned to drive this.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17D** — implemented; pushed at `6c6affba`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17D** — accepted. CDP attach is substrate-level. Three follow-ups (RU-1, RU-2, RU-3) tracked. DoD still satisfied; structural prevention strengthens items 1–2.
+- **2026-04-30 — Bundle 17E activated** — cleanup sweep rolling up FU-1, FU-4, RU-2, RU-3.
