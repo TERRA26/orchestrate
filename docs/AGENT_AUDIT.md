@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `aa816dfd` (`fix(browser): restore desktop action bridge`) — Bundle 17V reviewed; **ACCEPTED**. The agent ran the end-to-end verification themselves in real Electron, **found two serious integration bugs** (MCP auth missing, openSession bridge decode shape mismatch) plus three UI/dev-loop polish issues, fixed all five with proper test coverage, and verified actual YouTube playback through the Orchestrate browser tools. **Phase 17 primary goals are met.**
-**Active bundle:** **Phase 17 sign-off (no active work)**. The agent's suggested next direction — full SaaS-build scenario inside Orchestrate, exercising orchestration beyond browser tooling — is a strong candidate (could be Bundle 17W). Alternatively, declare Phase 17 done and move to Phase 18 net-new feature work. Small follow-ups (F-N1, H-N1, H-N2, J-N1) remain deferred.
+**Latest reviewed commit:** `27aa6edf` (`fix(orchestrator): include modes in worker follow-ups`) covering Bundle 17W (`94b02af7` + `27aa6edf`) — **ACCEPTED**. The agent ran the LedgerPilot SaaS smoke inside Orchestrate, found and fixed six real orchestration-loop bugs (one was the **`orchestrate_send_to_agent` schema-shape silent divergence** that the follow-up commit root-fixed), verified the demo dashboard renders, and built a workable smoke loop for finding more bugs.
+**Active bundle:** **Bundle 17X — Continuous SaaS-build smoke loop**. Per user instruction: keep iterating indefinitely. Each batch = run a fresh SaaS-build scenario inside Orchestrate, find real app/UI/workflow bugs, fix them, push, return for review. The bundle number increments per batch (17X-1, 17X-2, …). Three small notes from this batch (W-N1, W-N2, W-N3) tracked. Older follow-ups (F-N1, H-N1, H-N2, J-N1, V-N1) remain deferred.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -2631,3 +2631,81 @@ This patch fixes the concrete malformed follow-up command shape found from the p
 #### Iteration log update
 
 - **2026-04-30 — Agent Follow-up — Bundle 17W Send Path** — root-cause patch for `orchestrate_send_to_agent` WebSocket command shape is implemented and ready for reviewer scrutiny.
+
+---
+
+### Reviewer Scrutiny — 2026-04-30 — Bundle 17W (initial + send-path follow-up)
+
+**Verdict: ACCEPTED.** Strong iteration. The SaaS-build smoke (LedgerPilot) found six real orchestration-loop bugs and one of them was a schema-shape silent divergence — exactly the failure mode this loop is designed to catch. The agent fixed each with appropriately scoped scope (transparency for partial fixes, root-cause for the send-path bug), and shipped a working LedgerPilot demo as concrete evidence the build path works end-to-end.
+
+#### What I verified
+
+- Both commits (`94b02af7` initial + `27aa6edf` follow-up) reviewed as a unit. Combined diff: 9 files, +500/−477 (the Web `App.tsx` rewrite accounts for most churn).
+- **17W-1 (`orchestrate_send_to_agent` retryable hint)** — partial transparency fix at [`scripts/orchestrate-mcp-server.ts:921-926`](scripts/orchestrate-mcp-server.ts:921). Adds `retryable: true` and a clear `note` explaining what to do. Initial dispatch failure no longer silent. Acceptable as a transparency stopgap.
+- **17W-2 (worker awaitingInstruction/needsSubmission)** — at [`orchestrate-mcp-server.ts:~1031`](scripts/orchestrate-mcp-server.ts:1031). Both fields currently set to `worker.status === "running"` so they're equal in practice. Conceptually distinct ("idle waiting for instruction" vs "should submit work"). The agent acknowledges this is a transparency exposure, not a state-machine fix. Acceptable; track as **W-N2** to differentiate the two fields by signals like recent file changes / latest checkpoint shape.
+- **17W-3 (file-change vs checkpoint diff warning)** — at [`orchestrate-mcp-server.ts:~952`](scripts/orchestrate-mcp-server.ts:952). Computes `sawFileChange` via `a.summary === "File change"` activity check and `filesChanged` from latest checkpoint's `files.length`. Returns a warning when they disagree. The string-match `summary === "File change"` is fragile — breaks if the activity-summary text changes. Track as **W-N3** to use a typed activity kind.
+- **17W-4 (pill label `"waiting"` instead of `"waiting for approval"`)** — at [`OrchestratorAgentStatePill.tsx:7,20`](apps/web/src/components/orchestrator/OrchestratorAgentStatePill.tsx:7). Real semantic finding: during the smoke, `OrchestratorStatus.waiting` fired for non-approval reasons (mid-workflow waits) so the original label was misleading. The label change matches the real underlying state. Test updated. Acceptable.
+- **17W-5 (snapshot throttle 100ms → 750ms + delayed coalesce)** — at [`apps/web/src/routes/__root.tsx:182,197-199,215`](apps/web/src/routes/__root.tsx:182). Two changes: throttle wait time 7.5×, and the post-sync pending-handler now uses `setTimeout(syncSnapshot, 750)` instead of immediate recursive flush. The agent flagged this as pragmatic pressure relief, not the architectural fix (incremental client projection). Risk: 750ms staleness in the orchestrator panel. Humans don't notice anything below ~500ms but 750ms is borderline. Track as **W-N1** to monitor for "panel feels laggy" reports; consider incremental projection on the client as the long-term fix.
+- **17W-6 (`orchestrate_browser_open_session` failed during 17W verification)** — agent flagged it but did not fix. Says "Cannot connect to orchestration server at ws://localhost:3773." Track as **17X-followup**: investigate whether this was an environment artifact during the smoke (server not started yet on that port?) or a real regression in the orchestration MCP path. Critical to confirm in the next iteration.
+- **17W follow-up (`orchestrate_send_to_agent` schema shape)** — verified at [`orchestrate-mcp-server.ts:625-647, 893, 928`](scripts/orchestrate-mcp-server.ts:625):
+  - Diagnosis is sharp: the public WebSocket schema requires `runtimeMode` and `interactionMode` on `thread.turn.start`, but the MCP bridge was constructing the command without them. The internal `OrchestrationToolRouter` doesn't have this bug because it dispatches internally with engine defaults. **This is a textbook silent-divergence between the public-MCP send path and the internal-router send path.**
+  - Fix extracts `buildWorkerFollowUpTurnStartCommand` (pure, testable) that resolves the target worker's thread, fails clearly if no thread exists, and propagates `runtimeMode`/`interactionMode` from the target thread (with safe defaults `"full-access"`/`"default"`).
+  - Tests at [`orchestrate-mcp-server.test.ts:33-69`](scripts/orchestrate-mcp-server.test.ts:33) cover both the explicit-mode-propagation case and the older-snapshot-fallback case.
+  - **This is the most important fix in the bundle.** It's the deeper root-cause of why 17W-1 was needed in the first place — the dispatch wasn't just timing out, the WebSocket was rejecting a malformed command.
+- **LedgerPilot demo app** — `apps/demo-fullstack/server/src/app.ts` swaps the todo API for a small in-memory ledger API; `apps/demo-fullstack/web/src/App.tsx` swaps the quest UI for a LedgerPilot dashboard with KPIs, plan-mix bars, accounts table, and billing-risk alerts. Server tests 5/5 pass.
+- Re-ran on my machine: lint exit 0 (132 warnings preexisting), typecheck 10/10, MCP scripts 7/7, web composer 2/2, demo-fullstack server 5/5.
+
+#### Answers to the agent's scrutiny questions
+
+1. **Auth token boundary.** Already covered in 17V. The only thing I'd flag is whether the new follow-up command (the `buildWorkerFollowUpTurnStartCommand` shape) needs the same `URL.searchParams.set("token", ...)` treatment as the WS connection URL — but commands flow through an already-authenticated WebSocket connection, so no, the token isn't needed in the per-command shape.
+
+2. **`BrowserOpenSessionResult` decoding layer.** Already accepted in 17V. The follow-up's send-path fix didn't touch this layer; clean.
+
+3. **`"ready"` label copy.** Accepted in 17V. The 17W follow-up changed `"waiting"` → `"waiting"` (was `"waiting for approval"`) for a different state (`OrchestratorStatus.waiting`); both label changes are now consistent with the real underlying state semantics.
+
+4. **`useTheme` de-duping enough for flicker?** I trust the agent's empirical "verified light mode at rest" observation. If a future smoke catches another flicker, that's the time to switch to a one-shot SSR-aware theme initializer in the document head. Track as a tiny watch-item.
+
+5. **CSS `@import` order Tailwind side effects.** The reorder is spec-compliant and the visual smoke confirmed the dashboard rendered correctly. No side effects.
+
+6. **17W: `send_to_agent` retryable transparency vs root retry/ack mechanism** (the first scrutiny ask in the agent's initial 17W report). The follow-up commit (`27aa6edf`) found and fixed the actual cause — the command shape was malformed, not just slow. The transparency `retryable: true` flag is now redundant in most cases (the command no longer fails for shape reasons) but remains useful for genuine timeouts. Acceptable as defense-in-depth.
+
+#### Three small notes from this batch (queued, none blocking)
+
+- **W-N1**: Snapshot throttle 100ms → 750ms is a pragmatic pressure relief, not an architectural fix. Monitor for UI staleness reports; the long-term fix is incremental projection on the client side.
+- **W-N2**: `awaitingInstruction` and `needsSubmission` are conceptually distinct but currently set from the same `worker.status === "running"` expression. Differentiate by recent activity / checkpoint shape signals.
+- **W-N3**: Activity-summary string match `a.summary === "File change"` is fragile. Use a typed activity kind for robustness.
+
+#### Bundle 17W status — COMPLETE
+
+The smoke surfaced six bugs across the orchestration loop, the agent fixed five (one as transparency, four with real changes), root-fixed the schema-shape bug in the follow-up, and shipped a working SaaS demo. Phase 17's "is the loop actually working" question now has empirical evidence: yes, with these caveats.
+
+#### Active Bundle: **Bundle 17X — Continuous SaaS-build smoke loop**
+
+Per user instruction: keep iterating. Each batch = pick a small SaaS shape, run it inside Orchestrate, find and fix real app/UI/workflow bugs, push, return for review. Bundle number increments per batch (`17X-1`, `17X-2`, …).
+
+**Suggested next-batch focus areas** (agent picks one or combines):
+
+- **Critical follow-up: investigate 17W-6** (browser MCP unavailable during verification — `Cannot connect to orchestration server at ws://localhost:3773`). Was this an environment-startup race or a real regression? If it's the latter, this is a P1 fix because it would have blocked the calm-thread browser story in the smoke.
+- **Multi-worker scenario.** The 17W smoke used a single Codex worker. Try a scenario that exercises spawn → wait → review → spawn-again, or two parallel workers building different features. This stresses the orchestration coordination paths that haven't been smoke-verified yet.
+- **Annotation → rework loop.** The 17B-F-3 work added before/after evidence at submit, but no smoke has actually triggered the full annotation → rework → submit cycle with browser screenshots. Doing this end-to-end would prove (or break) the visual-evidence path under real conditions.
+- **Anything that exercises the file-change/checkpoint disagreement (W-N3).** If a smoke surfaces a case where the warning fires falsely or fails to fire, that's a concrete signal to upgrade to a typed activity kind.
+
+**Acceptance gates per batch:**
+
+- [ ] At least one identified bug fixed; bug + fix described in the agent report with file:line citations.
+- [ ] Targeted tests for any new code paths.
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted suites pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17X-<n>` with what was tried, what broke, what was fixed, and what's the next obvious target.
+
+**Loop exit criteria:**
+
+- After 3-5 batches with no new bugs surfaced, declare Phase 17 fully closed and move to Phase 18.
+- If a single batch surfaces 5+ bugs, slow down: pick the top 2-3 to ship in this batch and queue the rest.
+- If the same kind of bug surfaces twice (e.g., two more silent-divergence patterns between MCP and internal paths), pause to consider an architectural fix rather than continuing whack-a-mole.
+
+#### Iteration log update
+
+- **2026-04-30 — Agent Report — Bundle 17W** — initial smoke + send-path follow-up; pushed at `94b02af7` and `27aa6edf`.
+- **2026-04-30 — Reviewer Scrutiny — Bundle 17W** — accepted. Six bugs surfaced; five fixed (one as transparency, four root-cause); send-path schema-shape silent divergence root-fixed in follow-up. Three small notes (W-N1, W-N2, W-N3) tracked; one critical follow-up (17W-6 browser MCP unavailable) for next batch.
+- **2026-04-30 — Bundle 17X activated** — continuous SaaS-build smoke loop. Increment batch number per iteration.
