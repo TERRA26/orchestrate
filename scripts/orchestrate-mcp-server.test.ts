@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMcpBootDiagnostic,
+  buildMcpConnectionFailureMessage,
   buildOrchestrationWsUrls,
   buildWorkerFollowUpTurnStartCommand,
   summarizeBrowserObservation,
@@ -45,6 +46,20 @@ describe("buildMcpBootDiagnostic", () => {
   it("makes stale sessions without Orchestrate env obvious", () => {
     expect(buildMcpBootDiagnostic({})).toBe(
       "orchestrate-mcp-server loaded; port=fallback; auth=missing; parentThread=missing",
+    );
+  });
+});
+
+describe("buildMcpConnectionFailureMessage", () => {
+  it("adds redacted connection diagnostics to websocket failures", () => {
+    expect(
+      buildMcpConnectionFailureMessage(new Error("Cannot connect to orchestration server"), {
+        ORCHESTRATE_WS_PORT: "59685",
+        ORCHESTRATE_AUTH_TOKEN: "secret-token",
+        ORCHESTRATE_PARENT_THREAD_ID: "thread-1",
+      }),
+    ).toBe(
+      "Cannot connect to orchestration server; orchestrate-mcp-server loaded; port=59685; auth=present; parentThread=present",
     );
   });
 });

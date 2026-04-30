@@ -498,6 +498,13 @@ export function buildMcpBootDiagnostic(env: NodeJS.ProcessEnv): string {
   ].join("; ");
 }
 
+export function buildMcpConnectionFailureMessage(
+  error: Error,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return `${error.message}; ${buildMcpBootDiagnostic(env)}`;
+}
+
 let wsConnection: WebSocket | null = null;
 let wsRequestId = 0;
 const wsPending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
@@ -515,7 +522,11 @@ async function ensureWs(): Promise<WebSocket> {
           : new Error(`Cannot connect to orchestration server at ${url}`);
     }
   }
-  throw lastError ?? new Error(`Cannot connect to orchestration server at ${ORCH_WS_URLS[0]}`);
+  throw new Error(
+    buildMcpConnectionFailureMessage(
+      lastError ?? new Error(`Cannot connect to orchestration server at ${ORCH_WS_URLS[0]}`),
+    ),
+  );
 }
 
 function connectWs(url: string): Promise<WebSocket> {

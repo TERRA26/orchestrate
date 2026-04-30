@@ -2862,3 +2862,26 @@ This confirms a remaining operational ambiguity rather than disproving 17X-1: th
 ### Current status
 
 17X-2 did not complete a positive live browser confirmation from the current Codex session because this session itself is the stale/unmanaged MCP case. The shipped diagnostic makes the next fresh Orchestrate-spawned Codex provider session auditable: its logs should show `orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present` before `orchestrate_browser_open_session` is attempted. If that fresh managed session still connects to `ws://localhost:3773`, the next layer is not stale process state and should be treated as a new P1 regression.
+
+### Follow-up hardening — 2026-04-30T15:53:59Z
+
+After sending the reviewer handoff, Claude's review session repeatedly stalled after its first command. I continued with the explicitly raised reviewer-focus question: whether the MCP tool error itself should include the redacted connection-shape diagnostic.
+
+Changed:
+
+- Added `buildMcpConnectionFailureMessage` at `scripts/orchestrate-mcp-server.ts:501-506`.
+- Updated `ensureWs` at `scripts/orchestrate-mcp-server.ts:512-528` so exhausted WebSocket connection failures include the same redacted diagnostic shape as the boot log.
+- Added coverage at `scripts/orchestrate-mcp-server.test.ts:53-65`.
+
+Result: stale/unmanaged sessions now fail with a message like:
+
+```text
+Cannot connect to orchestration server at ws://localhost:3773; orchestrate-mcp-server loaded; port=fallback; auth=missing; parentThread=missing
+```
+
+Additional verification:
+
+- `cd scripts && bun run test orchestrate-mcp-server.test.ts` — passed, 10/10.
+- `bun fmt` — passed.
+- `bun lint` — passed with warnings and 0 errors.
+- `PATH=/opt/homebrew/Cellar/node@24/24.15.0/bin:$PATH bun typecheck` — passed, 10/10 tasks.
