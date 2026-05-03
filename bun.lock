@@ -249,11 +249,13 @@
         "@orchestrate/contracts": "workspace:*",
         "@orchestrate/shared": "workspace:*",
         "effect": "catalog:",
+        "ws": "^8.19.0",
       },
       "devDependencies": {
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
         "@types/bun": "catalog:",
+        "@types/ws": "^8.18.1",
         "typescript": "catalog:",
         "vitest": "catalog:",
       },

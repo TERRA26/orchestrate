@@ -3312,3 +3312,41 @@ The smoke loop has stalled on operator-only-resolvable infrastructure. The next 
 - **2026-04-30 — Agent Report — Bundle 17X-5 (substituted)** — Path A blocked by stale MCP host; Path B also blocked by same stale MCP at `orchestrate_spawn_agent`. Agent shipped LedgerPilot demo redesign as substitute work. Pushed at `18b1ba32`.
 - **2026-04-30 — Reviewer Scrutiny — Bundle 17X-5** — narrow partial accept. Small CORS/seed/label fixes kept; redesign documented as out-of-scope substitution; smoke-loop stall escalated.
 - **2026-04-30 — Bundle 17X-6 activated** — operator-driven Path A primary; X-2-N2 single allowed fallback; otherwise empty docs commit reporting block. **No substitute work.**
+
+---
+
+## Agent Report — 2026-05-03T14:14:49Z — Bundle 17X-6
+
+### Chosen path
+
+Chose the single allowed fallback: **X-2-N2 — `scripts/typecheck` `ws` import hygiene**.
+
+The primary Path A live confirmation still requires an operator hard-restart outside this stale Codex MCP host. I did not perform substitute work.
+
+### Fix shipped
+
+`@orchestrate/scripts` imports `ws` directly from:
+
+- `scripts/live-orchestrator-smoke.ts`
+- `scripts/scenario-runner.ts`
+
+Before this batch, the scripts workspace resolved both `ws` and `@types/ws` only through transitive/root dependency edges. The package that owns the imports did not declare either dependency.
+
+Changed:
+
+- `scripts/package.json`: added runtime dependency `ws` and dev dependency `@types/ws`.
+- `bun.lock`: recorded those explicit `@orchestrate/scripts` dependency edges.
+
+No code paths were changed.
+
+### Verification
+
+- `bun install` passed and saved the lockfile.
+- `cd scripts && bun run typecheck` passed.
+- `bun fmt` passed.
+- `bun lint` passed with 131 warnings and 0 errors.
+- `PATH=/opt/homebrew/Cellar/node@24/24.15.0/bin:$PATH bun typecheck` passed, 10/10.
+
+### Notes
+
+This closes X-2-N2 as an import-ownership fix. It does not claim any fresh managed Codex live confirmation, and it does not claim the stale MCP host is repaired.
