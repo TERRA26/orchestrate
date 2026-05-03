@@ -19,6 +19,7 @@ import {
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   ProviderItemId,
+  DEFAULT_MODEL_BY_PROVIDER,
   ThreadId,
   TurnId,
   WS_CHANNELS,
@@ -76,7 +77,12 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
     status: "ready",
     available: true,
     authStatus: "authenticated",
+    auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
+    enabled: true,
+    installed: true,
+    models: [],
+    version: null,
   },
 ];
 
@@ -821,8 +827,8 @@ describe("WebSocket Server", () => {
           workspaceRoot: "/test/bootstrap-workspace",
           title: "bootstrap-workspace",
           defaultModelSelection: {
-            provider: "codex",
-            model: "gpt-5-codex",
+            provider: "claudeAgent",
+            model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
           },
         }),
       ]),
@@ -834,8 +840,8 @@ describe("WebSocket Server", () => {
           projectId: bootstrapProjectId,
           title: "New thread",
           modelSelection: {
-            provider: "codex",
-            model: "gpt-5-codex",
+            provider: "claudeAgent",
+            model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
           },
           branch: null,
           worktreePath: null,
@@ -904,8 +910,13 @@ describe("WebSocket Server", () => {
       Layer.provide(NodeServices.layer),
     );
 
+    const existingWorkspace = fs.mkdtempSync(
+      path.join(os.tmpdir(), "orchestrate-existing-workspace-"),
+    );
+    const newWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrate-new-cwd-"));
+
     server = await createTestServer({
-      cwd: "/test/existing-workspace",
+      cwd: existingWorkspace,
       baseDir,
       persistenceLayer,
       autoBootstrapProjectFromCwd: false,
@@ -925,7 +936,7 @@ describe("WebSocket Server", () => {
         commandId: "cmd-bootstrap-project-create",
         projectId: "project-existing",
         title: "Existing project",
-        workspaceRoot: "/test/existing-workspace",
+        workspaceRoot: existingWorkspace,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -963,7 +974,7 @@ describe("WebSocket Server", () => {
     server = null;
 
     server = await createTestServer({
-      cwd: "/test/new-cwd",
+      cwd: newWorkspace,
       baseDir,
       persistenceLayer,
       autoBootstrapProjectFromCwd: true,
@@ -976,8 +987,8 @@ describe("WebSocket Server", () => {
     connections.push(ws);
     expect(welcome.data).toEqual(
       expect.objectContaining({
-        cwd: "/test/new-cwd",
-        projectName: "new-cwd",
+        cwd: newWorkspace,
+        projectName: path.basename(newWorkspace),
         bootstrapProjectId: "project-existing",
         bootstrapThreadId: "thread-existing",
       }),
@@ -991,7 +1002,7 @@ describe("WebSocket Server", () => {
     };
 
     expect(snapshot.projects).toEqual(
-      expect.arrayContaining([expect.objectContaining({ workspaceRoot: "/test/new-cwd" })]),
+      expect.arrayContaining([expect.objectContaining({ workspaceRoot: newWorkspace })]),
     );
     expect(snapshot.threads).toEqual([expect.objectContaining({ id: "thread-existing" })]);
   });
@@ -1104,6 +1115,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      homeDir: expect.any(String),
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [
@@ -1259,6 +1271,7 @@ describe("WebSocket Server", () => {
     ) as KeybindingsConfig;
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      homeDir: expect.any(String),
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
@@ -1307,6 +1320,7 @@ describe("WebSocket Server", () => {
     expect(configResponse.error).toBeUndefined();
     expect(configResponse.result).toEqual({
       cwd: "/my/workspace",
+      homeDir: expect.any(String),
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],

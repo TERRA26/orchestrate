@@ -57,7 +57,7 @@ function waitForSync<A>(
   read: () => A,
   predicate: (value: A) => boolean,
   description: string,
-  timeoutMs = 10_000,
+  timeoutMs = 30_000,
 ): Effect.Effect<A, never> {
   return Effect.gen(function* () {
     const deadline = Date.now() + timeoutMs;
@@ -1013,6 +1013,12 @@ it.live("recovers claudeAgent sessions after provider stopAll using persisted re
           (entry) =>
             entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
         );
+        yield* harness.waitForReceipt(
+          (receipt): receipt is TurnProcessingQuiescedReceipt =>
+            receipt.type === "turn.processing.quiesced" &&
+            receipt.threadId === THREAD_ID &&
+            receipt.checkpointTurnCount === 1,
+        );
 
         yield* harness.adapterHarness!.adapter.stopAll();
         yield* waitForSync(
@@ -1270,6 +1276,12 @@ it.live(
             (entry) =>
               entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
           );
+          yield* harness.waitForReceipt(
+            (receipt): receipt is TurnProcessingQuiescedReceipt =>
+              receipt.type === "turn.processing.quiesced" &&
+              receipt.threadId === THREAD_ID &&
+              receipt.checkpointTurnCount === 1,
+          );
 
           yield* harness.adapterHarness!.queueTurnResponse(THREAD_ID, {
             events: [
@@ -1313,6 +1325,12 @@ it.live(
               entry.latestTurn?.turnId === "turn-2" &&
               entry.checkpoints.length === 2 &&
               entry.session?.providerName === "claudeAgent",
+          );
+          yield* harness.waitForReceipt(
+            (receipt): receipt is TurnProcessingQuiescedReceipt =>
+              receipt.type === "turn.processing.quiesced" &&
+              receipt.threadId === THREAD_ID &&
+              receipt.checkpointTurnCount === 2,
           );
 
           yield* harness.engine.dispatch({

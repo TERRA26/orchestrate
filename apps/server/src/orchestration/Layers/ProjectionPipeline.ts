@@ -1566,30 +1566,20 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
         }
 
         case "orchestrator.worker.promoted": {
-          const workers = yield* orchestratorRunsRepository.getWorkersByRunId({
-            runId: event.aggregateId as any,
-          });
-          const existingWorker = workers.find((w) => w.workerId === event.payload.workerId);
-          if (!existingWorker) return;
-          yield* orchestratorRunsRepository.upsertWorker({
-            ...existingWorker,
-            visibility: "foreground",
-            updatedAt: event.payload.promotedAt,
-          });
+          yield* sql`
+            UPDATE orchestrator_workers
+            SET visibility = 'foreground', updated_at = ${event.payload.promotedAt}
+            WHERE worker_id = ${event.payload.workerId}
+          `;
           return;
         }
 
         case "orchestrator.worker.demoted": {
-          const workers = yield* orchestratorRunsRepository.getWorkersByRunId({
-            runId: event.aggregateId as any,
-          });
-          const existingWorker = workers.find((w) => w.workerId === event.payload.workerId);
-          if (!existingWorker) return;
-          yield* orchestratorRunsRepository.upsertWorker({
-            ...existingWorker,
-            visibility: "background",
-            updatedAt: event.payload.demotedAt,
-          });
+          yield* sql`
+            UPDATE orchestrator_workers
+            SET visibility = 'background', updated_at = ${event.payload.demotedAt}
+            WHERE worker_id = ${event.payload.workerId}
+          `;
           return;
         }
 

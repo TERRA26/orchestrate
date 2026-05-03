@@ -263,6 +263,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          threadType: "orchestrator",
+          parentThreadId: null,
           title: "Thread 1",
           modelSelection: {
             provider: "codex",

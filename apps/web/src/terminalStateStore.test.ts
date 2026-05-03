@@ -1,11 +1,23 @@
+// @vitest-environment jsdom
+
 import { ThreadId } from "@orchestrate/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createJSONStorage } from "zustand/middleware";
 
+import { collectTerminalIdsFromLayout } from "./terminalPaneLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
 const ORIGINAL_TERMINAL_STORAGE = useTerminalStateStore.persist.getOptions().storage;
+
+function summarizeTerminalGroups(
+  groups: ReturnType<typeof selectThreadTerminalState>["terminalGroups"],
+) {
+  return groups.map((group) => ({
+    id: group.id,
+    terminalIds: collectTerminalIdsFromLayout(group.layout),
+  }));
+}
 
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
@@ -50,7 +62,18 @@ describe("terminalStateStore actions", () => {
       terminalAttentionStatesById: {},
       runningTerminalIds: [],
       activeTerminalId: "default",
-      terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
+      terminalGroups: [
+        {
+          id: "group-default",
+          activeTerminalId: "default",
+          layout: {
+            type: "terminal",
+            paneId: "pane-default",
+            terminalIds: ["default"],
+            activeTerminalId: "default",
+          },
+        },
+      ],
       activeTerminalGroupId: "group-default",
     });
   });
@@ -96,7 +119,7 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalOpen).toBe(true);
     expect(terminalState.terminalIds).toEqual(["default", "terminal-2"]);
     expect(terminalState.activeTerminalId).toBe("terminal-2");
-    expect(terminalState.terminalGroups).toEqual([
+    expect(summarizeTerminalGroups(terminalState.terminalGroups)).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2"] },
     ]);
   });
@@ -191,12 +214,14 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.workspaceActiveTab).toBe("terminal");
   });
 
-  it("caps splits at four terminals per group", () => {
+  it("caps splits at six terminals per group", () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_ID, "terminal-2");
     store.splitTerminal(THREAD_ID, "terminal-3");
     store.splitTerminal(THREAD_ID, "terminal-4");
     store.splitTerminal(THREAD_ID, "terminal-5");
+    store.splitTerminal(THREAD_ID, "terminal-6");
+    store.splitTerminal(THREAD_ID, "terminal-7");
 
     const terminalState = selectThreadTerminalState(
       useTerminalStateStore.getState().terminalStateByThreadId,
@@ -207,9 +232,21 @@ describe("terminalStateStore actions", () => {
       "terminal-2",
       "terminal-3",
       "terminal-4",
+      "terminal-5",
+      "terminal-6",
     ]);
-    expect(terminalState.terminalGroups).toEqual([
-      { id: "group-default", terminalIds: ["default", "terminal-2", "terminal-3", "terminal-4"] },
+    expect(summarizeTerminalGroups(terminalState.terminalGroups)).toEqual([
+      {
+        id: "group-default",
+        terminalIds: [
+          "default",
+          "terminal-2",
+          "terminal-3",
+          "terminal-4",
+          "terminal-5",
+          "terminal-6",
+        ],
+      },
     ]);
   });
 
@@ -223,7 +260,7 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalIds).toEqual(["default", "terminal-2"]);
     expect(terminalState.activeTerminalId).toBe("terminal-2");
     expect(terminalState.activeTerminalGroupId).toBe("group-terminal-2");
-    expect(terminalState.terminalGroups).toEqual([
+    expect(summarizeTerminalGroups(terminalState.terminalGroups)).toEqual([
       { id: "group-default", terminalIds: ["default"] },
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
@@ -241,7 +278,10 @@ describe("terminalStateStore actions", () => {
       useTerminalStateStore.getState().terminalStateByThreadId,
       THREAD_ID,
     );
-    expect(terminalState.terminalLabelsById).toEqual({ "terminal-2": "Codex CLI" });
+    expect(terminalState.terminalLabelsById).toEqual({
+      default: "Terminal 1",
+      "terminal-2": "Codex 1",
+    });
     expect(terminalState.terminalCliKindsById).toEqual({ "terminal-2": "codex" });
 
     store.closeTerminal(THREAD_ID, "terminal-2");
@@ -250,11 +290,11 @@ describe("terminalStateStore actions", () => {
       useTerminalStateStore.getState().terminalStateByThreadId,
       THREAD_ID,
     );
-    expect(terminalState.terminalLabelsById).toEqual({});
+    expect(terminalState.terminalLabelsById).toEqual({ default: "Terminal 1" });
     expect(terminalState.terminalCliKindsById).toEqual({});
   });
 
-  it("allows unlimited groups while keeping each group capped at four terminals", () => {
+  it("allows unlimited groups while keeping each group capped at six terminals", () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_ID, "terminal-2");
     store.splitTerminal(THREAD_ID, "terminal-3");
@@ -274,7 +314,7 @@ describe("terminalStateStore actions", () => {
       "terminal-5",
       "terminal-6",
     ]);
-    expect(terminalState.terminalGroups).toEqual([
+    expect(summarizeTerminalGroups(terminalState.terminalGroups)).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2", "terminal-3", "terminal-4"] },
       { id: "group-terminal-5", terminalIds: ["terminal-5"] },
       { id: "group-terminal-6", terminalIds: ["terminal-6"] },
@@ -341,7 +381,7 @@ describe("terminalStateStore actions", () => {
     );
     expect(terminalState.activeTerminalId).toBe("terminal-2");
     expect(terminalState.terminalIds).toEqual(["default", "terminal-2"]);
-    expect(terminalState.terminalGroups).toEqual([
+    expect(summarizeTerminalGroups(terminalState.terminalGroups)).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2"] },
     ]);
   });

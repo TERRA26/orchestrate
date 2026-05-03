@@ -59,6 +59,14 @@ function tokenizeQuery(value: string): string[] {
     .filter((token) => token.length > 0);
 }
 
+function buildQueryVariants(query: string): string[] {
+  const variants = new Set([query]);
+  if (query.length >= 5 && (query.endsWith("er") || query.endsWith("or"))) {
+    variants.add(query.slice(0, -1));
+  }
+  return [...variants];
+}
+
 function truncateSnippet(value: string, startIndex: number, queryLength: number): string {
   const SNIPPET_MAX_LENGTH = 88;
   const safeStartIndex = Math.max(0, startIndex);
@@ -244,6 +252,7 @@ export function matchSidebarSearchThreads(
 ): SidebarSearchThreadMatch[] {
   const normalizedQuery = normalizeText(query);
   const queryTokens = tokenizeQuery(query);
+  const queryVariants = buildQueryVariants(normalizedQuery);
 
   if (!normalizedQuery) {
     return threads
@@ -275,6 +284,8 @@ export function matchSidebarSearchThreads(
       let matchKind: SidebarSearchThreadMatch["matchKind"] = "title";
       let snippet: string | null = null;
 
+      const titleVariant = queryVariants.find((variant) => title.startsWith(variant));
+
       if (title === normalizedQuery) {
         score = 170;
         matchKind = "title";
@@ -283,6 +294,9 @@ export function matchSidebarSearchThreads(
         matchKind = "title";
       } else if (title.includes(normalizedQuery)) {
         score = 125;
+        matchKind = "title";
+      } else if (titleVariant && titleVariant !== normalizedQuery) {
+        score = 118;
         matchKind = "title";
       } else if (messageMatch.score !== null) {
         score = messageMatch.score;

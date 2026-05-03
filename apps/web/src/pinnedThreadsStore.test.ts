@@ -2,6 +2,8 @@
 // Purpose: Verifies the global pinned-thread store mutates ids predictably.
 // Layer: UI state store test
 
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, it } from "vitest";
 import { ThreadId } from "@orchestrate/contracts";
 import { usePinnedThreadsStore } from "./pinnedThreadsStore";

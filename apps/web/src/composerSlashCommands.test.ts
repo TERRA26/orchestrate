@@ -159,7 +159,7 @@ describe("composerSlashCommands", () => {
     expect(hasProviderNativeSlashCommand("codex", ["/fast", "model"], "/model")).toBe(true);
   });
 
-  it("never exposes app-level slash commands for claude", () => {
+  it("exposes provider-safe app-level slash commands for claude", () => {
     expect(
       getAvailableComposerSlashCommands({
         provider: "claudeAgent",
@@ -167,7 +167,7 @@ describe("composerSlashCommands", () => {
         canOfferReviewCommand: true,
         canOfferForkCommand: true,
       }),
-    ).toEqual([]);
+    ).toEqual(["clear", "model", "plan", "default", "status", "subagents"]);
   });
 
   it("treats claude aliases like /fork as provider-native collisions", () => {

@@ -56,6 +56,10 @@ class MockWebSocket {
 }
 
 const originalWebSocket = globalThis.WebSocket;
+const emptyServerConfigUpdatedPayload = {
+  issues: [],
+  providers: [],
+} as const;
 
 function getSocket(): MockWebSocket {
   const socket = sockets.at(-1);
@@ -98,7 +102,7 @@ describe("WsTransport", () => {
         type: "push",
         sequence: 1,
         channel: WS_CHANNELS.serverConfigUpdated,
-        data: { issues: [] },
+        data: emptyServerConfigUpdatedPayload,
       }),
     );
 
@@ -107,7 +111,7 @@ describe("WsTransport", () => {
       type: "push",
       sequence: 1,
       channel: WS_CHANNELS.serverConfigUpdated,
-      data: { issues: [] },
+      data: emptyServerConfigUpdatedPayload,
     });
 
     transport.dispose();
@@ -160,7 +164,7 @@ describe("WsTransport", () => {
         type: "push",
         sequence: 3,
         channel: WS_CHANNELS.serverConfigUpdated,
-        data: { issues: [] },
+        data: emptyServerConfigUpdatedPayload,
       }),
     );
 
@@ -169,7 +173,7 @@ describe("WsTransport", () => {
       type: "push",
       sequence: 3,
       channel: WS_CHANNELS.serverConfigUpdated,
-      data: { issues: [] },
+      data: emptyServerConfigUpdatedPayload,
     });
     expect(warnSpy).toHaveBeenCalledTimes(2);
     expect(warnSpy).toHaveBeenNthCalledWith(

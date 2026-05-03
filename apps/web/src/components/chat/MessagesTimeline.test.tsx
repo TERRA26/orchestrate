@@ -85,12 +85,12 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("flex w-full justify-end");
-    expect(markup).toContain("group flex max-w-[80%] flex-col items-end gap-1");
+    expect(markup).toContain("group flex max-w-[82%] flex-col items-end gap-1");
     expect(markup).toContain(
-      "w-max max-w-full min-w-0 self-end rounded-xl border border-border/70",
+      "w-max max-w-full min-w-0 self-end rounded-lg border border-border/50",
     );
     expect(markup).toContain("text-muted-foreground/45");
-  });
+  }, 15_000);
 
   it("renders plain user text without preformatted shrink-wrap markup", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");

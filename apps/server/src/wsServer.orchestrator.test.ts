@@ -19,7 +19,6 @@ import {
   ThreadId,
   TurnId,
   WS_CHANNELS,
-  WS_METHODS,
   type WebSocketResponse,
   type ProviderRuntimeEvent,
   type ServerProvider,
@@ -173,6 +172,38 @@ async function sendRequest(
       return response;
     }
   }
+}
+
+async function getOrchestratorSnapshot(ws: WebSocket) {
+  const snapshotRes = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot, {});
+  expect(snapshotRes.error).toBeUndefined();
+  return snapshotRes.result as {
+    orchestratorTasks?: Array<{
+      taskId: string;
+      runId: string;
+      title: string;
+      status: string;
+      iteration: number;
+    }>;
+    orchestratorWorkers?: Array<{
+      workerId: string;
+      runId: string;
+      threadId: string;
+      status: string;
+      activeTaskId: string | null;
+      modelBinding?: { provider: string; model: string };
+    }>;
+  };
+}
+
+async function getOrchestratorTasks(ws: WebSocket, runId: string) {
+  const snapshot = await getOrchestratorSnapshot(ws);
+  return (snapshot.orchestratorTasks ?? []).filter((task) => task.runId === runId);
+}
+
+async function getOrchestratorWorkers(ws: WebSocket, runId: string) {
+  const snapshot = await getOrchestratorSnapshot(ws);
+  return (snapshot.orchestratorWorkers ?? []).filter((worker) => worker.runId === runId);
 }
 
 async function waitForPush<C extends WsPushChannel>(
@@ -499,8 +530,12 @@ describe("Orchestrator Journey Smoke Tests", () => {
     });
     expect(threadRes.error).toBeUndefined();
 
-    // Create run (auto-creates root task)
-    const runRes = await sendRequest(ws, WS_METHODS.orchestratorCreateRun, {
+    // Create run and root task through the current dispatchCommand API.
+    const runId = `run-journey-${suffix}`;
+    const runRes = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "orchestrator.run.create",
+      commandId: `cmd-${suffix}-run-create`,
+      runId,
       projectId,
       userRequest: `Journey test: ${suffix}`,
       goals: [`Verify ${suffix} flow works end-to-end`],
@@ -512,24 +547,29 @@ describe("Orchestrator Journey Smoke Tests", () => {
         allowedTools: ["edit", "search"],
         writeScope: [],
       },
+      createdAt,
     });
     expect(runRes.error).toBeUndefined();
-    const run = runRes.result as { runId: string; status: string; projectId: string };
-    expect(run.status).toBe("active");
+    const run = { runId, status: "active", projectId };
 
-    // Get root task
-    const taskTreeRes = await sendRequest(ws, WS_METHODS.orchestratorGetTaskTree, {
+    const rootTaskId = `task-journey-${suffix}-root`;
+    const taskCreateRes = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "orchestrator.task.create",
+      commandId: `cmd-${suffix}-task-create`,
+      taskId: rootTaskId,
       runId: run.runId,
+      title: `Root task ${suffix}`,
+      objective: `Verify ${suffix} flow works end-to-end`,
+      acceptanceCriteria: ["Task reaches accepted state"],
+      readScope: [],
+      writeScope: [],
+      allowedTools: ["edit", "search"],
+      createdAt,
     });
-    expect(taskTreeRes.error).toBeUndefined();
-    const tasks = taskTreeRes.result as Array<{
-      taskId: string;
-      title: string;
-      status: string;
-      iteration: number;
-    }>;
+    expect(taskCreateRes.error).toBeUndefined();
+
+    const tasks = await getOrchestratorTasks(ws, run.runId);
     expect(tasks).toHaveLength(1);
-    const rootTaskId = tasks[0]!.taskId;
 
     // Spawn worker with Claude binding
     const workerId = `worker-journey-${suffix}`;
@@ -563,15 +603,7 @@ describe("Orchestrator Journey Smoke Tests", () => {
     expect(workerRes.error).toBeUndefined();
 
     // Verify worker exists in read model
-    const workersRes = await sendRequest(ws, WS_METHODS.orchestratorGetWorkers, {
-      runId: run.runId,
-    });
-    expect(workersRes.error).toBeUndefined();
-    const workers = workersRes.result as Array<{
-      workerId: string;
-      threadId: string;
-      modelBinding?: { provider: string; model: string };
-    }>;
+    const workers = await getOrchestratorWorkers(ws, run.runId);
     expect(workers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -622,13 +654,8 @@ describe("Orchestrator Journey Smoke Tests", () => {
     const now = new Date().toISOString();
 
     // Worker spawn already set the task to "running" — verify via task tree
-    const taskTreeAfterSpawn = await sendRequest(ws, WS_METHODS.orchestratorGetTaskTree, {
-      runId: run.runId,
-    });
-    expect(taskTreeAfterSpawn.error).toBeUndefined();
-    const runningTask = (
-      taskTreeAfterSpawn.result as Array<{ taskId: string; status: string }>
-    ).find((t) => t.taskId === rootTaskId);
+    const taskTreeAfterSpawn = await getOrchestratorTasks(ws, run.runId);
+    const runningTask = taskTreeAfterSpawn.find((t) => t.taskId === rootTaskId);
     expect(runningTask!.status).toBe("running");
 
     // -- Submit the task --
@@ -663,15 +690,7 @@ describe("Orchestrator Journey Smoke Tests", () => {
     });
 
     // -- Verify final state via task tree --
-    const finalTaskTreeRes = await sendRequest(ws, WS_METHODS.orchestratorGetTaskTree, {
-      runId: run.runId,
-    });
-    expect(finalTaskTreeRes.error).toBeUndefined();
-    const finalTasks = finalTaskTreeRes.result as Array<{
-      taskId: string;
-      status: string;
-      iteration: number;
-    }>;
+    const finalTasks = await getOrchestratorTasks(ws, run.runId);
     const finalTask = finalTasks.find((t) => t.taskId === rootTaskId);
     expect(finalTask).toBeDefined();
     expect(finalTask!.status).toBe("accepted");
@@ -738,15 +757,7 @@ describe("Orchestrator Journey Smoke Tests", () => {
     });
 
     // -- Verify task is now needs-rework with iteration=1 --
-    const taskTreeAfterReject = await sendRequest(ws, WS_METHODS.orchestratorGetTaskTree, {
-      runId: run.runId,
-    });
-    expect(taskTreeAfterReject.error).toBeUndefined();
-    const tasksAfterReject = taskTreeAfterReject.result as Array<{
-      taskId: string;
-      status: string;
-      iteration: number;
-    }>;
+    const tasksAfterReject = await getOrchestratorTasks(ws, run.runId);
     const rejectedTask = tasksAfterReject.find((t) => t.taskId === rootTaskId);
     expect(rejectedTask).toBeDefined();
     expect(rejectedTask!.status).toBe("needs-rework");
@@ -790,15 +801,7 @@ describe("Orchestrator Journey Smoke Tests", () => {
     expect(acceptRes.error).toBeUndefined();
 
     // -- Verify final state via task tree --
-    const finalTaskTreeRes = await sendRequest(ws, WS_METHODS.orchestratorGetTaskTree, {
-      runId: run.runId,
-    });
-    expect(finalTaskTreeRes.error).toBeUndefined();
-    const finalTasks = finalTaskTreeRes.result as Array<{
-      taskId: string;
-      status: string;
-      iteration: number;
-    }>;
+    const finalTasks = await getOrchestratorTasks(ws, run.runId);
     const finalTask = finalTasks.find((t) => t.taskId === rootTaskId);
     expect(finalTask).toBeDefined();
     expect(finalTask!.status).toBe("accepted");

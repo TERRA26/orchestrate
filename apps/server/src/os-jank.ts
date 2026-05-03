@@ -2,14 +2,23 @@ import * as OS from "node:os";
 import { Effect, Path } from "effect";
 import { readPathFromLoginShell } from "@orchestrate/shared/shell";
 
-export function fixPath(): void {
-  if (process.platform !== "darwin") return;
+interface FixPathOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly platform?: NodeJS.Platform;
+  readonly readPath?: typeof readPathFromLoginShell;
+}
+
+export function fixPath(options: FixPathOptions = {}): void {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const readPath = options.readPath ?? readPathFromLoginShell;
+  if (platform !== "darwin" && platform !== "linux") return;
 
   try {
-    const shell = process.env.SHELL ?? "/bin/zsh";
-    const result = readPathFromLoginShell(shell);
+    const shell = env.SHELL ?? "/bin/zsh";
+    const result = readPath(shell);
     if (result) {
-      process.env.PATH = result;
+      env.PATH = result;
     }
   } catch {
     // Silently ignore — keep default PATH

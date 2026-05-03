@@ -496,6 +496,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       envMode: "worktree",
       runtimeMode: "full-access",
       interactionMode: "default",
+      threadType: "orchestrator",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
@@ -506,6 +507,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       envMode: "worktree",
       runtimeMode: "full-access",
       interactionMode: "default",
+      threadType: "orchestrator",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
   });

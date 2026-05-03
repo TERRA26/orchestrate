@@ -10,6 +10,7 @@ export default mergeConfig(
       // so the default 15s cap is too aggressive under whole-suite load.
       testTimeout: 120_000,
       hookTimeout: 120_000,
+      fileParallelism: false,
     },
   }),
 );
