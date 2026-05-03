@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `90efd0ac` (`fix(scripts): declare websocket dependencies`) — Bundle 17X-6 reviewed; **ACCEPTED (fallback path executed cleanly)**. Agent took the single allowed fallback (X-2-N2: scripts `ws` import hygiene), shipped the import-only fix exactly as scoped, declared no substitute work and made no claim of live confirmation. **Path A (operator-driven live confirmation of `orchestrate_browser_open_session` after the 17X-1 env fix) is still pending — and is now the only remaining work.** All small scope-allowed fallbacks are exhausted.
-**Active bundle:** **Bundle 17X-7 — Path A live confirmation OR explicit empty-block report**. The diagnostic, redaction, and import-hygiene work is fully complete. There are no more scope-allowed small fallbacks. 17X-7 narrows to two acceptable outcomes: (1) operator-driven hard-restart + fresh Codex session + paste the boot-line + send `orchestrate_browser_open_session` and capture the result; OR (2) empty docs commit reporting the operational block. **No substitute work.**
+**Latest reviewed commit:** `1ed502bf` (`docs: report Bundle 17X-7 live confirmation block`) — Bundle 17X-7 reviewed; **ACCEPTED (empty-block, exactly as spec'd)**. Agent attempted Path A from the only context available (the stale Codex MCP host), captured the diagnostic boot-line `port=3773; auth=missing; parentThread=missing` as concrete evidence the 17X-2 diagnostic does its job, and reported honestly without substitute work. **The loop is now paused on consecutive empty-blocks** pending operator hard-restart.
+**Active bundle:** **Bundle 17X-7 (still active — bundle does not advance on empty-block)**. The next iteration must be Path A executed by the operator (hard-restart → fresh managed Codex session → live `orchestrate_browser_open_session` confirmation). If the operator cannot perform that step in the next round, the reviewer will formally pause the loop until they can.
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -3473,3 +3473,54 @@ This confirms the operator-driven hard restart/fresh managed Codex session is st
 ### Notes
 
 No code paths changed. No demo app polish. No cleanup. No new diagnostic or redaction work.
+
+---
+
+### Reviewer Scrutiny — 2026-05-03 — Bundle 17X-7 (empty-block)
+
+**Verdict: ACCEPTED.** Empty-block report is exactly the shape the 17X-7 spec required. Diff is docs-only (+39 lines). Scope discipline is exemplary, honesty discipline is exemplary, and the captured boot-line is concrete evidence the 17X-2 diagnostic is doing its job.
+
+#### What I verified
+
+- `git diff 48a9866f..1ed502bf` — 1 file (`docs/AGENT_AUDIT.md`), +39/−0. **No code paths changed**, no package.json changes, no test changes, no demo polish, no new diagnostic/redaction work. Exactly the empty-block shape.
+- The agent attempted Path A from the only context they have access to (the stale Codex MCP host), got a clean failure with the diagnostic boot-line `Cannot connect to orchestration server at ws://localhost:3773/; orchestrate-mcp-server loaded; port=3773; auth=missing; parentThread=missing`, and reported it.
+- The boot-line is **bonus evidence** that the 17X-2 work pays off. Without it, the failure would have been the opaque "Cannot connect" stack we saw in 17W-6. With it, anyone reading the failure can immediately see the MCP subprocess is unmanaged (`auth=missing; parentThread=missing`) and route the diagnosis to the right layer.
+- The agent's "Notes" section explicitly states "I did not perform substitute work" — exactly the honesty discipline the 17X-7 spec required after several batches of substitute-pattern stalls.
+- Verification I confirmed via the agent's report and a quick on-machine sanity: `bun fmt` PASS, `bun lint` exit 0, `bun typecheck` 10/10. Nothing changed in code so no code-level test sweep was needed.
+
+#### What this empty-block actually accomplished
+
+The agent didn't ship a fix, but the round was not wasted:
+
+1. **Confirmed the 17X-2 boot-line diagnostic works in production**, against a real failing call. This is the first time the diagnostic has been exercised end-to-end on a real failure path. It produced exactly the expected output and made the failure mode unambiguous.
+2. **Confirmed the stale MCP host is still the operative context** — the same one that has blocked 17X-2 through 17X-6. Nothing changed underneath us during the diagnostic/redaction work.
+3. **Cleanly demonstrated the loop's pause-on-block behavior.** The agent did not invent substitute work the way 17X-5 did. This is the pattern we want for any future blocked iteration.
+
+#### Bundle 17X-7 status — EMPTY-BLOCK ACCEPTED; loop paused on consecutive blocks
+
+Per the loop-exit signal in the prior reviewer scrutiny: this is the first empty-block in the consecutive-block accounting. **The bundle number does not advance.** 17X-7 stays active. The next iteration is binary:
+
+- **Path A executed by the operator** → 17W-6 closes, 17X-1 verified-in-production, loop returns to regular SaaS-build smoke (next bundle = 17Y-1).
+- **A second empty-block** → loop is **formally paused**. Reviewer will not accept further iterations until the operator performs a hard-restart of the desktop stack outside any Codex MCP host context.
+
+**There is no third option.** Substitute work, demo polish, or more diagnostic/redaction tweaks are not acceptable for the next iteration. The diagnostic surface is fully prepared; the only remaining gate is operational.
+
+#### What the operator needs to do (concrete steps)
+
+If the operator wants to keep the loop running, the next steps outside any Codex MCP context are:
+
+1. Quit the desktop stack entirely (close the Electron window, terminate any background `codex app-server` processes, stop `bun run dev:desktop`).
+2. Verify no stale processes survived: `pgrep -fl 'codex app-server'` should return nothing.
+3. Restart with the current main: `bun run dev:desktop` (or whatever the project's start command is).
+4. Open a **new** orchestrator thread (do not reuse a thread that was created against the stale host).
+5. Send a small browser task that invokes `orchestrate_browser_open_session({ url: "https://example.com" })`.
+6. Capture: (a) the first MCP-subprocess stderr line — should be `orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present`; (b) the returned `sessionId` — should start with `electron-visible-`; (c) any error output if the session fails despite the env being correct.
+7. Paste all three into the next agent report.
+
+If any field in the boot-line still says `fallback`/`missing`, that means 17X-1 is incomplete — and we'd have a real new bug to diagnose in 17X-8.
+
+#### Iteration log update
+
+- **2026-05-03 — Agent Report — Bundle 17X-7 (empty-block)** — pushed at `1ed502bf`. Path A attempted from stale MCP host; failure captured with diagnostic boot-line; no substitute work.
+- **2026-05-03 — Reviewer Scrutiny — Bundle 17X-7** — accepted. Empty-block exactly per spec. Bundle does not advance. Next iteration is Path A or formal pause.
+- **2026-05-03 — Bundle 17X-7 remains active** — operator hard-restart required.
