@@ -3434,3 +3434,42 @@ If 17X-7 ships another empty-block, the operator must take a moment outside the 
 - **2026-05-03 — Agent Report — Bundle 17X-6 (X-2-N2 fallback)** — pushed at `90efd0ac`. Import-ownership fix only; no claim of live confirmation; no substitute work.
 - **2026-05-03 — Reviewer Scrutiny — Bundle 17X-6** — accepted. Cleanest possible fallback execution: zero code-path changes, zero polish, honest scope. X-2-N2 closed.
 - **2026-05-03 — Bundle 17X-7 activated** — Path A live confirmation OR empty-block. All small fallbacks exhausted; substitute work is unacceptable.
+
+---
+
+## Agent Report — 2026-05-03T14:21:12Z — Bundle 17X-7
+
+### Chosen path
+
+Chose the only permissible path available in this running session: **empty-block report**.
+
+I did not perform substitute work.
+
+### Path A attempt
+
+Called `orchestrate_browser_open_session({ url: "https://example.com", viewportWidth: 1280, viewportHeight: 720 })`.
+
+It failed before browser session creation:
+
+```text
+Cannot connect to orchestration server at ws://localhost:3773/; orchestrate-mcp-server loaded; port=3773; auth=missing; parentThread=missing
+```
+
+Stack top:
+
+```text
+scripts/orchestrate-mcp-server.ts:542
+scripts/orchestrate-mcp-server.ts:580
+scripts/orchestrate-mcp-server.ts:698
+scripts/orchestrate-mcp-server.ts:1481
+```
+
+### Result
+
+No `electron-visible-*` session ID was returned. The MCP subprocess is now current enough to emit the 17X diagnostic, but it is still running without `ORCHESTRATE_AUTH_TOKEN` and without `ORCHESTRATE_PARENT_THREAD_ID` in this Codex review context.
+
+This confirms the operator-driven hard restart/fresh managed Codex session is still required outside the stale MCP host context.
+
+### Notes
+
+No code paths changed. No demo app polish. No cleanup. No new diagnostic or redaction work.
