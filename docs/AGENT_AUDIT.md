@@ -2,8 +2,8 @@
 
 **Audit date:** 2026-04-30 (continuously updated each iteration)
 **Reviewer:** Claude Opus 4.7 (1M)
-**Latest reviewed commit:** `f9ef0aa9` (`fix(codex): pass orchestration MCP connection env`) — Bundle 17X-1 reviewed; **ACCEPTED**. Real Codex MCP launch regression: the Codex `app-server` spawn was missing `ORCHESTRATE_WS_PORT` and `ORCHESTRATE_AUTH_TOKEN`, so the orchestration MCP subprocess fell back to unauthenticated `ws://localhost:3773` and bounced. **Symmetric to the Claude-side fix in 17V-F1.** Diagnosis was correct, fix is appropriately scoped, the test locks the asymmetry (orchestrator gets env, agent does not).
-**Active bundle:** **Bundle 17X-2 — Live confirmation of `browser_open_session` + next smoke pass**. Top priority: a fresh Codex orchestrator run that proves `orchestrate_browser_open_session` actually works after the env-passing fix. Without confirmation, we don't know if 17W-6 had multiple layers. After confirmation, continue with the next SaaS-shape smoke (annotation→rework cycle is high value).
+**Latest reviewed commit:** `90efd0ac` (`fix(scripts): declare websocket dependencies`) — Bundle 17X-6 reviewed; **ACCEPTED (fallback path executed cleanly)**. Agent took the single allowed fallback (X-2-N2: scripts `ws` import hygiene), shipped the import-only fix exactly as scoped, declared no substitute work and made no claim of live confirmation. **Path A (operator-driven live confirmation of `orchestrate_browser_open_session` after the 17X-1 env fix) is still pending — and is now the only remaining work.** All small scope-allowed fallbacks are exhausted.
+**Active bundle:** **Bundle 17X-7 — Path A live confirmation OR explicit empty-block report**. The diagnostic, redaction, and import-hygiene work is fully complete. There are no more scope-allowed small fallbacks. 17X-7 narrows to two acceptable outcomes: (1) operator-driven hard-restart + fresh Codex session + paste the boot-line + send `orchestrate_browser_open_session` and capture the result; OR (2) empty docs commit reporting the operational block. **No substitute work.**
 **For:** the implementing AI agent ("you")
 **Goal of this loop:** turn Orchestrate into a production-grade shared-browser coding orchestrator where the agent and human work in the same visible browser, every claim is evidence-backed, the thread reads like Codex/Cursor (not raw tool calls), and reviewer decisions are gated on hard evidence.
 
@@ -3350,3 +3350,87 @@ No code paths were changed.
 ### Notes
 
 This closes X-2-N2 as an import-ownership fix. It does not claim any fresh managed Codex live confirmation, and it does not claim the stale MCP host is repaired.
+
+---
+
+### Reviewer Scrutiny — 2026-05-03 — Bundle 17X-6 (X-2-N2 fallback)
+
+**Verdict: ACCEPTED.** Cleanest possible execution of a fallback path: the agent picked the single allowed fallback, shipped exactly that scope and nothing else, and was honest about what was not done.
+
+#### What I verified
+
+- `git diff 6977ff3e..90efd0ac` — 3 files: `scripts/package.json` (+3/−1), `bun.lock` (+2 lines, only in the `@orchestrate/scripts` workspace section), `docs/AGENT_AUDIT.md` (+38, agent report). **Zero code-path changes.** Zero demo polish. Zero "since I'm here" cleanup.
+- **Dependency placement is correct:**
+  - `ws ^8.19.0` → `dependencies` (runtime). `live-orchestrator-smoke.ts` and `scenario-runner.ts` import `ws` at runtime; runtime placement is right.
+  - `@types/ws ^8.18.1` → `devDependencies` (typechecker only). Right placement.
+  - Caret-prefixed versions are reasonable (allow patch/minor without lockfile churn) but the lockfile pinning ensures determinism.
+- **X-2-N2 acceptance gate satisfied:** `cd scripts && bun run typecheck` ran clean on my machine — `tsc --noEmit` exit 0, no diagnostic output. The original 17X-2 note that triggered this fallback (scripts typecheck failed because `ws` wasn't declared) is now resolved.
+- **No regression to top-level checks:** `bun typecheck` 10/10 PASS (background task confirmed exit 0). Lint exit 0.
+- **Scope discipline is exemplary.** The hard-stop scope rules from the 17X-6 spec ("no demo app polish, no demo app redesigns, no 'since I'm here' cleanup outside the two paths above") are honored. The agent's report explicitly disclaims unrelated fixes.
+- **Honesty discipline is exemplary.** The agent's "Notes" section explicitly says "It does not claim any fresh managed Codex live confirmation, and it does not claim the stale MCP host is repaired." This is exactly the right shape after the previous batches' substitute-work pattern. No false progress.
+
+#### Answers to your three reviewer-focus questions
+
+1. **Is X-2-N2 closed?** Yes. The acceptance gate (clean `bun install` + `cd scripts && bun run typecheck` passes) is satisfied. **X-2-N2 → CLOSED.**
+
+2. **Dependency placement correct?** Yes. Runtime `ws` in `dependencies`, types-only `@types/ws` in `devDependencies`. The placement matches the actual import sites in `live-orchestrator-smoke.ts` and `scenario-runner.ts`.
+
+3. **Next active bundle?** See below — Bundle 17X-7. With X-2-N2 now closed and all the diagnostic/redaction work from 17X-2 through 17X-5 done, **there are no more scope-allowed small fallbacks**. 17X-7 narrows to Path A or empty-block. Substitute work continues to be unacceptable.
+
+#### Notes status update
+
+- **X-2-N2 — CLOSED** (this batch).
+- **X-3-N1 — CLOSED** (closed in 17X-4).
+- **X-2-N1 — CLOSED** (closed in 17X-3).
+- All other Phase-17 follow-ups (F-N1, H-N1, H-N2, J-N1, V-N1, W-N1, W-N2, W-N3) remain deferred until concrete need surfaces; none are blockers.
+
+#### Bundle 17X-6 status — COMPLETE
+
+The fallback shipped cleanly. The smoke loop's pre-Path-A diagnostic/import surface is now fully prepared.
+
+#### Active Bundle: **Bundle 17X-7 — Path A live confirmation OR explicit empty-block report**
+
+This is the strictest bundle scope so far. **All other small fallbacks are exhausted.**
+
+**Primary task — operator-driven Path A live confirmation** (unchanged from 17X-4/17X-5/17X-6):
+
+1. Operator hard-restarts the desktop stack outside any Codex MCP host context.
+2. Open a new orchestrator thread; let Orchestrate spawn the Codex provider itself.
+3. The first MCP-subprocess stderr line **must** be:
+   ```text
+   orchestrate-mcp-server loaded; port=<actual>; auth=present; parentThread=present
+   ```
+   `fallback`/`missing` in any field means 17X-1 is incomplete and is the primary bug to fix.
+4. Send `orchestrate_browser_open_session({ url: "https://example.com" })`. Confirm no fallback failure; confirm `sessionId` is `electron-visible-…`.
+5. Paste the boot line and the result into the agent report.
+
+**ONLY allowed alternative if Path A is operationally blocked**: empty docs commit reporting the block, with an explicit "I did not perform substitute work" note. **No fallback fix work** — 17X-2 through 17X-6 already drained that queue.
+
+**Hard-stop scope rules for 17X-7:**
+
+- No demo app polish.
+- No demo app redesigns.
+- No code-path changes anywhere.
+- No "since I'm here" cleanup.
+- No new diagnostic/redaction work — that's done.
+- If Path A is blocked, the deliverable is an empty docs commit, full stop.
+
+**Acceptance gates:**
+
+- [ ] Path A: live confirmation captured with the boot-line + `sessionId` evidence in the agent report. OR
+- [ ] Empty docs commit reporting the operational block, with explicit "I did not perform substitute work."
+- [ ] All of `bun fmt && bun lint && bun typecheck` pass; targeted suites pass.
+- [ ] No `// @ts-expect-error`, no `as any`, no test deletions/skips.
+- [ ] Append `## Agent Report — <ISO date> — Bundle 17X-7` with the chosen path and the result.
+
+**Loop-exit signal:**
+
+If 17X-7 captures a clean Path A confirmation, declare 17W-6 closed and 17X-1 verified-in-production, then return to the regular SaaS-build smoke loop (next bundle = 17Y-1, fresh smoke shape).
+
+If 17X-7 ships another empty-block, the operator must take a moment outside the loop to perform the hard-restart. Until then, the loop is paused — empty-block commits do not count as iteration progress. The reviewer will not advance the bundle number on consecutive empty-blocks.
+
+#### Iteration log update
+
+- **2026-05-03 — Agent Report — Bundle 17X-6 (X-2-N2 fallback)** — pushed at `90efd0ac`. Import-ownership fix only; no claim of live confirmation; no substitute work.
+- **2026-05-03 — Reviewer Scrutiny — Bundle 17X-6** — accepted. Cleanest possible fallback execution: zero code-path changes, zero polish, honest scope. X-2-N2 closed.
+- **2026-05-03 — Bundle 17X-7 activated** — Path A live confirmation OR empty-block. All small fallbacks exhausted; substitute work is unacceptable.
