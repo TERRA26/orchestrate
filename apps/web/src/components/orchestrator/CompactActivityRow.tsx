@@ -6,6 +6,7 @@ import type { WorkLogEntry } from "~/session-logic";
 
 function extractToolArgsPreview(detail: string | undefined): string {
   if (!detail) return "";
+  if (containsRawOrchestrationSelection(detail)) return "";
   const colonIdx = detail.indexOf(":");
   const argsText = colonIdx >= 0 ? detail.slice(colonIdx + 1).trim() : detail;
   if (!argsText.startsWith("{")) return argsText.slice(0, 120).replace(/\s+/g, " ").trim();
@@ -46,6 +47,14 @@ function extractToolArgsPreview(detail: string | undefined): string {
   return argsText.slice(0, 120).replace(/\s+/g, " ").trim();
 }
 
+function containsRawOrchestrationSelection(value: string | undefined): boolean {
+  return (
+    typeof value === "string" &&
+    /(?:^|\s|:)select\s*:/i.test(value) &&
+    /\bmcp__orchestrate__orchestrate_[\w-]+\b/.test(value)
+  );
+}
+
 function BrowserScreenshotThumb({
   screenshot,
 }: {
@@ -65,6 +74,10 @@ function BrowserScreenshotThumb({
 export function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
   const rawToolName = workEntry.toolName?.replace(/^mcp__orchestrate__/, "");
   const isOrchTool = rawToolName?.startsWith("orchestrate_") ?? false;
+  const hasRawOrchestrationSelection =
+    containsRawOrchestrationSelection(workEntry.detail) ||
+    containsRawOrchestrationSelection(workEntry.toolTitle) ||
+    containsRawOrchestrationSelection(workEntry.output);
   const screenshot = browserScreenshotDataUrls(workEntry);
   const runtimeTruthLabel = browserRuntimeTruthLabel(workEntry);
   const phase = phaseForToolEvent({
@@ -80,6 +93,9 @@ export function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
   const label = (() => {
     if (workEntry.command) {
       return `$ ${workEntry.command.split(" ").slice(0, 4).join(" ")}`;
+    }
+    if (hasRawOrchestrationSelection) {
+      return "Selecting orchestration tools";
     }
     if (phase) {
       const target = workEntry.workerId
@@ -116,6 +132,9 @@ export function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
       return "";
     }
     const extracted = extractToolArgsPreview(workEntry.detail);
+    if (containsRawOrchestrationSelection(extracted) || extracted.includes("mcp__orchestrate__")) {
+      return "";
+    }
     const trimmedWorker = workEntry.workerId?.slice(-8);
     if (trimmedWorker && extracted === trimmedWorker) {
       return "";

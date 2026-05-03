@@ -730,6 +730,40 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolTitle).toBe("Search files");
   });
 
+  it("normalizes orchestration MCP select tool calls to semantic tool metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "orchestration-select-tool",
+        kind: "tool.completed",
+        summary: "Tool call",
+        payload: {
+          itemType: "orchestration_tool_call",
+          title:
+            "select:mcp__orchestrate__orchestrate_browser_open_session,mcp__orchestrate__orchestrate_browser_close_session",
+          data: {
+            item: {
+              name: "select",
+              input: {
+                tools: [
+                  "mcp__orchestrate__orchestrate_browser_open_session",
+                  "mcp__orchestrate__orchestrate_browser_close_session",
+                ],
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      toolName: "orchestrate_browser_open_session",
+      itemType: "orchestration_tool_call",
+    });
+    expect(entry?.toolTitle).not.toContain("mcp__orchestrate__");
+    expect(entry?.toolTitle).not.toContain("select:");
+  });
+
   it("keeps compact Codex tool metadata used for icons and labels", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

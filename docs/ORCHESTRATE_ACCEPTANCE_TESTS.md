@@ -7,6 +7,7 @@
 **Non-goals.** This is not a unit-test plan (those live next to source). It is not a contract spec (`packages/contracts` schemas own that). It is not the audit log itself. It is the menu of "Orchestrate should be able to do X" scenarios that Phase-17+ work is meant to make trivially achievable.
 
 **Conventions.**
+
 - Each test has a stable ID (e.g. `AT-01`). New tests append; do not renumber.
 - Acceptance gates are concrete pass/fail bullets. Subjective adjectives ("looks good") are not gates.
 - Evidence requirements specify what durable artifacts must exist after the test. If the agent claims a state but no artifact backs it, the gate fails.
@@ -16,24 +17,25 @@
 
 ## Table of categories
 
-| Category | Tests | Theme |
-|---|---|---|
-| 1. Cold-start sanity | AT-01 .. AT-04 | App boots, ports, auth, MCP wiring |
-| 2. Single browser session | AT-05 .. AT-09 | Open, navigate, observe, screenshot, close |
-| 3. Browser actions | AT-10 .. AT-14 | Click, type, scroll, evaluate with evidence |
-| 4. Single-worker tasks | AT-15 .. AT-19 | Files, commands, builds, plan, submit |
-| 5. Multi-worker orchestration | AT-20 .. AT-24 | Parallel spawn, wait, coordinate, review |
-| 6. Annotation → rework loop | AT-25 .. AT-28 | Comment, focused rework, before/after evidence |
-| 7. Full-stack SaaS build | AT-29 .. AT-32 | Server + web + browser smoke as one task |
-| 8. Calm thread UX | AT-33 .. AT-36 | Semantic phases, no raw tool name leaks |
-| 9. Reliability & restart | AT-37 .. AT-40 | Crashes, port collisions, session recovery |
-| 10. Security & auth | AT-41 .. AT-44 | Env propagation, no token leaks |
+| Category                      | Tests          | Theme                                          |
+| ----------------------------- | -------------- | ---------------------------------------------- |
+| 1. Cold-start sanity          | AT-01 .. AT-04 | App boots, ports, auth, MCP wiring             |
+| 2. Single browser session     | AT-05 .. AT-09 | Open, navigate, observe, screenshot, close     |
+| 3. Browser actions            | AT-10 .. AT-14 | Click, type, scroll, evaluate with evidence    |
+| 4. Single-worker tasks        | AT-15 .. AT-19 | Files, commands, builds, plan, submit          |
+| 5. Multi-worker orchestration | AT-20 .. AT-24 | Parallel spawn, wait, coordinate, review       |
+| 6. Annotation → rework loop   | AT-25 .. AT-28 | Comment, focused rework, before/after evidence |
+| 7. Full-stack SaaS build      | AT-29 .. AT-32 | Server + web + browser smoke as one task       |
+| 8. Calm thread UX             | AT-33 .. AT-36 | Semantic phases, no raw tool name leaks        |
+| 9. Reliability & restart      | AT-37 .. AT-40 | Crashes, port collisions, session recovery     |
+| 10. Security & auth           | AT-41 .. AT-44 | Env propagation, no token leaks                |
 
 ---
 
 ## 1. Cold-start sanity
 
 ### AT-01 — Desktop stack starts cleanly
+
 - **Preconditions**: clean checkout of `main`, no stale `codex app-server` processes (`pgrep -fl 'codex app-server'` returns nothing).
 - **Steps**: run `bun run dev:desktop`. Wait until the Electron window appears.
 - **Acceptance gates**:
@@ -45,6 +47,7 @@
 - **Known gotchas**: stale Codex MCP processes from prior sessions block the smoke loop (audit log: 17X-2 through 17X-7). Always verify clean process state first.
 
 ### AT-02 — Two desktop instances don't collide
+
 - **Preconditions**: AT-01 passed; first instance still running.
 - **Steps**: launch a second desktop instance from another shell with `bun run dev:desktop`.
 - **Acceptance gates**:
@@ -54,6 +57,7 @@
 - **Evidence**: both dev-server logs show different chosen ports; no port-collision diagnostic fires.
 
 ### AT-03 — Orchestrator MCP boot diagnostic fires correctly
+
 - **Preconditions**: AT-01 passed; a fresh orchestrator thread is opened (do not reuse a thread created against a prior stale MCP host).
 - **Steps**: send any orchestration tool call from the new thread.
 - **Acceptance gates**:
@@ -62,6 +66,7 @@
 - **Known gotchas**: if `auth=missing` or `parentThread=missing`, the provider adapter dropped one of the env vars. Audit log: 17V-F1 (Claude side), 17X-1 (Codex side). Fix is symmetric across providers.
 
 ### AT-04 — Headless validator attaches via CDP
+
 - **Preconditions**: AT-01 passed.
 - **Steps**: trigger a `playwright-headless` session indirectly (e.g., via reviewer workflow that explicitly requests headless validation).
 - **Acceptance gates**:
@@ -74,6 +79,7 @@
 ## 2. Single browser session
 
 ### AT-05 — Open session, return electron-visible session id
+
 - **Steps**: agent calls `orchestrate_browser_open_session({ url: "https://example.com" })` from a managed orchestrator thread.
 - **Acceptance gates**:
   - [ ] Returned `sessionId` starts with `electron-visible-`.
@@ -83,6 +89,7 @@
   - [ ] `evidenceRefs` is non-empty and includes a screenshot artifact ref.
 
 ### AT-06 — Observe the same WebContentsView the user sees
+
 - **Preconditions**: AT-05 returned a session.
 - **Steps**: agent calls `orchestrate_browser_act({ sessionId, action: { kind: "observe" } })` (or equivalent observe API). User watches the visible browser panel.
 - **Acceptance gates**:
@@ -92,6 +99,7 @@
 - **Evidence**: durable screenshot artifact whose `sha256` matches the byte content the recorder persisted.
 
 ### AT-07 — Navigate, screenshot, close
+
 - **Steps**: open → navigate to `https://example.com` → observe → close.
 - **Acceptance gates**:
   - [ ] Each step returns within 10s.
@@ -99,6 +107,7 @@
   - [ ] No leftover Playwright browser process (the `connectOverCDP` validator does not close Electron's browser; AT-RU-3 in 17E covers this).
 
 ### AT-08 — Refuse silent fallback when Electron unavailable
+
 - **Steps**: stop the desktop stack mid-test, then issue `orchestrate_browser_open_session({ url: "..." })` from the server side without `preferredRuntimeKind`.
 - **Acceptance gates**:
   - [ ] Call fails with `Effect.fail` and a clear message ("Electron visible browser runtime bridge is unavailable; refusing headless fallback.").
@@ -106,6 +115,7 @@
   - [ ] The failure is recorded as durable evidence (not silently swallowed).
 
 ### AT-09 — Static screenshot evidence path is explicit
+
 - **Steps**: trigger any code path that records a screenshot from a non-live source (e.g., a saved artifact replay).
 - **Acceptance gates**:
   - [ ] Surface mode is `static-screenshot-evidence`.
@@ -116,6 +126,7 @@
 ## 3. Browser actions with evidence
 
 ### AT-10 — Click a button by accessible name
+
 - **Steps**: open a page with a button labeled "Save", agent calls `clickTarget` with `{ kind: "role-name", role: "button", name: "Save" }`.
 - **Acceptance gates**:
   - [ ] Target resolves uniquely (`targetResolution.status === "resolved"`).
@@ -124,6 +135,7 @@
   - [ ] Work-log entry headline reads "Clicked button Save" (semantic phase, not raw `clickTarget`).
 
 ### AT-11 — Type into an input field
+
 - **Steps**: open a page with a text input labeled "Email", agent calls `fillTarget` with the role-name target and a string value.
 - **Acceptance gates**:
   - [ ] Input value reflects the typed string after the action.
@@ -131,6 +143,7 @@
   - [ ] Durable evidence shows the post-action page state.
 
 ### AT-12 — Scroll with semantic label
+
 - **Steps**: scroll the page by an offset.
 - **Acceptance gates**:
   - [ ] Scroll position changes.
@@ -138,6 +151,7 @@
   - [ ] No raw tool name like `orchestrate_browser_act` appears in the user-visible thread.
 
 ### AT-13 — Approval gate fires for risky action
+
 - **Steps**: agent attempts a consequential action (e.g., form submit, payment, auth) that the policy classifies as risky.
 - **Acceptance gates**:
   - [ ] Action is held; an approval request is created.
@@ -147,6 +161,7 @@
   - [ ] Approval cannot be reused (single-use lifecycle).
 
 ### AT-14 — Human takeover preempts agent
+
 - **Steps**: agent is mid-action; user clicks "Take control" in the browser panel.
 - **Acceptance gates**:
   - [ ] Agent's current action is interrupted or refused mid-flight.
@@ -158,6 +173,7 @@
 ## 4. Single-worker tasks
 
 ### AT-15 — Spawn one Codex worker, complete a small task, submit
+
 - **Steps**: orchestrator spawns a single Codex worker with a task like "rename `getCwd` to `getCurrentWorkingDirectory` across `apps/server/src/`."
 - **Acceptance gates**:
   - [ ] Worker is created and dispatched a `thread.turn.start` (per 17B-F-1).
@@ -167,6 +183,7 @@
   - [ ] On accept, after-evidence is captured (visual snapshot if browser-related).
 
 ### AT-16 — Worker runs a build command and reports failure cleanly
+
 - **Steps**: worker is asked to run `bun typecheck` on a known-broken branch.
 - **Acceptance gates**:
   - [ ] Build failure surfaces as a `tone: "error"` work-log entry.
@@ -175,6 +192,7 @@
   - [ ] No silent retry loop without progress.
 
 ### AT-17 — Plan-mode worker proposes a plan before changing files
+
 - **Steps**: spawn a worker with `interactionMode: "plan"`.
 - **Acceptance gates**:
   - [ ] Worker emits a plan first (no file changes).
@@ -182,6 +200,7 @@
   - [ ] Approval to proceed transitions worker to execution mode.
 
 ### AT-18 — Approval-required worker holds before each file write
+
 - **Steps**: spawn with `runtimeMode: "approval-required"`.
 - **Acceptance gates**:
   - [ ] Each consequential action surfaces an approval request.
@@ -189,6 +208,7 @@
   - [ ] Approval audit trail is durable.
 
 ### AT-19 — Worker terminate is honored
+
 - **Steps**: orchestrator calls `orchestrate_terminate_agent({ agentId })` mid-execution.
 - **Acceptance gates**:
   - [ ] Worker's spawned process is killed within 5s.
@@ -201,6 +221,7 @@
 ## 5. Multi-worker orchestration
 
 ### AT-20 — Two parallel workers building independent features
+
 - **Steps**: orchestrator spawns Worker-A ("build the API") and Worker-B ("build the React UI") for the same project.
 - **Acceptance gates**:
   - [ ] Both workers run concurrently.
@@ -209,12 +230,14 @@
   - [ ] Spawn budget is respected (no third worker spawns if `maxConcurrentWriters: 2`).
 
 ### AT-21 — Wait-all coordinates two workers
+
 - **Steps**: after AT-20 spawn, orchestrator calls `orchestrate_wait_all`.
 - **Acceptance gates**:
   - [ ] Returns once both workers reach a terminal status (submitted/accepted/rejected/terminated).
   - [ ] Returns earlier if any worker errors out (no infinite wait).
 
 ### AT-22 — Reviewer evaluates two parallel submissions
+
 - **Steps**: both workers submit; reviewer runs accept/reject decisions on each.
 - **Acceptance gates**:
   - [ ] Each submission has its own evidence bundle.
@@ -222,6 +245,7 @@
   - [ ] User-visible summary explains each decision in plain English.
 
 ### AT-23 — Worker A's failure does not break Worker B
+
 - **Steps**: Worker A is killed mid-flight; Worker B continues.
 - **Acceptance gates**:
   - [ ] Worker B's submission completes normally.
@@ -229,6 +253,7 @@
   - [ ] No corruption of shared state (e.g., projection rows for the orphan worker are cleaned up).
 
 ### AT-24 — Spawn budget is enforced
+
 - **Steps**: orchestrator attempts to spawn worker beyond `maxTotalWorkers`.
 - **Acceptance gates**:
   - [ ] Spawn fails with a clear "spawn budget exceeded" error.
@@ -239,6 +264,7 @@
 ## 6. Annotation → rework loop
 
 ### AT-25 — User annotates the live browser, sees the comment in the thread
+
 - **Steps**: user clicks an element in the browser panel, attaches a comment ("move this button down").
 - **Acceptance gates**:
   - [ ] An annotation card appears in the thread with the comment, target label, and a screenshot crop.
@@ -246,6 +272,7 @@
   - [ ] Before-evidence (full screenshot + DOM snapshot) is captured at annotation creation time.
 
 ### AT-26 — Start-rework spawns a focused worker
+
 - **Steps**: user clicks "Start rework" with `mode: "start-agent-run"`.
 - **Acceptance gates**:
   - [ ] An orchestrator task spawns with focused routes/viewports/evidence.
@@ -254,6 +281,7 @@
   - [ ] On worker start, status transitions to `running`.
 
 ### AT-27 — On submit, after-evidence renders a paired before/after preview
+
 - **Steps**: rework worker submits; reviewer sees the comparison.
 - **Acceptance gates**:
   - [ ] After-evidence (fresh screenshot + DOM snapshot via `BrowserRuntimeService.observe`) is captured at submit time.
@@ -262,6 +290,7 @@
   - [ ] User can visually confirm the change matches the annotation.
 
 ### AT-28 — Reviewer auto-resolves the annotation if the gate passes
+
 - **Steps**: continuing AT-27, reviewer evaluates the rework.
 - **Acceptance gates**:
   - [ ] If gate passes, annotation status transitions to `resolved`.
@@ -273,6 +302,7 @@
 ## 7. Full-stack SaaS build
 
 ### AT-29 — Build a small in-memory SaaS server + dashboard end-to-end
+
 - **Reference**: LedgerPilot smoke (audit log: Bundle 17W).
 - **Steps**: prompt orchestrator with "build a compact subscription-analytics SaaS dashboard with an Express server exposing `/api/<resource>` and a React dashboard with KPI cards, plan-mix bars, accounts table, billing-risk alerts" inside `apps/demo-fullstack` (or a fresh `apps/demo-saas-<name>`).
 - **Acceptance gates**:
@@ -283,6 +313,7 @@
   - [ ] No raw tool names leak into the user-visible thread.
 
 ### AT-30 — The orchestrator coordinates server + web work via two workers
+
 - **Steps**: AT-29, but explicitly prompt the orchestrator to use parallel workers (one server, one web).
 - **Acceptance gates**:
   - [ ] Both submit independently.
@@ -290,6 +321,7 @@
   - [ ] Final dashboard works against the final server.
 
 ### AT-31 — Orchestrator catches a missing CORS / dev-server config
+
 - **Steps**: as AT-29, but the worker's CORS allowlist points at the wrong origin.
 - **Acceptance gates**:
   - [ ] Browser smoke (orchestrator opens the dashboard) sees a network error.
@@ -297,6 +329,7 @@
   - [ ] Worker on rework iteration fixes the CORS and the next smoke passes.
 
 ### AT-32 — User comments on a UI element; rework worker fixes it
+
 - **Steps**: user opens the AT-29 dashboard, annotates "the KPI card spacing is too tight", clicks Start rework.
 - **Acceptance gates**:
   - [ ] AT-25 → AT-28 chain succeeds against this real artifact.
@@ -307,6 +340,7 @@
 ## 8. Calm thread UX
 
 ### AT-33 — No raw tool names in user-visible thread surfaces
+
 - **Steps**: drive any orchestrator task that exercises browser, file-edit, terminal, plan, and worker-spawn tools.
 - **Acceptance gates** (rendered markup search):
   - [ ] No occurrence of `orchestrate_<verb>_<verb>` (e.g. `accept_work`, `spawn_agent`) as user-visible text in the thread.
@@ -315,6 +349,7 @@
 - **Reference tests**: `OrchestratorMessages.test.tsx` (compact rows), `WorkEntryRow.test.tsx` (rich rows).
 
 ### AT-34 — Semantic phase headlines for non-browser work
+
 - **Steps**: agent runs `read`, `edit`, `bash`, `plan_update`, `wait_agent`.
 - **Acceptance gates**:
   - [ ] `read` → "Reading files".
@@ -325,6 +360,7 @@
   - [ ] Unknown tools → fallback label, never the raw tool name.
 
 ### AT-35 — Composer agent-state pill reflects current run
+
 - **Steps**: drive a long-ish task and watch the pill.
 - **Acceptance gates**:
   - [ ] Pill transitions: idle/ready → thinking → working → (waiting | done) → ready.
@@ -332,6 +368,7 @@
   - [ ] On idle/completed, pill reads "ready" with neutral styling (audit log: 17V-F3).
 
 ### AT-36 — Browser evidence card shows the actual screenshot
+
 - **Steps**: any test that produces a `screenshotArtifactRef`.
 - **Acceptance gates**:
   - [ ] Card renders an actual `BrowserScreenshotPreview`, not just the artifact ID as text.
@@ -343,6 +380,7 @@
 ## 9. Reliability & restart
 
 ### AT-37 — Provider session recovers across server restart
+
 - **Steps**: start a long-running orchestrator task; restart the server mid-flight.
 - **Acceptance gates**:
   - [ ] Thread state survives the restart (durable event log replays).
@@ -350,6 +388,7 @@
   - [ ] In-flight worker either resumes or surfaces a clean "interrupted" state — never a phantom "running" with no progress.
 
 ### AT-38 — Port collision falls back to dynamic allocation
+
 - **Reference**: 17H.
 - **Steps**: launch desktop with `ORCHESTRATE_ELECTRON_CDP_PORT=9333`. While running, launch a second instance without setting that env.
 - **Acceptance gates**:
@@ -358,12 +397,14 @@
   - [ ] If both pin 9333, the second startup fails fast with the documented error: `Unable to reserve Electron CDP debug port 127.0.0.1:9333: <cause>. Set ORCHESTRATE_ELECTRON_CDP_PORT to a different port or unset it for dynamic allocation.`
 
 ### AT-39 — Clean shutdown leaves no zombie processes
+
 - **Steps**: launch desktop, spawn 2 workers, shutdown via the app's quit menu.
 - **Acceptance gates**:
   - [ ] After shutdown, `pgrep -fl 'codex app-server'` returns nothing.
   - [ ] No orphan `electron`, `bun`, or `node` processes from this session remain.
 
 ### AT-40 — Stale MCP host produces a clear failure, not a silent hang
+
 - **Reference**: 17W-6, 17X-1, 17X-7.
 - **Steps**: load the orchestration MCP from a session that pre-dates the server, with no env vars set.
 - **Acceptance gates**:
@@ -376,6 +417,7 @@
 ## 10. Security & auth
 
 ### AT-41 — Auth token reaches the spawned MCP subprocess
+
 - **Reference**: 17V-F1 (Claude), 17X-1 (Codex).
 - **Steps**: start a managed session; inspect the MCP subprocess env via `/proc/<pid>/environ` (Linux) or `lsof -p <pid>` (macOS) or test fixture.
 - **Acceptance gates**:
@@ -385,6 +427,7 @@
   - [ ] None of the above are set for non-orchestrator agent threads.
 
 ### AT-42 — Token does not leak into logs or error strings
+
 - **Reference**: 17X-3, 17X-4, V-N1.
 - **Steps**: cause a connection failure with auth enabled; capture the full error chain.
 - **Acceptance gates**:
@@ -392,12 +435,14 @@
   - [ ] The redacted form (`?token=***` or equivalent) appears where the URL would otherwise expose it.
 
 ### AT-43 — Annotation comments do not include cross-thread leakage
+
 - **Steps**: file annotations in two different orchestrator threads on the same project.
 - **Acceptance gates**:
   - [ ] Each annotation is scoped to its thread.
   - [ ] Reviewer decisions in one thread do not leak comment text to the other.
 
 ### AT-44 — Worker workspaces respect write-scope
+
 - **Steps**: spawn a worker with `writeScope: ["apps/web/**"]`. Ask the worker to write a file outside that scope.
 - **Acceptance gates**:
   - [ ] Out-of-scope writes are blocked.

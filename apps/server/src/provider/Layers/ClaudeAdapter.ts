@@ -56,9 +56,9 @@ import { z } from "zod";
 import {
   hasEffortLevel,
   applyClaudePromptEffortPrefix,
-  getModelCapabilities,
   trimOrNull,
 } from "@orchestrate/shared/model";
+import { getClaudeModelCapabilities } from "./ClaudeProvider";
 import {
   Cause,
   DateTime,
@@ -532,7 +532,50 @@ function classifyRequestType(toolName: string): CanonicalRequestType {
       : "dynamic_tool_call";
 }
 
+function bareOrchestrationToolName(toolName: string): string {
+  return toolName.startsWith("mcp__orchestrate__")
+    ? toolName.slice("mcp__orchestrate__".length)
+    : toolName;
+}
+
+function orchestrationToolSummary(toolName: string): string | null {
+  const bareToolName = bareOrchestrationToolName(toolName);
+  if (!ORCHESTRATION_TOOL_NAMES.has(bareToolName)) {
+    return null;
+  }
+  switch (bareToolName) {
+    case "orchestrate_browser_open_session":
+      return "Checking browser";
+    case "orchestrate_browser_act":
+      return "Using browser";
+    case "orchestrate_browser_close_session":
+      return "Closing browser";
+    case "orchestrate_spawn_agent":
+      return "Started worker";
+    case "orchestrate_wait_agent":
+    case "orchestrate_wait_all":
+      return "Waiting";
+    case "orchestrate_accept_work":
+    case "orchestrate_reject_work":
+    case "orchestrate_review_agent_work":
+      return "Reviewing evidence";
+    default:
+      return "Orchestrating";
+  }
+}
+
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
+  const orchestrationSummary = orchestrationToolSummary(toolName);
+  if (orchestrationSummary) {
+    return orchestrationSummary;
+  }
+  if (toolName === "select") {
+    const serialized = JSON.stringify(input);
+    if (serialized.includes("mcp__orchestrate__") || serialized.includes("orchestrate_")) {
+      return "Selecting orchestration tools";
+    }
+  }
+
   const commandValue = input.command ?? input.cmd;
   const command = typeof commandValue === "string" ? commandValue : undefined;
   if (command && command.trim().length > 0) {
@@ -552,6 +595,8 @@ function titleForTool(itemType: CanonicalItemType): string {
       return "Command run";
     case "file_change":
       return "File change";
+    case "orchestration_tool_call":
+      return "Orchestrating";
     case "mcp_tool_call":
       return "MCP tool call";
     case "collab_agent_tool_call":
@@ -945,7 +990,7 @@ function buildPromptText(input: ProviderSendTurnInput): string {
   const requestedEffort = trimOrNull(rawEffort);
   const claudeModel =
     input.modelSelection?.provider === "claudeAgent" ? input.modelSelection.model : undefined;
-  const caps = getModelCapabilities("claudeAgent", claudeModel);
+  const caps = getClaudeModelCapabilities(claudeModel);
   const promptEffort =
     requestedEffort === "ultrathink" && caps.reasoningEffortLevels.length > 0
       ? "ultrathink"
@@ -3078,7 +3123,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 return {
                   behavior: "deny",
                   message:
-                    "Orchestrator threads must use the visible orchestration tools instead of Claude Code's built-in agent/subagent tool. Use orchestrate_spawn_agent, orchestrate_send_to_agent, orchestrate_promote_to_foreground, or related orchestrator tools.",
+                    "Orchestrator threads must use the visible orchestration tools instead of Claude Code's built-in agent/subagent tool. Use spawn_agent, send_to_agent, promote_to_foreground, or related orchestrator tools.",
                 } satisfies PermissionResult;
               }
 
@@ -3239,7 +3284,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const modelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
         const requestedEffort = trimOrNull(modelSelection?.options?.effort ?? null);
-        const caps = getModelCapabilities("claudeAgent", modelSelection?.model);
+        const caps = getClaudeModelCapabilities(modelSelection?.model);
         const effort =
           requestedEffort && hasEffortLevel(caps, requestedEffort) ? requestedEffort : null;
         const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;

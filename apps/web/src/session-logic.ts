@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  ORCHESTRATION_TOOL_NAMES,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
@@ -572,10 +573,15 @@ function collapseDerivedWorkLogEntries(
         const existing = collapsed[existingIndex];
         if (existing) {
           collapsed[existingIndex] = mergeDerivedWorkLogEntries(existing, entry);
+          if (entry.activityKind === "tool.completed") {
+            toolEntryIndexByCollapseKey.delete(entry.collapseKey);
+          }
           continue;
         }
       }
-      toolEntryIndexByCollapseKey.set(entry.collapseKey, collapsed.length);
+      if (entry.activityKind === "tool.updated") {
+        toolEntryIndexByCollapseKey.set(entry.collapseKey, collapsed.length);
+      }
     }
 
     const previous = collapsed.at(-1);
@@ -723,7 +729,7 @@ function extractToolCommand(payload: Record<string, unknown> | null): string | n
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   const direct = asTrimmedString(payload?.title);
-  if (direct) return direct;
+  if (direct && !isRawOrchestrationToolSelection(direct)) return direct;
   // For orchestration MCP tool calls, surface the human-readable task description.
   const data = asRecord(payload?.data);
   const item = asRecord(data?.item);
@@ -736,6 +742,49 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
     asTrimmedString(data?.task),
   ];
   return candidates.find((c) => c !== null) ?? null;
+}
+
+function stripMcpOrchestrationToolPrefix(toolName: string): string {
+  return toolName.startsWith("mcp__orchestrate__")
+    ? toolName.slice("mcp__orchestrate__".length)
+    : toolName;
+}
+
+function isKnownOrchestrationToolName(toolName: string | null): toolName is string {
+  if (!toolName) {
+    return false;
+  }
+  return ORCHESTRATION_TOOL_NAMES.has(stripMcpOrchestrationToolPrefix(toolName));
+}
+
+function firstOrchestrationToolNameFromText(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  for (const match of value.matchAll(/(?:mcp__orchestrate__)?orchestrate_[\w-]+/g)) {
+    const toolName = stripMcpOrchestrationToolPrefix(match[0]);
+    if (ORCHESTRATION_TOOL_NAMES.has(toolName)) {
+      return toolName;
+    }
+  }
+  return null;
+}
+
+function firstOrchestrationToolNameFromPayload(
+  payload: Record<string, unknown> | null,
+): string | null {
+  if (!payload) {
+    return null;
+  }
+  try {
+    return firstOrchestrationToolNameFromText(JSON.stringify(payload));
+  } catch {
+    return null;
+  }
+}
+
+function isRawOrchestrationToolSelection(value: string): boolean {
+  return /^select\s*:/i.test(value) && firstOrchestrationToolNameFromText(value) !== null;
 }
 
 function stripTrailingExitCode(value: string): {
@@ -906,15 +955,27 @@ function extractToolName(payload: Record<string, unknown> | null): string | null
     asTrimmedString(payload?.tool_name) ??
     asTrimmedString(payload?.name);
   if (structuredName) {
-    return normalizeDiscoveredToolName(structuredName);
+    const normalized = normalizeDiscoveredToolName(structuredName);
+    if (normalized === "select") {
+      return firstOrchestrationToolNameFromPayload(payload) ?? normalized;
+    }
+    if (isKnownOrchestrationToolName(normalized)) {
+      return stripMcpOrchestrationToolPrefix(normalized);
+    }
+    return normalized;
   }
 
   const summaryName = extractToolNameFromText(asTrimmedString(payload?.summary));
   if (summaryName) {
-    return summaryName;
+    return isKnownOrchestrationToolName(summaryName)
+      ? stripMcpOrchestrationToolPrefix(summaryName)
+      : summaryName;
   }
 
-  return extractToolNameFromText(asTrimmedString(payload?.detail));
+  const detailName = extractToolNameFromText(asTrimmedString(payload?.detail));
+  return isKnownOrchestrationToolName(detailName)
+    ? stripMcpOrchestrationToolPrefix(detailName)
+    : detailName;
 }
 
 function extractToolNameFromText(value: string | null): string | null {

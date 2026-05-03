@@ -582,6 +582,12 @@ export class DesktopBrowserManager {
       this.activateThread(input.threadId, this.activeBounds);
     }
 
+    const runtime = this.ensureLiveRuntime(input.threadId, activeTab.id);
+    if (this.activeBounds) {
+      this.attachRuntime(runtime, this.activeBounds);
+    }
+    await this.loadTab(input.threadId, activeTab.id, { force: true, runtime });
+
     const sessionId = BrowserSessionId.makeUnsafe(`electron-visible-${Crypto.randomUUID()}`);
     this.runtimeSessions.set(sessionId, { threadId: input.threadId, tabId: activeTab.id });
     const state = this.getOrCreateState(input.threadId);

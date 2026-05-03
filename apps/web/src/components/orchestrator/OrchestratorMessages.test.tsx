@@ -66,4 +66,30 @@ describe("CompactActivityRow", () => {
     expect(markup).not.toContain("orchestrate_");
     expect(markup.toLowerCase()).not.toContain("unknown future tool");
   });
+
+  it("sanitizes orchestration MCP select previews", () => {
+    const markup = renderCompactActivityRow({
+      detail:
+        "select:mcp__orchestrate__orchestrate_browser_open_session,mcp__orchestrate__orchestrate_browser_close_session",
+      label: "Tool call",
+      toolName: "toolsearch",
+    });
+
+    expect(markup).toContain("Selecting orchestration tools");
+    expect(markup).not.toContain("select:mcp__orchestrate__");
+    expect(markup).not.toContain("mcp__orchestrate__");
+  });
+
+  it("drops raw orchestration MCP previews even when the raw selection is already extracted", () => {
+    const markup = renderCompactActivityRow({
+      detail:
+        "mcp__orchestrate__orchestrate_browser_open_session,mcp__orchestrate__orchestrate_browser_close_session",
+      label: "Tool call",
+      output: "ToolSearch: select:mcp__orchestrate__orchestrate_browser_open_session",
+      toolName: "toolsearch",
+    });
+
+    expect(markup).toContain("Selecting orchestration tools");
+    expect(markup).not.toContain("mcp__orchestrate__");
+  });
 });

@@ -19,7 +19,11 @@ export function deriveReadableToolTitle(input: ReadableToolTitleInput): string |
   const commandLabel = input.command ? humanizeCommandToolLabel(input.command) : null;
   const commandLike = input.itemType === "command_execution" || input.requestKind === "command";
 
-  if (normalizedTitle.length > 0 && !isGenericToolTitle(normalizedTitle)) {
+  if (
+    normalizedTitle.length > 0 &&
+    !isGenericToolTitle(normalizedTitle) &&
+    !isRawToolSelectionLabel(normalizedTitle)
+  ) {
     return normalizedTitle;
   }
 
@@ -32,13 +36,17 @@ export function deriveReadableToolTitle(input: ReadableToolTitleInput): string |
     return descriptor;
   }
 
-  if (normalizedFallback.length > 0 && !isGenericToolTitle(normalizedFallback)) {
+  if (
+    normalizedFallback.length > 0 &&
+    !isGenericToolTitle(normalizedFallback) &&
+    !isRawToolSelectionLabel(normalizedFallback)
+  ) {
     return normalizedFallback;
   }
-  if (normalizedTitle.length > 0) {
+  if (normalizedTitle.length > 0 && !isRawToolSelectionLabel(normalizedTitle)) {
     return normalizedTitle;
   }
-  if (normalizedFallback.length > 0) {
+  if (normalizedFallback.length > 0 && !isRawToolSelectionLabel(normalizedFallback)) {
     return normalizedFallback;
   }
   return null;
@@ -64,6 +72,9 @@ function isGenericToolTitle(value: string): boolean {
 
 function normalizeToolDescriptor(value: string | null): string | null {
   if (!value) {
+    return null;
+  }
+  if (isRawToolSelectionLabel(value)) {
     return null;
   }
   const normalized = value.replace(/[_-]/g, " ").replace(/\s+/g, " ").trim();
@@ -101,9 +112,16 @@ function extractToolDescriptorFromPayload(
     if (isGenericToolTitle(normalizeCompactToolLabel(normalized))) {
       continue;
     }
+    if (isRawToolSelectionLabel(normalized)) {
+      continue;
+    }
     return normalized;
   }
   return null;
+}
+
+function isRawToolSelectionLabel(value: string): boolean {
+  return /\bmcp__orchestrate__orchestrate_[\w-]+\b/.test(value) || /^select\s*:/i.test(value);
 }
 
 function collectDescriptorCandidates(
