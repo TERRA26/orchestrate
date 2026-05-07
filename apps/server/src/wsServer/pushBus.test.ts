@@ -12,6 +12,10 @@ class MockWebSocket {
   readonly OPEN = MockWebSocket.OPEN;
   readyState = MockWebSocket.OPEN;
   readonly sent: string[] = [];
+  // ORC-055: ws.WebSocket exposes bufferedAmount; the bus should consult it
+  // to skip slow clients rather than letting their internal send queue
+  // grow unboundedly. Tests can pre-set this to simulate a stalled client.
+  bufferedAmount = 0;
   private readonly waiters = new Set<() => void>();
 
   send(message: string) {
@@ -141,6 +145,48 @@ describe("makeServerPushBus", () => {
           }
         }),
       ),
+  );
+
+  it.live("ORC-055 skips a client whose bufferedAmount exceeds the per-client threshold", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fast = new MockWebSocket();
+        const slow = new MockWebSocket();
+        // 100 MB queued: a stuck client whose receive buffer hasn't drained.
+        slow.bufferedAmount = 100_000_000;
+
+        const slowClientEvents: Array<{
+          readonly bufferedAmount: number;
+          readonly channel: string;
+        }> = [];
+        const clients = yield* Ref.make(
+          new Set<WebSocket>([fast as unknown as WebSocket, slow as unknown as WebSocket]),
+        );
+        const pushBus = yield* makeServerPushBus({
+          clients,
+          logOutgoingPush: () => {},
+          maxBufferedBytesPerClient: 8_000_000,
+          onSlowClient: (info) =>
+            slowClientEvents.push({
+              bufferedAmount: info.bufferedAmount,
+              channel: info.channel,
+            }),
+        });
+
+        yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: [],
+          providers: [],
+        });
+
+        yield* Effect.promise(() => fast.waitForSentCount(1));
+
+        expect(fast.sent.length).toBe(1);
+        expect(slow.sent.length).toBe(0);
+        expect(slowClientEvents.length).toBe(1);
+        expect(slowClientEvents[0]!.bufferedAmount).toBeGreaterThanOrEqual(8_000_000);
+        expect(slowClientEvents[0]!.channel).toBe(WS_CHANNELS.serverConfigUpdated);
+      }),
+    ),
   );
 
   it.live("publishClient resolves false instead of hanging when the queue is full (ORC-045)", () =>

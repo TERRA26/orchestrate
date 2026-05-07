@@ -512,6 +512,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts (push fanout fanout per client)
 - evidence: When the server fans a domain event to all clients, a single slow client cannot stall others, but if push backpressure is per-channel (not per-client), one slow client may delay all clients on that channel. Confirm by reviewing the push loop architecture.
 - proposed_fix: Verify per-client backpressure isolation. If absent, add per-client send queue with per-client overflow handling. Verify push loop continues even when one socket.send rejects.
+- status: DONE
+- fixed_iter: 45
 - status: PENDING
 
 ### ORC-056

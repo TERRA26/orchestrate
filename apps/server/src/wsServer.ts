@@ -624,6 +624,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         "ws push queue full; dropping push",
       );
     },
+    // ORC-055: surface per-client backpressure. The push is skipped for
+    // this client to keep healthy clients moving; the operator sees the
+    // skip via this structured log so a stuck client can be investigated
+    // before it accumulates further state.
+    onSlowClient: (info) => {
+      logger.warn(
+        {
+          event: "wsserver.pushbus.slow-client",
+          channel: info.channel,
+          bufferedAmount: info.bufferedAmount,
+          maxBufferedBytesPerClient: info.maxBufferedBytesPerClient,
+        },
+        "ws client buffered-amount over threshold; skipping push to that client",
+      );
+    },
   });
   setDesktopBrowserBridgePublisher((clientId, channel, data) =>
     Effect.gen(function* () {

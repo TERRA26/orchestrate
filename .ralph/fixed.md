@@ -241,3 +241,49 @@ Adversarial review:
 - Add a Math.max(1, maxQueueDepth) guard if the depth becomes externally configurable.
 - Surface the queue depth as a metric (currently just a log line on overflow); useful for graphs and alerting.
 - Consider per-channel depth tracking so a single chatty channel does not starve others.
+
+### ORC-055 — fixed iter 45 (2026-05-07)
+
+**Root cause**: The push fanout loop in `pushBus.send()` called `client.send(message)` blindly for every connected client. The bus-wide queue is bounded (ORC-045), but each individual `ws.WebSocket` has its own internal send buffer (`bufferedAmount`). When a client's network is slow or its TCP receive window is closed, that buffer grows per-message in memory until either the kernel kills the process or the bus's queue is exhausted. There was no isolation: every push touched every client's buffer.
+
+**Change summary**:
+
+1. Added `maxBufferedBytesPerClient?: number` (default 8 MB) and `onSlowClient?: (info) => void` options to `makeServerPushBus`.
+2. In the fanout loop, before calling `client.send`, read `client.bufferedAmount`. If it's at or above the threshold, skip the client and invoke `onSlowClient`. The push proceeds for healthy clients.
+3. Wired `wsServer.ts` to pass an `onSlowClient` callback that logs a structured `wsserver.pushbus.slow-client` warn so operators can see which client is stuck and act on it.
+
+**Files touched**:
+
+- apps/server/src/wsServer/pushBus.ts (new types, threshold gate in send loop)
+- apps/server/src/wsServer/pushBus.test.ts (added 1 test + extended MockWebSocket with `bufferedAmount`)
+- apps/server/src/wsServer.ts (passes onSlowClient callback)
+
+**Tests added**:
+
+- `ORC-055 skips a client whose bufferedAmount exceeds the per-client threshold` — sets one MockWebSocket to bufferedAmount=100MB, verifies the push reaches the fast client only and `onSlowClient` is invoked once with the right channel/bufferedAmount.
+
+The test fails against the prior implementation (no bufferedAmount check; both clients receive the push).
+
+**Evidence of green run**:
+
+```
+$ bun run vitest --run src/wsServer/pushBus.test.ts
+Test Files  1 passed (1)
+     Tests  4 passed (4)
+```
+
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 135 warnings.
+
+Adversarial review:
+
+- `bufferedAmount` is `undefined` (e.g., a peer that doesn't expose it): the `?? 0` fallback treats it as healthy. ✓
+- Threshold of 0: every push is skipped (the operator's choice). The default of 8 MB is generous enough that healthy clients never trip it.
+- All clients slow at once: every client gets skipped on every push; recipientCount=0; the bus reports delivered=false on publishClient. The Deferred resolves correctly. ✓
+- Slow client recovers (bufferedAmount drops): the next push proceeds normally. No state is held about "previously slow" clients. ✓
+- A reading from `bufferedAmount` is itself synchronous (no extra await), keeping the fanout fast.
+
+**Follow-ups**:
+
+- Consider closing the socket after N consecutive skips (currently we just keep skipping; the client never recovers without action). Track separately.
+- Surface `bufferedAmount` as a metric per-client; would help operators graph slow clients before they hit the threshold.
+- Consider a sliding window (drop only the K oldest queued messages on the slow client's bus side) instead of a hard skip; the current approach is the simplest defense.

@@ -37,6 +37,12 @@ export interface PushBusOverflowInfo {
   readonly maxQueueDepth: number;
 }
 
+export interface PushBusSlowClientInfo {
+  readonly channel: WsPushChannel;
+  readonly bufferedAmount: number;
+  readonly maxBufferedBytesPerClient: number;
+}
+
 // ORC-045: cap the in-memory push queue. With Queue.unbounded a slow client
 // would balloon the queue until the server OOMed. Queue.dropping rejects
 // new offers when full, so the publisher learns immediately and the worker
@@ -44,15 +50,27 @@ export interface PushBusOverflowInfo {
 // trips it; if it does, the structured overflow callback fires.
 const DEFAULT_PUSH_QUEUE_DEPTH = 10_000;
 
+// ORC-055: per-client backpressure threshold. Even though the bus's own
+// queue is bounded (ORC-045), each individual ws.WebSocket has its own
+// internal send buffer (`bufferedAmount`). If a client's network is slow
+// or its TCP receive window is closed, that buffer grows per-message in
+// memory until the kernel kills the process. Skip clients above this
+// threshold so they cannot starve healthy clients.
+const DEFAULT_MAX_BUFFERED_BYTES_PER_CLIENT = 8 * 1024 * 1024;
+
 export const makeServerPushBus = (input: {
   readonly clients: Ref.Ref<Set<WebSocket>>;
   readonly logOutgoingPush: (push: WsPushEnvelopeBase, recipients: number) => void;
   readonly maxQueueDepth?: number;
   readonly onOverflow?: (info: PushBusOverflowInfo) => void;
+  readonly maxBufferedBytesPerClient?: number;
+  readonly onSlowClient?: (info: PushBusSlowClientInfo) => void;
 }): Effect.Effect<ServerPushBus, never, Scope.Scope> =>
   Effect.gen(function* () {
     const nextSequence = yield* Ref.make(0);
     const maxQueueDepth = input.maxQueueDepth ?? DEFAULT_PUSH_QUEUE_DEPTH;
+    const maxBufferedBytesPerClient =
+      input.maxBufferedBytesPerClient ?? DEFAULT_MAX_BUFFERED_BYTES_PER_CLIENT;
     const queue = yield* Queue.dropping<PushJob>(maxQueueDepth);
     const encodePush = Schema.encodeUnknownEffect(Schema.fromJsonString(WsPush));
 
@@ -77,6 +95,23 @@ export const makeServerPushBus = (input: {
           let recipientCount = 0;
           for (const client of recipients) {
             if (client.readyState !== client.OPEN) {
+              continue;
+            }
+            // ORC-055: per-client backpressure. ws.WebSocket exposes
+            // bufferedAmount (bytes queued for transmission). When the
+            // kernel/peer is slow this grows per-send. Skip the client
+            // once it crosses the threshold so a single stuck consumer
+            // cannot OOM the server by accumulating in its private
+            // send buffer.
+            const bufferedAmount = client.bufferedAmount ?? 0;
+            if (bufferedAmount >= maxBufferedBytesPerClient) {
+              if (input.onSlowClient) {
+                input.onSlowClient({
+                  channel: job.channel,
+                  bufferedAmount,
+                  maxBufferedBytesPerClient,
+                });
+              }
               continue;
             }
             client.send(message);
