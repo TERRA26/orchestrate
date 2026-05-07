@@ -37,6 +37,19 @@ export const providerDiscoveryQueryKeys = {
   models: (provider: ProviderKind) => ["provider-discovery", "models", provider] as const,
 };
 
+// Stale times calibrated for ORC-050. Provider discovery results are
+// essentially static within a session: capabilities and model lists do not
+// change unless the provider restarts; skills/commands/plugins change only
+// when a user adds a marketplace entry or modifies disk state. Long stale
+// windows let split-view remounts share a single fetch instead of hammering
+// the underlying RPC channel each time a pane opens.
+const STALE_CAPABILITIES_MS = 10 * 60 * 1000;
+const STALE_DISCOVERY_MS = 5 * 60 * 1000;
+const STALE_MODELS_MS = 10 * 60 * 1000;
+const GC_CAPABILITIES_MS = 30 * 60 * 1000;
+const GC_DISCOVERY_MS = 15 * 60 * 1000;
+const GC_MODELS_MS = 30 * 60 * 1000;
+
 export function providerComposerCapabilitiesQueryOptions(provider: ProviderKind) {
   return queryOptions({
     queryKey: providerDiscoveryQueryKeys.composerCapabilities(provider),
@@ -44,7 +57,8 @@ export function providerComposerCapabilitiesQueryOptions(provider: ProviderKind)
       const api = ensureNativeApi();
       return api.provider.getComposerCapabilities({ provider });
     },
-    staleTime: 10_000,
+    staleTime: STALE_CAPABILITIES_MS,
+    gcTime: GC_CAPABILITIES_MS,
   });
 }
 
@@ -74,7 +88,8 @@ export function providerSkillsQueryOptions(input: {
       });
     },
     enabled: input.enabled ?? true,
-    staleTime: 30_000,
+    staleTime: STALE_DISCOVERY_MS,
+    gcTime: GC_DISCOVERY_MS,
     placeholderData: (previous) => previous ?? EMPTY_SKILLS_RESULT,
   });
 }
@@ -100,7 +115,8 @@ export function providerCommandsQueryOptions(input: {
       });
     },
     enabled: (input.enabled ?? true) && input.cwd !== null,
-    staleTime: 30_000,
+    staleTime: STALE_DISCOVERY_MS,
+    gcTime: GC_DISCOVERY_MS,
     placeholderData: (previous) => previous ?? EMPTY_COMMANDS_RESULT,
   });
 }
@@ -113,7 +129,8 @@ export function providerModelsQueryOptions(input: { provider: ProviderKind; enab
       return api.provider.listModels({ provider: input.provider });
     },
     enabled: input.enabled ?? true,
-    staleTime: 60_000,
+    staleTime: STALE_MODELS_MS,
+    gcTime: GC_MODELS_MS,
     placeholderData: (previous) => previous ?? EMPTY_MODELS_RESULT,
   });
 }
@@ -144,7 +161,8 @@ export function providerPluginsQueryOptions(input: {
       });
     },
     enabled: input.enabled ?? true,
-    staleTime: 30_000,
+    staleTime: STALE_DISCOVERY_MS,
+    gcTime: GC_DISCOVERY_MS,
     placeholderData: (previous) => previous ?? EMPTY_PLUGINS_RESULT,
   });
 }
@@ -170,7 +188,8 @@ export function providerReadPluginQueryOptions(input: {
       });
     },
     enabled: input.enabled ?? true,
-    staleTime: 60_000,
+    staleTime: STALE_MODELS_MS,
+    gcTime: GC_MODELS_MS,
   });
 }
 

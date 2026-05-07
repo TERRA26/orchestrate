@@ -489,7 +489,7 @@ Schema per entry:
 - files: apps/web/src/components/orchestrator/OrchestratorComposer.tsx:169-194
 - evidence: Four useQuery hooks per OrchestratorComposer instance. With multiple panes/sidebars/previews mounted (split view, history scroll), the same queries fire 10+ times concurrently. React Query dedupes if the queryKey is identical, but cache misses still produce N parallel network calls when staleTime is not infinite.
 - proposed_fix: Audit the queryKeys; ensure they are stable across mounts. Consider switching shared lookups to context (single Provider that fetches once and shares) or to the store. Bump staleTime where applicable.
-- status: PENDING
+- status: DONE
 
 ### ORC-051
 

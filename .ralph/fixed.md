@@ -1529,3 +1529,38 @@ All three would fail before the change because the export didn't exist and the c
 - Add a `cache.size` debug endpoint or log line so operators can graph cache utilization.
 - Consider a per-cache cap (the four caches share the same constant today) if profiling shows any one cache dominating memory.
 - The skillsCache key includes threadId; we could separate by cwd to share results across threads in the same repo.
+
+## ORC-050 [iter 74] Provider discovery queries refetched too aggressively
+
+**Root cause**: `apps/web/src/lib/providerDiscoveryReactQuery.ts` exposed React Query options for capabilities/skills/commands/plugins/models with `staleTime: 10s`, `staleTime: 30s`, `staleTime: 30s`, `staleTime: 30s`, and `staleTime: 60s` respectively. Each `OrchestratorComposer` instance subscribes to four of these, ChatView adds another four, and PluginLibrary adds two more. Even with React Query's dedupe, every staleTime expiry forces a fresh round trip across the WebSocket bridge for every active subscriber on the next render. Provider discovery results are essentially static within a session (capabilities and model lists never change; skills/plugins move only when on-disk catalogs change), so the previous values caused unnecessary RPC churn during split-view remounts and history scrolling.
+
+**Change summary**:
+- `apps/web/src/lib/providerDiscoveryReactQuery.ts`: bumped staleTime to 10 minutes for capabilities/models/plugin-detail and 5 minutes for skills/commands/plugins. Added explicit `gcTime` so unmounted queries survive across pane switches (30 min for capabilities/models, 15 min for skills/commands/plugins). Constants (`STALE_*`, `GC_*`) hoisted to module scope with a doc-comment explaining the calibration.
+
+**Files touched**:
+- apps/web/src/lib/providerDiscoveryReactQuery.ts
+- apps/web/src/lib/providerDiscoveryReactQuery.test.ts (NEW)
+
+**Tests added**: 14 new cases in `providerDiscoveryReactQuery.test.ts`:
+1-5. queryKey stability and differentiation (composer-capabilities deterministic, skills equal for same input, distinct keys for different query/cwd/null vs explicit cwd).
+6-11. staleTime is at least 5 minutes for capabilities/models/plugin-read and at least 2 minutes for skills/commands/plugins.
+12-14. gcTime is at least 10 minutes for capabilities and 5 minutes for skills/plugins.
+
+All 9 of the staleTime/gcTime assertions would fail before the change because the previous values were 10s/30s/60s with no explicit gcTime (defaulted to ~5 min in Tanstack Query v5).
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/lib/providerDiscoveryReactQuery.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 14 passed (14)
+- `bun run test` (apps/web full suite, Node 24) -> 846 passed | 1 failed (a pre-existing MessagesTimeline timeout that flakes under CPU contention; baseline without my change had 14 such timeouts)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Plugin/skill install latency: with 5-minute staleTime, a newly installed plugin or skill takes up to 5 minutes to appear unless an invalidation fires. Audited the codebase: there is no in-app plugin install flow today; plugins are managed via the `codex` CLI or by editing on-disk catalogs. The user can refresh the page to see new entries immediately. If a future install flow lands, it should call `queryClient.invalidateQueries({ queryKey: providerDiscoveryQueryKeys.plugins(provider, cwd) })`.
+- Existing invalidations: confirmed the `__root.tsx` `providerQueryKeys.all` invalidation hits the `providers` namespace (checkpoint diffs), not the discovery namespace `provider-discovery`. So the staleTime change does not interact with that invalidation pattern.
+- Search-typing hot loop: skills/commands queries include the trimmed query string in the key. So when a user types "deploy" the keys evolve `""`, `"d"`, `"de"`, etc. With 5-min staleTime each becomes a long-lived cache entry. Acceptable because the same characters typed within 5 minutes hit the cache.
+- gcTime > staleTime invariant maintained: gcTime always >= staleTime so a freshly fetched value is held until past its stale window plus a buffer.
+
+**Follow-ups**:
+- When/if a plugin install or skill add flow lands in the UI, wire `queryClient.invalidateQueries({ queryKey: providerDiscoveryQueryKeys.<scope>(...) })` from the success handler.
+- Consider promoting capabilities to a singleton context so split-view mounts share a single subscription instead of N re-renders. Low priority since the cache already dedupes.
+- Audit the MessagesTimeline timeout flakes (the same 5 tests failed in the baseline) as a separate ticket.
