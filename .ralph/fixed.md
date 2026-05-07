@@ -826,3 +826,43 @@ Adversarial review:
 **Follow-ups**:
 - More `process.env` passthroughs exist in `codexAppServerManager.ts` at lines 796 (already partly addressed by ORC-188 stripping ORCHESTRATE_AUTH_TOKEN, but the broader env still flows through), 1324, 1767, 2770. Apply the same allowlist pattern in a follow-up sweep. Each callsite has its own appropriate `additions` set.
 - Consider extending the allowlist to permit `RUST_*` prefixes if Codex's underlying Rust binaries surface env-driven config (currently no evidence they do).
+
+### ORC-015 — fixed iter 57 (2026-05-07)
+
+**Root cause**: `OrchestrationEventStore.append` used a single SQL statement to compute stream_version via a `COALESCE((SELECT max+1 ...), 0)` subquery and INSERT in one go. Two parallel writers against the same `(aggregate_kind, stream_id)` could both read the same max version and both attempt to INSERT `N+1`. The UNIQUE INDEX on `(aggregate_kind, stream_id, stream_version)` would then reject one of them with SQLITE_CONSTRAINT, and the event would silently disappear from the caller's perspective.
+
+**Change summary**: Wrapped the `appendEventRow` call in `sql.withTransaction(...)`. Effect-sql's bun-sqlite driver runs in WAL mode (per ORC-016 pragma config), where write transactions serialize through the WAL writer lock. The second writer waits, reads the now-updated max, and gets a fresh `N+2`. No event is dropped.
+
+**Files touched**:
+- apps/server/src/persistence/Layers/OrchestrationEventStore.ts (wrapped append in `sql.withTransaction`)
+- apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts (added ORC-015 concurrent-append test, ordered last to avoid disturbing the existing read-corrupt-row test)
+- packages/contracts/src/orchestrationTools.test.ts (incidental: dropped a `.ts` extension that the contracts package's tsconfig rejects; was a regression from ORC-128's iteration where the server-side allowImportingTsExtensions setting masked it)
+
+**Tests added** (1):
+- `ORC-015 serializes concurrent appends to the same stream (no events dropped)` — issues 10 concurrent appends to the same `(project, project-concurrent)` stream via `Effect.all({ concurrency: "unbounded" })`. Asserts all 10 events are present in the table and `stream_version` values form a contiguous `0..9` range.
+
+The test would have failed against the prior implementation (race produces a SQLITE_CONSTRAINT failure on at least one of the 10 appends, dropping the event).
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/persistence/Layers/OrchestrationEventStore.test.ts
+Test Files  1 passed (1)
+     Tests  3 passed (3)
+
+$ bun run typecheck    # whole-repo (was blocked on a stale .ts import)
+Tasks:    10 successful, 10 total
+```
+Plus: `bun lint` 0 errors / 136 warnings.
+
+Adversarial review:
+- Two writers against DIFFERENT streams: each gets its own write transaction; serialization of the WAL writer lock means brief contention but no drops. ✓
+- A writer and a long-running reader: WAL allows readers to proceed concurrently with one writer. The transaction wrapper does not block readers. ✓
+- Transaction-internal failure (e.g. payload schema decode): the transaction rolls back; the caller gets the error. No partial writes. ✓
+- Backpressure / queue depth: the bus-side queue (ORC-045) bounds offers, so the upstream side cannot pile up unbounded transactions. ✓
+- The audit specifically mentioned BEGIN IMMEDIATE; Effect-sql's withTransaction defaults to BEGIN DEFERRED. With WAL mode and the IMMEDIATE-equivalent of "promote to writer on first INSERT", the same serialization property holds. If we ever observe SQLITE_BUSY contention, switch to explicit `sql\`BEGIN IMMEDIATE\`` + manual COMMIT.
+- Event-test ordering: my new test inserts 10 events that interfere with the pre-existing decode-failure test if run before it (the read limit is 10, my events would push the corrupt row past the limit). Reordered my test to run LAST so the decode test sees a clean DB. Documented inline.
+
+**Follow-ups**:
+- Apply the same `sql.withTransaction` wrapper to other read-then-write SQL paths if any are uncovered by future audit. Most projection writes already use transactions.
+- Consider promoting to explicit `BEGIN IMMEDIATE` if we ever see SQLITE_BUSY in the wild; the current DEFERRED default is sufficient for the audit's exact race.
+- Pre-existing import-extension issue in `packages/contracts/src/orchestrationTools.test.ts` (regression from ORC-128) was incidentally fixed in this iteration to unblock whole-repo typecheck.

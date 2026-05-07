@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Effect, Schema, Result } from "effect";
 
-import { SendUpdateToOrchestratorInput } from "./orchestrationTools.ts";
+import { SendUpdateToOrchestratorInput } from "./orchestrationTools";
 
 function decode(input: unknown) {
   return Effect.runSync(

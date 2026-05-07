@@ -116,4 +116,64 @@ layer("OrchestrationEventStore", (it) => {
       }
     }),
   );
+
+  // Place ORC-015 LAST: this test inserts 10 valid events on a unique
+  // streamId. Order matters because the test layer's in-memory SQLite is
+  // shared across `it.effect` blocks: if this test ran before the
+  // PersistenceDecodeError test, those 10 events would push the corrupt
+  // row past the read limit and the decode test would never see it.
+  it.effect(
+    "ORC-015 serializes concurrent appends to the same stream (no events dropped)",
+    () =>
+      Effect.gen(function* () {
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = new Date().toISOString();
+        const projectId = ProjectId.makeUnsafe("project-concurrent");
+
+        // Issue N concurrent appends to the same (aggregateKind, streamId).
+        // Pre-fix this would race and at least one append would fail with a
+        // SQLITE_CONSTRAINT violation against the unique index on
+        // (aggregate_kind, stream_id, stream_version), dropping that event.
+        const N = 10;
+        const appends = Array.from({ length: N }, (_, i) =>
+          eventStore.append({
+            type: "project.meta-updated",
+            eventId: EventId.makeUnsafe(`evt-orc015-${i}`),
+            aggregateKind: "project",
+            aggregateId: projectId,
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe(`cmd-orc015-${i}`),
+            causationEventId: null,
+            correlationId: CommandId.makeUnsafe(`cmd-orc015-${i}`),
+            metadata: {},
+            payload: {
+              projectId,
+              changes: { title: `iteration ${i}` },
+              updatedAt: now,
+            },
+          }),
+        );
+        yield* Effect.all(appends, { concurrency: "unbounded" });
+
+        // All N events must be present (no drops).
+        const rows = yield* sql<{
+          readonly streamVersion: number;
+          readonly eventId: string;
+        }>`
+          SELECT stream_version AS "streamVersion", event_id AS "eventId"
+          FROM orchestration_events
+          WHERE aggregate_kind = ${"project"} AND stream_id = ${projectId}
+          ORDER BY stream_version ASC
+        `;
+        assert.equal(rows.length, N);
+
+        // stream_versions must be a contiguous 0..N-1 with no duplicates.
+        const versions = rows.map((r) => r.streamVersion);
+        assert.deepEqual(
+          versions,
+          Array.from({ length: N }, (_, i) => i),
+        );
+      }),
+  );
 });

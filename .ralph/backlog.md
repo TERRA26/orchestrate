@@ -152,7 +152,8 @@ Schema per entry:
 - files: apps/server/src/persistence/Layers/OrchestrationEventStore.ts:123-133
 - evidence: stream_version is computed via subquery `COALESCE((SELECT stream_version + 1 ... ORDER BY stream_version DESC LIMIT 1), 0)` then INSERTed in the same statement. Two parallel writes against the same (aggregateKind, streamId) can both read the same max version and both attempt to INSERT N+1, hitting the unique index and dropping one event.
 - proposed_fix: Wrap the read-then-insert in a transaction with BEGIN IMMEDIATE so SQLite serializes writers, OR add an explicit application-level mutex per (aggregateKind, streamId), OR use INSERT...ON CONFLICT(stream_version) DO NOTHING then re-read and retry.
-- status: PENDING
+- status: DONE
+- fixed_iter: 57
 
 ### ORC-016
 

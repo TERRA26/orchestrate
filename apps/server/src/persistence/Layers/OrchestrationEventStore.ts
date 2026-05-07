@@ -179,32 +179,49 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
+  // ORC-015: serialize concurrent appends to the same stream. Without a
+  // transaction wrapper, two parallel writers against the same
+  // (aggregate_kind, stream_id) can both compute `max(stream_version)+1`
+  // from the read subquery and race to INSERT the same `N+1` value.
+  // The UNIQUE INDEX on (aggregate_kind, stream_id, stream_version)
+  // turns one of the duplicates into a SQLITE_CONSTRAINT failure, so an
+  // event silently disappears from the caller's perspective.
+  //
+  // sql.withTransaction wraps the statement in a write-transaction.
+  // Effect-sql's bun-sqlite driver runs in WAL mode (see ORC-016
+  // pragmas), where write transactions serialize through the WAL writer
+  // lock. The second writer waits, reads the now-updated max, and gets
+  // a fresh `N+2`. No event is dropped.
   const append: OrchestrationEventStoreShape["append"] = (event) =>
-    appendEventRow({
-      eventId: event.eventId,
-      aggregateKind: event.aggregateKind,
-      streamId: event.aggregateId,
-      type: event.type,
-      causationEventId: event.causationEventId,
-      correlationId: event.correlationId,
-      actorKind: inferActorKind(event),
-      occurredAt: event.occurredAt,
-      commandId: event.commandId,
-      payloadJson: event.payload,
-      metadataJson: event.metadata,
-    }).pipe(
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "OrchestrationEventStore.append:insert",
-          "OrchestrationEventStore.append:decodeRow",
+    sql
+      .withTransaction(
+        appendEventRow({
+          eventId: event.eventId,
+          aggregateKind: event.aggregateKind,
+          streamId: event.aggregateId,
+          type: event.type,
+          causationEventId: event.causationEventId,
+          correlationId: event.correlationId,
+          actorKind: inferActorKind(event),
+          occurredAt: event.occurredAt,
+          commandId: event.commandId,
+          payloadJson: event.payload,
+          metadataJson: event.metadata,
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "OrchestrationEventStore.append:insert",
+            "OrchestrationEventStore.append:decodeRow",
+          ),
         ),
-      ),
-      Effect.flatMap((row) =>
-        decodeEvent(row).pipe(
-          Effect.mapError(toPersistenceDecodeError("OrchestrationEventStore.append:rowToEvent")),
+        Effect.flatMap((row) =>
+          decodeEvent(row).pipe(
+            Effect.mapError(toPersistenceDecodeError("OrchestrationEventStore.append:rowToEvent")),
+          ),
         ),
-      ),
-    );
+      );
 
   const readFromSequence: OrchestrationEventStoreShape["readFromSequence"] = (
     sequenceExclusive,
