@@ -617,3 +617,43 @@ Adversarial review:
 - Consider adding a per-spawn HMAC over the parent_thread_id anyway (defense in depth) so a server that parses envelope from a corrupted file doesn't proceed with bad data. Marginal extra protection; tracked as a follow-up.
 - Document the envelope file format in the `docs/` tree so external integrations (custom orchestrators, CI scaffolding) know the schema.
 - The `_dirname` export in `authTokenProvisioning.ts` is unused now; consider removing in a separate cleanup pass.
+
+### ORC-003 — fixed iter 52 (2026-05-07)
+
+**Root cause**: `executeOrchestrationTool` dispatched by a chained if-checks. Unknown tool names hit the bottom and returned a `{ status: "unimplemented" }` JSON body packaged as a SUCCESSFUL tool result (`isError: false`). The calling agent read the JSON and treated it as a real successful response, which masked typos and version drift between the orchestrator's prompt and the MCP server's dispatcher.
+
+**Change summary**:
+1. Built a `KNOWN_ORCHESTRATION_TOOLS` set from the static `TOOLS` array at module load.
+2. Exported `isKnownOrchestrationTool(name)` for tests and external callers.
+3. `executeOrchestrationTool` now checks `isKnownOrchestrationTool(toolName)` at the top and THROWS for unknown names. The `CallToolRequestSchema` handler catches the throw and returns `{ content: [...], isError: true }` so the orchestrator sees a real failure.
+4. The bottom-of-function fallthrough was rewritten: it now THROWS as well, with a message identifying it as a programming error (the tool was registered but the dispatcher branches don't handle it). Same `isError: true` treatment downstream.
+
+**Files touched**:
+- scripts/orchestrate-mcp-server.ts (added KNOWN_ORCHESTRATION_TOOLS set + isKnownOrchestrationTool export + early throw + bottom throw)
+- scripts/orchestrate-mcp-server.test.ts (added 2 tests for `isKnownOrchestrationTool`)
+
+**Tests added** (2):
+- `recognizes the documented orchestration tool names`
+- `rejects unknown tool names so the dispatcher can fail loud` (covers typos, empty string, foreign tool)
+
+The second test is the key regression: with the prior implementation, an unknown name fell through to the "unimplemented" success path. The new implementation rejects it via the registry helper.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run scripts/orchestrate-mcp-server.test.ts
+Test Files  1 passed (1)
+     Tests  16 passed (16)
+```
+Plus: server `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 136 warnings.
+
+Adversarial review:
+- Typo'd tool name: rejected with a clear message listing the known tools — orchestrator sees `isError: true` instead of a fake success. ✓
+- A tool added to TOOLS but no dispatcher branch added: bottom fallthrough still fires; throw says "programming error in scripts/orchestrate-mcp-server.ts". ✓
+- Empty tool name: `isKnownOrchestrationTool("")` is false → rejected. ✓
+- Whitespace tool name: not in the set → rejected. ✓
+- The `serializeErrorForTool` path already exists in the CallToolRequestSchema handler (line 1602-1612), so the throw is properly serialized as text content. ✓
+
+**Follow-ups**:
+- Consider replacing the long if/else chain in executeOrchestrationTool with a dispatch table keyed by tool name. The fallthrough throw becomes redundant once every tool has a registered handler. Tracked separately as a refactor.
+- The `args` parameter is currently `Record<string, unknown>`; per-tool argument validation should run BEFORE dispatch instead of inside each branch.
+- The error message lists ALL known tools for debugging convenience; in production we may want to truncate for very large registries (currently small enough that listing is fine).

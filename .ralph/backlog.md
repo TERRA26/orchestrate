@@ -39,7 +39,8 @@ Schema per entry:
 - files: scripts/orchestrate-mcp-server.ts:751-1478
 - evidence: executeOrchestrationTool dispatches by chained if-checks. Unknown tool names hit the bottom and return `{ status: "unimplemented" }` packaged as a successful tool result (`isError: false`). Calling agent reads the JSON and treats it as success, which masks typos and version drift.
 - proposed_fix: Add an explicit unknown-tool branch that throws `RouteRequestError` so MCP wraps it as `isError: true`, OR have the registry reject unregistered names at lookup time.
-- status: PENDING
+- status: DONE
+- fixed_iter: 52
 
 ### ORC-004
 

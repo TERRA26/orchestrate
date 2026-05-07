@@ -804,10 +804,30 @@ export function buildWorkerFollowUpTurnStartCommand({
   };
 }
 
+// ORC-003: registered tool names (the static TOOLS array names). Used to
+// fail-fast on unknown tool calls so MCP wraps the response as
+// isError: true rather than returning the misleading "unimplemented"
+// success that masks typos and version drift.
+const KNOWN_ORCHESTRATION_TOOLS: ReadonlySet<string> = new Set(TOOLS.map((t) => t.name));
+
+export function isKnownOrchestrationTool(name: string): boolean {
+  return KNOWN_ORCHESTRATION_TOOLS.has(name);
+}
+
 async function executeOrchestrationTool(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<string> {
+  // ORC-003: refuse unknown tool names up front. The CallTool handler
+  // catches the throw and wraps it as `isError: true`, so the orchestrator
+  // sees a real failure instead of the prior `{status: "unimplemented"}`
+  // success body that looked indistinguishable from a real result.
+  if (!isKnownOrchestrationTool(toolName)) {
+    throw new Error(
+      `Unknown orchestration tool: ${toolName}. ` +
+        `Known tools: ${Array.from(KNOWN_ORCHESTRATION_TOOLS).sort().join(", ")}`,
+    );
+  }
   // Always fetch the snapshot — we need projectId and other fields from the
   // orchestrator thread even when the env var or sidecar provides the threadId.
   const snapshot = await wsRequest("orchestration.getSnapshot");
@@ -1549,15 +1569,14 @@ async function executeOrchestrationTool(
     return JSON.stringify(result);
   }
 
-  // Generic fallback — clearly signal the tool isn't wired yet so the
-  // orchestrator knows to try a different approach instead of waiting
-  // on a ghost response.
-  return JSON.stringify({
-    status: "unimplemented",
-    tool: toolName,
-    args,
-    note: "This orchestration tool is not yet implemented in the MCP server. Use a combination of orchestrate_spawn_agent, orchestrate_wait_agent, orchestrate_get_agent_status, orchestrate_review_agent_work, orchestrate_accept_work, orchestrate_reject_work, and orchestrate_terminate_agent to manage agents.",
-  });
+  // ORC-003: tool name was in the registered set but no branch handled it.
+  // That means the registry and the dispatcher have drifted. Throw so the
+  // CallTool handler reports `isError: true` instead of the prior
+  // misleading "unimplemented" success body.
+  throw new Error(
+    `Registered orchestration tool ${toolName} has no dispatcher branch in executeOrchestrationTool. ` +
+      "This is a programming error in scripts/orchestrate-mcp-server.ts; the tool is in the TOOLS list but the if/else chain does not handle it.",
+  );
 }
 
 // Create MCP server

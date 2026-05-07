@@ -6,6 +6,7 @@ import {
   buildOrchestrationConnectionFallbackError,
   buildOrchestrationWsUrls,
   buildWorkerFollowUpTurnStartCommand,
+  isKnownOrchestrationTool,
   redactOrchestrationWsUrlForLog,
   summarizeBrowserObservation,
 } from "./orchestrate-mcp-server";
@@ -187,5 +188,21 @@ describe("summarizeBrowserObservation", () => {
     expect(summary).not.toHaveProperty("fullPageScreenshotDataUrl");
     expect(summary.screenshot).not.toHaveProperty("dataUrl");
     expect(summary.fullPageScreenshot).not.toHaveProperty("dataUrl");
+  });
+});
+
+describe("isKnownOrchestrationTool (ORC-003)", () => {
+  it("recognizes the documented orchestration tool names", () => {
+    expect(isKnownOrchestrationTool("orchestrate_spawn_agent")).toBe(true);
+    expect(isKnownOrchestrationTool("orchestrate_get_agent_status")).toBe(true);
+    expect(isKnownOrchestrationTool("orchestrate_send_to_agent")).toBe(true);
+    expect(isKnownOrchestrationTool("orchestrate_terminate_agent")).toBe(true);
+  });
+
+  it("rejects unknown tool names so the dispatcher can fail loud", () => {
+    expect(isKnownOrchestrationTool("orchestrate_does_not_exist")).toBe(false);
+    expect(isKnownOrchestrationTool("orchestrate_spwan_agent")).toBe(false); // typo
+    expect(isKnownOrchestrationTool("")).toBe(false);
+    expect(isKnownOrchestrationTool("filesystem_read")).toBe(false);
   });
 });
