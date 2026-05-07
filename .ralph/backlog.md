@@ -288,7 +288,8 @@ Schema per entry:
 - files: docs/ORCHESTRATOR.md:155 (Bash usage guidance)
 - evidence: The doc tells the orchestrator to verify REPORT paths via `Bash ls -la <path>`. There is no documented array-form Bash usage in the ORCHESTRATOR.md. If the orchestrator interpolates the path string into a shell command, command injection happens via shell metacharacters in worker-controlled input.
 - proposed_fix: Update ORCHESTRATOR.md to mandate array form for any path-substituting command, with explicit example. Add a top-of-doc rule: "Never interpolate worker-supplied strings into shell commands; always pass them as separate argv entries."
-- status: PENDING
+- status: DONE
+- fixed_iter: 64
 
 ### ORC-030
 
