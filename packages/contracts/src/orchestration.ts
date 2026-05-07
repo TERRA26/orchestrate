@@ -16,6 +16,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
+import { SafeFilePath } from "./safeFilePath";
 
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
@@ -1694,7 +1695,7 @@ export const OrchestratorTask = Schema.Struct({
   diffStats: Schema.optional(OrchestratorTaskDiffStats),
   // Gap C+F: worker's structured submit report — what the worker says it did.
   submitSummary: Schema.optional(Schema.String),
-  filesWritten: Schema.optional(Schema.Array(Schema.String)),
+  filesWritten: Schema.optional(Schema.Array(SafeFilePath)),
   testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
   submitNotes: Schema.optional(Schema.String),
 });
@@ -1990,7 +1991,7 @@ export const OrchestratorTaskSubmitCommand = Schema.Struct({
   hasChanges: Schema.optional(Schema.Boolean),
   diffStats: Schema.optional(OrchestratorTaskDiffStats),
   // Gap C+F: structured submit report.
-  filesWritten: Schema.optional(Schema.Array(Schema.String)),
+  filesWritten: Schema.optional(Schema.Array(SafeFilePath)),
   testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
   notes: Schema.optional(Schema.String),
   browserAfterScreenshotRef: Schema.optional(EvidenceArtifactId),
@@ -2270,7 +2271,7 @@ export const OrchestratorTaskSubmittedPayload = Schema.Struct({
   hasChanges: Schema.optional(Schema.Boolean),
   diffStats: Schema.optional(OrchestratorTaskDiffStats),
   // Gap C+F: structured submit report.
-  filesWritten: Schema.optional(Schema.Array(Schema.String)),
+  filesWritten: Schema.optional(Schema.Array(SafeFilePath)),
   testsRun: Schema.optional(Schema.Array(OrchestratorTaskTestResult)),
   notes: Schema.optional(Schema.String),
   browserAfterScreenshotRef: Schema.optional(EvidenceArtifactId),

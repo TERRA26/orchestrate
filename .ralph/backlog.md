@@ -268,7 +268,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:437-439,docs/ORCHESTRATOR.md:155
 - evidence: filesWritten paths from a worker REPORT are surfaced via `orchestrate_get_agent_status` without sanitization or scope validation. ORCHESTRATOR.md instructs the orchestrator to "verify paths via Bash ls -la". A worker can emit `filesWritten: ["foo; cat /etc/shadow"]` and if the orchestrator interpolates that path into a shell command, command injection occurs.
 - proposed_fix: Validate filesWritten entries against the spawn writeScope at REPORT-parse time (decider). Reject paths containing shell metacharacters (`;`, `|`, `$`, backticks, newlines). Document the only-array-form Bash usage in ORCHESTRATOR.md with `Bash(["ls", "-la", path])` rather than string interpolation.
-- status: PENDING
+- status: DONE
+- fixed_iter: 62
 
 ### ORC-028
 

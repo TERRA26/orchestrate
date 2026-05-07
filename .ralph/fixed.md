@@ -1042,3 +1042,57 @@ Adversarial review (verified by re-reading the source):
 **Follow-ups**:
 - Track failed `runAttachmentSideEffects` operations and retry them on next bootstrap. Requires a separate `failed_side_effects` SQL table and a startup-time retry loop. Tracked separately as an outbox-pattern improvement.
 - Document the transactional contract in `docs/architecture/event-sourcing.md` so future contributors don't accidentally split the append/project pair.
+
+### ORC-027 — fixed iter 62 (2026-05-07)
+
+**Root cause**: Worker REPORT blocks include a `filesWritten` array. The schema typed those entries as plain `Schema.String`. ORCHESTRATOR.md instructed the orchestrator to "verify the REPORT-listed paths exist via `Bash ls -la <path>`". An adversarial worker could emit `filesWritten: ["foo; cat /etc/shadow"]` and string-interpolating that into the Bash command would execute arbitrary code under the orchestrator's user.
+
+**Change summary**:
+1. New module `packages/contracts/src/safeFilePath.ts`:
+   - `containsShellMetacharacters(path)` regex check covering `;`, `|`, `<`, `>`, `$`, backticks, parens, braces, `&`, quotes, backslash, null bytes, newlines, tabs.
+   - `isSafeFilePath(path)` adds length bounds (non-empty, ≤ 4096 bytes).
+   - `SafeFilePath` Effect Schema using `Schema.makeFilter` to fail decode with a clear message naming the rejected character class.
+2. `packages/contracts/src/orchestration.ts`: replaced `Schema.Array(Schema.String)` with `Schema.Array(SafeFilePath)` for all three `filesWritten` slots (OrchestratorTaskSubmittedEvent line 1697, OrchestratorTaskSubmitCommand line 1993, OrchestratorTaskMeta line 2273).
+3. `docs/ORCHESTRATOR.md`: updated step 3 of the review flow to mandate array-form Bash (`Bash(["ls", "-la", path])`) and reference ORC-027 explicitly.
+
+**Files touched**:
+- packages/contracts/src/safeFilePath.ts (NEW)
+- packages/contracts/src/safeFilePath.test.ts (NEW; 18 tests)
+- packages/contracts/src/orchestration.ts (added import + replaced 3 schema usages)
+- docs/ORCHESTRATOR.md (updated step 3 of review flow)
+
+**Tests added** (18):
+- 9 `containsShellMetacharacters` cases (separators, pipes/redirects, expansion, background/group, quoting, null/tab, ordinary paths, spaces, special-but-safe chars).
+- 5 `isSafeFilePath` cases (empty, length-cap, borderline, shell-meta, ordinary).
+- 4 `SafeFilePath` schema cases (decode-success, decode-fail on shell-meta, empty rejection, non-string rejection).
+
+The schema rejection tests fail against the prior implementation because `Schema.String` accepts everything.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/safeFilePath.test.ts          # contracts package
+Test Files  1 passed (1)
+     Tests  18 passed (18)
+
+$ bun run vitest --run                                    # full contracts suite
+Test Files  13 passed (13)
+     Tests  141 passed (141)
+
+$ bun run typecheck                                       # whole-repo
+Tasks:    10 successful, 10 total
+```
+Plus: `bun lint` 0 errors / 138 warnings.
+
+Adversarial review:
+- Empty path: rejected. ✓
+- 4096-byte path: accepted; 4097 rejected.
+- Path with whitespace (legitimate): accepted (regex doesn't include space).
+- Path with backslash (Windows-style): rejected. Acceptable on POSIX-only deployments.
+- Path traversal (`..`): NOT rejected here; that's a writeScope/git-tree containment concern (separate audit item).
+- Existing data with foreign-meta paths in the projection table: that's projector input from already-processed events; the schema runs on decode of NEW commands. Existing data is not re-decoded against the new constraint. ✓
+- An orchestrator that ignores the docs and uses string-form Bash anyway: the schema's defense-in-depth catches the worker's input before it reaches the orchestrator's tool call. ✓
+
+**Follow-ups**:
+- Add the writeScope path-pattern check at decoder time (separate audit item ORC-026 follow-up about per-spawn write scope enforcement).
+- Apply `SafeFilePath` to other places worker output is shelled out (browser screenshots paths, terminal cwd inputs, etc.) where applicable.
+- Consider a Windows-aware variant that allows `\\` in paths if the codebase ever runs on Windows.
