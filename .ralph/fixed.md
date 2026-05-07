@@ -959,3 +959,51 @@ Adversarial review:
 - Implement the outbox pattern: write a single `checkpoint.captured` command that the projector expands into both `thread.turn.diff.complete` and `thread.activity.append` events in one event-store transaction. This achieves true atomicity at the SQL level. Larger refactor; tracked separately.
 - Investigate Effect-sql's nested-transaction support over bun-sqlite. The deadlock observed during this iteration suggests the nested-transaction path is not exercised by the test suite. File a separate issue.
 - Add a fault-injection test harness for CheckpointReactor that lets us simulate dispatch failures and assert the receipt-bus stream stays consistent. Out of scope for one iteration.
+
+### ORC-018 — fixed iter 60 (2026-05-07)
+
+**Root cause**: `CheckpointReactor.processInputSafely` caught every non-interrupt cause and logged it as a generic warning. Validation failures, transient SQL contention, and genuine programming defects all fell into the same bucket. Operators had no way to filter the log stream and decide which signals demanded attention; the reactor kept consuming inputs as if nothing went wrong.
+
+**Change summary**:
+1. New module `apps/server/src/orchestration/reactorErrorClassification.ts`:
+   - `ReactorErrorCategory = "validation" | "transient" | "unexpected"`.
+   - `VALIDATION_TAGS` set covers CheckpointInvariantError, OrchestrationCommandInvariantError, OrchestrationCommandPreviouslyRejectedError, OrchestrationCommandDecodeError, OrchestrationCommandJsonParseError, OrchestrationProjectorDecodeError.
+   - `TRANSIENT_TAGS` set covers CheckpointUnavailableError, ProjectionRepositoryError.
+   - Anything else (unknown tag, defects, composite causes) is `"unexpected"`.
+   - `classifyReactorErrorTag(tag)` and `classifyReactorCause(cause)` exposed for tests and other reactors.
+2. `processInputSafely` in CheckpointReactor.ts now classifies the cause and chooses the log level:
+   - `"unexpected"` → `Effect.logError`
+   - `"transient"` → `Effect.logWarning("hit a transient error; continuing", ...)` (still continues; retry is a follow-up)
+   - `"validation"` → `Effect.logWarning("rejected an input as a validation error", ...)`
+   Each log carries `{ source, eventType, category, cause }` so operators can filter by category in their log shipper.
+
+**Files touched**:
+- apps/server/src/orchestration/reactorErrorClassification.ts (NEW)
+- apps/server/src/orchestration/reactorErrorClassification.test.ts (NEW; 8 tests)
+- apps/server/src/orchestration/Layers/CheckpointReactor.ts (added import + classification branch in processInputSafely)
+
+**Tests added** (8):
+- 3 `classifyReactorErrorTag` cases (validation tags, transient tags, unknown tags).
+- 5 `classifyReactorCause` cases (validation fail, transient fail, unknown fail, non-tagged fail, defect).
+
+The test that pins the unexpected-tag classification (`MysteryError` → `"unexpected"`) and the defect test (`Cause.die` → `"unexpected"`) are the core regressions: pre-fix all of these would have been treated identically as a warning.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/orchestration/reactorErrorClassification.test.ts
+Test Files  1 passed (1)
+     Tests  8 passed (8)
+```
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 137 warnings.
+
+Adversarial review:
+- Composite cause (parallel/sequential): `extractTaggedError` only classifies single-fail causes; composites fall through to "unexpected" so the operator sees the high-priority signal.
+- Effect 4.0-beta API: `Cause.parallel` and `Cause.isFailType` do not exist; the helper uses `cause.reasons.filter(Cause.isFailReason)` per the actual API.
+- A genuinely transient error that's been logged as warning continues to be processed: same as before, but operators can NOW filter by `category: "transient"` and graph the rate. Retry-with-backoff is a follow-up that needs a per-input retry counter.
+- An unknown error tag from a future Effect-sql or domain change: classified as "unexpected" and logged at error level, prompting investigation.
+
+**Follow-ups**:
+- Implement retry-with-backoff for `transient` errors. Needs a per-input attempt counter and a Schedule.exponential policy. Tracked separately.
+- Implement reactor escalation for `unexpected` errors after N consecutive failures (stop the reactor, surface a high-priority alert). Tracked separately.
+- Emit a structured `runtime.warning` event (alongside the log line) so the orchestrator can react programmatically rather than relying on log scraping. Tracked as part of the "always emit a structured event" portion of the audit.
+- Apply the same classification pattern to other reactors (ProjectionPipeline, OrchestrationReactor) so all error handling is consistent.

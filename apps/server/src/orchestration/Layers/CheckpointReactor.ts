@@ -25,6 +25,7 @@ import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
+import { classifyReactorCause } from "../reactorErrorClassification.ts";
 
 type ReactorInput =
   | {
@@ -768,11 +769,33 @@ const make = Effect.gen(function* () {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
         }
-        return Effect.logWarning("checkpoint reactor failed to process input", {
+        // ORC-018: classify the cause so operators can filter the log
+        // stream by category. Pre-fix every non-interrupt cause was
+        // logged as a generic warning; transient db contention was
+        // indistinguishable from a real programming defect.
+        const category = classifyReactorCause(cause);
+        const payload = {
           source: input.source,
           eventType: input.event.type,
+          category,
           cause: Cause.pretty(cause),
-        });
+        };
+        if (category === "unexpected") {
+          return Effect.logError(
+            "checkpoint reactor failed to process input (unexpected error)",
+            payload,
+          );
+        }
+        if (category === "transient") {
+          return Effect.logWarning(
+            "checkpoint reactor hit a transient error; continuing",
+            payload,
+          );
+        }
+        return Effect.logWarning(
+          "checkpoint reactor rejected an input as a validation error",
+          payload,
+        );
       }),
     );
 

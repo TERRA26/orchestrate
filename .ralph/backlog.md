@@ -182,7 +182,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/CheckpointReactor.ts:753-765
 - evidence: `processInputSafely` catches all causes (except interrupts) and downgrades them to `Effect.logWarning`. Real errors (git failures, checkpoint store failures, dispatch errors) are swallowed; the reactor keeps consuming inputs as if nothing went wrong, producing orphaned state silently.
 - proposed_fix: Categorize errors. Transient (EAGAIN, lock contention) retry with backoff. Validation errors fail the input. Unexpected errors are escalated and stop the reactor. Always emit a structured error event so the orchestrator (and operator) can see what went wrong.
-- status: PENDING
+- status: DONE
+- fixed_iter: 60
 
 ### ORC-019
 
