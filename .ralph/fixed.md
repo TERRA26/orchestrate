@@ -1007,3 +1007,38 @@ Adversarial review:
 - Implement reactor escalation for `unexpected` errors after N consecutive failures (stop the reactor, surface a high-priority alert). Tracked separately.
 - Emit a structured `runtime.warning` event (alongside the log line) so the orchestrator can react programmatically rather than relying on log scraping. Tracked as part of the "always emit a structured event" portion of the audit.
 - Apply the same classification pattern to other reactors (ProjectionPipeline, OrchestrationReactor) so all error handling is consistent.
+
+### ORC-024 — verified iter 61 (2026-05-07)
+
+**Root cause investigation**: The audit claimed that event append and projection update happen as two separate steps with no compensating retry loop. Investigation reveals this is incorrect against the current codebase:
+
+1. `OrchestrationEngine.dispatch` wraps the entire `eventStore.append` + `projectEvent` + `projectionPipeline.projectEvent` + `commandReceiptRepository.upsert` chain in a SINGLE `sql.withTransaction` block (apps/server/src/orchestration/Layers/OrchestrationEngine.ts:150-179). If any step fails, all four roll back.
+
+2. `ProjectionPipeline.bootstrap` (apps/server/src/orchestration/Layers/ProjectionPipeline.ts:1705-1719) replays events from each projector's `last_applied_sequence` on startup. If the server crashes mid-transaction, the next boot picks up where the projection left off.
+
+3. Each per-event projection (`runProjectorForEvent` at line 1681-1691) wraps `projector.apply(event) + projectionStateRepository.upsert(lastAppliedSequence)` in another `sql.withTransaction` so the projector's state advance is atomic with the projector's actual write.
+
+4. Existing regression test `resumes from projector last_applied_sequence without replaying older events` (apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts:1101-1226) explicitly covers the scenario the audit describes:
+   - Append 3 events.
+   - Bootstrap (projects them).
+   - Append a 4th event.
+   - Bootstrap (catches up; only the new event is projected).
+   - Verify projection state matches max event sequence.
+
+**Disposition**: No code change required. The audit's concern was a false-positive against this codebase. Mark DONE with this documentation so future readers see the existing infrastructure documented in fixed.md.
+
+**Files touched**: 0 (state files only).
+
+**Tests added**: 0 (existing `resumes from projector last_applied_sequence` test serves as the regression guard).
+
+**Evidence of green run**: Existing test in ProjectionPipeline.test.ts is part of the ProjectionPipeline test suite which the project runs in CI. Last verified green during ORC-015 iteration's run-through of the broader test surface.
+
+Adversarial review (verified by re-reading the source):
+- Engine path is fully transactional from append through projection to receipt-upsert. ✓
+- Bootstrap-replay path catches missed projections on restart. ✓
+- Idempotency: bootstrap is safe to run repeatedly because `last_applied_sequence` only advances forward. ✓
+- Secondary concern (NOT addressed by this verification): `runAttachmentSideEffects` runs OUTSIDE the transaction so attachment-file deletions can fail silently after the projection commits. The projector's state has advanced past the event so a future bootstrap won't retry the file delete. Captured as a follow-up.
+
+**Follow-ups**:
+- Track failed `runAttachmentSideEffects` operations and retry them on next bootstrap. Requires a separate `failed_side_effects` SQL table and a startup-time retry loop. Tracked separately as an outbox-pattern improvement.
+- Document the transactional contract in `docs/architecture/event-sourcing.md` so future contributors don't accidentally split the append/project pair.

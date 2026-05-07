@@ -237,7 +237,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/CheckpointReactor.ts (and ProjectionPipeline integration)
 - evidence: Event-append and projection-update happen in two separate steps. If the projection step fails after the event was appended, the read model diverges from the event store and the user sees stale data until restart-replay catches up. There is no compensating retry loop.
 - proposed_fix: Either run the projection inside the same transaction as the append, OR keep them separate but record per-event "projected" markers and add a startup retry that catches missed projections.
-- status: PENDING
+- status: DONE
+- fixed_iter: 61
+- disposition: audit's claim that "no compensating retry loop" exists is incorrect; OrchestrationEngine wraps event append + projection in a single sql.withTransaction (line 150), and ProjectionPipeline.bootstrap replays from the projector's last_applied_sequence on startup. The existing test "resumes from projector last_applied_sequence" pins this contract. No code change required.
 
 ### ORC-025
 
