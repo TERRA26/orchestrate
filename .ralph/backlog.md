@@ -1940,6 +1940,8 @@ Schema per entry:
 - files: apps/server/src/main.ts (no process.on handlers)
 - evidence: There are no `process.on("unhandledRejection")` or `process.on("uncaughtException")` handlers in the server bootstrap. An async path that throws outside Effect's scope crashes the server with no log line and no clean shutdown of DB / sockets / subprocesses.
 - proposed_fix: Add handlers in main.ts that log via the structured logger, attempt a 500ms graceful shutdown (close DB, close subprocesses, drain WS), then exit. Avoid masking the error by always re-throwing or process.exit(1) after cleanup.
+- status: DONE
+- fixed_iter: 48
 - status: PENDING
 
 ### ORC-214

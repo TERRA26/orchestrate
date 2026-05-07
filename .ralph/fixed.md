@@ -401,3 +401,58 @@ Adversarial review:
 - Apply the same path-based provisioning to any other places auth tokens enter subprocess env. None observed in current code (server-side spawns of providers go through this manager); track as a pattern audit follow-up.
 - Add a similar pattern for OAuth credentials and provider API keys when the server gains the ability to forward those. Currently those live in user config files outside our subprocess env path.
 - Document the new `ORCHESTRATE_AUTH_TOKEN_FILE` env var in the server README so external callers (tests, integration harnesses) know the new wire shape.
+
+### ORC-213 — fixed iter 48 (2026-05-07)
+
+**Root cause**: The server bootstrap registered no `process.on("unhandledRejection")` or `process.on("uncaughtException")` handlers. An async throw outside Effect's scope (legacy Node code path, third-party callback that swallowed Effect's error type) crashed the process silently with no log line and no clean shutdown of DB / WebSocket clients / Codex subprocesses.
+
+**Change summary**:
+
+1. New module `apps/server/src/processHandlers.ts`:
+   - `makeUnhandledRejectionHandler(deps)` and `makeUncaughtExceptionHandler(deps)` return pure handler functions, exported separately so tests can invoke them directly without polluting `process`.
+   - `installCrashHandlers(deps)` registers both on the global `process` and returns an unregister function.
+   - Each handler logs a structured payload (`event: process.unhandled-rejection|uncaught-exception`, serialized error reason) and triggers a bounded graceful shutdown via the caller's `shutdown` callback, then `exit(1)`.
+   - Shutdown is bounded by `shutdownTimeoutMs` (default 500ms). On timeout the handler logs `process.shutdown-timeout` and exits hard. If shutdown throws, it logs `process.shutdown-failed` and still exits.
+2. Wired into `apps/server/src/index.ts` BEFORE the Effect runtime starts so the handlers are armed for the very earliest crashes. The logger writes JSON lines to stderr directly because the structured pino logger is constructed inside the Effect runtime; in-runtime errors continue to flow through Effect's reporter.
+
+**Files touched**:
+
+- apps/server/src/processHandlers.ts (NEW)
+- apps/server/src/processHandlers.test.ts (NEW; 6 tests)
+- apps/server/src/index.ts (call installCrashHandlers at boot)
+
+**Tests added** (6):
+
+- `makeUnhandledRejectionHandler logs the rejection and triggers shutdown + exit`
+- `makeUncaughtExceptionHandler logs the error and triggers shutdown + exit`
+- `falls back to hard exit when shutdown exceeds shutdownTimeoutMs (ORC-213)`
+- `logs shutdown errors and still exits`
+- `serializes a non-Error rejection reason without crashing`
+- `installCrashHandlers registers and unregisters handlers on the global process`
+
+The first four tests would have failed against the prior implementation: there was no handler to invoke, no logger to call, no shutdown path. The install/unregister test would have failed because there was no `installCrashHandlers` to delegate to.
+
+**Evidence of green run**:
+
+```
+$ bun run vitest --run src/processHandlers.test.ts src/main.test.ts
+Test Files  2 passed (2)
+     Tests  21 passed (21)
+```
+
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 135 warnings.
+
+Adversarial review:
+
+- Shutdown that hangs forever: bounded by 500ms timeout; hard exit always fires. ✓
+- Shutdown that throws: caught, logged as `shutdown-failed`, hard exit fires. ✓
+- Non-Error rejection reason (string, plain object): serialized via `serializeReason` which JSON-stringifies non-strings; never crashes the handler. ✓
+- Repeated unhandled rejections in quick succession: each fires its own handler. With shutdown timeout of 500ms, the second fire might race the first's exit; both call `process.exit(1)` which is idempotent. ✓
+- Handler itself throws: not currently guarded; in practice the handler does small constant-time work (logger.error + setTimeout). If pino throws synchronously the process is already in a bad state and crashing further is acceptable.
+- Sub-second shutdown timeout in dev: configurable per-deployment via `shutdownTimeoutMs`.
+
+**Follow-ups**:
+
+- Wire the shutdown callback to interrupt the Effect runtime fiber (e.g. via `Fiber.interrupt`) so the in-runtime finalizers (DB close, WS drain, Codex SIGTERM) run on async-throw paths. Currently those rely on Node's default child-process kill on parent exit; works for most cases but a coordinated shutdown would be cleaner.
+- Add a SIGTERM/SIGINT-bridged graceful-shutdown path that mirrors this one for non-crash paths (`docker stop` etc.). Likely already present via `NodeRuntime.runMain` but worth verifying.
+- Surface the crash log to a file destination (already structured JSON, so any log shipper picks it up).
