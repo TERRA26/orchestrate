@@ -866,3 +866,52 @@ Adversarial review:
 - Apply the same `sql.withTransaction` wrapper to other read-then-write SQL paths if any are uncovered by future audit. Most projection writes already use transactions.
 - Consider promoting to explicit `BEGIN IMMEDIATE` if we ever see SQLITE_BUSY in the wild; the current DEFERRED default is sufficient for the audit's exact race.
 - Pre-existing import-extension issue in `packages/contracts/src/orchestrationTools.test.ts` (regression from ORC-128) was incidentally fixed in this iteration to unblock whole-repo typecheck.
+
+### ORC-016 — fixed iter 58 (2026-05-07)
+
+**Root cause**: The SQLite setup layer set only `journal_mode = WAL` and `foreign_keys = ON`. Missing pragmas:
+- `synchronous` defaulted to FULL (~10x slower than NORMAL on a WAL database; FULL is paranoid-durable beyond what the WAL crash-recovery model already provides).
+- `busy_timeout` defaulted to 0; any write that races a checkpoint or another writer returned SQLITE_BUSY immediately instead of waiting briefly.
+- `temp_store` defaulted to mixed; temporary tables/indexes spilled to /tmp which is slower and leaves stale files on crash.
+- `cache_size` defaulted to 2 MB; too small for the event-store + projection workload.
+
+**Change summary**: Added four pragmas to `setup` in `apps/server/src/persistence/Layers/Sqlite.ts`, with inline rationale for each:
+- `synchronous = NORMAL` (encoded as 1) — SQLite docs' recommendation for WAL.
+- `busy_timeout = 5000` ms — wait up to 5s on contention before SQLITE_BUSY.
+- `temp_store = MEMORY` (encoded as 2) — keep temps in RAM.
+- `cache_size = -64000` — 64 MB page cache (negative means KB).
+
+**Files touched**:
+- apps/server/src/persistence/Layers/Sqlite.ts (added 4 pragmas + rationale comment)
+- apps/server/src/persistence/Layers/Sqlite.test.ts (NEW; 6 tests)
+
+**Tests added** (6):
+- `sets journal_mode = WAL (or memory for in-memory dbs)` — accepts both per SQLite's behavior with `:memory:`.
+- `sets foreign_keys = ON`
+- `sets synchronous = NORMAL (1)`
+- `sets busy_timeout = 5000ms` — the core ORC-016 regression.
+- `sets temp_store = MEMORY (2)`
+- `sets cache_size = -64000 (64 MB; negative means KB)`
+
+The four new-pragma tests would have failed against the prior implementation (the pragmas inherited their SQLite defaults, not our explicit values).
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/persistence/Layers/Sqlite.test.ts
+Test Files  1 passed (1)
+     Tests  6 passed (6)
+```
+Plus: `bun lint` 0 errors / 137 warnings (one new minor; not from this fix).
+
+Adversarial review:
+- `:memory:` databases ignore `journal_mode = WAL` (SQLite reports `memory` instead). Test accepts both. ✓
+- `synchronous` integer encoding (0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA) is stable across SQLite versions. ✓
+- `cache_size` negative values are KB; positive are pages. -64000 = 64 MB regardless of page size. ✓
+- `busy_timeout` is per-connection. Effect-sql's connection pool: each connection runs `setup` on creation, so each connection gets the pragmas. ✓ (verified by the test running on the in-memory connection.)
+- WAL + synchronous=NORMAL durability: a power-loss after commit but before WAL checkpoint can lose the most recent commit. Acceptable for our event-store (replayable from upstream sources) and standard practice for application state.
+- temp_store=MEMORY can OOM on large queries; SQLite falls back to FILE if memory is exhausted. Acceptable.
+
+**Follow-ups**:
+- Periodic `wal_checkpoint(TRUNCATE)` to keep WAL file from growing unboundedly during long-running server uptime (tracked by ORC-019/021 in the backlog).
+- Consider `mmap_size` pragma for very large databases; defer until profiling shows benefit.
+- Document the pragma choices in `docs/operations/sqlite.md` (or similar); inline comments are the source of truth for now.

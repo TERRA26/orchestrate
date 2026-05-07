@@ -29,8 +29,30 @@ const makeRuntimeSqliteLayer = (
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // ORC-016: pragma tuning. Each value is the SQLite-recommended default
+    // for a WAL-mode database used as application state.
+    //
+    // - journal_mode = WAL: writers do not block readers; required by the
+    //   ORC-015 transaction-serialization model.
+    // - foreign_keys = ON: enforce FK constraints (off by default per
+    //   SQLite history; we want them).
+    // - synchronous = NORMAL: with WAL, fsync only at WAL checkpoint
+    //   (not per commit). FULL is paranoid-durable but ~10x slower.
+    //   NORMAL is the SQLite docs' recommendation for WAL.
+    // - busy_timeout = 5000ms: under write contention, retry for up to
+    //   5 seconds before returning SQLITE_BUSY. Without this, a write
+    //   that races a checkpoint or another writer fails immediately.
+    // - temp_store = MEMORY: keep temporary tables/indexes in RAM rather
+    //   than spilling to /tmp (faster + avoids leaving stale temp files).
+    // - cache_size = -64000: 64 MB page cache. Negative means KB; the
+    //   SQLite default is 2 MB which is too small for our event-store +
+    //   projection workload.
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
+    yield* sql`PRAGMA synchronous = NORMAL;`;
+    yield* sql`PRAGMA busy_timeout = 5000;`;
+    yield* sql`PRAGMA temp_store = MEMORY;`;
+    yield* sql`PRAGMA cache_size = -64000;`;
     yield* runMigrations();
   }),
 );

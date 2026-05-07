@@ -162,7 +162,8 @@ Schema per entry:
 - files: apps/server/src/persistence/Layers/Sqlite.ts:32-33
 - evidence: Only `journal_mode = WAL` and `foreign_keys = ON` pragmas are set. Missing `synchronous` (default NORMAL is fine for WAL but explicit FULL is safer), `busy_timeout` (write under contention will fail with SQLITE_BUSY immediately instead of retrying), and `temp_store`/`cache_size` for hot-path performance.
 - proposed_fix: Add `PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -64000;` at startup. Document the rationale for each value.
-- status: PENDING
+- status: DONE
+- fixed_iter: 58
 
 ### ORC-017
 
