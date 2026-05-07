@@ -443,7 +443,6 @@ Schema per entry:
 - proposed_fix: Replace Queue.unbounded with Queue.bounded(N) (e.g. 10000). On overflow drop oldest or oldest-per-channel. Emit a structured warn event with the dropped count and current depth.
 - status: DONE
 - fixed_iter: 44
-- status: PENDING
 
 ### ORC-046
 
@@ -498,7 +497,7 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:719-744
 - evidence: startSession is called concurrently from multiple thread-start handlers. No mutex guards the sessions map. Two simultaneous starts on the same threadId can both spawn a Codex process and one clobbers the other in the map, leaking a process.
 - proposed_fix: Use a per-threadId Effect.Semaphore (or per-key mutex helper) so concurrent startSession calls on the same thread serialize. Existing process is reused instead of duplicated.
-- status: PENDING
+- status: DONE
 
 ### ORC-052
 
@@ -536,7 +535,6 @@ Schema per entry:
 - proposed_fix: Verify per-client backpressure isolation. If absent, add per-client send queue with per-client overflow handling. Verify push loop continues even when one socket.send rejects.
 - status: DONE
 - fixed_iter: 45
-- status: PENDING
 
 ### ORC-056
 
@@ -1195,7 +1193,6 @@ Schema per entry:
 - proposed_fix: Refactor to a discriminated union: `{ status: "in-progress", nextStep: string } | { status: "needs-input", question: string } | { status: "blocked", blockedReason: string } | { status: "ready-for-review" }`. The decoder enforces the right side per status.
 - status: DONE
 - fixed_iter: 46
-- status: PENDING
 
 ### ORC-129
 
@@ -1737,7 +1734,6 @@ Schema per entry:
 - proposed_fix: Pass the token via a unix-socket file descriptor or a one-shot temporary file (mode 0o600) referenced by path. The subprocess reads-then-deletes. Avoid env entirely for this secret.
 - status: DONE
 - fixed_iter: 47
-- status: PENDING
 
 ### ORC-189
 
@@ -1964,7 +1960,6 @@ Schema per entry:
 - proposed_fix: Add handlers in main.ts that log via the structured logger, attempt a 500ms graceful shutdown (close DB, close subprocesses, drain WS), then exit. Avoid masking the error by always re-throwing or process.exit(1) after cleanup.
 - status: DONE
 - fixed_iter: 48
-- status: PENDING
 
 ### ORC-214
 
@@ -1993,7 +1988,6 @@ Schema per entry:
 - proposed_fix: Wrap the running migration's body in a SAVEPOINT (where SQLite supports it for the operations involved). On failure, rollback the savepoint and surface a clear "DB needs manual repair" error. Document recovery.
 - status: DONE
 - fixed_iter: 49
-- status: PENDING
 
 ### ORC-217
 
@@ -2022,7 +2016,6 @@ Schema per entry:
 - proposed_fix: Add a configurable per-turn timeout (e.g. default 10 minutes, override per-task). On timeout, mark the worker turn `failed` with reason "turn_timeout"; fail the worker thread and notify the orchestrator.
 - status: DONE
 - fixed_iter: 50
-- status: PENDING
 
 ### ORC-220
 

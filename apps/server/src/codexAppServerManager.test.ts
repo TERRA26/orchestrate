@@ -1908,6 +1908,99 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
   }, 180_000);
 });
 
+describe("startSession concurrency (ORC-051)", () => {
+  it("dedupes concurrent startSession calls for the same threadId", async () => {
+    const manager = new CodexAppServerManager();
+    let attempts = 0;
+    const versionSpy = vi
+      .spyOn(
+        manager as unknown as {
+          assertSupportedCodexCliVersion: (input: {
+            binaryPath: string;
+            cwd: string;
+            homePath?: string;
+          }) => void;
+        },
+        "assertSupportedCodexCliVersion",
+      )
+      .mockImplementation(() => {
+        attempts += 1;
+        throw new Error("simulated version check failure");
+      });
+
+    try {
+      const threadId = asThreadId("orc-051-concurrent");
+      const [a, b] = await Promise.allSettled([
+        manager.startSession({
+          threadId,
+          provider: "codex",
+          runtimeMode: "full-access",
+        }),
+        manager.startSession({
+          threadId,
+          provider: "codex",
+          runtimeMode: "full-access",
+        }),
+      ]);
+
+      expect(a.status).toBe("rejected");
+      expect(b.status).toBe("rejected");
+      // Both calls should reject with the same error message; the dedupe
+      // means the version check ran exactly once.
+      expect(attempts).toBe(1);
+      expect(versionSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      versionSpy.mockRestore();
+      manager.stopAll();
+    }
+  });
+
+  it("re-runs startSession after a previous call has fully settled", async () => {
+    const manager = new CodexAppServerManager();
+    let attempts = 0;
+    const versionSpy = vi
+      .spyOn(
+        manager as unknown as {
+          assertSupportedCodexCliVersion: (input: {
+            binaryPath: string;
+            cwd: string;
+            homePath?: string;
+          }) => void;
+        },
+        "assertSupportedCodexCliVersion",
+      )
+      .mockImplementation(() => {
+        attempts += 1;
+        throw new Error("simulated version check failure");
+      });
+
+    try {
+      const threadId = asThreadId("orc-051-sequential");
+      await expect(
+        manager.startSession({
+          threadId,
+          provider: "codex",
+          runtimeMode: "full-access",
+        }),
+      ).rejects.toThrow();
+      await expect(
+        manager.startSession({
+          threadId,
+          provider: "codex",
+          runtimeMode: "full-access",
+        }),
+      ).rejects.toThrow();
+
+      // Sequential calls should each be attempted; the dedupe only collapses
+      // *concurrent* in-flight starts.
+      expect(attempts).toBe(2);
+    } finally {
+      versionSpy.mockRestore();
+      manager.stopAll();
+    }
+  });
+});
+
 describe("CodexAppServerManager discovery caches (ORC-049)", () => {
   it("documents the cache cap at 1000 entries", () => {
     expect(CODEX_DISCOVERY_CACHE_MAX_ENTRIES).toBe(1000);

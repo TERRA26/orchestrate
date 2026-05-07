@@ -674,6 +674,20 @@ export const CODEX_DISCOVERY_CACHE_MAX_ENTRIES = 1000;
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  /**
+   * Tracks startSession calls that are currently in flight, keyed by
+   * threadId. A second concurrent startSession for the same threadId sees
+   * the in-flight promise here and waits for it instead of spawning a
+   * duplicate codex process. Cleared on settle. [ORC-051]
+   */
+  private readonly pendingStarts = new Map<ThreadId, Promise<ProviderSession>>();
+  /**
+   * Same coalescing pattern as `pendingStarts` but for the discovery
+   * sessions used by listSkills/listPlugins/listModels. Concurrent
+   * discovery calls for the same cwd would otherwise race to spawn two
+   * separate codex children. [ORC-051]
+   */
+  private readonly pendingDiscoveryStarts = new Map<string, Promise<CodexSessionContext>>();
   private readonly discoverySessions = new Map<string, CodexSessionContext>();
   private readonly skillsCache = new LruMap<string, ProviderListSkillsResult>({
     maxSize: CODEX_DISCOVERY_CACHE_MAX_ENTRIES,
@@ -751,7 +765,28 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     this.toolCallHandler = handler;
   }
 
+  /**
+   * Start a Codex app-server session for the given thread. Concurrent calls
+   * with the same threadId share a single in-flight promise so the codex
+   * process is never spawned twice. [ORC-051]
+   */
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
+    const inflight = this.pendingStarts.get(input.threadId);
+    if (inflight) {
+      return inflight;
+    }
+    const promise = this.startSessionInner(input);
+    this.pendingStarts.set(input.threadId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingStarts.delete(input.threadId);
+    }
+  }
+
+  private async startSessionInner(
+    input: CodexAppServerStartSessionInput,
+  ): Promise<ProviderSession> {
     const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
@@ -1773,7 +1808,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (existing && !existing.stopping && !existing.child.killed) {
       return existing;
     }
+    const inflight = this.pendingDiscoveryStarts.get(normalizedCwd);
+    if (inflight) {
+      return inflight;
+    }
+    const promise = this.createDiscoverySession(normalizedCwd);
+    this.pendingDiscoveryStarts.set(normalizedCwd, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingDiscoveryStarts.delete(normalizedCwd);
+    }
+  }
 
+  private async createDiscoverySession(normalizedCwd: string): Promise<CodexSessionContext> {
     const now = new Date().toISOString();
     this.assertSupportedCodexCliVersion({
       binaryPath: "codex",

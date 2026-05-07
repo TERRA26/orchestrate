@@ -1564,3 +1564,40 @@ All 9 of the staleTime/gcTime assertions would fail before the change because th
 - When/if a plugin install or skill add flow lands in the UI, wire `queryClient.invalidateQueries({ queryKey: providerDiscoveryQueryKeys.<scope>(...) })` from the success handler.
 - Consider promoting capabilities to a singleton context so split-view mounts share a single subscription instead of N re-renders. Low priority since the cache already dedupes.
 - Audit the MessagesTimeline timeout flakes (the same 5 tests failed in the baseline) as a separate ticket.
+
+## ORC-051 [iter 75] Concurrent startSession could spawn duplicate codex processes
+
+**Root cause**: `CodexAppServerManager.startSession` had no concurrency guard. Two concurrent calls with the same threadId would each pass the early checks, spawn their own `codex app-server` child, and race to call `this.sessions.set(threadId, context)`. The losing context's child was orphaned in memory and on the host. The same race existed in `getOrCreateDiscoverySession`, where two concurrent listSkills/listPlugins calls for the same cwd could both spawn a discovery codex.
+
+**Change summary**:
+- `apps/server/src/codexAppServerManager.ts`:
+  - Added `pendingStarts: Map<ThreadId, Promise<ProviderSession>>` and `pendingDiscoveryStarts: Map<string, Promise<CodexSessionContext>>`.
+  - Public `startSession(input)` now checks the pending map; if an in-flight call exists for the same threadId it awaits and returns that promise. Otherwise it stores the new promise, awaits, and clears on settle. The original body was renamed to `startSessionInner` and is unchanged.
+  - `getOrCreateDiscoverySession(cwd)` got the same coalescing pattern, and the original spawn body was renamed to `createDiscoverySession`.
+
+**Files touched**:
+- apps/server/src/codexAppServerManager.ts
+- apps/server/src/codexAppServerManager.test.ts (2 new tests)
+
+**Tests added**:
+1. "dedupes concurrent startSession calls for the same threadId [ORC-051]" - mocks `assertSupportedCodexCliVersion` to throw; calls `startSession` twice via `Promise.allSettled`; asserts both reject with the same error AND `assertSupportedCodexCliVersion` was called exactly once.
+2. "re-runs startSession after a previous call has fully settled" - documents the converse: sequential failed starts each go through the version check independently.
+
+The first test would fail before the change because both startSession calls executed independently and each invoked `assertSupportedCodexCliVersion` (attempts === 2).
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/codexAppServerManager.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 55 passed | 1 skipped
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Dedupe collapse mid-settle: a caller arriving after the inner promise settled but before the finally cleared the map sees the settled promise and resolves immediately. Correct.
+- Failed start: finally clears the entry; subsequent retries proceed (covered by test 2).
+- Same threadId, different inputs: dedupe ignores input shape; the second caller gets the first caller's session. Correct semantics since there is only one session per thread.
+- Discovery dedupe race: a discovery session could be racing-stopped between the `existing` check and the `pendingDiscoveryStarts` check. The pendingDiscoveryStarts entry would still resolve to whatever the prior in-flight promise produces; if that promise's session was just stopped, callers see a context that may immediately be cleaned up. Acceptable since discovery sessions are restartable on the next call.
+- forkThread (line 1334) has the same shape but is initiated by explicit user action (one click), so concurrent-fork is unlikely; tracked as follow-up below.
+
+**Follow-ups**:
+- Apply the same coalescing pattern to `forkThread` for symmetry.
+- Consider extracting the coalesce-by-key helper into `apps/server/src/utils/coalesce.ts` so future managers can reuse the pattern.
+- Add a test that uses real spawn-mocking (vi.mock("node:child_process")) to verify no second spawn occurs in the success path; the current test asserts at the version-check stage only.
