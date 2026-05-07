@@ -1969,6 +1969,8 @@ Schema per entry:
 - files: apps/server/src/persistence/Migrations.ts:156 (run path with no rollback)
 - evidence: A migration that succeeds for N then fails on N+1 leaves the DB half-migrated. Subsequent code paths assume the post-migration schema and crash with cryptic errors.
 - proposed_fix: Wrap the running migration's body in a SAVEPOINT (where SQLite supports it for the operations involved). On failure, rollback the savepoint and surface a clear "DB needs manual repair" error. Document recovery.
+- status: DONE
+- fixed_iter: 49
 - status: PENDING
 
 ### ORC-217

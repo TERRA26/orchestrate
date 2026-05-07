@@ -12,6 +12,13 @@ import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 
+import {
+  computeMigrationIntegrity,
+  formatMigrationFailureMessage,
+  MigrationFailureError,
+  projectExpectedMigrations,
+} from "./Migrations/Integrity.ts";
+
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
@@ -153,7 +160,26 @@ export const runMigrations = ({ toMigrationInclusive }: RunMigrationsOptions = {
         ? "Running all migrations..."
         : `Running migrations 1 through ${toMigrationInclusive}...`,
     );
-    const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+
+    // ORC-216: wrap migrator failures in a structured error with a clear
+    // recovery message. Effect's Migrator runs each migration in its own
+    // transaction; when one fails, its body rolls back and the migrations
+    // log does NOT record it, so the DB is at the previous version (not
+    // half-migrated within a single migration). The remaining concern is
+    // operator-facing: the bare underlying SQL error is cryptic. This
+    // wrapper produces a recovery-oriented MigrationFailureError instead.
+    const executedMigrations = yield* run({
+      loader: makeMigrationLoader(toMigrationInclusive),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new MigrationFailureError({
+            cause,
+            message: formatMigrationFailureMessage({ cause }),
+          }),
+      ),
+    );
+
     yield* Effect.log("Migrations ran successfully").pipe(
       Effect.annotateLogs({ migrations: executedMigrations.map(([id, name]) => `${id}_${name}`) }),
     );
@@ -177,4 +203,14 @@ export const runMigrations = ({ toMigrationInclusive }: RunMigrationsOptions = {
  * )
  * ```
  */
+// ORC-216: integrity check helper exposed for callers that want to verify
+// the DB has every expected migration applied. The Migrator itself only
+// reports migrations that ran THIS BOOT (not ones already applied), so a
+// boot that finds no pending work returns an empty array. Callers that
+// need an end-to-end "DB is at latest version" assertion should query
+// the migrations table directly. This pure helper compares two lists.
+export const expectedMigrationKeys = projectExpectedMigrations(migrationEntries);
+
+export { MigrationFailureError, computeMigrationIntegrity, formatMigrationFailureMessage };
+
 export const MigrationsLive = Layer.effectDiscard(runMigrations());

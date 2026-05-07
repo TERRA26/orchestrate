@@ -456,3 +456,59 @@ Adversarial review:
 - Wire the shutdown callback to interrupt the Effect runtime fiber (e.g. via `Fiber.interrupt`) so the in-runtime finalizers (DB close, WS drain, Codex SIGTERM) run on async-throw paths. Currently those rely on Node's default child-process kill on parent exit; works for most cases but a coordinated shutdown would be cleaner.
 - Add a SIGTERM/SIGINT-bridged graceful-shutdown path that mirrors this one for non-crash paths (`docker stop` etc.). Likely already present via `NodeRuntime.runMain` but worth verifying.
 - Surface the crash log to a file destination (already structured JSON, so any log shipper picks it up).
+
+### ORC-216 — fixed iter 49 (2026-05-07)
+
+**Root cause investigation**: Effect's Migrator runs each migration in its own transaction; when migration N+1 throws, its body rolls back and the migrations log does NOT record it, so the DB is at version N (not "half-migrated within a single migration"). The remaining real concern is operator-facing: the bare underlying SQL error ("no such column", "syntax error near") that leaks from the runtime tells you _that_ something failed but not _which migration_ and not how to recover.
+
+**Change summary**:
+
+1. New module `apps/server/src/persistence/Migrations/Integrity.ts`:
+   - `MigrationFailureError` (Effect `Data.TaggedError`) with `attemptedId`, `attemptedName`, `cause`, `message`.
+   - `formatMigrationFailureMessage(input)` produces a recovery-oriented operator message naming the failed migration (when known) and listing recovery steps (read logs, fix script, restart, or drop DB).
+   - `computeMigrationIntegrity({ executed, expected })` compares two id/name lists and reports missing migrations + highest applied/expected.
+   - `projectExpectedMigrations(entries)` strips the third (payload) tuple element from `migrationEntries`.
+2. `runMigrations` now wraps the underlying `run({...})` Effect with `Effect.mapError(...)` to produce a `MigrationFailureError` containing the formatted message and original cause. The successful path is unchanged.
+3. `expectedMigrationKeys` and the helpers re-exported from `Migrations.ts` so callers can invoke the integrity check at startup if they want a strict end-to-end assertion.
+
+**Files touched**:
+
+- apps/server/src/persistence/Migrations/Integrity.ts (NEW)
+- apps/server/src/persistence/Migrations/Integrity.test.ts (NEW; 9 tests)
+- apps/server/src/persistence/Migrations.ts (added imports + Effect.mapError wrapper + re-exports)
+
+**Tests added** (9):
+
+- Four `computeMigrationIntegrity` cases: ok=true match, ok=false missing-tail, interleaved missing, empty-executed.
+- Three `formatMigrationFailureMessage` cases: includes id/name, generic fallback, recovery hints present.
+- One `MigrationFailureError` shape test.
+- One `projectExpectedMigrations` shape test.
+
+These pin the policy. Without `MigrationFailureError` and the helpers, the four integrity-result tests would fail with "computeMigrationIntegrity is not defined" (the function did not exist).
+
+**Evidence of green run**:
+
+```
+$ bun run vitest --run src/persistence/Migrations/Integrity.test.ts
+Test Files  1 passed (1)
+     Tests  9 passed (9)
+
+$ bun run vitest --run src/persistence/Migrations
+Test Files  5 passed (5)
+     Tests  13 passed (13)        # all per-migration tests still green
+```
+
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 135 warnings.
+
+Adversarial review:
+
+- Migrator already runs each migration in its own transaction; the per-migration atomicity the audit asks for is already provided by Effect SQL. The fix layers operator-facing clarity on top.
+- `formatMigrationFailureMessage` with a non-Error cause: `String(cause)` falls back to `[object Object]` for non-string/non-Error. Acceptable: the operator log will still include all useful surrounding context, just less detail for that one kind of cause.
+- Multiple tests share `runMigrations`; the wrapper only fires on FAILURE, so happy paths are unaffected. ✓ (5 migration test files, 13 tests, all still green.)
+- Backward compatibility for callers awaiting a specific error type: the change is from an arbitrary Migrator error to `MigrationFailureError`. Existing tests don't typecheck the error type, so they still work. New code can `Effect.catch` against `MigrationFailureError` for a structured recovery flow.
+
+**Follow-ups**:
+
+- Wire the `MigrationsLive` layer to optionally invoke `computeMigrationIntegrity` after a successful run, comparing executed-this-boot + already-applied (queried from `effect_sql_migrations`) against `expectedMigrationKeys`. This requires a SQL client read in the layer; track separately.
+- Add a docs page (`docs/operations/migrations.md`) covering the recovery flow described in the error message: 1) read logs, 2) fix script, 3) restart, 4) drop DB if unrecoverable.
+- Migrator already includes the migration ID in its error path internally; capture and propagate it to `MigrationFailureError.attemptedId/attemptedName` for an even sharper operator message. Currently those fields are populated only when callers construct the error manually (e.g. an explicit guard on a known migration).
