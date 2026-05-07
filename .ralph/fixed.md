@@ -512,3 +512,56 @@ Adversarial review:
 - Wire the `MigrationsLive` layer to optionally invoke `computeMigrationIntegrity` after a successful run, comparing executed-this-boot + already-applied (queried from `effect_sql_migrations`) against `expectedMigrationKeys`. This requires a SQL client read in the layer; track separately.
 - Add a docs page (`docs/operations/migrations.md`) covering the recovery flow described in the error message: 1) read logs, 2) fix script, 3) restart, 4) drop DB if unrecoverable.
 - Migrator already includes the migration ID in its error path internally; capture and propagate it to `MigrationFailureError.attemptedId/attemptedName` for an even sharper operator message. Currently those fields are populated only when callers construct the error manually (e.g. an explicit guard on a known migration).
+
+### ORC-219 — fixed iter 50 (2026-05-07)
+
+**Root cause**: There was no per-turn timeout. A worker LLM that stalled (provider hung, network timeout pre-stream) kept the orchestrator waiting forever. The orchestrator's `get_agent_status` polling loop saw `status: running` indefinitely, with no signal that the worker had gone cold.
+
+**Change summary** (scope-bounded fix; full reactor-driven turn-fail is a follow-up):
+
+1. New module `apps/server/src/orchestration/turnStaleness.ts`:
+   - `DEFAULT_STALE_TURN_MS = 10 * 60 * 1000` (10 minutes).
+   - `evaluateTurnStaleness({ status, updatedAt, nowMs, thresholdMs? })` — pure policy returning `{ stale, idleMs, thresholdMs }`. Only `running` and `assigned` workers are eligible for staleness; missing or unparseable `updatedAt` returns `stale: false`.
+2. `handleGetAgentStatus` now invokes the helper with `Date.now()` and the worker's `updatedAt`, and includes the staleness fields in the response when `stale: true`. The orchestrator's polling loop now sees `stale`, `idleMs`, `stalenessThresholdMs`, and a `stalenessReason` text suggesting the next action (terminate + reassign).
+3. Surfacing the flag is intentionally read-only on the polling side. The full reactor that DISPATCHES `turn.fail` events on timeout is a separate, larger change (multi-file lifecycle), tracked as a follow-up.
+
+**Files touched**:
+
+- apps/server/src/orchestration/turnStaleness.ts (NEW)
+- apps/server/src/orchestration/turnStaleness.test.ts (NEW; 8 tests)
+- apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts (added import + staleness wiring inside handleGetAgentStatus)
+- apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts (added 2 tests pinning the wiring)
+
+**Tests added** (10 total):
+
+- 8 in `turnStaleness.test.ts`: happy path, freshness, non-running statuses excluded, `assigned` included, missing `updatedAt`, unparseable `updatedAt`, override threshold, clock-skew clamp.
+- 2 in `OrchestrationToolRouter.test.ts`: stuck worker (30 min idle) surfaces `stale: true` + `idleMs` + `stalenessThresholdMs` + `stalenessReason`; fresh worker (1s idle) omits those fields.
+
+The two router-level tests fail against the prior implementation (no staleness fields in the response).
+
+**Evidence of green run**:
+
+```
+$ bun run vitest --run src/orchestration/turnStaleness.test.ts \
+                       src/orchestration/Layers/OrchestrationToolRouter.test.ts
+Test Files  2 passed (2)
+     Tests  29 passed (29)
+```
+
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 135 warnings.
+
+Adversarial review:
+
+- Worker without `updatedAt` (programmatic test data, unmigrated row): `stale: false`, no surprise. ✓
+- Clock skew (worker recorded an `updatedAt` in the future): `idleMs` clamps to 0, `stale: false`. ✓
+- Threshold override of 0: every running worker is "stale". The default 10 minutes is generous; operators can tune via the threshold knob.
+- `assigned` status: explicitly included so a worker that's been "assigned" but never picked up is also flagged. ✓
+- Worker in `submitted`/`terminated`/etc.: not eligible. ✓
+- Calibrating tests against `Date.now()`: real-time-tolerant; tests do not freeze the clock and rely on relative offsets from `Date.now()`. ✓
+
+**Follow-ups**:
+
+- Add a background reactor that watches workers and dispatches `orchestrator.worker.terminate` (with reason `turn_timeout`) when staleness exceeds the threshold, instead of relying on the orchestrator to act on the polling-side flag. This is the audit's primary ask; surfacing the flag in get_agent_status is the foundational layer.
+- Hook the staleness threshold into `spawnBudget` so individual tasks can override the default for known-slow operations.
+- Wire the AbortController in the provider layer so that on timeout we also abort the in-flight LLM stream, freeing local resources immediately.
+- Consider a "warning" tier (e.g. 5 min idle) that surfaces a softer signal so the orchestrator can ping the worker (send_to_agent) before terminating.

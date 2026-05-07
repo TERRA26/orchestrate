@@ -1998,6 +1998,8 @@ Schema per entry:
 - files: apps/server/src (no turn-level timeout)
 - evidence: There is no documented turn timeout. A worker LLM that stalls (provider hung, network timeout pre-stream) keeps the orchestrator waiting forever. The orchestrator's polling loop sees `running` indefinitely.
 - proposed_fix: Add a configurable per-turn timeout (e.g. default 10 minutes, override per-task). On timeout, mark the worker turn `failed` with reason "turn_timeout"; fail the worker thread and notify the orchestrator.
+- status: DONE
+- fixed_iter: 50
 - status: PENDING
 
 ### ORC-220

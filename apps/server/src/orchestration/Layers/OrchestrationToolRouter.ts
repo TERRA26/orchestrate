@@ -38,6 +38,7 @@ import {
   type BrowserOrchestrationEvidenceRepositoryShape,
 } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
 import { objectiveContainsFabricatedReport, workerKickoffMessage } from "../reportProtocol.ts";
+import { evaluateTurnStaleness } from "../turnStaleness.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationToolRouterService,
@@ -417,6 +418,15 @@ function handleGetAgentStatus(
       return null;
     })();
 
+    // ORC-219: surface turn staleness so a stuck worker is visible to the
+    // orchestrator instead of looking like it's still running. The
+    // orchestrator can react (terminate, escalate, reassign) on this flag.
+    const staleness = evaluateTurnStaleness({
+      status: worker.status as unknown as string,
+      updatedAt: worker.updatedAt as unknown as string | undefined,
+      nowMs: Date.now(),
+    });
+
     return {
       agentId: worker.workerId,
       status: worker.status,
@@ -439,6 +449,15 @@ function handleGetAgentStatus(
       ...(activeTask?.submitNotes !== undefined ? { submitNotes: activeTask.submitNotes } : {}),
       ...(activeTask?.hasChanges !== undefined ? { hasChanges: activeTask.hasChanges } : {}),
       ...(activeTask?.diffStats !== undefined ? { diffStats: activeTask.diffStats } : {}),
+      ...(staleness.stale
+        ? {
+            stale: true,
+            idleMs: staleness.idleMs,
+            stalenessThresholdMs: staleness.thresholdMs,
+            stalenessReason:
+              "No worker activity recorded for longer than the staleness threshold. The worker may be hung. Consider terminating it and reassigning the task.",
+          }
+        : {}),
     };
   });
 }

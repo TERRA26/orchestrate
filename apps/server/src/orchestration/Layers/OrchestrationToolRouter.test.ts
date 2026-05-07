@@ -516,6 +516,104 @@ describe("OrchestrationToolRouter", () => {
     expect(result.submitNotes).toBe("CORS pinned to :5173");
   });
 
+  it("orchestrate_get_agent_status surfaces stale=true when a running worker has been idle past threshold (ORC-219)", async () => {
+    const workerId = "worker-stuck";
+    const threadId = ThreadId.makeUnsafe("thread-stuck");
+    // The handler uses real Date.now(); calibrate updatedAt against real time
+    // so the test is robust against clock skew between fixture NOW and real
+    // wall-clock. 30 minutes before real-now is well past the 10-minute threshold.
+    const stuckSince = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const readModel = makeReadModel({
+      threads: [makeThread(), { ...makeThread(), id: threadId }],
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: stuckSince,
+          updatedAt: stuckSince,
+        } as unknown as OrchestrationReadModel["orchestratorWorkers"][number],
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_get_agent_status",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as {
+      agentId: string;
+      status: string;
+      stale?: boolean;
+      idleMs?: number;
+      stalenessThresholdMs?: number;
+      stalenessReason?: string;
+    };
+    expect(result.stale).toBe(true);
+    expect(result.idleMs).toBeGreaterThan(10 * 60 * 1000);
+    expect(result.stalenessThresholdMs).toBe(10 * 60 * 1000);
+    expect(result.stalenessReason).toContain("hung");
+  });
+
+  it("orchestrate_get_agent_status omits stale fields for fresh running workers (ORC-219)", async () => {
+    const workerId = "worker-fresh";
+    const threadId = ThreadId.makeUnsafe("thread-fresh");
+    // Calibrate against real time so the freshness check uses a recent timestamp.
+    const recentlyActive = new Date(Date.now() - 1000).toISOString();
+    const readModel = makeReadModel({
+      threads: [makeThread(), { ...makeThread(), id: threadId }],
+      orchestratorWorkers: [
+        {
+          workerId: workerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: recentlyActive,
+          updatedAt: recentlyActive,
+        } as unknown as OrchestrationReadModel["orchestratorWorkers"][number],
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, [])));
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_get_agent_status",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: { agentId: workerId },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as { stale?: boolean };
+    expect(result.stale).toBeUndefined();
+  });
+
   it("orchestrate_accept_work auto-submits running work with fresh browser after-evidence", async () => {
     const browser = makeBrowserRuntime();
     const commands: OrchestrationCommand[] = [];
