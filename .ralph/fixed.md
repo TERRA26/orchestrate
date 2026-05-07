@@ -787,3 +787,42 @@ Adversarial review:
 - Apply the same allowlist pattern to the codexAppServerManager spawn (currently uses `process.env` directly). Tracked separately.
 - Wire a session-end cleanup for `mcpAuthTokenProvision` to delete the file even if the MCP server crashes before reading it. ORC-188's Codex path has this via `child.once("exit", ...)`; the Claude path's lifecycle is different (managed by the SDK), so a different hook is needed.
 - Document the `subprocessEnvAllowlist` policy in the secrets handling section of `docs/`.
+
+### ORC-012 — fixed iter 56 (2026-05-07)
+
+**Root cause**: `probeCodexAccount` in `codexAppServer.ts` spawned the Codex `app-server` subprocess with `env: { ...process.env, ...(input.homePath ? { CODEX_HOME: input.homePath } : {}) }` — full env passthrough plus an optional CODEX_HOME override. The same /proc exposure as ORC-011, plus broader because the Codex subprocess is long-lived (sticks around for the entire account-probe lifetime).
+
+**Change summary**:
+1. Added a small named helper `buildProbeCodexEnv(parent, homePath?)` that delegates to ORC-011's `buildSanitizedSubprocessEnv` and merges the optional CODEX_HOME override on top. Exported so tests can verify the env shape directly.
+2. Replaced the `{ ...process.env, ... }` spread inside `probeCodexAccount`'s `spawn(...)` with `buildProbeCodexEnv(process.env, input.homePath)`.
+
+**Files touched**:
+- apps/server/src/provider/codexAppServer.ts (added import + buildProbeCodexEnv helper + swapped the spawn env)
+- apps/server/src/provider/codexAppServer.test.ts (NEW; 5 tests)
+
+**Tests added** (5):
+- `strips ORCHESTRATE_* server-private secrets from the codex subprocess env` — the core ORC-012 regression.
+- `keeps CODEX_* and provider prefixes the codex SDK needs`
+- `strips arbitrary cloud cred prefixes`
+- `injects an explicit CODEX_HOME override when homePath is provided`
+- `preserves the inherited CODEX_HOME when no homePath override is provided`
+
+The `ORCHESTRATE_*` rejection test is the core regression: pre-fix, `buildProbeCodexEnv` did not exist and `probeCodexAccount` spread the full parent env.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/provider/codexAppServer.test.ts
+Test Files  1 passed (1)
+     Tests  5 passed (5)
+```
+Plus: server `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 136 warnings.
+
+Adversarial review:
+- Inherited CODEX_HOME from the parent: kept (CODEX_* prefix is allowed). ✓
+- Explicit CODEX_HOME override via `input.homePath`: applied via the additions argument on top, so it wins over the inherited value. ✓
+- ANTHROPIC_API_KEY and OPENAI_API_KEY needed by the Codex SDK to authenticate: kept (provider prefixes allowed). ✓
+- Cloud creds (AWS_*, GOOGLE_*) and DATABASE_URL not relevant to Codex: stripped. ✓
+
+**Follow-ups**:
+- More `process.env` passthroughs exist in `codexAppServerManager.ts` at lines 796 (already partly addressed by ORC-188 stripping ORCHESTRATE_AUTH_TOKEN, but the broader env still flows through), 1324, 1767, 2770. Apply the same allowlist pattern in a follow-up sweep. Each callsite has its own appropriate `additions` set.
+- Consider extending the allowlist to permit `RUST_*` prefixes if Codex's underlying Rust binaries surface env-driven config (currently no evidence they do).

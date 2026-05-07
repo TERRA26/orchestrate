@@ -1,6 +1,16 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import { readCodexAccountSnapshot, type CodexAccountSnapshot } from "./codexAccount";
+import { buildSanitizedSubprocessEnv } from "../subprocessEnvAllowlist.ts";
+
+// ORC-012: small named helper so the env-construction is testable in
+// isolation without mocking the full spawn pipeline.
+export function buildProbeCodexEnv(
+  parent: NodeJS.ProcessEnv,
+  homePath?: string,
+): NodeJS.ProcessEnv {
+  return buildSanitizedSubprocessEnv(parent, homePath ? { CODEX_HOME: homePath } : {});
+}
 
 interface JsonRpcProbeResponse {
   readonly id?: unknown;
@@ -46,11 +56,13 @@ export async function probeCodexAccount(input: {
   readonly signal?: AbortSignal;
 }): Promise<CodexAccountSnapshot> {
   return await new Promise((resolve, reject) => {
+    // ORC-012: only forward an allowlisted subset of env to Codex. Without
+    // this, every secret in the server's process env (ORCHESTRATE_AUTH_TOKEN,
+    // AWS keys, DATABASE_URL, etc.) leaked into the long-lived Codex
+    // subprocess where any tool it shelled out to inherited them. The
+    // allowlist keeps PATH/HOME/locale plus CODEX_* / ANTHROPIC_* / OPENAI_*.
     const child = spawn(input.binaryPath, ["app-server"], {
-      env: {
-        ...process.env,
-        ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
-      },
+      env: buildProbeCodexEnv(process.env, input.homePath),
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
     });

@@ -124,7 +124,8 @@ Schema per entry:
 - files: apps/server/src/provider/codexAppServer.ts:50-53
 - evidence: `env: { ...process.env, ...(input.homePath ? { CODEX_HOME: ... } : {}) }` spreads full server env to Codex subprocess. Same /proc exposure as ORC-011 plus broader since Codex subprocess is long-lived.
 - proposed*fix: Same whitelist-only forwarding as ORC-011, with CODEX*\* vars allowed.
-- status: PENDING
+- status: DONE
+- fixed_iter: 56
 
 ### ORC-013
 
