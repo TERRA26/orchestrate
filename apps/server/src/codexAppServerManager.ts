@@ -38,6 +38,7 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
 } from "@orchestrate/contracts";
+import { LruMap } from "@orchestrate/shared/LruMap";
 import { normalizeModelSlug } from "@orchestrate/shared/model";
 import { Effect, ServiceMap } from "effect";
 
@@ -663,13 +664,29 @@ export interface CodexAppServerManagerEvents {
   event: [event: ProviderEvent];
 }
 
+/**
+ * Upper bound on entries in any single discovery cache. Each entry is a
+ * small JSON-shaped result so the absolute byte cost is minor; the cap
+ * exists to keep the resident set bounded for long-running servers that
+ * see many distinct (cwd, threadId) combos. [ORC-049]
+ */
+export const CODEX_DISCOVERY_CACHE_MAX_ENTRIES = 1000;
+
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
   private readonly discoverySessions = new Map<string, CodexSessionContext>();
-  private readonly skillsCache = new Map<string, ProviderListSkillsResult>();
-  private readonly pluginsCache = new Map<string, ProviderListPluginsResult>();
-  private readonly pluginDetailCache = new Map<string, ProviderReadPluginResult>();
-  private readonly modelCache = new Map<string, ProviderListModelsResult>();
+  private readonly skillsCache = new LruMap<string, ProviderListSkillsResult>({
+    maxSize: CODEX_DISCOVERY_CACHE_MAX_ENTRIES,
+  });
+  private readonly pluginsCache = new LruMap<string, ProviderListPluginsResult>({
+    maxSize: CODEX_DISCOVERY_CACHE_MAX_ENTRIES,
+  });
+  private readonly pluginDetailCache = new LruMap<string, ProviderReadPluginResult>({
+    maxSize: CODEX_DISCOVERY_CACHE_MAX_ENTRIES,
+  });
+  private readonly modelCache = new LruMap<string, ProviderListModelsResult>({
+    maxSize: CODEX_DISCOVERY_CACHE_MAX_ENTRIES,
+  });
   private toolCallHandler: CodexToolCallHandler | undefined;
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;

@@ -10,6 +10,7 @@ import {
   buildCodexOrchestratorEnvironment,
   buildCodexInitializeParams,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_DISCOVERY_CACHE_MAX_ENTRIES,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
   classifyCodexStderrLine,
@@ -1905,4 +1906,81 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
       rmSync(workspaceDir, { recursive: true, force: true });
     }
   }, 180_000);
+});
+
+describe("CodexAppServerManager discovery caches (ORC-049)", () => {
+  it("documents the cache cap at 1000 entries", () => {
+    expect(CODEX_DISCOVERY_CACHE_MAX_ENTRIES).toBe(1000);
+  });
+
+  it("uses bounded LruMaps for the four discovery caches", () => {
+    const manager = new CodexAppServerManager();
+    const fields = manager as unknown as {
+      skillsCache: { maxSize: number };
+      pluginsCache: { maxSize: number };
+      pluginDetailCache: { maxSize: number };
+      modelCache: { maxSize: number };
+    };
+    expect(fields.skillsCache.maxSize).toBe(CODEX_DISCOVERY_CACHE_MAX_ENTRIES);
+    expect(fields.pluginsCache.maxSize).toBe(CODEX_DISCOVERY_CACHE_MAX_ENTRIES);
+    expect(fields.pluginDetailCache.maxSize).toBe(CODEX_DISCOVERY_CACHE_MAX_ENTRIES);
+    expect(fields.modelCache.maxSize).toBe(CODEX_DISCOVERY_CACHE_MAX_ENTRIES);
+  });
+
+  it("evicts the least-recently-used skill entry when listSkills overflows", async () => {
+    const manager = new CodexAppServerManager();
+    // Replace the production cache with a tiny one so we can prove eviction
+    // without making 1001 fake requests.
+    const { LruMap } = await import("@orchestrate/shared/LruMap");
+    (manager as unknown as { skillsCache: unknown }).skillsCache = new LruMap({
+      maxSize: 2,
+    });
+
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as {
+          sendRequest: (...args: unknown[]) => Promise<unknown>;
+        },
+        "sendRequest",
+      )
+      .mockResolvedValue({ result: { skills: [] } });
+
+    const resolveContextForDiscovery = vi
+      .spyOn(
+        manager as unknown as {
+          resolveContextForDiscovery: (...args: unknown[]) => unknown;
+        },
+        "resolveContextForDiscovery",
+      )
+      .mockResolvedValue({
+        session: {
+          provider: "codex",
+          status: "ready",
+          threadId: "thread_x",
+          runtimeMode: "full-access",
+          model: "gpt-5.3-codex",
+          resumeCursor: { threadId: "thread_x" },
+          createdAt: "2026-02-10T00:00:00.000Z",
+          updatedAt: "2026-02-10T00:00:00.000Z",
+        },
+        account: { type: "unknown", planType: null, sparkEnabled: true },
+        collabReceiverTurns: new Map(),
+      });
+
+    await manager.listSkills({ cwd: "/repo-a", threadId: "t1" });
+    await manager.listSkills({ cwd: "/repo-b", threadId: "t1" });
+    await manager.listSkills({ cwd: "/repo-c", threadId: "t1" });
+
+    // /repo-a should have been evicted; calling it again must hit the wire.
+    sendRequest.mockClear();
+    await manager.listSkills({ cwd: "/repo-a", threadId: "t1" });
+    expect(sendRequest).toHaveBeenCalledTimes(1);
+
+    // /repo-c is still cached, so no extra wire call.
+    sendRequest.mockClear();
+    await manager.listSkills({ cwd: "/repo-c", threadId: "t1" });
+    expect(sendRequest).not.toHaveBeenCalled();
+
+    expect(resolveContextForDiscovery).toHaveBeenCalled();
+  });
 });

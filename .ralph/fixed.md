@@ -1487,3 +1487,45 @@ All 10 would fail before the change because the module did not exist.
 - Emit a depth metric (`active session count` gauge) so operators can graph approach to the warn threshold.
 - Add an integration test that exercises the periodic schedule with TestClock + a large idle TTL collapse, validating end-to-end that the reaper actually closes sessions.
 - Consider tracking createdAt separately from lastActivityAt to surface "always-on" sessions in a metric distinct from "idle" ones.
+
+## ORC-049 [iter 73] CodexAppServerManager discovery caches were unbounded
+
+**Root cause**: `CodexAppServerManager` held four discovery caches as plain `Map` instances (skillsCache, pluginsCache, pluginDetailCache, modelCache). Each cache key included `cwd` plus an optional `threadId`, so a long-running server that listed skills/plugins/models for many distinct threads would accumulate entries with no eviction. The cache values are small JSON shapes, but unbounded growth still drives the resident set up over weeks of uptime and gives an attacker an easy memory-amplification vector by churning thread ids.
+
+**Change summary**:
+- New `packages/shared/src/LruMap.ts`: bounded LRU built on `Map`'s native insertion order. `get` and `set` re-insert to update recency; `set` past `maxSize` evicts the oldest key and fires an optional `onEvict` callback. `delete` and `clear` do not fire `onEvict` so callers can distinguish "aged out" from "cleared on purpose."
+- New `packages/shared/src/LruMap.test.ts`: 9 cases covering insert/evict/recency/has-no-recency/clear/delete/clamping/undefined sentinels/iteration order.
+- Exposed via `@orchestrate/shared/LruMap` subpath export in `packages/shared/package.json`.
+- `apps/server/src/codexAppServerManager.ts`: replaced the four `Map` instances with `LruMap` instances bounded at `CODEX_DISCOVERY_CACHE_MAX_ENTRIES = 1000`. Existing read/write call sites are unchanged because LruMap implements the relevant Map subset.
+
+**Files touched**:
+- packages/shared/src/LruMap.ts (NEW)
+- packages/shared/src/LruMap.test.ts (NEW)
+- packages/shared/package.json (export entry)
+- apps/server/src/codexAppServerManager.ts
+- apps/server/src/codexAppServerManager.test.ts (3 new tests)
+
+**Tests added**: in addition to the 9 LruMap unit tests, three new cases pin the manager wiring:
+1. "documents the cache cap at 1000 entries" - asserts `CODEX_DISCOVERY_CACHE_MAX_ENTRIES === 1000`.
+2. "uses bounded LruMaps for the four discovery caches" - reads each private cache and asserts `maxSize === CODEX_DISCOVERY_CACHE_MAX_ENTRIES`.
+3. "evicts the least-recently-used skill entry when listSkills overflows" - swaps in a 2-entry LruMap, calls `listSkills` for `/repo-a`, `/repo-b`, `/repo-c` with mocked `sendRequest`, then verifies that requesting `/repo-a` again hits the wire (cache miss) while `/repo-c` does not.
+
+All three would fail before the change because the export didn't exist and the caches were plain `Map` instances with no `maxSize` property.
+
+**Green-run evidence**:
+- `cd packages/shared && bun run test src/LruMap.test.ts` -> Test Files 1 passed (1) | Tests 9 passed (9)
+- `cd apps/server && bun run test src/codexAppServerManager.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 53 passed | 1 skipped
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+- `bun typecheck` (repo, Node 24) -> exit code 0 across all 10 packages
+
+**Adversarial review**:
+- Cache poisoning: an attacker churning threadIds could push the cache to its max in O(N) memory bounded by `maxSize * sizeof(value)`. With 1000 entries of a few KB each that's ~few MB total. Acceptable.
+- Recency bug under read-heavy load: `get` calls `Map.delete` then `Map.set`, which is O(1) amortized but does double-pointer-rewrite; for our cache hit rate (a couple hits per second) this is negligible.
+- Missing `onEvict` for the discovery caches: the cached values do not own external resources so eviction is a pure GC trigger; no leak there. (`onEvict` is wired in the LruMap API for future callers that might cache something heavier.)
+- Sessions and discoverySessions: those Maps still aren't bounded. Sessions hold subprocess handles and are explicitly closed when the thread closes; discoverySessions is closed on idle and on explicit close paths (lines 1836, 1881). They are out of scope for this fix; tracking these as a separate follow-up.
+
+**Follow-ups**:
+- Bound `discoverySessions` with a TTL similar to ORC-048 (idle codex discovery sessions are cheap but each holds a child process).
+- Add a `cache.size` debug endpoint or log line so operators can graph cache utilization.
+- Consider a per-cache cap (the four caches share the same constant today) if profiling shows any one cache dominating memory.
+- The skillsCache key includes threadId; we could separate by cwd to share results across threads in the same repo.

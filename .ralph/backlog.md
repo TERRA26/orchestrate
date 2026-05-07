@@ -480,7 +480,7 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:649-654
 - evidence: this.sessions, this.discoverySessions, and the four caches in CodexAppServerManager are plain Maps with no eviction. A pathological pattern (server runs for a week, dozens of threads created and partially cleaned up) leaves entries forever.
 - proposed_fix: Add explicit cleanup on thread deletion. Implement TTL or LRU eviction with a max size (e.g. 1000). Add a startup scrub that drops entries with no live thread.
-- status: PENDING
+- status: DONE
 
 ### ORC-050
 
