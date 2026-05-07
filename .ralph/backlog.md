@@ -327,7 +327,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1963
 - evidence: `socket.on("error", () => {});` swallows all upgrade-time socket errors with no logging. Operator cannot tell if clients are repeatedly aborting handshakes, hitting EPIPE, or being blocked by a firewall.
 - proposed_fix: Replace the empty handler with a debug-level log that captures err.code + err.message. Optionally count error rates per client and surface a metric.
-- status: PENDING
+- status: DONE
+- fixed_iter: 67
 
 ### ORC-034
 

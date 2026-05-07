@@ -153,6 +153,25 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
   );
 }
 
+// ORC-033: structured logging for upgrade-time socket errors. Exported so
+// tests can drive the helper directly with a fake logger.
+export function logUpgradeSocketError(
+  logger: { debug: (payload: Record<string, unknown>, message: string) => void },
+  err: NodeJS.ErrnoException,
+  socket: { readonly remoteAddress?: string | undefined },
+): void {
+  logger.debug(
+    {
+      event: "wsserver.upgrade.socket-error",
+      code: err.code,
+      syscall: err.syscall,
+      errno: err.errno,
+      remoteAddress: socket.remoteAddress,
+    },
+    err.message ?? "ws upgrade socket error",
+  );
+}
+
 type BootstrapSnapshotThread = OrchestrationReadModel["threads"][number];
 
 function toSortableBootstrapTimestamp(iso: string | undefined): number {
@@ -2051,7 +2070,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
-    socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
+    // ORC-033: log upgrade-time socket errors at debug level instead of
+    // swallowing them. Without the listener Node would crash the process
+    // on EPIPE/ECONNRESET when a client disconnects mid-handshake; the
+    // listener prevents that crash but used to be empty so operators
+    // had no signal that clients were failing handshakes en masse.
+    socket.on("error", (err: NodeJS.ErrnoException) =>
+      logUpgradeSocketError(logger, err, socket),
+    );
 
     if (authToken) {
       let providedToken: string | null = null;

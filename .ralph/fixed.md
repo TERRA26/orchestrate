@@ -1256,3 +1256,41 @@ Adversarial review:
 - Wire `setOnLateBridgeResponse` to a structured logger emit at server startup (currently the hook is null in production; this fix delivers the infrastructure but not the production wiring). The next reactor refactor pass should add a single `pino.warn(...)` from a top-level service.
 - Consider exposing tombstone count as a metric so operators can graph the rate of late responses without log scraping.
 - Consider adding a periodic timer-based prune (not just opportunistic) so tombstones from a quiet bridge eventually clear without waiting for the next timeout. Current approach is sufficient for normal traffic; quiet-period accumulation is bounded by `2 * timeoutMs`.
+
+### ORC-033 — fixed iter 67 (2026-05-07)
+
+**Root cause**: The HTTP upgrade handler in `wsServer.ts` registered `socket.on("error", () => {})` to prevent the process from crashing on EPIPE/ECONNRESET when a client disconnected mid-handshake. The empty handler did its job (no crash) but operators had no signal when clients were repeatedly failing handshakes (firewall, malformed clients, network flapping).
+
+**Change summary**:
+1. Extracted `logUpgradeSocketError(logger, err, socket)` as a top-level exported function so tests can drive it without spinning up a real socket. Logs at `debug` level with structured payload `{ event, code, syscall, errno, remoteAddress }` and the err message (or a default when missing).
+2. Replaced the empty handler at the upgrade handler with a one-line call to `logUpgradeSocketError(logger, err, socket)`.
+
+**Files touched**:
+- apps/server/src/wsServer.ts (added `logUpgradeSocketError` + replaced empty handler)
+- apps/server/src/wsServer.upgradeSocketError.test.ts (NEW; 3 tests)
+
+**Tests added** (3):
+- Logs the structured event with err code, syscall, errno, remoteAddress.
+- Falls back to "ws upgrade socket error" default when err.message is undefined.
+- Handles a socket without remoteAddress.
+
+The first test fails against the prior implementation: pre-fix the handler did nothing, so `logger.calls` would have been empty.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/wsServer.upgradeSocketError.test.ts
+Test Files  1 passed (1)
+     Tests  3 passed (3)
+```
+Plus: `bun run typecheck` clean, `bun lint` 0 errors / 141 warnings (no new warnings from this fix).
+
+Adversarial review:
+- The handler is now active (logger.debug). If pino's debug level is filtered out at runtime, the call is a noop after the formatter; no perf concern.
+- Empty/undefined err message: falls back to default. ✓
+- Missing remoteAddress (e.g., already-closed socket): payload contains `remoteAddress: undefined`. ✓
+- Same-socket multiple errors: each fires the handler; operator sees one log line per error. Acceptable.
+- A future cleanup that wants ALL upgrade-error log lines at warn (not debug): change one log level in the helper; tests still apply.
+
+**Follow-ups**:
+- Add a per-client error counter so a single client repeatedly aborting handshakes can be flagged for IP-block rather than buried in debug logs. Tracked separately as observability hardening.
+- Consider promoting to warn level if specific err.code values indicate genuine attack patterns (e.g., a flood of EBADRQC).
