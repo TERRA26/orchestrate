@@ -58,17 +58,24 @@ const testLayer = Layer.mergeAll(
   NodeServices.layer,
 );
 
-const runCli = (
-  args: ReadonlyArray<string>,
-  env: Record<string, string> = { ORCHESTRATE_NO_BROWSER: "true" },
-) => {
+// Default env for CLI tests. ORC-041: include a benign ORCHESTRATE_AUTH_TOKEN
+// so the binding-security check (which refuses to start on a wildcard host
+// without an auth token) does not abort tests that aren't exercising it.
+// Tests that DO want to exercise the security check can pass an env that
+// explicitly leaves the token unset (e.g. by setting it to undefined and
+// using a host of 0.0.0.0).
+const DEFAULT_CLI_ENV: Record<string, string> = {
+  ORCHESTRATE_NO_BROWSER: "true",
+  ORCHESTRATE_AUTH_TOKEN: "test-auth-token",
+};
+
+const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) => {
+  const mergedEnv = { ...DEFAULT_CLI_ENV, ...env };
   return Command.runWith(t3Cli, { version: "0.0.0-test" })(args).pipe(
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
-          env: {
-            ...env,
-          },
+          env: mergedEnv,
         }),
       ),
     ),
@@ -285,6 +292,36 @@ it.layer(testLayer)("server CLI command", (it) => {
 
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("ORC-041 refuses to start when binding wildcard host with no auth token", () =>
+    Effect.gen(function* () {
+      // Override the default env to remove the auth token, simulating a
+      // production startup with neither --token nor ORCHESTRATE_AUTH_TOKEN.
+      yield* runCli(["--mode", "web", "--host", "0.0.0.0"], {
+        ORCHESTRATE_NO_BROWSER: "true",
+        ORCHESTRATE_AUTH_TOKEN: "",
+      }).pipe(Effect.catch(() => Effect.void));
+
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(stop.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("ORC-041 starts when binding to loopback even without an auth token", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--mode", "web", "--host", "127.0.0.1"], {
+        ORCHESTRATE_NO_BROWSER: "true",
+        ORCHESTRATE_AUTH_TOKEN: "",
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.host, "127.0.0.1");
+      // Empty env value passes through as empty string; the binding-security
+      // check treats it as "no token" (trimmed length zero) and lets the
+      // loopback bind through without complaint.
+      assert.equal((resolvedConfig?.authToken ?? "").trim(), "");
     }),
   );
 

@@ -18,6 +18,7 @@ import {
   type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
+import { isWildcardHost, validateBindingSecurity } from "./bindingSecurity.ts";
 import { fixPath, resolveBaseDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
@@ -206,9 +207,6 @@ const LayerLive = (input: CliInput) =>
     Layer.provideMerge(ServerConfigLive(input)),
   );
 
-const isWildcardHost = (host: string | undefined): boolean =>
-  host === "0.0.0.0" || host === "::" || host === "[::]";
-
 const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
@@ -253,6 +251,17 @@ const makeServerProgram = (input: CliInput) =>
           hint: "Run `bun run --cwd apps/web build` or set VITE_DEV_SERVER_URL for dev mode.",
         },
       );
+    }
+
+    // ORC-041: refuse to start when the server would accept remote
+    // connections without an auth token. Loopback bindings and
+    // token-protected wildcard bindings are allowed.
+    const bindingCheck = validateBindingSecurity({
+      host: config.host,
+      authToken: config.authToken,
+    });
+    if (!bindingCheck.ok) {
+      return yield* Effect.fail(new StartupError({ message: bindingCheck.reason }));
     }
 
     yield* start;

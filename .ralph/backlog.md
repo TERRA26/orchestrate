@@ -383,7 +383,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1965,apps/server/src/main.ts:209-270
 - evidence: When `authToken` is unset and host is wildcard (0.0.0.0, ::), the auth gate is skipped entirely. Server starts open with no warning. The README says to "configure an auth token" but nothing enforces it.
 - proposed_fix: In ServerConfigLive (or main.ts startup), refuse to start when host is a wildcard binding without an auth token; print a clear failure message that explains the requirement.
-- status: PENDING
+- status: DONE
+- fixed_iter: 43
 
 ### ORC-042
 
