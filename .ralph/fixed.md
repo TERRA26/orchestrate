@@ -657,3 +657,41 @@ Adversarial review:
 - Consider replacing the long if/else chain in executeOrchestrationTool with a dispatch table keyed by tool name. The fallthrough throw becomes redundant once every tool has a registered handler. Tracked separately as a refactor.
 - The `args` parameter is currently `Record<string, unknown>`; per-tool argument validation should run BEFORE dispatch instead of inside each branch.
 - The error message lists ALL known tools for debugging convenience; in production we may want to truncate for very large registries (currently small enough that listing is fine).
+
+### ORC-004 — fixed iter 53 (2026-05-07)
+
+**Root cause**: `handleStreamEvent` in ClaudeAdapter.ts dispatched by bare `if (event.type === "...")` checks for the three known kinds (`content_block_delta`, `content_block_start`, `content_block_stop`). Anything else fell through and the function returned silently, so a Claude SDK upgrade that shipped a new event kind (cache_creation, content_block kinds we hadn't written for) was silently dropped with no log line and no telemetry. Operators had no signal to wire a handler.
+
+**Change summary**:
+1. Defined a `KNOWN_CLAUDE_STREAM_EVENT_TYPES` set inside the adapter scope listing the three handled event kinds.
+2. Added `isUnknownClaudeStreamEventType(eventType)` helper.
+3. Appended a fallthrough block at the end of `handleStreamEvent` that calls the existing `emitRuntimeWarning(context, "claude.stream-event.unknown-type", { eventType })` for any event whose type is not in the known set. The warning surfaces through the standard `runtime.warning` event channel so it appears in the same observability stream as other runtime warnings.
+
+**Files touched**:
+- apps/server/src/provider/Layers/ClaudeAdapter.ts (added KNOWN_CLAUDE_STREAM_EVENT_TYPES + isUnknownClaudeStreamEventType + fallthrough warning emit)
+- apps/server/src/provider/Layers/ClaudeAdapter.test.ts (added 1 ORC-004 integration test)
+
+**Tests added** (1):
+- `ORC-004 emits a runtime.warning when a Claude stream_event has an unknown event.type` — full-runtime test using the existing harness. Emits a `stream_event` with `event.type: "imaginary_future_event_kind"` and asserts a `runtime.warning` event is produced with `payload.message === "claude.stream-event.unknown-type"` and `payload.detail.eventType === "imaginary_future_event_kind"`.
+
+The test fails against the prior implementation: pre-fix, the unknown event was silently dropped, no `runtime.warning` was emitted, and `assert.ok(unknownTypeWarning, ...)` would fail.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/provider/Layers/ClaudeAdapter.test.ts
+Test Files  1 passed (1)
+     Tests  46 passed (46)
+```
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 136 warnings.
+
+Adversarial review:
+- A FUTURE known event kind (post-fix) won't trigger the warning because we'd add it to `KNOWN_CLAUDE_STREAM_EVENT_TYPES` when we wire its handler. ✓
+- An event with a missing `type` field: TS narrows `event.type` to a string union; runtime would coerce `undefined` to `"undefined"` and we'd emit a warning indicating a malformed payload. Acceptable.
+- Repeated unknown events of the same type: each emits a separate warning. Could be noisy if the SDK starts sending hundreds of unknown events per turn; tracked as a follow-up (rate-limit per-type).
+- The known set is in the closure scope of `ClaudeAdapterLive`, so each session has its own set instance but they all carry the same string members. Equivalent semantics. ✓
+- `emitRuntimeWarning` is already used in 4+ other places in the adapter so the test infrastructure for runtime.warning observation works for free. ✓
+
+**Follow-ups**:
+- Consider rate-limiting the warning per `eventType` so a noisy SDK upgrade doesn't flood the log. Hash-based 1-per-N or coalesce-by-time would work; tracked separately.
+- The audit also suggested converting the if-chain to a `switch`. Kept the if-chain to minimize diff churn; the fallthrough achieves the same observability outcome. A future cleanup pass can do the switch refactor.
+- Apply the same pattern to other event-routing dispatchers in the codebase (Codex adapter, browser runtime). Tracked as a pattern audit follow-up.

@@ -1782,6 +1782,18 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         });
       });
 
+    // ORC-004: enumerate the stream-event.type values handleStreamEvent
+    // explicitly handles. Anything else triggers the unknown-type warning
+    // path so SDK changes surface in logs instead of being silently
+    // dropped.
+    const KNOWN_CLAUDE_STREAM_EVENT_TYPES = new Set<string>([
+      "content_block_delta",
+      "content_block_start",
+      "content_block_stop",
+    ]);
+    const isUnknownClaudeStreamEventType = (eventType: string): boolean =>
+      !KNOWN_CLAUDE_STREAM_EVENT_TYPES.has(eventType);
+
     const emitRuntimeWarning = (
       context: ClaudeSessionContext,
       message: string,
@@ -2239,6 +2251,19 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           if (!tool) {
             return;
           }
+          return;
+        }
+
+        // ORC-004: anything else is an unknown stream-event type. We used to
+        // silently fall through and drop it; that masked SDK upgrades that
+        // shipped new event kinds (e.g. cache_creation, content_block kinds
+        // we didn't write code for). Emit a runtime warning so the new
+        // event surfaces in observability and prompts the developer to
+        // wire a handler.
+        if (isUnknownClaudeStreamEventType(event.type)) {
+          yield* emitRuntimeWarning(context, "claude.stream-event.unknown-type", {
+            eventType: event.type,
+          });
         }
       });
 

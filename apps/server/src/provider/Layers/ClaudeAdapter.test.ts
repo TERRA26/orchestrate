@@ -616,6 +616,92 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "ORC-004 emits a runtime.warning when a Claude stream_event has an unknown event.type",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          modelSelection: { provider: "claudeAgent", model: "claude-sonnet-4-5" },
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        // Emit a stream_event with a type the adapter does not know about.
+        // Without ORC-004 this was silently dropped.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-future",
+          parent_tool_use_id: null,
+          event: {
+            type: "imaginary_future_event_kind",
+            index: 0,
+          },
+        } as unknown as SDKMessage);
+
+        // Drain a few sentinel events too so the take(8) fiber resolves.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-1",
+          parent_tool_use_id: null,
+          event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-2",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 1,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-3",
+          parent_tool_use_id: null,
+          event: { type: "content_block_stop", index: 1 },
+        } as unknown as SDKMessage);
+
+        const events = yield* Fiber.join(runtimeEventsFiber);
+        const eventList = Array.from(events);
+
+        // Expect at least one runtime.warning carrying the unknown-type detail.
+        const unknownTypeWarning = eventList.find(
+          (e: any) =>
+            e.type === "runtime.warning" &&
+            e.payload?.message === "claude.stream-event.unknown-type",
+        ) as any;
+        assert.ok(unknownTypeWarning, "expected a runtime.warning for the unknown stream_event");
+        assert.strictEqual(
+          unknownTypeWarning?.payload?.detail?.eventType,
+          "imaginary_future_event_kind",
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

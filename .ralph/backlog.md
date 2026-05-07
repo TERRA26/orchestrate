@@ -49,7 +49,8 @@ Schema per entry:
 - files: apps/server/src/provider/Layers/ClaudeAdapter.ts:2026-2798
 - evidence: handleStreamEvent uses bare if-checks per known event.type. Unknown event types fall through with no warning, no telemetry. New SDK events (cache hits, new content blocks) are silently dropped.
 - proposed_fix: Convert the bare if chain to a switch with a default case that calls emitRuntimeWarning so unknown stream events are logged and visible in observability.
-- status: PENDING
+- status: DONE
+- fixed_iter: 53
 
 ### ORC-005
 
