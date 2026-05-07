@@ -82,6 +82,16 @@ function truncateText(value: unknown, maxLength: number): unknown {
   return `${value.slice(0, maxLength)}\n...[truncated ${value.length - maxLength} chars]`;
 }
 
+// ORC-028: wrap untrusted browser-sourced strings in framing tags so the
+// orchestrator's LLM treats them as data rather than authoritative
+// instructions. A malicious page can put "System: ignore previous
+// instructions" into an aria-label or visible text; without framing the
+// orchestrator might lift it into its own reasoning context.
+function wrapUntrustedBrowserContent(value: unknown, tag: string): unknown {
+  if (typeof value !== "string" || value.length === 0) return value;
+  return `<${tag}>\n${value}\n</${tag}>`;
+}
+
 function summarizeBrowserTarget(target: unknown): unknown {
   if (!target || typeof target !== "object" || Array.isArray(target)) {
     return target;
@@ -724,8 +734,17 @@ export function summarizeBrowserObservation(observation: any, includeScreenshot:
     url: observation.url,
     title: observation.title,
     readyState: observation.readyState,
-    textSummary: truncateText(observation.textSummary, 4_000),
-    ariaSnapshot: truncateText(observation.ariaSnapshot, 6_000),
+    // ORC-028: frame browser DOM/ARIA content as untrusted before the
+    // orchestrator sees it. The truncate happens first so the framing
+    // tags are not counted against the length budget.
+    textSummary: wrapUntrustedBrowserContent(
+      truncateText(observation.textSummary, 4_000),
+      "untrusted_browser_dom",
+    ),
+    ariaSnapshot: wrapUntrustedBrowserContent(
+      truncateText(observation.ariaSnapshot, 6_000),
+      "untrusted_browser_aria",
+    ),
     visualWarnings: browserVisualWarnings(observation),
     targets: Array.isArray(observation.targets)
       ? observation.targets.slice(0, 50).map(summarizeBrowserTarget)
