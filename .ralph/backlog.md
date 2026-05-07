@@ -109,7 +109,7 @@ Schema per entry:
 - area: secret handling
 - files: apps/server/src/provider/Layers/ClaudeAdapter.ts:3358-3392
 - evidence: `const queryEnv = { ...process.env }` is passed unfiltered to the Claude SDK subprocess. Any secret in the server's process env (ORCHESTRATE_AUTH_TOKEN, API keys, etc.) is inherited by the child process and visible via /proc/PID/environ to other local processes.
-- proposed*fix: Whitelist env vars to forward (HOME, PATH, USER, locale vars, ANTHROPIC*_, CLAUDE\__, etc.). Strip ORCHESTRATE_AUTH_TOKEN and other server-private secrets before spawn.
+- proposed*fix: Whitelist env vars to forward (HOME, PATH, USER, locale vars, ANTHROPIC*\_, CLAUDE\_\_, etc.). Strip ORCHESTRATE_AUTH_TOKEN and other server-private secrets before spawn.
 - status: PENDING
 
 ### ORC-012
@@ -246,7 +246,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/reportProtocol.ts:22-49,apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:708-716
 - evidence: workerKickoffMessage(objective, options) concatenates the objective directly into the worker's first user message. An orchestrator that has been injected (or a malicious orchestrator-side input) can craft an objective that contains a fabricated REPORT block; the worker LLM sees that text and may copy it into its own output, claiming work it did not do.
 - proposed_fix: Wrap the objective in `<task_objective>...</task_objective>` tags and instruct the worker (via the kickoff text) that REPORT blocks must be authored by the worker itself. Reject pre-existing `## REPORT` strings in the objective with a clear error before dispatch.
-- status: PENDING
+- status: DONE
+- fixed_iter: 41
 
 ### ORC-027
 

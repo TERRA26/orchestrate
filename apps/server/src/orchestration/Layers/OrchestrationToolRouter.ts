@@ -37,7 +37,7 @@ import {
   BrowserOrchestrationEvidenceRepository,
   type BrowserOrchestrationEvidenceRepositoryShape,
 } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
-import { workerKickoffMessage } from "../reportProtocol.ts";
+import { objectiveContainsFabricatedReport, workerKickoffMessage } from "../reportProtocol.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationToolRouterService,
@@ -574,6 +574,12 @@ function handleSpawnAgent(
       taskLabel: normalizedTaskLabel,
       objective,
     });
+    if (objectiveContainsFabricatedReport(normalizedObjective)) {
+      return {
+        error:
+          "Objective contains a fabricated REPORT block. REPORT blocks must be authored by the spawned worker on its final turn. Strip the '## REPORT' section from the objective and try again.",
+      };
+    }
     const normalizedCriteria = resolveSpawnAcceptanceCriteria({
       taskLabel: normalizedTaskLabel,
       acceptanceCriteria,
