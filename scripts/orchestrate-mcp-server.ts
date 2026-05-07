@@ -503,9 +503,39 @@ const TOOLS = [
   },
 ];
 
+// ORC-188: read the auth token from a file when available so we never
+// have to keep it in env. The parent process writes a 0o600 file and
+// passes its path; we read the contents once and unlink the file.
+function consumeMcpAuthTokenFile(filePath: string): string | undefined {
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const contents = fs.readFileSync(filePath, "utf8");
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // Best-effort cleanup; the file is mode 0o600 either way.
+    }
+    return contents.trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveOrchestrateAuthToken(env: NodeJS.ProcessEnv): string | undefined {
+  const filePath = env.ORCHESTRATE_AUTH_TOKEN_FILE;
+  if (filePath && filePath.length > 0) {
+    const fromFile = consumeMcpAuthTokenFile(filePath);
+    if (fromFile && fromFile.length > 0) {
+      return fromFile;
+    }
+  }
+  const direct = env.ORCHESTRATE_AUTH_TOKEN;
+  return direct && direct.length > 0 ? direct : undefined;
+}
+
 // The MCP server connects back to our orchestration WebSocket server to execute tools.
 export function buildOrchestrationWsUrls(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
-  const authToken = env.ORCHESTRATE_AUTH_TOKEN;
+  const authToken = resolveOrchestrateAuthToken(env);
   const withAuth = (baseUrl: string): string => {
     if (!authToken) {
       return baseUrl;
@@ -539,7 +569,7 @@ export function buildMcpBootDiagnostic(env: NodeJS.ProcessEnv): string {
   return [
     "orchestrate-mcp-server loaded",
     `port=${env.ORCHESTRATE_WS_PORT ?? "fallback"}`,
-    `auth=${env.ORCHESTRATE_AUTH_TOKEN ? "present" : "missing"}`,
+    `auth=${env.ORCHESTRATE_AUTH_TOKEN_FILE || env.ORCHESTRATE_AUTH_TOKEN ? "present" : "missing"}`,
     `parentThread=${env.ORCHESTRATE_PARENT_THREAD_ID ? "present" : "missing"}`,
   ].join("; ");
 }

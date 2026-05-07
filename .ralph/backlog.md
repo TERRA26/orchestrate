@@ -1713,6 +1713,8 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:510-519,apps/desktop/src/main.ts:1083 (subprocess env wiring)
 - evidence: ORCHESTRATE_AUTH_TOKEN is forwarded into Codex's subprocess env. Even with the broader env-allowlist fix in ORC-011/012, this specific assignment explicitly puts the token where /proc/PID/environ exposes it. Any tool the subprocess shells out to (linters, formatters, package managers) inherits it.
 - proposed_fix: Pass the token via a unix-socket file descriptor or a one-shot temporary file (mode 0o600) referenced by path. The subprocess reads-then-deletes. Avoid env entirely for this secret.
+- status: DONE
+- fixed_iter: 47
 - status: PENDING
 
 ### ORC-189

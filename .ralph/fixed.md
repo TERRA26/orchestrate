@@ -347,3 +347,57 @@ Adversarial review:
 - The existing dispatch site at handleSendUpdateToOrchestrator still uses defensive `decoded.question !== undefined` spread guards; these are correct but visually misleading because TypeScript can no longer reach those fields on every branch. Refactor to a cleaner `switch (decoded.status)` for readability; functionally equivalent.
 - Worker prompt instructions in reportProtocol.ts already say "set question" / "set blockedReason" per status; align the language with the discriminator-required wording so workers know the schema is now strict.
 - Consider adding a min-length check (e.g. `summary` non-empty) to catch trivially missing summaries.
+
+### ORC-188 — fixed iter 47 (2026-05-07)
+
+**Root cause**: `buildCodexOrchestratorEnvironment` set `ORCHESTRATE_AUTH_TOKEN` directly in the spawned Codex process env. On Linux that token was visible via `/proc/PID/environ`; on macOS via `ps -E`. Every tool the Codex subprocess shelled out to (linters, formatters, package managers, the orchestrate-mcp-server itself) inherited the token in its own env. A single misbehaving tool that logged its environment leaked the token wherever it logged.
+
+**Change summary**:
+
+1. New module `apps/server/src/authTokenProvisioning.ts`:
+   - `provisionAuthTokenFile(token, dir)` writes the token to a unique file in `dir` with mode `0o600` and returns the path plus an idempotent cleanup. The directory is created with mode `0o700`.
+   - `consumeAuthTokenFile(path)` reads the file, unlinks it, returns the trimmed contents.
+   - `resolveOrchestrateAuthToken(env)` is the canonical resolver: prefer `ORCHESTRATE_AUTH_TOKEN_FILE`, fall back to legacy `ORCHESTRATE_AUTH_TOKEN`.
+2. `buildCodexOrchestratorEnvironment` now accepts `authTokenFilePath?: string`. When set, it puts the path in `ORCHESTRATE_AUTH_TOKEN_FILE` and **deletes** any inherited `ORCHESTRATE_AUTH_TOKEN` from env so it cannot leak via baseEnv spread. Legacy fallback (no file path, only token) preserves prior behavior for callers we have not yet updated.
+3. `CodexAppServerManager` provisions a token file before spawning the Codex subprocess and registers cleanup on `child.exit`. Secrets directory is `<baseDir>/secrets/` (or `os.tmpdir()/secrets/` if baseDir is unavailable).
+4. `scripts/orchestrate-mcp-server.ts` `buildOrchestrationWsUrls` now resolves the token via the new helper. The MCP server reads the file once at startup, unlinks it, and caches the token in process memory for subsequent reconnects. The `buildMcpBootDiagnostic` helper recognizes both env variables for the `auth=present|missing` field.
+
+**Files touched**:
+
+- apps/server/src/authTokenProvisioning.ts (NEW)
+- apps/server/src/authTokenProvisioning.test.ts (NEW; 9 tests)
+- apps/server/src/codexAppServerManager.ts (added authTokenFilePath param + provisioning + cleanup wire-in)
+- apps/server/src/codexAppServerManager.test.ts (added 2 ORC-188 tests)
+- scripts/orchestrate-mcp-server.ts (consume file at startup; updated diagnostic)
+
+**Tests added** (11 total):
+
+- 9 in `authTokenProvisioning.test.ts`: provisioning produces 0o600 file, consumption returns content + unlinks, resolver prefers file over env, fallback path, cleanup idempotence, whitespace trimming.
+- 2 in `codexAppServerManager.test.ts`: `ORCHESTRATE_AUTH_TOKEN_FILE` is set and `ORCHESTRATE_AUTH_TOKEN` is NOT set when `authTokenFilePath` is provided; an inherited `ORCHESTRATE_AUTH_TOKEN` from baseEnv is stripped from the result.
+
+The two codexAppServerManager tests fail against the prior implementation: pre-fix, `ORCHESTRATE_AUTH_TOKEN_FILE` was unrecognized and `ORCHESTRATE_AUTH_TOKEN` was always set when authToken was provided.
+
+**Evidence of green run**:
+
+```
+$ bun run vitest --run src/authTokenProvisioning.test.ts src/codexAppServerManager.test.ts
+Test Files  2 passed (2)
+     Tests  57 passed | 1 skipped (58)
+```
+
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 135 warnings (no new ones).
+
+Adversarial review:
+
+- File system race (attacker between write and chmod): `writeFileSync` with `mode: 0o600` is atomic on POSIX (the file is created with the mode, never with default mode then chmod'd). ✓
+- Symlink attack on the secrets dir: dir is created under our own baseDir or `os.tmpdir()` (which is per-user). The `randomUUID` filename prevents collision with attacker-controlled names. ✓
+- Subprocess crashes before reading the file: `child.once("exit", ...)` cleanup registers the unlink on the parent process side. The file is removed when codex exits. ✓
+- Read-but-fail-to-unlink (FS read-only mid-run): the consumer logs nothing but returns the token; the file is mode 0o600, so a stale copy is no worse than the env-var case it replaces. The cleanup on exit will eventually remove it.
+- Token rotated: server provisions a NEW file each spawn; old files are cleaned up on prior subprocess exit.
+- Legacy MCP clients reading `ORCHESTRATE_AUTH_TOKEN`: still supported via the fallback branch in `resolveOrchestrateAuthToken` and the legacy branch in `buildCodexOrchestratorEnvironment`.
+
+**Follow-ups**:
+
+- Apply the same path-based provisioning to any other places auth tokens enter subprocess env. None observed in current code (server-side spawns of providers go through this manager); track as a pattern audit follow-up.
+- Add a similar pattern for OAuth credentials and provider API keys when the server gains the ability to forward those. Currently those live in user config files outside our subprocess env path.
+- Document the new `ORCHESTRATE_AUTH_TOKEN_FILE` env var in the server README so external callers (tests, integration harnesses) know the new wire shape.

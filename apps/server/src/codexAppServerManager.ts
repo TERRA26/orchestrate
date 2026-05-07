@@ -47,6 +47,7 @@ import {
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
 import { buildOrchestratorSystemPrompt } from "./orchestration/orchestratorSystemPrompt";
+import { provisionAuthTokenFile, type ProvisionedAuthToken } from "./authTokenProvisioning.ts";
 import { ServerConfig, type ServerConfigShape } from "./config.ts";
 
 type PendingRequestKey = string;
@@ -498,6 +499,13 @@ export function buildCodexOrchestratorEnvironment(input: {
   readonly threadId: ThreadId;
   readonly codexHomePath?: string;
   readonly threadType?: "orchestrator" | "agent";
+  // ORC-188: prefer passing the auth token via a one-shot file (mode 0o600)
+  // referenced by path. The MCP server reads the file and unlinks it; the
+  // env var leaking the path is harmless (file is only owner-readable).
+  // When this is set we omit ORCHESTRATE_AUTH_TOKEN from env entirely so
+  // the token is not visible to any tool the subprocess shells out to via
+  // /proc/PID/environ on Linux or `ps -E` on macOS.
+  readonly authTokenFilePath?: string;
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...input.baseEnv,
@@ -508,10 +516,20 @@ export function buildCodexOrchestratorEnvironment(input: {
     return env;
   }
 
+  // Strip any inherited token so we cannot accidentally re-leak via the
+  // baseEnv spread. The path-based form below is the only sanctioned way
+  // for a child orchestrator to learn the token.
+  delete env.ORCHESTRATE_AUTH_TOKEN;
+
   env.ORCHESTRATE_PARENT_THREAD_ID = input.threadId;
   if (input.serverConfig !== undefined) {
     env.ORCHESTRATE_WS_PORT = String(input.serverConfig.port);
-    if (input.serverConfig.authToken) {
+    if (input.authTokenFilePath) {
+      env.ORCHESTRATE_AUTH_TOKEN_FILE = input.authTokenFilePath;
+    } else if (input.serverConfig.authToken) {
+      // Legacy fallback: in environments where the caller has not
+      // provisioned a file yet (older code paths, tests). New code should
+      // always provision via authTokenProvisioning.ts.
       env.ORCHESTRATE_AUTH_TOKEN = input.serverConfig.authToken;
     }
   }
@@ -749,6 +767,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
+      // ORC-188: hand the auth token to the child via a one-shot 0o600 file
+      // referenced by ORCHESTRATE_AUTH_TOKEN_FILE rather than putting it in
+      // env. The MCP server reads the file and unlinks it; we register a
+      // cleanup on subprocess exit as a backstop.
+      let authTokenProvision: ProvisionedAuthToken | undefined;
+      if (
+        input.threadType === "orchestrator" &&
+        serverConfig?.authToken &&
+        serverConfig.authToken.length > 0
+      ) {
+        const secretsDir = path.join(serverConfig.baseDir ?? os.tmpdir(), "secrets");
+        authTokenProvision = provisionAuthTokenFile(serverConfig.authToken, secretsDir);
+      }
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
         env: buildCodexOrchestratorEnvironment({
@@ -757,6 +788,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           threadId,
           codexHomePath,
           threadType: input.threadType,
+          ...(authTokenProvision ? { authTokenFilePath: authTokenProvision.filePath } : {}),
         }),
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
@@ -766,7 +798,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         threadId,
         threadType: input.threadType,
       });
-      child.once("exit", () => removeOrchestratorPidSidecar(child.pid));
+      child.once("exit", () => {
+        removeOrchestratorPidSidecar(child.pid);
+        if (authTokenProvision) {
+          authTokenProvision.cleanup();
+        }
+      });
       const output = readline.createInterface({ input: child.stdout });
 
       context = {

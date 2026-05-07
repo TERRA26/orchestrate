@@ -59,6 +59,44 @@ describe("buildCodexOrchestratorEnvironment", () => {
     expect(env.ORCHESTRATE_WS_PORT).toBeUndefined();
     expect(env.ORCHESTRATE_AUTH_TOKEN).toBeUndefined();
   });
+
+  it("ORC-188 prefers ORCHESTRATE_AUTH_TOKEN_FILE over the env var when authTokenFilePath is provided", () => {
+    const env = buildCodexOrchestratorEnvironment({
+      baseEnv: { PATH: "/bin" },
+      serverConfig: {
+        port: 51234,
+        authToken: "secret-token",
+      },
+      threadId: asThreadId("thread-codex-orchestrator"),
+      threadType: "orchestrator",
+      authTokenFilePath: "/var/run/orchestrate/secrets/orchestrate-auth-abc.token",
+    });
+
+    // The path is in env (harmless leak; file is mode 0o600).
+    expect(env.ORCHESTRATE_AUTH_TOKEN_FILE).toBe(
+      "/var/run/orchestrate/secrets/orchestrate-auth-abc.token",
+    );
+    // The token itself is NOT in env, so /proc/PID/environ and `ps -E`
+    // cannot expose it to other same-user processes the subprocess
+    // shells out to.
+    expect(env.ORCHESTRATE_AUTH_TOKEN).toBeUndefined();
+  });
+
+  it("ORC-188 strips an inherited ORCHESTRATE_AUTH_TOKEN from baseEnv even when no token is configured", () => {
+    const env = buildCodexOrchestratorEnvironment({
+      baseEnv: { PATH: "/bin", ORCHESTRATE_AUTH_TOKEN: "leaked-from-parent" },
+      serverConfig: {
+        port: 51234,
+        authToken: "secret-token",
+      },
+      threadId: asThreadId("thread-codex-orchestrator"),
+      threadType: "orchestrator",
+      authTokenFilePath: "/tmp/orchestrate-auth.token",
+    });
+
+    expect(env.ORCHESTRATE_AUTH_TOKEN).toBeUndefined();
+    expect(env.ORCHESTRATE_AUTH_TOKEN_FILE).toBe("/tmp/orchestrate-auth.token");
+  });
 });
 
 function createSendTurnHarness() {
