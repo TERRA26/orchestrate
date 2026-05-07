@@ -287,3 +287,63 @@ Adversarial review:
 - Consider closing the socket after N consecutive skips (currently we just keep skipping; the client never recovers without action). Track separately.
 - Surface `bufferedAmount` as a metric per-client; would help operators graph slow clients before they hit the threshold.
 - Consider a sliding window (drop only the K oldest queued messages on the slow client's bus side) instead of a hard skip; the current approach is the simplest defense.
+
+### ORC-128 — fixed iter 46 (2026-05-07)
+
+**Root cause**: `SendUpdateToOrchestratorInput` was a flat `Schema.Struct` with `question`, `nextStep`, and `blockedReason` all marked `Schema.optional`. Cross-field constraints (e.g. `blockedReason` only valid when `status === "blocked"`) were enforced only by convention. A worker sending `{ status: "in-progress", blockedReason: "x" }` was decoded as-is and the dispatch site spread every present field, so the orchestrator's read model recorded a posture that contradicted itself.
+
+**Change summary**: Replaced the flat struct with a discriminated `Schema.Union` of four branches:
+
+- `InProgressUpdate` — `status: "in-progress"`, `summary`, optional `nextStep`.
+- `NeedsInputUpdate` — `status: "needs-input"`, `summary`, **required** `question`.
+- `BlockedUpdate` — `status: "blocked"`, `summary`, **required** `blockedReason`.
+- `ReadyForReviewUpdate` — `status: "ready-for-review"`, `summary`.
+
+Each branch is annotated with `parseOptions: { onExcessProperty: "error" }` so any field intended for another branch causes a hard decode error. This fails closed at the schema layer; the dispatch site continues to spread only present fields and now sees only fields valid for the matched posture.
+
+**Files touched**:
+
+- packages/contracts/src/orchestrationTools.ts (refactored SendUpdateToOrchestratorInput from Struct to Union)
+- packages/contracts/src/orchestrationTools.test.ts (NEW; 9 tests pinning the policy)
+
+**Tests added**: 9 tests:
+
+- 4 happy-path tests (one per branch)
+- 5 rejection tests including the core ORC-128 case (`status: in-progress` with `blockedReason`), missing-required-field on `needs-input` and `blocked`, cross-field-data on `ready-for-review`, and `question` on the wrong status.
+
+All 5 rejection tests fail against the prior implementation (the flat struct accepts everything).
+
+**Evidence of green run**:
+
+```
+$ bun run vitest --run src/orchestrationTools.test.ts          # contracts package
+Test Files  1 passed (1)
+     Tests  9 passed (9)
+
+$ bun run vitest --run                                          # full contracts suite
+Test Files  12 passed (12)
+     Tests  123 passed (123)
+
+$ bun run vitest --run src/orchestration/Layers/OrchestrationToolRouter.test.ts
+Test Files  1 passed (1)
+     Tests  19 passed (19)
+```
+
+Plus: server `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 135 warnings.
+
+Adversarial review:
+
+- `status: "in-progress"` plus `nextStep`: accepted (nextStep is optional but valid on this branch). ✓
+- `status: "in-progress"` plus `nextStep` AND `question`: rejected (question not in InProgressUpdate). ✓
+- `status: "needs-input"` without `question`: rejected (required field missing). ✓
+- `status: "blocked"` without `blockedReason`: rejected. ✓
+- `status: "ready-for-review"` plus `nextStep`: rejected (no extras allowed). ✓
+- Empty `summary` string: still accepted (no min-length check; summary content is the worker's responsibility). Could tighten in a follow-up.
+- Worker sends an unknown status: union match fails on every branch → decode error. ✓ (prior code allowed only the 4 documented values via `Schema.Literals`; same coverage here.)
+- Invalid `summary` type (number, null): rejected by `Schema.String`. ✓
+
+**Follow-ups**:
+
+- The existing dispatch site at handleSendUpdateToOrchestrator still uses defensive `decoded.question !== undefined` spread guards; these are correct but visually misleading because TypeScript can no longer reach those fields on every branch. Refactor to a cleaner `switch (decoded.status)` for readability; functionally equivalent.
+- Worker prompt instructions in reportProtocol.ts already say "set question" / "set blockedReason" per status; align the language with the discriminator-required wording so workers know the schema is now strict.
+- Consider adding a min-length check (e.g. `summary` non-empty) to catch trivially missing summaries.

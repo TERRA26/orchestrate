@@ -1171,6 +1171,8 @@ Schema per entry:
 - files: packages/contracts/src/orchestrationTools.ts:137-143 (SendUpdateToOrchestratorInput)
 - evidence: The schema is a flat Struct with optional question/nextStep/blockedReason. Cross-field validity (question only with status="needs-input", blockedReason only with status="blocked") is not enforced at the schema level. A worker can send `status: "in-progress", blockedReason: "x"` and the server stores both, leading the orchestrator to misread state.
 - proposed_fix: Refactor to a discriminated union: `{ status: "in-progress", nextStep: string } | { status: "needs-input", question: string } | { status: "blocked", blockedReason: string } | { status: "ready-for-review" }`. The decoder enforces the right side per status.
+- status: DONE
+- fixed_iter: 46
 - status: PENDING
 
 ### ORC-129

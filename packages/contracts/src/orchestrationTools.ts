@@ -134,13 +134,41 @@ export const SendToAgentOutput = Schema.Struct({
 // doesn't terminate with a final task.submit so the orchestrator's polling
 // loop returns useful posture (status + summary + optional question)
 // instead of an opaque "running" with empty diff.
-export const SendUpdateToOrchestratorInput = Schema.Struct({
-  status: Schema.Literals(["in-progress", "needs-input", "ready-for-review", "blocked"]),
+//
+// ORC-128: discriminated union by status. Each branch only allows the
+// fields valid for that posture, and `onExcessProperty: "error"` rejects
+// any field intended for another branch (e.g. `status: "in-progress"`
+// with `blockedReason`). The decoder fails closed instead of letting
+// the orchestrator misread cross-field-inconsistent state.
+const InProgressUpdate = Schema.Struct({
+  status: Schema.Literal("in-progress"),
   summary: Schema.String,
-  question: Schema.optional(Schema.String),
   nextStep: Schema.optional(Schema.String),
-  blockedReason: Schema.optional(Schema.String),
-});
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+const NeedsInputUpdate = Schema.Struct({
+  status: Schema.Literal("needs-input"),
+  summary: Schema.String,
+  question: Schema.String,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+const BlockedUpdate = Schema.Struct({
+  status: Schema.Literal("blocked"),
+  summary: Schema.String,
+  blockedReason: Schema.String,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+const ReadyForReviewUpdate = Schema.Struct({
+  status: Schema.Literal("ready-for-review"),
+  summary: Schema.String,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+export const SendUpdateToOrchestratorInput = Schema.Union([
+  InProgressUpdate,
+  NeedsInputUpdate,
+  BlockedUpdate,
+  ReadyForReviewUpdate,
+]);
 export const SendUpdateToOrchestratorOutput = Schema.Struct({
   posted: Schema.Boolean,
   workerId: WorkerId,
