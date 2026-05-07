@@ -1436,3 +1436,54 @@ All 4 would fail before the change: the options parameter, `onOverflow`, and `DE
 - Add a depth-watermark metric (95th percentile queue depth over a sliding window) so operators can graph approach to the limit before drops occur.
 - For ProviderRuntimeIngestion specifically, drops mean lost provider events; consider promoting the overflow-warn to an error-channel signal so the runtime can fail-stop or restart the session rather than silently lose events.
 - Outbox pattern (deferred): persisting the queue to SQLite would let the worker survive a process crash, replacing the in-memory dropping with durable backpressure on the producer.
+
+## ORC-048 [iter 72] BrowserAutomation never reaped idle sessions
+
+**Root cause**: `apps/server/src/browser/Layers/BrowserAutomation.ts` kept a `Map<string, BrowserSessionState>` keyed by sessionId. The only path that removed entries was `closeSession`. Misbehaving clients (or clients that crashed mid-flow) left Playwright browser contexts and their child Chromium processes pinned in memory until the server restarted. Each context is ~50MB plus a Chromium worker. There was no metric or warning, so an operator would not notice the leak until the host ran out of memory.
+
+**Change summary**:
+- New `apps/server/src/browser/Layers/sessionReaper.ts`: pure `evaluateIdleSessions({ entries, now, idleTtlMs?, warnThreshold? })` returns `{ toEvict, warnExceeded, activeCount, idleTtlMs, warnThreshold }`. Defaults: 30 min TTL, 5 min sweep interval, 100 active sessions warn threshold.
+- `apps/server/src/browser/Layers/BrowserAutomation.ts`:
+  - Added `lastActivityAt: number` to `BrowserSessionState`.
+  - Set on `openSession` via `Clock.currentTimeMillis`.
+  - Updated on every `requireSession` call (covers all `act` paths and `closeSession`).
+  - Added a periodic `reapIdleSessionsOnce` effect, repeated on `Schedule.spaced(DEFAULT_SESSION_REAPER_INTERVAL_MS)`, forked into the Layer scope so it shuts down with the server.
+  - Reaper logs `browserAutomation.session-warn-threshold` once per sweep when `activeCount > threshold` and `browserAutomation.session-reaped` for each evicted session, with structured fields (sessionId, idleMs, idleTtlMs).
+  - Wrapped in `Effect.catchCause` so a transient failure inside the reaper does not stop the schedule.
+
+**Files touched**:
+- apps/server/src/browser/Layers/sessionReaper.ts (NEW)
+- apps/server/src/browser/Layers/sessionReaper.test.ts (NEW)
+- apps/server/src/browser/Layers/BrowserAutomation.ts
+
+**Tests added**: 10 new pure-function cases in sessionReaper.test.ts:
+1. Evicts sessions whose idle time exceeds the TTL
+2. Boundary case at exactly TTL stays alive (strict greater-than)
+3. TTL+1 ms is evicted
+4. warnExceeded fires when surviving count > threshold (not gte)
+5. warnExceeded does not fire at the threshold
+6. Evicted sessions are excluded from activeCount before the threshold check
+7. Empty input yields empty decision
+8. Decision reports applied idleTtlMs and warnThreshold for instrumentation
+9. Falls back to documented defaults when overrides are not supplied
+10. Pins the documented constants (5 min interval, 30 min TTL, 100 threshold)
+
+All 10 would fail before the change because the module did not exist.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/browser/Layers/sessionReaper.test.ts src/browser/Layers/BrowserAutomation.test.ts` (Node 24) -> Test Files 2 passed (2) | Tests 11 passed (11)
+- `bun run test src/browser` -> Test Files 14 passed (14) | Tests 81 passed (81)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Long-running `act()`: lastActivityAt is set when the action *starts*, so an action longer than 30 min could be reaped mid-flight. Documented behavior: a 30+ min action almost certainly indicates a hang and reaping is the correct outcome (cancellation propagates via Playwright errors when the page closes underneath).
+- Reaper crash: wrapped in `Effect.catchCause` so a single bad sweep logs and the schedule keeps firing.
+- Concurrent close: snapshot via `[...sessions.entries()]`, then `sessions.get(id)` rechecked before delete; if a parallel `closeSession` already removed the entry the reaper skips it.
+- First sweep delay: `Schedule.spaced` waits the full interval before the first iteration. Sessions opened just before shutdown may not be reaped, but the Layer finalizer closes everything anyway. A future improvement could fire one immediate sweep before scheduling.
+
+**Follow-ups**:
+- Make TTL/interval configurable per-deployment (env or config service) for hosted vs local profiles.
+- Emit a depth metric (`active session count` gauge) so operators can graph approach to the warn threshold.
+- Add an integration test that exercises the periodic schedule with TestClock + a large idle TTL collapse, validating end-to-end that the reaper actually closes sessions.
+- Consider tracking createdAt separately from lastActivityAt to surface "always-on" sessions in a metric distinct from "idle" ones.

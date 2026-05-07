@@ -9,8 +9,13 @@ import {
   type BrowserObservedTarget,
   type BrowserPageMetrics,
 } from "@orchestrate/contracts";
-import { Effect, Layer, Schema } from "effect";
+import { Clock, Effect, Layer, Schedule, Schema } from "effect";
 import type { Browser, BrowserContext, Locator, Page } from "playwright";
+
+import {
+  DEFAULT_SESSION_REAPER_INTERVAL_MS,
+  evaluateIdleSessions,
+} from "./sessionReaper.ts";
 
 import {
   BrowserAutomation,
@@ -45,6 +50,12 @@ interface BrowserSessionState {
   targetDescriptorsById: Map<string, BrowserTargetDescriptor>;
   consoleBuffer: BrowserConsoleEntry[];
   networkErrorBuffer: BrowserNetworkError[];
+  /**
+   * Epoch ms updated on every requireSession lookup. The reaper compares
+   * this against the idle TTL to evict sessions whose owners forgot to
+   * call closeSession (ORC-048).
+   */
+  lastActivityAt: number;
 }
 
 interface EvaluatedTarget extends BrowserObservedTarget {
@@ -672,17 +683,62 @@ const makeBrowserAutomation = () =>
       }).pipe(Effect.ignore),
     );
 
-    const requireSession = (sessionId: string) => {
-      const session = sessions.get(sessionId);
-      if (!session) {
-        return Effect.fail(
-          new BrowserAutomationSessionNotFoundError({
-            sessionId,
-          }),
-        );
+    // ORC-048: periodic reaper. Sessions whose owners forgot to call
+    // closeSession would otherwise leak Playwright contexts (~50MB each)
+    // until the server process exits. The reaper sweeps every
+    // SESSION_REAPER_INTERVAL_MS and closes anything idle past the TTL.
+    const reapIdleSessionsOnce = Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const entries = [...sessions.entries()].map(([id, session]) => ({
+        id,
+        lastActivityAt: session.lastActivityAt,
+      }));
+      const decision = evaluateIdleSessions({ entries, now });
+      if (decision.warnExceeded) {
+        yield* Effect.logWarning("active browser session count exceeds threshold", {
+          event: "browserAutomation.session-warn-threshold",
+          activeCount: decision.activeCount,
+          threshold: decision.warnThreshold,
+        });
       }
-      return Effect.succeed(session);
-    };
+      for (const id of decision.toEvict) {
+        const session = sessions.get(id);
+        if (!session) continue;
+        sessions.delete(id);
+        yield* Effect.logWarning("reaping idle browser session", {
+          event: "browserAutomation.session-reaped",
+          sessionId: id,
+          idleMs: now - session.lastActivityAt,
+          idleTtlMs: decision.idleTtlMs,
+        });
+        yield* closeSessionState(session).pipe(Effect.ignore);
+      }
+    });
+
+    yield* reapIdleSessionsOnce.pipe(
+      Effect.repeat(Schedule.spaced(DEFAULT_SESSION_REAPER_INTERVAL_MS)),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("browser session reaper crashed", {
+          event: "browserAutomation.reaper-crashed",
+          cause: String(cause),
+        }),
+      ),
+      Effect.forkScoped,
+    );
+
+    const requireSession = (sessionId: string) =>
+      Effect.gen(function* () {
+        const session = sessions.get(sessionId);
+        if (!session) {
+          return yield* Effect.fail(
+            new BrowserAutomationSessionNotFoundError({
+              sessionId,
+            }),
+          );
+        }
+        session.lastActivityAt = yield* Clock.currentTimeMillis;
+        return session;
+      });
 
     const openSession = (input: {
       url: string;
@@ -786,6 +842,7 @@ const makeBrowserAutomation = () =>
               targetDescriptorsById: new Map(),
               consoleBuffer: [],
               networkErrorBuffer: [],
+              lastActivityAt: 0,
             }).pipe(Effect.ignore),
           ),
         );
@@ -816,6 +873,7 @@ const makeBrowserAutomation = () =>
           });
         });
 
+        const openedAt = yield* Clock.currentTimeMillis;
         const sessionState: BrowserSessionState = {
           browser,
           context,
@@ -824,6 +882,7 @@ const makeBrowserAutomation = () =>
           targetDescriptorsById: new Map(),
           consoleBuffer,
           networkErrorBuffer,
+          lastActivityAt: openedAt,
         };
         const { observation, targetDescriptorsById } = yield* Effect.tryPromise({
           try: async () => captureObservation({ page, session: sessionState }),

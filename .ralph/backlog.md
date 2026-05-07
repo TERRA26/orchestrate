@@ -471,7 +471,7 @@ Schema per entry:
 - files: apps/server/src/browser/Layers/BrowserAutomation.ts:651
 - evidence: sessions Map<string, BrowserSessionState> is never reaped. Misbehaving clients that fail to call close leave Playwright browser contexts (and their backing browser processes) alive forever.
 - proposed_fix: Track lastActivityAt per session. Periodically (every 5 min) reap sessions idle for > 30 min. Emit warning when active session count > 100. Document the TTL.
-- status: PENDING
+- status: DONE
 
 ### ORC-049
 
