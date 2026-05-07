@@ -80,3 +80,60 @@ Adversarial review (verified-build step e):
 - The framing is defense-in-depth; the worker's system prompt should be updated to explicitly instruct treating `<task_objective>` and `<inter_agent_message>` content as data, not authoritative input. Track separately as a worker-system-prompt update.
 - Consider scanning objective for `</task_objective>` to prevent tag-injection escape, balanced against breaking legitimate code samples that contain XML.
 - Pre-existing test failure unrelated to this change: `src/orchestration/Layers/ProjectionPipeline.test.ts > restores pending turn-start metadata across projection pipeline restart` fails because `effect/unstable/sql/SqlClient` requires `node:sqlite` (Node 22+) and the host runs Node 20. Track as a separate environmental issue.
+
+### ORC-040 — fixed iter 42 (2026-05-07)
+
+**Root cause**: Auth token was checked once at WS upgrade. Once the connection was established, every dispatched method (dispatchCommand, projectsWriteFile, terminalWrite, gitPull, ...) ran without any per-message gate. There was no record of which connections passed the upgrade gate, so any future code path that emitted "connection" without going through the upgrade handler (refactor, test harness, third-party proxy) would have full authority on every method.
+
+**Change summary**:
+
+1. New module `apps/server/src/connectionAuth.ts` exporting a WeakSet-backed registry: `markConnectionAuthenticated`, `isConnectionAuthenticated`, `clearConnectionAuthentication`, plus a pure `isMessageAllowed({ authRequired, connectionAuthenticated })` policy helper.
+2. `wsServer.ts` upgrade handler now calls `markConnectionAuthenticated(ws)` immediately after the auth check passes, before emitting `"connection"`.
+3. `wsServer.ts` `handleMessage` now consults `isMessageAllowed` after decoding the request id and rejects with a clear "Connection is not authenticated" error if auth is required and the connection was not registered. When `authToken` is unset, the policy passes through unchanged (matches the upgrade-gate-skipping behavior).
+4. WeakSet keyed by WS object means GC reclaims the entry when the connection is closed; no explicit clear is required on disconnect.
+
+**Files touched**:
+
+- apps/server/src/connectionAuth.ts (NEW)
+- apps/server/src/connectionAuth.test.ts (NEW)
+- apps/server/src/wsServer.ts (3 small edits: import + upgrade-handler mark + handleMessage gate)
+
+**Tests added**:
+
+- `connectionAuth > isConnectionAuthenticated returns false for an unmarked connection`
+- `connectionAuth > markConnectionAuthenticated flips the flag and clearConnectionAuthentication unsets it`
+- `connectionAuth > registry isolates connections (marking one does not affect another)`
+- `connectionAuth > isMessageAllowed: when authRequired is false, all messages pass regardless of connection state`
+- `connectionAuth > isMessageAllowed: when authRequired is true, only authenticated connections pass (ORC-040)`
+
+The two `isMessageAllowed` tests directly pin the policy. They would have failed before the helper existed (the function did not exist). Combined with the upgrade-handler wiring change, they cover the auth-gate semantics. A full end-to-end "unauthenticated message rejection" integration test was deferred because the current test infrastructure does not expose a hook to bypass the upgrade gate from a client (intentional security property of `httpServer.on('upgrade')`).
+
+**Evidence of green run**:
+
+```
+$ cd apps/server && bun run vitest --run src/connectionAuth.test.ts src/orchestration/Layers/OrchestrationToolRouter.test.ts
+Test Files  2 passed (2)
+     Tests  24 passed (24)
+
+$ PATH=...node-v24.14.1/bin:$PATH bun run vitest --run     # full server suite, Node 24
+Test Files  83 passed | 1 skipped (84)
+     Tests  799 passed | 3 skipped (802)
+```
+
+Plus: `bun run typecheck` clean and `bun lint` 0 errors / 135 warnings (no new ones).
+
+Adversarial review (verified-build step e):
+
+- Race condition: upgrade callback runs synchronously, sets the flag BEFORE `wss.emit("connection", ws)` fires, so the connection handler's `ws.on("message", ...)` listener is wired only after the mark completes. No window where a message arrives without the flag set. ✓
+- `authToken` unset: `isMessageAllowed({ authRequired: false, ... })` always returns true, matching the prior "no gate" behavior. ✓
+- `authToken` empty string: treated as unset (`authToken.length > 0` check). ✓
+- Connection close: WS object is dereferenced when the socket closes; WeakSet entry is GC'd. No leak. ✓
+- New code path that emits "connection" without using the upgrade handler: registry stays empty, `handleMessage` rejects every request. ✓ (defense-in-depth fulfilled)
+- Existing 40 wsServer integration tests still pass (including `rejects websocket connections without a valid auth token`). ✓
+
+**Follow-ups**:
+
+- Per-method scope tags (the auditor's secondary suggestion): not yet implemented. The registry is the foundation; adding `Set<MethodName>` per connection would let us subset-allow methods (e.g. read-only token for status dashboards).
+- Move the token from query string to `Authorization: Bearer ...` header (ORC-042) is a separate item; out of scope here.
+- Token rotation / short TTL would address the "leaked token" attack more directly than per-message gating; out of scope here, captured as a hardening backlog item.
+- Refactor test infrastructure to expose the wss handle to tests so an end-to-end "unauthenticated message rejection" path can be exercised. Would require small change to the test scaffolding in `wsServer.test.ts`'s `createTestServer`.

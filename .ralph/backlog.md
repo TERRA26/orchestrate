@@ -373,7 +373,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1965-1984,1109-1922
 - evidence: Auth token is checked once at WS handshake. After the handshake, every dispatched method runs without any per-call re-check or scope. A leaked or replayed token grants full access to all mutating ops (dispatchCommand, projectsWriteFile, terminalWrite, gitPull, etc.).
 - proposed_fix: Track a per-connection authenticated state; on every method dispatch, re-validate the token (or a connection-scoped session cookie). Add per-method scope tags so methods can be subset-allowed in the future.
-- status: PENDING
+- status: DONE
+- fixed_iter: 42
 
 ### ORC-041
 

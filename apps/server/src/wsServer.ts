@@ -56,6 +56,11 @@ import {
 import OS from "node:os";
 import { WebSocketServer, type WebSocket } from "ws";
 
+import {
+  isConnectionAuthenticated,
+  isMessageAllowed,
+  markConnectionAuthenticated,
+} from "./connectionAuth.ts";
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
@@ -1945,6 +1950,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       });
     }
 
+    // ORC-040: per-message auth gate. The handshake-level check stays primary,
+    // but if a future code path emits "connection" without running through it
+    // (refactor, test harness, third-party proxy), this rejects the message
+    // instead of executing it with full authority. When no auth token is
+    // configured, this passes through unchanged.
+    if (
+      !isMessageAllowed({
+        authRequired: typeof authToken === "string" && authToken.length > 0,
+        connectionAuthenticated: isConnectionAuthenticated(ws),
+      })
+    ) {
+      return yield* sendWsResponse({
+        id: request.success.id,
+        error: { message: "Connection is not authenticated. Reconnect with a valid token." },
+      });
+    }
+
     const result = yield* Effect.exit(routeRequest(ws, request.success));
     if (Exit.isFailure(result)) {
       return yield* sendWsResponse({
@@ -1979,6 +2001,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
+      // Defense-in-depth (ORC-040): tag the connection as authenticated so
+      // handleMessage can refuse any future code path that emits "connection"
+      // without going through this upgrade gate.
+      markConnectionAuthenticated(ws);
       wss.emit("connection", ws, request);
     });
   });
