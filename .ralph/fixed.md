@@ -1356,3 +1356,46 @@ Adversarial review:
 - Update the browser web client to use `Sec-WebSocket-Protocol` instead of `?token=`. Browser WebSocket API supports the second-arg protocols array. Tracked separately.
 - After the web client transitions, remove the `?token=` legacy fallback from the helper (next major version).
 - Apply constant-time comparison at the upgrade handler (currently a `!==` string compare is timing-side-channel-leaky for short tokens, though the audit didn't call this out).
+
+### ORC-046 — fixed iter 70 (2026-05-07)
+
+**Root cause**: `ProviderCommandReactor.enqueueQueuedTurnStart` pushed onto the per-thread `queuedTurnStartsByThread` map without any depth check. A misbehaving worker hammering `send_to_agent` (which dispatches `thread.turn.start` with default queue mode) could push thousands of queued turns onto the same thread, leaking memory and blocking the reactor.
+
+**Change summary**:
+1. New module `apps/server/src/orchestration/queuedTurnLimit.ts` exports `DEFAULT_MAX_QUEUED_TURNS_PER_THREAD = 100` and a pure `decideQueuedTurnAdmission({ currentDepth, limit? })` policy that returns `{ admitted: true } | { admitted: false, reason }`.
+2. `enqueueQueuedTurnStart` now consults the policy. On rejection, it logs a structured warning (`event: providerCommandReactor.queue-limit-exceeded`) with the thread id, dispatch mode, message id, current depth, and the rejection reason. The reactor returns without pushing; the caller (provider intent stream) treats the call as a no-op.
+
+**Files touched**:
+- apps/server/src/orchestration/queuedTurnLimit.ts (NEW)
+- apps/server/src/orchestration/queuedTurnLimit.test.ts (NEW; 6 tests)
+- apps/server/src/orchestration/Layers/ProviderCommandReactor.ts (added import + admission check in `enqueueQueuedTurnStart`)
+
+**Tests added** (6):
+- Admit at depth 0, 50, 99 (under default limit).
+- Reject at depth 100 with reason text.
+- Reject at depth 150 with reason text.
+- Override-limit honored (admit 4/5, reject 5/5).
+- Boundary: depth 0 limit 1 admits.
+- Boundary: depth 1 limit 1 rejects.
+
+The two rejection tests fail against the prior implementation: pre-fix, the policy did not exist and every depth was accepted.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/orchestration/queuedTurnLimit.test.ts
+Test Files  1 passed (1)
+     Tests  6 passed (6)
+```
+Plus: `bun run typecheck` clean, `bun lint` 0 errors / 141 warnings.
+
+Adversarial review:
+- "steer" dispatch unshifts to the front of the queue: same admission policy applies because the helper checks `existing.length` regardless of position. Operator-tier admission policy does not currently differentiate by dispatch mode; if needed, a future refinement could allow steer to bypass the limit (it's a smaller channel).
+- The rejection drops the queued turn entirely (vs returning an error to the orchestrator). The audit's proposed "surface the rejection in dispatchCommand return value" path requires routing the rejection through the read model and back to the dispatcher; that's a bigger refactor. Logging is the immediate defense; the orchestrator can detect quiet ignores by polling `get_agent_status` and seeing the queue not advance.
+- No test for the wired-in reactor path (only the helper). The reactor's test infrastructure is heavy and requires a full layer build; the helper test pins the policy and the wiring is mechanical (one if-statement guard around an existing push).
+- The chosen limit of 100 is generous for normal use (the orchestrator typically dispatches a handful of queued turns); operators can tune via the `limit` argument if needed, but the helper is currently called without an override.
+
+**Follow-ups**:
+- Consider exposing the limit as a config option so deployments can tune.
+- Wire the rejection back to the dispatchCommand caller via a queue-rejected event so the orchestrator can react programmatically rather than wait for the missing turn to surface via polling.
+- Add a metric counting per-thread queue depth so operators can graph hot threads before they hit the limit.
+- Consider differentiating the limit by dispatch mode: "steer" might warrant a smaller bypass-limit since it's used for safety overrides.

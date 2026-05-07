@@ -33,6 +33,7 @@ import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { buildHandoffBootstrapText, hasNativeAssistantMessagesBefore } from "../handoff.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { decideQueuedTurnAdmission } from "../queuedTurnLimit.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -235,8 +236,26 @@ const make = Effect.gen(function* () {
   const enqueueQueuedTurnStart = (
     payload: Extract<ProviderIntentEvent, { type: "thread.turn-queued" }>["payload"],
   ) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const existing = queuedTurnStartsByThread.get(payload.threadId) ?? [];
+      // ORC-046: bound the per-thread queue depth. Without this, a
+      // misbehaving worker hammering send_to_agent could push thousands
+      // of queued turns on the same thread, leaking memory and starving
+      // the reactor. "steer" dispatch is unshifted so it's bounded by
+      // the same overall depth check; the operator-tier admission policy
+      // does not currently differentiate by mode.
+      const decision = decideQueuedTurnAdmission({ currentDepth: existing.length });
+      if (!decision.admitted) {
+        yield* Effect.logWarning("dropping queued turn: per-thread queue limit reached", {
+          event: "providerCommandReactor.queue-limit-exceeded",
+          threadId: payload.threadId,
+          dispatchMode: payload.dispatchMode,
+          messageId: payload.messageId,
+          currentDepth: existing.length,
+          reason: decision.reason,
+        });
+        return;
+      }
       if (payload.dispatchMode === "steer") {
         existing.unshift(payload);
       } else {

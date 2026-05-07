@@ -452,7 +452,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts:602-603
 - evidence: When dispatchMode === "queue" and the thread is mid-turn, the new turn is appended to the projector-side queue with no depth bound. A misbehaving worker hammering send_to_agent could push thousands of queued turns onto a thread.
 - proposed_fix: Track per-thread queued turn count in the read model. Reject new turn.start commands when queue exceeds 100 (or a configured limit). Surface the rejection in dispatchCommand return value.
-- status: PENDING
+- status: DONE
+- fixed_iter: 70
 
 ### ORC-047
 
