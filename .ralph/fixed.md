@@ -738,3 +738,52 @@ Adversarial review:
 - Apply the guard to other navigate callsites if a programmatic cross-project navigation ever surfaces (e.g. URL hash routing that bypasses the picker). Track separately.
 - Consider surfacing the rejection as a toast notification so the user sees that their picked thread was refused.
 - The web `tsc --noEmit` runtime issue (very slow under concurrent dev server) is operational; not in scope for this fix.
+
+### ORC-011 — fixed iter 55 (2026-05-07)
+
+**Root cause**: ClaudeAdapter spawned the Claude SDK with `queryEnv = { ...process.env }` — full env passthrough. ORCHESTRATE_AUTH_TOKEN, AWS keys, DATABASE_URL, anything in our env all leaked into the child where any tool it shelled out to inherited them. Visible via /proc/PID/environ on Linux and `ps -E` on macOS to other same-user processes. Same call site also embedded the auth token in the orchestration MCP server's stdio env (line 3377), missing the file-based provisioning that ORC-188 introduced for the Codex spawn path.
+
+**Change summary**:
+1. New module `apps/server/src/subprocessEnvAllowlist.ts`:
+   - `EXACT_ALLOWED_KEYS` covers HOME, PATH, USER, USERNAME, LOGNAME, SHELL, TERM, TMPDIR/TEMP/TMP, LANG, LANGUAGE, TZ, PWD, COLUMNS, LINES, NODE_PATH, NODE_OPTIONS, BUN_INSTALL, VOLTA_HOME.
+   - `ALLOWED_PREFIXES` covers LC_, ANTHROPIC_, CLAUDE_, OPENAI_, CODEX_, XDG_, MCP_.
+   - `isAllowedSubprocessEnvKey(key)` exported helper.
+   - `buildSanitizedSubprocessEnv(parent, additions)` returns a fresh env containing only allowed keys from the parent, with `additions` merged on top so callers can inject dynamic values (port, file path).
+2. ClaudeAdapter.ts:
+   - Imports `buildSanitizedSubprocessEnv` and `provisionAuthTokenFile` (the same helper that ORC-188 wired for Codex).
+   - Replaces `queryEnv = { ...process.env }` with `queryEnv = buildSanitizedSubprocessEnv(process.env)`.
+   - For the orchestration MCP stdio config, when `serverConfig.authToken` is set, provisions a 0o600 envelope containing the token + parent thread id and passes the path via `ORCHESTRATE_AUTH_TOKEN_FILE` (same shape as ORC-188 + ORC-002).
+   - Drops the prior direct `ORCHESTRATE_AUTH_TOKEN` and `ORCHESTRATE_PARENT_THREAD_ID` env entries from the MCP config.
+
+**Files touched**:
+- apps/server/src/subprocessEnvAllowlist.ts (NEW)
+- apps/server/src/subprocessEnvAllowlist.test.ts (NEW; 11 tests)
+- apps/server/src/provider/Layers/ClaudeAdapter.ts (added imports, switched queryEnv to allowlist, wired auth-token-file provisioning, removed direct env wiring of secrets)
+
+**Tests added** (11):
+- `isAllowedSubprocessEnvKey`: 6 cases (core unix keys, locale extensions, provider prefixes, ORCHESTRATE_* rejected, cloud-cred prefixes rejected, arbitrary unknown rejected).
+- `buildSanitizedSubprocessEnv`: 5 cases (allowed-only passthrough, additions merging, undefined additions ignored, undefined parent values dropped, additions override parent).
+
+The `ORCHESTRATE_*` rejection test is the core regression: pre-fix, the helper did not exist and the env was passed through whole.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/subprocessEnvAllowlist.test.ts \
+                       src/provider/Layers/ClaudeAdapter.test.ts \
+                       src/codexAppServerManager.test.ts
+Test Files  3 passed (3)
+     Tests  107 passed | 1 skipped (108)
+```
+Plus: server `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 136 warnings.
+
+Adversarial review:
+- A Claude user that relies on a custom env var the SDK reads but our allowlist doesn't cover: they can either prefix it with one of the allowed prefixes (CLAUDE_*, ANTHROPIC_*) or extend the allowlist. Tracked as a follow-up if reports come in.
+- Provider whose API key is in a non-prefixed name (e.g. legacy OPENAI_KEY): our allowlist includes OPENAI_*. Same for ANTHROPIC_*. If a future provider uses a non-prefixed scheme, extend ALLOWED_PREFIXES.
+- The MCP stdio config no longer has ORCHESTRATE_AUTH_TOKEN at all when ORC-188 + ORC-002 path applies. The MCP server reads + unlinks the file at startup. ✓
+- Lifetime of the provisioned auth-token file: `mcpAuthTokenProvision` is captured but cleanup-on-session-end is NOT yet wired here. The file is unlinked by the MCP server immediately on first read (per ORC-188), so the lifetime is effectively single-use. Adding an explicit cleanup hook on session end is a follow-up (defense in depth).
+- Backward compat: a rogue process that previously relied on inheriting parent env via Claude SDK would no longer inherit. Acceptable change for a security fix.
+
+**Follow-ups**:
+- Apply the same allowlist pattern to the codexAppServerManager spawn (currently uses `process.env` directly). Tracked separately.
+- Wire a session-end cleanup for `mcpAuthTokenProvision` to delete the file even if the MCP server crashes before reading it. ORC-188's Codex path has this via `child.once("exit", ...)`; the Claude path's lifecycle is different (managed by the SDK), so a different hook is needed.
+- Document the `subprocessEnvAllowlist` policy in the secrets handling section of `docs/`.

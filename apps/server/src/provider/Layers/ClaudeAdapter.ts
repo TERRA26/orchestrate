@@ -75,8 +75,13 @@ import {
 } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import {
+  provisionAuthTokenFile,
+  type ProvisionedAuthToken,
+} from "../../authTokenProvisioning.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildOrchestratorSystemPrompt } from "../../orchestration/orchestratorSystemPrompt.ts";
+import { buildSanitizedSubprocessEnv } from "../../subprocessEnvAllowlist.ts";
 import { OrchestrationToolRouterService } from "../../orchestration/Services/OrchestrationToolRouter.ts";
 import {
   ProviderAdapterProcessError,
@@ -3337,6 +3342,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         let orchestrationMcpServerConfig:
           | { type: "stdio"; command: string; args: string[]; env: Record<string, string> }
           | undefined;
+        // ORC-188 + ORC-011: track the provisioned auth-token file so we
+        // can clean it up when the session ends.
+        let mcpAuthTokenProvision: ProvisionedAuthToken | undefined;
 
         if (isOrchestrator) {
           // ORCHESTRATOR.md and the MCP server script are SERVER ASSETS, not
@@ -3368,21 +3376,41 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             "scripts",
             "orchestrate-mcp-server.ts",
           );
+          // ORC-188 + ORC-002: provision the auth token + parent thread id
+          // via a 0o600 file referenced by ORCHESTRATE_AUTH_TOKEN_FILE
+          // instead of putting them in env where they leak via /proc.
+          if (serverConfig.authToken && serverConfig.authToken.length > 0) {
+            const secretsDir = nodePath.join(
+              serverConfig.baseDir ?? require("node:os").tmpdir(),
+              "secrets",
+            );
+            mcpAuthTokenProvision = provisionAuthTokenFile(
+              {
+                token: serverConfig.authToken,
+                parentThreadId: threadId as unknown as string,
+              },
+              secretsDir,
+            );
+          }
           orchestrationMcpServerConfig = {
             type: "stdio" as const,
             command: "bun",
             args: [mcpServerScript],
             env: {
               ORCHESTRATE_WS_PORT: String(serverConfig.port),
-              ...(serverConfig.authToken ? { ORCHESTRATE_AUTH_TOKEN: serverConfig.authToken } : {}),
-              ORCHESTRATE_PARENT_THREAD_ID: threadId,
+              ...(mcpAuthTokenProvision
+                ? { ORCHESTRATE_AUTH_TOKEN_FILE: mcpAuthTokenProvision.filePath }
+                : {}),
             },
           };
         }
 
-        const queryEnv = {
-          ...process.env,
-        };
+        // ORC-011: refuse to forward the parent's full env to the Claude
+        // SDK subprocess. Without this, ORCHESTRATE_AUTH_TOKEN, AWS keys,
+        // DATABASE_URL, etc. all leak into the child where any tool it
+        // shells out to inherits them. The allowlist keeps PATH/HOME/
+        // locale + provider-specific prefixes (ANTHROPIC_*, CLAUDE_*).
+        const queryEnv = buildSanitizedSubprocessEnv(process.env);
 
         // Orchestrator threads must NOT invoke Claude Code's built-in
         // Agent / Task / subagent tools — those spawn hidden workers that don't

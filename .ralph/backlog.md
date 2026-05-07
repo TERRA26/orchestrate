@@ -114,7 +114,8 @@ Schema per entry:
 - files: apps/server/src/provider/Layers/ClaudeAdapter.ts:3358-3392
 - evidence: `const queryEnv = { ...process.env }` is passed unfiltered to the Claude SDK subprocess. Any secret in the server's process env (ORCHESTRATE_AUTH_TOKEN, API keys, etc.) is inherited by the child process and visible via /proc/PID/environ to other local processes.
 - proposed*fix: Whitelist env vars to forward (HOME, PATH, USER, locale vars, ANTHROPIC*\_, CLAUDE\_\_, etc.). Strip ORCHESTRATE_AUTH_TOKEN and other server-private secrets before spawn.
-- status: PENDING
+- status: DONE
+- fixed_iter: 55
 
 ### ORC-012
 
