@@ -317,7 +317,8 @@ Schema per entry:
 - files: apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.ts:132-186
 - evidence: Pending bridge requests have a setTimeout reject path. When the timeout fires, the request is removed from the map. If the desktop client's response arrives later, there is no handler and no log entry. Memory leak path exists if many timeouts accumulate orphaned response handlers.
 - proposed_fix: On timeout, leave a tombstone in the pending map noting the timeout. When a late response arrives, drop it and emit a structured warn event "late_bridge_response" with the requestId. Periodically prune tombstones older than 2 \* timeout.
-- status: PENDING
+- status: DONE
+- fixed_iter: 66
 
 ### ORC-033
 

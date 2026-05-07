@@ -62,6 +62,62 @@ let publishDesktopBrowserBridgeRequest: PublishDesktopBrowserBridgeRequest | nul
 const pendingRequests = new Map<string, PendingRequest>();
 const desktopBridgeClientIds = new Set<string>();
 const sessionOwnerClientIds = new Map<string, string>();
+
+// ORC-032: tombstones for timed-out bridge requests so a late response
+// is recognized as late (and reported) rather than silently dropped.
+// Without this we had no signal when the desktop client took longer
+// than `timeoutMs` and a stray response could indicate either a sluggish
+// network or a bug in the client; operators couldn't tell which.
+type LateBridgeResponseInfo = {
+  readonly requestId: string;
+  readonly kind: DesktopBrowserBridgeRequestPayload["kind"];
+  readonly clientId: string;
+  readonly timedOutAtMs: number;
+  readonly receivedAtMs: number;
+  readonly status: "ok" | "error";
+};
+type TimedOutTombstone = {
+  readonly kind: DesktopBrowserBridgeRequestPayload["kind"];
+  readonly clientId: string;
+  readonly timedOutAtMs: number;
+};
+const timedOutRequests = new Map<string, TimedOutTombstone>();
+let onLateBridgeResponseCallback: ((info: LateBridgeResponseInfo) => void) | null = null;
+
+export function setOnLateBridgeResponse(
+  callback: ((info: LateBridgeResponseInfo) => void) | null,
+): void {
+  onLateBridgeResponseCallback = callback;
+}
+
+const TOMBSTONE_PRUNE_FACTOR = 2;
+function pruneStaleTombstones(maxAgeMs: number): void {
+  const now = Date.now();
+  for (const [requestId, tombstone] of timedOutRequests) {
+    if (now - tombstone.timedOutAtMs > maxAgeMs) {
+      timedOutRequests.delete(requestId);
+    }
+  }
+}
+
+// Test-only helpers so unit tests can reset module state between runs
+// and simulate the timeout path without waiting for the real default
+// (30s). NOT for production use.
+export function _resetDesktopBrowserBridgeTombstonesForTests(): void {
+  timedOutRequests.clear();
+}
+export function _peekDesktopBrowserBridgeTombstoneCountForTests(): number {
+  return timedOutRequests.size;
+}
+export function _recordDesktopBrowserBridgeTombstoneForTests(
+  requestId: string,
+  tombstone: { kind: DesktopBrowserBridgeRequestPayload["kind"]; clientId: string },
+): void {
+  timedOutRequests.set(requestId, {
+    ...tombstone,
+    timedOutAtMs: Date.now(),
+  });
+}
 const decodeBrowserObservation = Schema.decodeUnknownEffect(BrowserObservation);
 const decodeBrowserOpenSessionResult = Schema.decodeUnknownEffect(BrowserOpenSessionResult);
 const decodeBrowserInspectResult = Schema.decodeUnknownEffect(BrowserInspectResult);
@@ -131,6 +187,15 @@ function requestDesktopBrowserBridge(
         const requestId = `desktop-browser-${randomUUID()}`;
         const timeout = setTimeout(() => {
           pendingRequests.delete(requestId);
+          // ORC-032: leave a tombstone so a late response is recognized
+          // and logged via setOnLateBridgeResponse. Pruning happens
+          // opportunistically below to bound memory.
+          timedOutRequests.set(requestId, {
+            kind,
+            clientId,
+            timedOutAtMs: Date.now(),
+          });
+          pruneStaleTombstones(timeoutMs * TOMBSTONE_PRUNE_FACTOR);
           reject(
             bridgeError(
               `Electron visible browser runtime bridge timed out waiting for ${kind}.`,
@@ -274,7 +339,26 @@ export function handleDesktopBrowserBridgeResponse(
   response: DesktopBrowserBridgeResponseInput,
 ): void {
   const pending = pendingRequests.get(response.requestId);
-  if (!pending) return;
+  if (!pending) {
+    // ORC-032: if this was a request we previously timed out, surface
+    // the late response so operators can investigate (network slow vs
+    // client bug). Drop the response either way.
+    const tombstone = timedOutRequests.get(response.requestId);
+    if (tombstone) {
+      timedOutRequests.delete(response.requestId);
+      if (onLateBridgeResponseCallback) {
+        onLateBridgeResponseCallback({
+          requestId: response.requestId,
+          kind: tombstone.kind,
+          clientId: tombstone.clientId,
+          timedOutAtMs: tombstone.timedOutAtMs,
+          receivedAtMs: Date.now(),
+          status: response.status,
+        });
+      }
+    }
+    return;
+  }
   clearTimeout(pending.timeout);
   pendingRequests.delete(response.requestId);
   if (response.status === "error") {

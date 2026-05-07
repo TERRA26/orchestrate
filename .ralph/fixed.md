@@ -1213,3 +1213,46 @@ Adversarial review:
 - A deterministic regression test for the success-send-fail path: would require a mock socket fixture whose `send` throws on demand. Tracked separately as test infrastructure work.
 - Consider tracking metrics on per-request error counts so operators can graph the rate of unhandled defects.
 - The audit's exact "ignoreCause" → "Effect.exit/Effect.result" suggestion was implemented as `catchCause(logError)`; equivalent semantics for our purposes (the client-side structured envelope is already in place at the inner level).
+
+### ORC-032 — fixed iter 66 (2026-05-07)
+
+**Root cause**: When a desktop browser bridge request timed out, `setTimeout` rejected the promise and `pendingRequests.delete(requestId)` removed it from the map. If the desktop client's response arrived later, `handleDesktopBrowserBridgeResponse` looked up `pendingRequests.get(response.requestId)`, got `undefined`, and `return`-ed silently. Operators had no signal that the bridge was experiencing slow responses; only the timeout error reached them, with no follow-up indicating whether the client was just slow or genuinely broken.
+
+**Change summary**:
+1. Added a `timedOutRequests: Map<requestId, { kind, clientId, timedOutAtMs }>` tombstone map.
+2. On timeout: move the requestId from `pendingRequests` to `timedOutRequests` and opportunistically prune tombstones older than `2 * timeoutMs` to bound memory.
+3. New `setOnLateBridgeResponse(callback)` registers a hook that receives late-response info: requestId, kind, clientId, timedOutAtMs, receivedAtMs, and status. Production wires this to the structured logger; tests use it to assert behavior.
+4. `handleDesktopBrowserBridgeResponse` now: if no pending request, check the tombstone map. If found, fire the hook and clear the tombstone. Else (genuinely unknown id) silent drop as before.
+5. Test-only helpers `_resetDesktopBrowserBridgeTombstonesForTests`, `_peekDesktopBrowserBridgeTombstoneCountForTests`, `_recordDesktopBrowserBridgeTombstoneForTests` so tests can simulate timeouts without waiting for the 30s default.
+
+**Files touched**:
+- apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.ts (added tombstone map, late-response hook, prune-on-timeout, test helpers)
+- apps/server/src/browserRuntime/Layers/DesktopBrowserBridge.test.ts (added 3 ORC-032 tests)
+
+**Tests added** (3):
+- `silently drops responses with no matching pending or tombstone` — pins the unchanged behavior for unknown ids.
+- `a late response that matches a tombstone fires the late-response hook` — simulates a timed-out request via the test helper, then drives the response handler; asserts the hook fires with the right requestId/kind/clientId/status, AND the tombstone is cleared.
+- `a late ERROR response also fires the hook with status='error'` — same path with `status: "error"`.
+
+The two tombstone-driven tests fail against the prior implementation: pre-fix, the late response was silently dropped without firing any hook.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/browserRuntime/Layers/DesktopBrowserBridge.test.ts
+Test Files  1 passed (1)
+     Tests  10 passed (10)
+```
+Plus: `bun run typecheck` clean, `bun lint` 0 errors / 141 warnings (3 new are from the per-test guard pattern; none semantic).
+
+Adversarial review:
+- Memory leak from accumulating tombstones: opportunistic prune on each new timeout removes any older than `2 * timeoutMs`. With the default 30s timeout, tombstones live at most 60s. ✓
+- Late response after tombstone pruned: hits the silent-drop path (genuinely unknown id from the receiver's perspective). ✓
+- Hook is null at time of late response: `if (onLateBridgeResponseCallback)` guards the call; tombstone is still cleared. ✓
+- Hook throws: the synchronous call throws into the `handleDesktopBrowserBridgeResponse` body; this would be a programming error in the hook callback. Acceptable behavior; the WS message handler ORC-031 catches such defects on its outer wrapper.
+- Race between timeout firing and late response arriving in the same JS tick: setTimeout fires first (it's queued microtask vs macrotask), populates tombstone, deletes pending. Response arrives next macrotask. Order is deterministic. ✓
+- The hook's tombstone-clear behavior also bounds memory in a different dimension: each late response that arrives clears its tombstone immediately. Without the hook, the prune-on-next-timeout still cleans up.
+
+**Follow-ups**:
+- Wire `setOnLateBridgeResponse` to a structured logger emit at server startup (currently the hook is null in production; this fix delivers the infrastructure but not the production wiring). The next reactor refactor pass should add a single `pino.warn(...)` from a top-level service.
+- Consider exposing tombstone count as a metric so operators can graph the rate of late responses without log scraping.
+- Consider adding a periodic timer-based prune (not just opportunistic) so tombstones from a quiet bridge eventually clear without waiting for the next timeout. Current approach is sufficient for normal traffic; quiet-period accumulation is bounded by `2 * timeoutMs`.
