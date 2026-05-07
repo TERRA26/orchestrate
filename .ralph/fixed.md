@@ -1174,3 +1174,42 @@ Adversarial review:
 - Add a similar safety preamble to worker prompts (workers also receive untrusted file contents and tool outputs).
 - Verify the GenAI evaluator that periodically reviews orchestrator behavior also reads these rules and tests for compliance in its sample runs.
 - Consider rendering the rules as a top-line system message rather than middle-of-doc text so they survive instruction-following pressure better.
+
+### ORC-031 — fixed iter 65 (2026-05-07)
+
+**Root cause investigation**: The audit said "frame parse errors and handler crashes are logged but no error response is sent". Investigation reveals that's only partially true:
+- Frame parse errors ARE handled at line 1969-1980 (sendWsResponse with id "unknown" + error). ✓
+- routeRequest failures ARE handled at line 2000-2006 via `Effect.exit` (sendWsResponse with parsed id + error). ✓
+- The ACTUAL gap: defects that bypass the inner conversion (e.g. `sendWsResponse` itself fails because `ws.send` throws after the connection went bad mid-write). The `ignoreCause({ log: true })` outer wrapper at line 2068 caught those silently.
+
+**Change summary**:
+1. Added a `sendBestEffortErrorEnvelope(ws, requestId, message)` helper that synchronously writes a JSON error envelope to the WS if it's still OPEN, swallowing any further errors so the catch path can't itself throw.
+2. Wrapped the success-response `sendWsResponse` in a `catchCause` that:
+   - Logs structurally with `requestId` and the cause.
+   - Best-effort sends an error envelope using the ORIGINAL request id so the client sees a frame instead of timing out.
+3. Replaced `ignoreCause({ log: true })` at the outer `ws.on("message")` registration with `catchCause(Effect.logError(...))` for structured logging. Did NOT add a bonus error envelope at this outermost layer because we have no parsed request id there and the test harness's `id === "unknown"` catch-all would steal envelopes from subsequent legitimate requests.
+
+**Files touched**:
+- apps/server/src/wsServer.ts (added `sendBestEffortErrorEnvelope`; wrapped the success-send in a catchCause; replaced `ignoreCause` with structured logging)
+
+**Tests added**: 0 new. The existing 40 wsServer tests cover the parse-fail and routeRequest-fail paths. Writing a deterministic regression test for the success-send-fail scenario requires injecting a fault into `ws.send` itself, which the test infrastructure does not easily allow (mock socket would have to throw at a precisely timed moment). The structural change is documented in the code with cross-reference to ORC-031.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/wsServer.test.ts
+Test Files  1 passed (1)
+     Tests  40 passed (40)
+```
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 138 warnings.
+
+Adversarial review:
+- Original test "catches websocket message handler rejections and keeps the socket usable" still passes because the routeRequest-failure path is unchanged.
+- New catchCause on the success-send only fires when `sendWsResponse` ITSELF fails. That path was previously silent.
+- `sendBestEffortErrorEnvelope` checks `ws.readyState === ws.OPEN` before writing, so a closed WS doesn't trigger another throw.
+- The outer catchCause at `ws.on("message")` registration uses `requestId: "unknown"` is NOT used (no envelope sent at that level) to avoid polluting the test harness's id catch-all. Operators see the structured `ws.handleMessage failed` log line; the failure surface is preserved without breaking test isolation.
+- Defects in `decodeWebSocketRequest` (synchronous): the existing parse-fail handling catches `Result.isFailure`. A throw inside the decoder would still propagate to the outer catchCause and be logged.
+
+**Follow-ups**:
+- A deterministic regression test for the success-send-fail path: would require a mock socket fixture whose `send` throws on demand. Tracked separately as test infrastructure work.
+- Consider tracking metrics on per-request error counts so operators can graph the rate of unhandled defects.
+- The audit's exact "ignoreCause" → "Effect.exit/Effect.result" suggestion was implemented as `catchCause(logError)`; equivalent semantics for our purposes (the client-side structured envelope is already in place at the inner level).

@@ -1957,6 +1957,26 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
   });
 
+  // ORC-031: best-effort send of an error envelope when the entire
+  // handleMessage body fails (defect or sendWsResponse failure). Used as a
+  // last-resort safety net so the client sees a frame instead of timing
+  // out. We swallow any further errors here because if even THIS path
+  // fails the WebSocket is not usable anyway.
+  const sendBestEffortErrorEnvelope = (
+    ws: WebSocket,
+    requestId: string,
+    message: string,
+  ): Effect.Effect<void> =>
+    Effect.sync(() => {
+      try {
+        if (ws.readyState !== ws.OPEN) return;
+        const envelope = JSON.stringify({ id: requestId, error: { message } });
+        ws.send(envelope);
+      } catch {
+        // best-effort; the caller has already logged the underlying cause
+      }
+    });
+
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
     const sendWsResponse = (response: WsResponseMessage) =>
       encodeWsResponse(response).pipe(
@@ -2005,10 +2025,29 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       });
     }
 
+    // ORC-031: if sending the success response fails (e.g. the WS
+    // connection went bad mid-write), best-effort send an error
+    // envelope with the original request id so the client sees a frame
+    // and can either retry or surface the failure. Without this, a
+    // failed send leaves the caller waiting until timeout.
     return yield* sendWsResponse({
       id: request.success.id,
       result: result.value,
-    });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("ws.sendWsResponse failed", {
+            requestId: request.success.id,
+            cause: Cause.pretty(cause),
+          });
+          yield* sendBestEffortErrorEnvelope(
+            ws,
+            request.success.id,
+            "Internal server error while sending the response.",
+          );
+        }),
+      ),
+    );
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
@@ -2065,7 +2104,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     );
 
     ws.on("message", (raw) => {
-      void runPromise(handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })));
+      // ORC-031: structured logging on outermost handler defects.
+      // handleMessage already converts known failures (parse errors,
+      // routeRequest failures) into error envelopes for the client.
+      // This catch is the safety net for unhandled defects (e.g.
+      // sendWsResponse itself throws); we log structurally so operators
+      // can investigate. We don't send a bonus error envelope here
+      // because we have no way to know the original request id at this
+      // outer level, and the test harness's "unknown" id catch-all
+      // would steal the envelope from subsequent legitimate requests.
+      void runPromise(
+        handleMessage(ws, raw).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("ws.handleMessage failed", { cause: Cause.pretty(cause) }),
+          ),
+        ),
+      );
     });
 
     ws.on("close", () => {

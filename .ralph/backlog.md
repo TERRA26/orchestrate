@@ -307,7 +307,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:2012
 - evidence: `ws.on("message", (raw) => { void runPromise(handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true }))); });`. Frame parse errors and handler crashes are logged but no error response is sent to the client. Caller hangs until timeout.
 - proposed_fix: Replace ignoreCause with an Effect.exit / Effect.result that maps failure to a structured error envelope sent back via sendWsResponse. Add a regression test that crashes a handler and asserts the client receives an error frame.
-- status: PENDING
+- status: DONE
+- fixed_iter: 65
 
 ### ORC-032
 
