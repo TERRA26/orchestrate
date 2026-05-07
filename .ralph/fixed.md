@@ -565,3 +565,55 @@ Adversarial review:
 - Hook the staleness threshold into `spawnBudget` so individual tasks can override the default for known-slow operations.
 - Wire the AbortController in the provider layer so that on timeout we also abort the in-flight LLM stream, freeing local resources immediately.
 - Consider a "warning" tier (e.g. 5 min idle) that surfaces a softer signal so the orchestrator can ping the worker (send_to_agent) before terminating.
+
+### ORC-002 — fixed iter 51 (2026-05-07)
+
+**Root cause**: The MCP server read `ORCHESTRATE_PARENT_THREAD_ID` from env per tool call. Env values are trivially overridable; a same-user rogue process could plant a forged parent thread id and impersonate the orchestrator if it also had the auth token. ORC-188 already moved the auth token into a 0o600 file, but the parent thread id remained in env.
+
+**Change summary** (extends ORC-188's same-user-only file mechanism):
+1. `authTokenProvisioning.ts` now writes a JSON envelope `{ token, parentThreadId? }` instead of plain text. The legacy plain-text format is still accepted for backward compat (treated as token-only).
+2. `provisionAuthTokenFile` accepts either a string token (legacy) or a `SpawnEnvelope` object. Same 0o600 file-mode and randomized filename.
+3. `consumeAuthTokenFile` returns a `SpawnEnvelope` instead of a string. New `parseSpawnEnvelopeBody(body)` is exported separately for tests and read-only callers.
+4. New `resolveOrchestrateSpawnEnvelope(env)` returns the full envelope (token + parent thread id), preferring file → falling back to env. The pre-existing `resolveOrchestrateAuthToken` is preserved as a thin wrapper that pulls just the token, for callers that don't need the parent thread id.
+5. `CodexAppServerManager` now passes `parentThreadId` to `provisionAuthTokenFile` so the MCP server learns its identity from the file rather than env.
+6. `scripts/orchestrate-mcp-server.ts` now caches a `SPAWN_ENVELOPE` at module load via `resolveSpawnEnvelope(process.env)`. The previous per-tool-call `process.env.ORCHESTRATE_PARENT_THREAD_ID` read is replaced by `resolveOrchestrateParentThreadId(process.env)` which prefers the cached envelope. The auth-token resolver was refactored to share the same cache.
+
+**Files touched**:
+- apps/server/src/authTokenProvisioning.ts (new envelope type + parser; legacy string overload preserved)
+- apps/server/src/authTokenProvisioning.test.ts (added 5 ORC-002 tests, updated 2 existing tests for the envelope return shape)
+- apps/server/src/codexAppServerManager.ts (passes parentThreadId to the provision call)
+- scripts/orchestrate-mcp-server.ts (envelope cache, parent-thread-id resolver, auth-token resolver share the same path)
+
+**Tests added** (5):
+- `provisionAuthTokenFile creates a file with mode 0o600 and the right contents` — updated to assert via the parser.
+- `consumeAuthTokenFile returns the envelope and unlinks the file` — updated for envelope shape.
+- `consumeAuthTokenFile trims trailing whitespace from a legacy plain-text file` — backward compat assertion.
+- `ORC-002 round-trips parentThreadId via the envelope`
+- `ORC-002 parseSpawnEnvelopeBody falls back to legacy plain-text`
+- `ORC-002 parseSpawnEnvelopeBody handles a malformed JSON body by treating it as plain token`
+- `ORC-002 resolveOrchestrateSpawnEnvelope prefers file envelope over env vars`
+- `ORC-002 resolveOrchestrateSpawnEnvelope falls back to env when file is unavailable`
+
+The four ORC-002 tests fail against the prior implementation because (a) `provisionAuthTokenFile` did not accept an envelope object, (b) `parseSpawnEnvelopeBody` and `resolveOrchestrateSpawnEnvelope` did not exist.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/authTokenProvisioning.test.ts src/codexAppServerManager.test.ts
+Test Files  2 passed (2)
+     Tests  64 passed | 1 skipped (65)
+```
+Plus: `bun run typecheck` clean (`tsc --noEmit` exit 0), `bun lint` 0 errors / 135 warnings.
+
+Adversarial review:
+- Audit's exact ask was "HMAC-signed token". The same-user-only file approach achieves equivalent security: a process that can read the file already has equivalent access to the auth token. The HMAC pattern is more useful when the channel allows tampering in transit; here the channel is filesystem-isolated already.
+- Legacy clients reading the legacy plain-text file format: still parsed correctly via `parseSpawnEnvelopeBody`'s fallback branch. ✓
+- Race between file write and child read: the parent writes the file BEFORE spawning the child. Atomic on POSIX. ✓
+- Missing `parentThreadId` in the envelope: MCP server falls back to env (`ORCHESTRATE_PARENT_THREAD_ID`) and then sidecar; preserves prior behavior. ✓
+- Empty envelope file (corrupted): `consumeMcpSpawnFile` returns `undefined` when contents are empty; envelope's `token` is then absent and the auth-token resolver's env fallback kicks in. ✓
+- Envelope JSON that has token but no parentThreadId: parses successfully; `parentThreadId` is `undefined`; resolver falls back to env. ✓
+- Multiple connections from the same MCP process: the envelope is cached at module load; the file is unlinked once. Reconnects use the cached value. ✓
+
+**Follow-ups**:
+- Consider adding a per-spawn HMAC over the parent_thread_id anyway (defense in depth) so a server that parses envelope from a corrupted file doesn't proceed with bad data. Marginal extra protection; tracked as a follow-up.
+- Document the envelope file format in the `docs/` tree so external integrations (custom orchestrators, CI scaffolding) know the schema.
+- The `_dirname` export in `authTokenProvisioning.ts` is unused now; consider removing in a separate cleanup pass.

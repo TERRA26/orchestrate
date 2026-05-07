@@ -778,7 +778,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         serverConfig.authToken.length > 0
       ) {
         const secretsDir = path.join(serverConfig.baseDir ?? os.tmpdir(), "secrets");
-        authTokenProvision = provisionAuthTokenFile(serverConfig.authToken, secretsDir);
+        // ORC-002: include the parent thread id in the same 0o600 envelope
+        // so the MCP server reads its identity from a same-user-only file
+        // instead of trusting ORCHESTRATE_PARENT_THREAD_ID env (which is
+        // trivially overridable by other same-user processes).
+        authTokenProvision = provisionAuthTokenFile(
+          {
+            token: serverConfig.authToken,
+            parentThreadId: threadId as unknown as string,
+          },
+          secretsDir,
+        );
       }
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,

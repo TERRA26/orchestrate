@@ -29,7 +29,8 @@ Schema per entry:
 - files: scripts/orchestrate-mcp-server.ts:735-743
 - evidence: ORCHESTRATE_PARENT_THREAD_ID is read from env without validation. A local rogue process spawned with that env var set can impersonate any orchestrator thread and spawn agents in an unintended project. The MCP transport is stdio-local, but trust on env values is still bypassable.
 - proposed_fix: Pair the env value with an HMAC-signed token issued at spawn time and validated on every wsRequest. Sidecar file with per-process secret is cleaner than env.
-- status: PENDING
+- status: DONE
+- fixed_iter: 51
 
 ### ORC-003
 

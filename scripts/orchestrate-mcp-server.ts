@@ -503,10 +503,17 @@ const TOOLS = [
   },
 ];
 
-// ORC-188: read the auth token from a file when available so we never
-// have to keep it in env. The parent process writes a 0o600 file and
-// passes its path; we read the contents once and unlink the file.
-function consumeMcpAuthTokenFile(filePath: string): string | undefined {
+// ORC-188 + ORC-002: read the auth token AND the parent thread id from
+// a same-user-only file when available so we never have to keep them in
+// env. The parent process writes a 0o600 JSON envelope and passes its
+// path; we read the contents once and unlink the file. Caching at module
+// load time means a single read covers all subsequent reconnects.
+interface SpawnEnvelope {
+  readonly token?: string;
+  readonly parentThreadId?: string;
+}
+
+function consumeMcpSpawnFile(filePath: string): SpawnEnvelope | undefined {
   try {
     const fs = require("node:fs") as typeof import("node:fs");
     const contents = fs.readFileSync(filePath, "utf8");
@@ -515,22 +522,64 @@ function consumeMcpAuthTokenFile(filePath: string): string | undefined {
     } catch {
       // Best-effort cleanup; the file is mode 0o600 either way.
     }
-    return contents.trim();
+    const trimmed = contents.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed) as { token?: unknown; parentThreadId?: unknown };
+        if (parsed && typeof parsed === "object") {
+          return {
+            ...(typeof parsed.token === "string" && parsed.token.length > 0
+              ? { token: parsed.token }
+              : {}),
+            ...(typeof parsed.parentThreadId === "string" && parsed.parentThreadId.length > 0
+              ? { parentThreadId: parsed.parentThreadId }
+              : {}),
+          };
+        }
+      } catch {
+        // fall through to legacy plain-text interpretation
+      }
+    }
+    return trimmed.length > 0 ? { token: trimmed } : undefined;
   } catch {
     return undefined;
   }
 }
 
-function resolveOrchestrateAuthToken(env: NodeJS.ProcessEnv): string | undefined {
+function resolveSpawnEnvelope(env: NodeJS.ProcessEnv): SpawnEnvelope {
   const filePath = env.ORCHESTRATE_AUTH_TOKEN_FILE;
   if (filePath && filePath.length > 0) {
-    const fromFile = consumeMcpAuthTokenFile(filePath);
-    if (fromFile && fromFile.length > 0) {
+    const fromFile = consumeMcpSpawnFile(filePath);
+    if (fromFile) {
       return fromFile;
     }
   }
-  const direct = env.ORCHESTRATE_AUTH_TOKEN;
-  return direct && direct.length > 0 ? direct : undefined;
+  const directToken = env.ORCHESTRATE_AUTH_TOKEN;
+  const directParent = env.ORCHESTRATE_PARENT_THREAD_ID;
+  return {
+    ...(directToken && directToken.length > 0 ? { token: directToken } : {}),
+    ...(directParent && directParent.length > 0 ? { parentThreadId: directParent } : {}),
+  };
+}
+
+// Cached at module load. Subsequent reconnects use the cached values
+// because the file has been unlinked.
+const SPAWN_ENVELOPE = resolveSpawnEnvelope(process.env);
+
+function resolveOrchestrateAuthToken(env: NodeJS.ProcessEnv): string | undefined {
+  // Prefer the cached envelope value when available; fall back to env
+  // for callers that pass a fresh env (mostly tests).
+  if (env === process.env && SPAWN_ENVELOPE.token) {
+    return SPAWN_ENVELOPE.token;
+  }
+  return resolveSpawnEnvelope(env).token;
+}
+
+function resolveOrchestrateParentThreadId(env: NodeJS.ProcessEnv): string | undefined {
+  if (env === process.env && SPAWN_ENVELOPE.parentThreadId) {
+    return SPAWN_ENVELOPE.parentThreadId;
+  }
+  return resolveSpawnEnvelope(env).parentThreadId;
 }
 
 // The MCP server connects back to our orchestration WebSocket server to execute tools.
@@ -762,9 +811,13 @@ async function executeOrchestrationTool(
   // Always fetch the snapshot — we need projectId and other fields from the
   // orchestrator thread even when the env var or sidecar provides the threadId.
   const snapshot = await wsRequest("orchestration.getSnapshot");
-  const envThreadId = process.env.ORCHESTRATE_PARENT_THREAD_ID;
-  const sidecarThreadId = envThreadId ? undefined : readOrchestratorThreadIdFromSidecar();
-  const resolvedThreadId = envThreadId ?? sidecarThreadId;
+  // ORC-002: prefer the parent thread id from the same-user-only spawn
+  // envelope (file-based), falling back to env then sidecar. The file
+  // path was already unlinked at module load; SPAWN_ENVELOPE is the
+  // cached value.
+  const envelopeThreadId = resolveOrchestrateParentThreadId(process.env);
+  const sidecarThreadId = envelopeThreadId ? undefined : readOrchestratorThreadIdFromSidecar();
+  const resolvedThreadId = envelopeThreadId ?? sidecarThreadId;
   const orchestratorThread = resolvedThreadId
     ? (snapshot.threads ?? []).find((t: any) => t.id === resolvedThreadId)
     : (snapshot.threads ?? []).find(
