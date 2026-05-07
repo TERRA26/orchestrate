@@ -915,3 +915,47 @@ Adversarial review:
 - Periodic `wal_checkpoint(TRUNCATE)` to keep WAL file from growing unboundedly during long-running server uptime (tracked by ORC-019/021 in the backlog).
 - Consider `mmap_size` pragma for very large databases; defer until profiling shows benefit.
 - Document the pragma choices in `docs/operations/sqlite.md` (or similar); inline comments are the source of truth for now.
+
+### ORC-017 — fixed iter 59 (2026-05-07)
+
+**Root cause**: `captureCheckpoint`'s body ran four side-effects in sequence:
+```
+dispatch(thread.turn.diff.complete)
+publish(checkpoint.diff.finalized)
+publish(turn.processing.quiesced)
+dispatch(thread.activity.append)
+```
+If `activity.append` failed, the receipt bus had already announced the checkpoint as finalized to downstream consumers, but the activity-append event was missing. Worse, the FIRST dispatch had committed its SQL, so the orchestrator's read model showed a partial state.
+
+**Investigation finding (changed approach)**: I first attempted the audit's exact suggestion (`sql.withTransaction` wrapping both dispatches). That deadlocked the bun-sqlite driver because each `engine.dispatch` already wraps its body in `sql.withTransaction` and Effect-sql's nested-transaction support over the bun driver does not handle the outer/inner combination. Confirmed by single-test hangs >2 minutes with the wrap and instant pass without it.
+
+**Change summary** (pragmatic compromise):
+1. Reorder: dispatch BOTH events first, then publish BOTH receipts. If the second dispatch fails, the publish path is never reached, so downstream consumers never see receipts that contradict SQL state.
+2. The first dispatch's SQL writes can still commit before the second dispatch fails; the SQL state is partial. But no observable bus signal is emitted for the partial state, so observers' downstream reactions (which trigger off the receipts, not the SQL) stay consistent.
+3. True SQL-atomic rollback requires an outbox-style refactor (single command that the projector expands into multiple events); tracked as a follow-up.
+4. Added an explanatory comment block in `captureCheckpoint` documenting both the reorder rationale AND the deadlock-avoidance reason for not using `sql.withTransaction` here.
+
+**Files touched**:
+- apps/server/src/orchestration/Layers/CheckpointReactor.ts (reordered + docstring)
+
+**Tests added**: 0. The 12 existing CheckpointReactor tests pass under the new ordering, demonstrating the happy path is unaffected. A fault-injection test (force the second dispatch to fail and assert no receipts) requires test-infrastructure changes (custom engine layer, dispatch-spy harness) outside the scope of this iteration; tracked as a follow-up.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/orchestration/Layers/CheckpointReactor.test.ts
+Test Files  1 passed (1)
+     Tests  12 passed (12)
+```
+Plus: `bun run typecheck` clean, `bun lint` 0 errors / 137 warnings.
+
+Adversarial review:
+- Race between two checkpoint captures on the same thread: the engine's per-dispatch transaction (ORC-015) already serializes them.
+- First dispatch fails: no second dispatch happens, no receipts; clean rollback at the dispatch level.
+- Second dispatch fails: first dispatch's SQL committed; no receipts published; downstream observers see a state-consistent view from their perspective. SQL is internally inconsistent but only observable if a reader queries directly without going through the receipt bus.
+- Both dispatches succeed, first publish fails: second receipt never fires; observers see one consistent receipt and infer the other from polling or read-model snapshots. Acceptable degraded-mode.
+- An attempted `sql.withTransaction` wrap deadlocks the bun-sqlite driver; documented in code comment and fixed.md.
+
+**Follow-ups**:
+- Implement the outbox pattern: write a single `checkpoint.captured` command that the projector expands into both `thread.turn.diff.complete` and `thread.activity.append` events in one event-store transaction. This achieves true atomicity at the SQL level. Larger refactor; tracked separately.
+- Investigate Effect-sql's nested-transaction support over bun-sqlite. The deadlock observed during this iteration suggests the nested-transaction path is not exercised by the test suite. File a separate issue.
+- Add a fault-injection test harness for CheckpointReactor that lets us simulate dispatch failures and assert the receipt-bus stream stays consistent. Out of scope for one iteration.

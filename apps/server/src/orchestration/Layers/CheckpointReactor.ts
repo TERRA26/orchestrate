@@ -269,6 +269,19 @@ const make = Effect.gen(function* () {
         .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id ??
       MessageId.makeUnsafe(`assistant:${input.turnId}`);
 
+    // ORC-017: dispatch BOTH checkpoint events before publishing any
+    // bus signals. Each dispatch's SQL writes are wrapped in their own
+    // transaction by the engine; we cannot atomically combine them
+    // here because nesting sql.withTransaction over engine.dispatch
+    // deadlocks the bun-sqlite driver. The pragmatic compromise:
+    // - if the second dispatch (activity.append) fails, the first
+    //   (diff.complete) was committed, but downstream consumers never
+    //   see the receipts because we publish them AFTER both succeed.
+    // - this keeps the observable receipt stream consistent with
+    //   completed work even when the underlying SQL state is partial.
+    // A true atomic fix requires an outbox pattern (write a single
+    // command that the projector expands into both events); tracked
+    // as a follow-up.
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.diff.complete",
       commandId: serverCommandId("checkpoint-turn-diff-complete"),
@@ -282,23 +295,6 @@ const make = Effect.gen(function* () {
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });
-    yield* receiptBus.publish({
-      type: "checkpoint.diff.finalized",
-      threadId: input.threadId,
-      turnId: input.turnId,
-      checkpointTurnCount: input.turnCount,
-      checkpointRef: targetCheckpointRef,
-      status: input.status,
-      createdAt: input.createdAt,
-    });
-    yield* receiptBus.publish({
-      type: "turn.processing.quiesced",
-      threadId: input.threadId,
-      turnId: input.turnId,
-      checkpointTurnCount: input.turnCount,
-      createdAt: input.createdAt,
-    });
-
     yield* orchestrationEngine.dispatch({
       type: "thread.activity.append",
       commandId: serverCommandId("checkpoint-captured-activity"),
@@ -315,6 +311,22 @@ const make = Effect.gen(function* () {
         turnId: input.turnId,
         createdAt: input.createdAt,
       },
+      createdAt: input.createdAt,
+    });
+    yield* receiptBus.publish({
+      type: "checkpoint.diff.finalized",
+      threadId: input.threadId,
+      turnId: input.turnId,
+      checkpointTurnCount: input.turnCount,
+      checkpointRef: targetCheckpointRef,
+      status: input.status,
+      createdAt: input.createdAt,
+    });
+    yield* receiptBus.publish({
+      type: "turn.processing.quiesced",
+      threadId: input.threadId,
+      turnId: input.turnId,
+      checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });
   });

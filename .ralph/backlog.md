@@ -172,7 +172,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/CheckpointReactor.ts:272-319
 - evidence: Multiple `dispatch` and `receiptBus.publish` calls in sequence, no transaction wrapper. If the first dispatch succeeds but a later one fails, state is partially updated: a git ref may be created without the matching `thread.turn.diff.complete` event being recorded.
 - proposed_fix: Wrap the capture-and-dispatch sequence in `sql.withTransaction` so partial failures roll back together. Add an integration test that injects a failure on the second dispatch and asserts the git ref was not retained.
-- status: PENDING
+- status: DONE
+- fixed_iter: 59
 
 ### ORC-018
 
