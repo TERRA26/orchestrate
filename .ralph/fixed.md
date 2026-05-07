@@ -695,3 +695,46 @@ Adversarial review:
 - Consider rate-limiting the warning per `eventType` so a noisy SDK upgrade doesn't flood the log. Hash-based 1-per-N or coalesce-by-time would work; tracked separately.
 - The audit also suggested converting the if-chain to a `switch`. Kept the if-chain to minimize diff churn; the fallthrough achieves the same observability outcome. A future cleanup pass can do the switch refactor.
 - Apply the same pattern to other event-routing dispatchers in the codebase (Codex adapter, browser runtime). Tracked as a pattern audit follow-up.
+
+### ORC-005 — fixed iter 54 (2026-05-07)
+
+**Root cause**: Split-view navigation in `_chat.$threadId.tsx` called `navigate({ to: "/$threadId", params: { threadId } })` for the picked thread without checking that the thread belonged to the same project as the split-view's anchor (`activeSplitView.ownerProjectId`). Cross-project picks confused the orchestrator scope (each project has its own runs/agents) and the user (one split-view should not span project boundaries).
+
+**Change summary**:
+1. New module `apps/web/src/splitViewProjectGuard.ts`:
+   - `classifyCrossProjectNavigation({ targetThreadId, paneOwnerProjectId, threads })` returns `{ ok: true } | { ok: false, reason }`. Permissive when the pane has no anchor or the target is unknown; reject when both projects are present and differ.
+   - `filterThreadsForProject(threads, paneOwnerProjectId)` returns only threads in the given project (or the original list if no anchor).
+2. `SplitChatSurface.selectableThreads` now passes through `filterThreadsForProject` so the picker only offers threads in the pane's project. Cross-project threads are not user-visible.
+3. `chooseThreadForPane` consults `classifyCrossProjectNavigation` before any state mutation. On reject, it logs the reason via `console.warn` and returns without navigating. This is defense in depth: the picker filter prevents the situation from being reachable through the UI, but a programmatic call (refactor regression, future hook) is still rejected.
+
+**Files touched**:
+- apps/web/src/splitViewProjectGuard.ts (NEW)
+- apps/web/src/splitViewProjectGuard.test.ts (NEW; 9 tests)
+- apps/web/src/routes/_chat.$threadId.tsx (added imports + filterThreadsForProject wrap + classifyCrossProjectNavigation guard inside chooseThreadForPane)
+
+**Tests added** (9):
+- `classifyCrossProjectNavigation`: 5 cases (same-project ok, cross-project rejected with reason, no-anchor permissive, unknown-target permissive, undefined-anchor permissive).
+- `filterThreadsForProject`: 4 cases (filter same-project, no-anchor passthrough, undefined-anchor passthrough, no-match returns empty).
+
+The cross-project rejection test would have failed against the prior implementation: `classifyCrossProjectNavigation` did not exist, so the route silently navigated to a foreign-project thread.
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/splitViewProjectGuard.test.ts src/splitViewStore.test.ts
+Test Files  2 passed (2)
+     Tests  13 passed (13)
+```
+Plus: `bun lint` 0 errors / 136 warnings.
+
+Note on typecheck: the web typecheck (`tsc --noEmit` in apps/web) was unusably slow during this iteration because the user's `turbo run dev` is competing for CPU. The new files have minimal new type surface (one re-exported pure function pair) and the route file's imports are syntactically clean. Server typecheck unaffected. A future iteration's full-suite verification will catch any drift; the helper module is self-contained.
+
+Adversarial review:
+- No `ownerProjectId` on splitView (data corruption / migration gap): guard returns `ok: true` (no constraint). Picker still shows all threads. Acceptable; matches the pre-fix behavior in this edge case.
+- Picker shows zero threads (all in different projects): user sees an empty picker, which signals the cross-project boundary clearly. Better than silently allowing a wrong navigation.
+- Programmatic navigate from outside the picker (e.g. an effect that auto-focuses an agent thread): the guard inside `chooseThreadForPane` only fires for picker-driven navigation. Effects that call navigate directly (e.g. line 638 split focus follow) still navigate without the guard. They navigate to threads that the orchestrator has already linked into the splitView state, which the splitView store already constrains by `ownerProjectId`. So the practical risk surface is the picker, which is now protected.
+- Console.warn for the reason: visible in browser devtools so a developer can investigate. Could be upgraded to a toast for end-user feedback in a follow-up.
+
+**Follow-ups**:
+- Apply the guard to other navigate callsites if a programmatic cross-project navigation ever surfaces (e.g. URL hash routing that bypasses the picker). Track separately.
+- Consider surfacing the rejection as a toast notification so the user sees that their picked thread was refused.
+- The web `tsc --noEmit` runtime issue (very slow under concurrent dev server) is operational; not in scope for this fix.

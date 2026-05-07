@@ -47,6 +47,10 @@ import {
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { resolveActiveSplitView, isSplitRoute } from "../splitViewRoute";
 import {
+  classifyCrossProjectNavigation,
+  filterThreadsForProject,
+} from "../splitViewProjectGuard";
+import {
   resolveSplitViewFocusedThreadId,
   selectSplitView,
   type SplitView,
@@ -820,13 +824,33 @@ function SplitChatSurface(props: { splitViewId: SplitViewId; routeThreadId: Thre
 
   const leftBasis = `${activeSplitView.ratio * 100}%`;
   const rightBasis = `${(1 - activeSplitView.ratio) * 100}%`;
-  const selectableThreads = threads.toSorted(
-    (left, right) =>
-      Date.parse(right.updatedAt ?? right.createdAt) - Date.parse(left.updatedAt ?? left.createdAt),
-  );
+  // ORC-005: only offer threads that belong to this split-view's owning
+  // project. Cross-project navigation inside a split view used to confuse
+  // both the orchestrator scope (each project has its own runs/agents)
+  // and the user (a single split-view should not span project boundaries).
+  const selectableThreads = filterThreadsForProject(threads, activeSplitView.ownerProjectId)
+    .toSorted(
+      (left, right) =>
+        Date.parse(right.updatedAt ?? right.createdAt) -
+        Date.parse(left.updatedAt ?? left.createdAt),
+    );
   const chooseThreadForPane = (threadId: ThreadIdType, paneOverride?: SplitViewPane) => {
     const pane = paneOverride ?? threadPickerPane;
     if (!pane) {
+      return;
+    }
+    // ORC-005: defense in depth. Even if the picker offered a foreign-
+    // project thread (refactor regression, programmatic call), refuse to
+    // navigate cross-project. Picker filtering prevents this from being
+    // user-visible; the guard surfaces the bug if it ever happens.
+    const guard = classifyCrossProjectNavigation({
+      targetThreadId: threadId,
+      paneOwnerProjectId: activeSplitView.ownerProjectId,
+      threads,
+    });
+    if (!guard.ok) {
+      console.warn(guard.reason);
+      setThreadPickerPane(null);
       return;
     }
     const otherPane: SplitViewPane = pane === "left" ? "right" : "left";

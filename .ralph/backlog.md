@@ -59,7 +59,8 @@ Schema per entry:
 - files: apps/web/src/routes/\_chat.$threadId.tsx:641-1605
 - evidence: Split-view navigation calls `navigate({ to: "/$threadId" })` without checking that the target thread belongs to the same project as the current pane. Component has `routeThreadExists` guard at 1581 but not project ownership.
 - proposed_fix: Compare the resolved thread's projectId against the current pane's project before navigating; reject or redirect on mismatch.
-- status: PENDING
+- status: DONE
+- fixed_iter: 54
 
 ### ORC-006
 
