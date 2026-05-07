@@ -172,6 +172,62 @@ export function logUpgradeSocketError(
   );
 }
 
+// ORC-042: extract the auth token from a WS upgrade request. Header form is
+// preferred (not logged by proxies, not in browser history, not in OS
+// process tables); query string is kept for backward compat with older
+// clients. Returns the token string if any source supplied it; null
+// otherwise.
+//
+// Order of precedence:
+// 1. Authorization: Bearer <token>     (preferred; Node ws clients)
+// 2. Sec-WebSocket-Protocol: orchestrate-auth.<token>   (browser clients)
+// 3. URL query ?token=<token>          (legacy)
+//
+// The value is returned as-is; the caller compares against the configured
+// authToken.
+export interface UpgradeRequestForAuth {
+  readonly url?: string | undefined;
+  readonly headers: Record<string, string | string[] | undefined>;
+}
+
+export function extractWsAuthTokenFromUpgrade(
+  request: UpgradeRequestForAuth,
+  defaultBaseUrl: string,
+): string | null {
+  // Header: "Authorization: Bearer <token>"
+  const authHeader = request.headers["authorization"];
+  const authValue = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+  if (typeof authValue === "string") {
+    const match = authValue.match(/^Bearer\s+(.+)$/i);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // Subprotocol: comma-separated list, look for "orchestrate-auth.<token>"
+  const protoHeader = request.headers["sec-websocket-protocol"];
+  const protoValue = Array.isArray(protoHeader) ? protoHeader.join(",") : protoHeader;
+  if (typeof protoValue === "string") {
+    for (const raw of protoValue.split(",")) {
+      const candidate = raw.trim();
+      if (candidate.startsWith("orchestrate-auth.")) {
+        return candidate.slice("orchestrate-auth.".length);
+      }
+    }
+  }
+
+  // Legacy: URL query ?token=
+  try {
+    const url = new URL(request.url ?? "/", defaultBaseUrl);
+    const queryToken = url.searchParams.get("token");
+    if (queryToken !== null) return queryToken;
+  } catch {
+    // malformed URL falls through to "no token"
+  }
+
+  return null;
+}
+
 type BootstrapSnapshotThread = OrchestrationReadModel["threads"][number];
 
 function toSortableBootstrapTimestamp(iso: string | undefined): number {
@@ -2080,14 +2136,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     );
 
     if (authToken) {
-      let providedToken: string | null = null;
-      try {
-        const url = new URL(request.url ?? "/", `http://localhost:${port}`);
-        providedToken = url.searchParams.get("token");
-      } catch {
-        rejectUpgrade(socket, 400, "Invalid WebSocket URL");
-        return;
-      }
+      // ORC-042: prefer Authorization header / Sec-WebSocket-Protocol over
+      // ?token= query string. Query strings leak via proxy access logs,
+      // browser history, /proc/PID/cmdline, and Referer headers. Headers
+      // do not. Legacy ?token= is still accepted for one release of
+      // backward compat.
+      const providedToken = extractWsAuthTokenFromUpgrade(
+        { url: request.url, headers: request.headers as Record<string, string | string[] | undefined> },
+        `http://localhost:${port}`,
+      );
 
       if (providedToken !== authToken) {
         rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");

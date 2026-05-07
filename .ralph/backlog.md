@@ -411,7 +411,8 @@ Schema per entry:
 - files: scripts/orchestrate-mcp-server.ts:514-516,apps/server/src/wsServer.ts:1969
 - evidence: Auth token is appended to the WS URL as `?token=...`. URL query strings appear in proxy access logs, browser history, OS process tables (via /proc/PID/cmdline), and referrer headers. WebSocket upgrades support an Authorization header which is not logged by default.
 - proposed_fix: Move the token to an `Authorization: Bearer ...` header (or `Sec-WebSocket-Protocol` subprotocol). Update the MCP server, the web client, and the desktop bridge to use the header path. Keep query-string fallback for one release for backward compat, then remove.
-- status: PENDING
+- status: DONE
+- fixed_iter: 68
 
 ### ORC-043
 

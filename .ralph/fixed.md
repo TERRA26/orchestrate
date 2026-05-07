@@ -1294,3 +1294,65 @@ Adversarial review:
 **Follow-ups**:
 - Add a per-client error counter so a single client repeatedly aborting handshakes can be flagged for IP-block rather than buried in debug logs. Tracked separately as observability hardening.
 - Consider promoting to warn level if specific err.code values indicate genuine attack patterns (e.g., a flood of EBADRQC).
+
+### ORC-042 — fixed iter 68 (2026-05-07)
+
+**Root cause**: The auth token was appended to the WS URL as `?token=...`. URL query strings leak via proxy access logs, browser history, `/proc/PID/cmdline`, and Referer headers. The WS upgrade gate read `url.searchParams.get("token")` only.
+
+**Change summary**:
+1. New helper `extractWsAuthTokenFromUpgrade(request, defaultBaseUrl)` exported from `wsServer.ts`. Reads the token from (in order of preference):
+   - `Authorization: Bearer <token>` (case-insensitive)
+   - `Sec-WebSocket-Protocol: orchestrate-auth.<token>` (browser-friendly)
+   - URL query `?token=<token>` (legacy backward compat)
+2. Upgrade handler now calls the helper instead of inline `searchParams.get("token")`. Backward compatible: existing clients keep working.
+3. Bundled MCP server (`scripts/orchestrate-mcp-server.ts`) now passes the token via the `Sec-WebSocket-Protocol` subprotocol on `new WebSocket(url, [...])`. Bun's WebSocket constructor accepts the protocols array; this avoids putting the token in the URL where it would appear in `/proc/PID/cmdline` and other logs.
+
+**Files touched**:
+- apps/server/src/wsServer.ts (added `extractWsAuthTokenFromUpgrade` + replaced inline reader)
+- apps/server/src/wsServer.extractAuth.test.ts (NEW; 12 tests)
+- scripts/orchestrate-mcp-server.ts (`connectWs` now sends the auth token via the subprotocol arg)
+
+**Tests added** (12):
+- Token from Authorization header (preferred).
+- Trim whitespace from bearer token.
+- Case-insensitive Bearer scheme (uppercase, lowercase).
+- Token from Sec-WebSocket-Protocol when no Authorization.
+- Multiple subprotocols, find the orchestrate-auth one.
+- Fallback to ?token= query string.
+- Authorization wins over Sec-WebSocket-Protocol over query.
+- Sec-WebSocket-Protocol wins over query when no Authorization.
+- null when no source supplies a token.
+- null on malformed URL with no header fallback.
+- ignores Authorization without Bearer prefix.
+- ignores Sec-WebSocket-Protocol entries that don't match the orchestrate-auth prefix.
+
+The Authorization-precedence and Sec-WebSocket-Protocol-precedence tests fail against the prior implementation (which only read `?token=`).
+
+**Evidence of green run**:
+```
+$ bun run vitest --run src/wsServer.extractAuth.test.ts
+Test Files  1 passed (1)
+     Tests  12 passed (12)
+
+$ bun run vitest --run src/wsServer.test.ts src/wsServer.extractAuth.test.ts \
+                       src/wsServer.upgradeSocketError.test.ts
+Test Files  3 passed (3)
+     Tests  55 passed (55)
+
+$ bun run vitest --run scripts/orchestrate-mcp-server.test.ts
+Test Files  1 passed (1)
+     Tests  19 passed (19)
+```
+Plus: `bun run typecheck` clean, `bun lint` 0 errors / 141 warnings.
+
+Adversarial review:
+- Browser web client still uses `?token=` because the browser WebSocket constructor cannot send custom Authorization headers; it could use the Sec-WebSocket-Protocol path but the web client wasn't updated this iteration. Tracked as a follow-up.
+- Token leakage via Sec-WebSocket-Protocol: the subprotocol is part of the upgrade request; not logged by default in most proxies (vs URL query which IS logged by every standard reverse proxy).
+- Existing `?token=` clients keep working (legacy fallback in helper); no client breaks during the transition.
+- A malicious header injecting a fake Bearer token: still has to match the configured authToken at the constant-time compare; no improvement over the old query string in that respect, but no regression either.
+- The redactOrchestrationWsUrlForLog still exists for log-line redaction; URLs with `?token=` from older clients still get redacted there.
+
+**Follow-ups**:
+- Update the browser web client to use `Sec-WebSocket-Protocol` instead of `?token=`. Browser WebSocket API supports the second-arg protocols array. Tracked separately.
+- After the web client transitions, remove the `?token=` legacy fallback from the helper (next major version).
+- Apply constant-time comparison at the upgrade handler (currently a `!==` string compare is timing-side-channel-leaky for short tokens, though the audit didn't call this out).

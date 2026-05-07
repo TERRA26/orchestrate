@@ -673,7 +673,16 @@ async function ensureWs(): Promise<WebSocket> {
 
 function connectWs(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    // ORC-042: send the auth token via Sec-WebSocket-Protocol subprotocol
+    // (Bun/browser WebSocket accept this via the second constructor arg)
+    // so it does not appear in URL query strings (proxy logs, browser
+    // history, /proc/PID/cmdline, Referer headers). The server still
+    // accepts the URL form for backward compat, but new connections
+    // prefer the subprotocol path.
+    const authToken = resolveOrchestrateAuthToken(process.env);
+    const ws = authToken
+      ? new WebSocket(url, [`orchestrate-auth.${authToken}`])
+      : new WebSocket(url);
     ws.onopen = () => {
       wsConnection = ws;
       resolve(ws);
