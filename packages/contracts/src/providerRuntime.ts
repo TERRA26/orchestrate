@@ -298,6 +298,12 @@ export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.T
 
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
+  // Percent of `maxTokens` consumed, surfaced by providers that compute
+  // headroom server-side (e.g. Claude). Lets the UI render context meters
+  // even when the maxTokens denominator isn't exposed to the client.
+  usedPercent: Schema.optional(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)).check(Schema.isLessThanOrEqualTo(100)),
+  ),
   totalProcessedTokens: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),

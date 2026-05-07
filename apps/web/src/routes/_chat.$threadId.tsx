@@ -1338,8 +1338,9 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[]
           <OrchestratorPanel hideHeader />
         </div>
       </div>
-      {/* Divider after orchestrator */}
-      <PaneDivider onPointerDown={startDrag(0)} />
+      {/* Divider after orchestrator — only when another pane follows so the
+          single-pane layout doesn't expose a stranded resize handle on the right. */}
+      {(agentCount > 0 || browserOpen) && <PaneDivider onPointerDown={startDrag(0)} />}
       {/* Agent panes with dividers */}
       {props.agentThreadIds.map((agentThreadId, i) => (
         <Fragment key={agentThreadId}>

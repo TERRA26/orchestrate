@@ -1,6 +1,19 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, PubSub, Ref, Schema, Sink, Stream } from "effect";
+import {
+  Duration,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  PubSub,
+  Ref,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
+import { TestClock } from "effect/testing";
 import {
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
@@ -976,6 +989,114 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             }),
           ),
         ),
+      );
+      // Regression: a 4s timeout used to false-positive on slow `claude auth
+      // status` invocations (Effect spawn overhead + first-run JIT can push
+      // it past 4s even when the standalone CLI runs in <1s). The fix bumps
+      // the per-attempt timeout to 12s AND adds a single retry on timeout.
+      // Real CLI errors (not timeouts) still fast-fail with no retry — those
+      // are deterministic.
+
+      it.effect(
+        "retries auth probe once on timeout and succeeds when the second attempt returns",
+        () =>
+          Effect.gen(function* () {
+            // Counted spawner: first `auth status` call hangs forever, second
+            // returns a logged-in JSON. The probe should swallow the first
+            // timeout, retry, and report `authenticated`.
+            const callCounter = yield* Ref.make(0);
+            const spawnerLayer = Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) =>
+                Effect.gen(function* () {
+                  const cmd = command as unknown as { args: ReadonlyArray<string> };
+                  const joined = cmd.args.join(" ");
+                  if (joined === "--version") {
+                    return mockHandle({ stdout: "1.0.0\n", stderr: "", code: 0 });
+                  }
+                  if (joined === "auth status") {
+                    const callIdx = yield* Ref.modify(callCounter, (n) => [n, n + 1]);
+                    if (callIdx === 0) {
+                      // Hang forever — exitCode never resolves, simulating a
+                      // hung CLI invocation. The probe's timeoutOption fires.
+                      return ChildProcessSpawner.makeHandle({
+                        pid: ChildProcessSpawner.ProcessId(1),
+                        exitCode: Effect.never,
+                        isRunning: Effect.succeed(true),
+                        kill: () => Effect.void,
+                        stdin: Sink.drain,
+                        stdout: Stream.empty,
+                        stderr: Stream.empty,
+                        all: Stream.empty,
+                        getInputFd: () => Sink.drain,
+                        getOutputFd: () => Stream.empty,
+                      });
+                    }
+                    return mockHandle({
+                      stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                      stderr: "",
+                      code: 0,
+                    });
+                  }
+                  throw new Error(`Unexpected args: ${joined}`);
+                }),
+              ),
+            );
+
+            // Fork the probe so we can drive virtual time past both the
+            // initial timeout (12s) and the retry-settle delay (250ms).
+            const fiber = yield* checkClaudeProviderStatus()
+              .pipe(Effect.provide(spawnerLayer))
+              .pipe(Effect.forkChild);
+            // Advance past the first 12s timeout + retry settle + just into
+            // the second attempt's window. The second attempt resolves
+            // immediately (it's a synchronous mock), so we don't need to
+            // burn the second 12s.
+            yield* TestClock.adjust(Duration.seconds(13));
+            const status = yield* Fiber.join(fiber);
+
+            assert.strictEqual(status.status, "ready", "expected probe to recover after retry");
+            assert.strictEqual(status.auth.status, "authenticated");
+            const calls = yield* Ref.get(callCounter);
+            assert.strictEqual(calls, 2, "expected exactly one retry");
+          }),
+      );
+
+      it.effect("fast-fails on real CLI errors without retrying (retries are timeout-only)", () =>
+        Effect.gen(function* () {
+          // Spawner returns a non-zero exit code for `auth status` immediately.
+          // This is a real error (e.g. `error: unknown command`), not a timeout,
+          // so the probe should NOT retry — that would just double the latency
+          // for a deterministic failure.
+          const callCounter = yield* Ref.make(0);
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              Effect.gen(function* () {
+                const cmd = command as unknown as { args: ReadonlyArray<string> };
+                const joined = cmd.args.join(" ");
+                if (joined === "--version") {
+                  return mockHandle({ stdout: "1.0.0\n", stderr: "", code: 0 });
+                }
+                if (joined === "auth status") {
+                  yield* Ref.update(callCounter, (n) => n + 1);
+                  return mockHandle({
+                    stdout: "",
+                    stderr: "error: unknown command 'auth'",
+                    code: 2,
+                  });
+                }
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
+          );
+
+          const status = yield* checkClaudeProviderStatus().pipe(Effect.provide(spawnerLayer));
+          const calls = yield* Ref.get(callCounter);
+
+          assert.strictEqual(calls, 1, "real errors must not retry");
+          assert.strictEqual(status.status, "warning");
+        }),
       );
     });
 

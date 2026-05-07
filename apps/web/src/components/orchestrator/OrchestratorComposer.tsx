@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ProviderKind,
   ProviderMentionReference,
@@ -79,6 +79,17 @@ const EMPTY_NATIVE_COMMANDS: ProviderNativeCommandDescriptor[] = [];
 const EMPTY_SKILLS: import("@orchestrate/contracts").ProviderSkillDescriptor[] = [];
 const EMPTY_TERMINAL_CONTEXTS: never[] = [];
 
+// Rotating placeholder hints — give the user concrete starting prompts so the
+// composer doesn't feel like a blank wall on first paint. Cycles every ~6s.
+const COMPOSER_PLACEHOLDER_HINTS = [
+  "Ask anything, @tag plugins, or use / for commands",
+  "Build a small SaaS dashboard with auth and billing",
+  "Find every TODO in src/ and group by file",
+  "Refactor this module to remove the legacy adapter",
+  "Plan the migration to the new event store",
+] as const;
+const COMPOSER_PLACEHOLDER_ROTATION_MS = 6000;
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -102,6 +113,48 @@ export function OrchestratorComposer({
   const composerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const { resolvedTheme } = useTheme();
+
+  // Focus the composer when the orchestrator panel mounts so the user can
+  // start typing immediately without an extra click. Skip refocusing while
+  // the agent is busy — interrupting their typing on a state flip would be
+  // worse than the missed initial focus.
+  useEffect(() => {
+    if (isBusy) return;
+    const id = window.requestAnimationFrame(() => editorRef.current?.focusAtEnd());
+    return () => window.cancelAnimationFrame(id);
+    // Run once on mount; isBusy intentionally not a dep so we don't yank focus
+    // every time the run state flips.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Rotate the placeholder hint while the input is empty so first-time users
+  // discover what they can ask for. Pause once they start typing.
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  useEffect(() => {
+    if (input.trim().length > 0 || isBusy) return;
+    const id = window.setInterval(() => {
+      setPlaceholderIndex((prev) => (prev + 1) % COMPOSER_PLACEHOLDER_HINTS.length);
+    }, COMPOSER_PLACEHOLDER_ROTATION_MS);
+    return () => window.clearInterval(id);
+  }, [input, isBusy]);
+  const composerPlaceholder = isBusy
+    ? "Working..."
+    : (COMPOSER_PLACEHOLDER_HINTS[placeholderIndex] ?? COMPOSER_PLACEHOLDER_HINTS[0]);
+
+  // Listen for the empty-state suggestion buttons. They emit a window event
+  // (decoupled from the messages component) carrying the prompt text — we
+  // insert it into the composer and focus so the user can review/edit before
+  // sending. Wire this here so the messages tree can stay memo-pure.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ prompt?: string }>).detail;
+      if (!detail || typeof detail.prompt !== "string") return;
+      onInputChange(detail.prompt);
+      requestAnimationFrame(() => editorRef.current?.focusAtEnd());
+    };
+    window.addEventListener("orchestrate:insert-prompt", handler);
+    return () => window.removeEventListener("orchestrate:insert-prompt", handler);
+  }, [onInputChange]);
 
   // ── Editor state ───────────────────────────────────────────────────────
   const [composerCursor, setComposerCursor] = useState(0);
@@ -228,7 +281,14 @@ export function OrchestratorComposer({
           return true;
         }
       }
-      if (key === "Enter" && !event.shiftKey) {
+      if (key === "Enter") {
+        // Enter (no modifier) → send.
+        // Cmd/Ctrl+Enter → send too (the explicit "force send" power-user variant).
+        // Shift+Enter → newline (let Lexical handle it).
+        // Alt+Enter → newline (less common but matches editor convention).
+        if (event.shiftKey || event.altKey) {
+          return false;
+        }
         const trimmed = input.trim();
         if (!trimmed || !canSend || isBusy) {
           return true;
@@ -305,7 +365,7 @@ export function OrchestratorComposer({
           )}
           <div
             className={cn(
-              "rounded-[10px] border bg-card/60 backdrop-blur-sm transition-colors duration-200 focus-within:border-border focus-within:bg-card/80",
+              "rounded-[10px] border bg-card/60 backdrop-blur-sm transition-all duration-200 focus-within:border-foreground/30 focus-within:bg-card/80 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--foreground)_6%,transparent)]",
               isBusy ? "border-border/40 opacity-60" : "border-border/60",
               composerProviderState.composerSurfaceClassName,
             )}
@@ -321,9 +381,7 @@ export function OrchestratorComposer({
                 onChange={handleEditorChange}
                 onCommandKeyDown={handleCommandKey}
                 onPaste={() => {}}
-                placeholder={
-                  isBusy ? "Working..." : "Ask anything, @tag plugins, or use / for commands"
-                }
+                placeholder={composerPlaceholder}
                 disabled={isBusy}
               />
             </div>
@@ -370,12 +428,42 @@ export function OrchestratorComposer({
                 />
               </div>
 
-              {/* Send button */}
+              {/* Inline shortcut hint — appears once the user has typed real
+                  content so first-time users learn the keystroke without
+                  cluttering the empty-state composer. */}
+              {hasSendableContent && !isBusy ? (
+                <span
+                  aria-hidden
+                  className="hidden shrink-0 items-center gap-1 pr-1 text-[9.5px] text-muted-foreground/60 sm:inline-flex"
+                >
+                  <kbd className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[8.5px] tracking-tight text-muted-foreground/70">
+                    ⌘↵
+                  </kbd>
+                  <span className="opacity-70">to send</span>
+                </span>
+              ) : null}
+
+              {/* Send button — distinct visual states for disabled (no input),
+                  ready-to-send (sendable content + idle), and busy (in-flight). */}
               <button
                 type="submit"
-                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/85 text-background transition-all duration-150 hover:bg-foreground hover:scale-105 disabled:opacity-20 disabled:hover:scale-100"
+                className={cn(
+                  "flex size-7 shrink-0 items-center justify-center rounded-md transition-all duration-150",
+                  isBusy
+                    ? "cursor-progress bg-foreground/30 text-background"
+                    : !hasSendableContent || !canSend
+                      ? "cursor-not-allowed bg-foreground/15 text-background/60"
+                      : "bg-foreground text-background shadow-[0_2px_8px_color-mix(in_srgb,var(--foreground)_25%,transparent)] hover:scale-105 hover:bg-foreground/90 active:scale-95",
+                )}
                 disabled={!hasSendableContent || !canSend || isBusy}
-                aria-label={isBusy ? "Working" : "Send message"}
+                aria-label={isBusy ? "Working — send disabled" : "Send message (⌘↵)"}
+                title={
+                  isBusy
+                    ? "Agent is working — send disabled"
+                    : !hasSendableContent
+                      ? "Type a message"
+                      : "Send message (⌘↵)"
+                }
               >
                 {isBusy ? (
                   <svg

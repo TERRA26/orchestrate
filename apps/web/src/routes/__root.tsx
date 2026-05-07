@@ -4,7 +4,6 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
-  useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
@@ -148,10 +147,8 @@ function EventRouter() {
   const setWorkspaceHomeDir = useWorkspaceStore((store) => store.setHomeDir);
   const workspacePages = useWorkspaceStore((store) => store.workspacePages);
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
-  const handledBootstrapThreadIdRef = useRef<string | null>(null);
 
   pathnameRef.current = pathname;
 
@@ -269,23 +266,14 @@ function EventRouter() {
           return;
         }
 
-        if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
+        if (!payload.bootstrapProjectId) {
           return;
         }
+        // Expand the bootstrap project in the sidebar so the user can see their
+        // recent threads, but don't auto-navigate into one — startup should land
+        // on a fresh orchestrator pane (the `/` route) so the user can begin a
+        // new conversation instead of resuming whatever was open last session.
         setProjectExpanded(payload.bootstrapProjectId, true);
-
-        if (pathnameRef.current !== "/") {
-          return;
-        }
-        if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
-          return;
-        }
-        await navigate({
-          to: "/$threadId",
-          params: { threadId: payload.bootstrapThreadId },
-          replace: true,
-        });
-        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
       })().catch(() => undefined);
     });
     // onServerConfigUpdated replays the latest cached value synchronously
@@ -344,7 +332,6 @@ function EventRouter() {
       unsubServerConfigUpdated();
     };
   }, [
-    navigate,
     queryClient,
     removeOrphanedTerminalStates,
     setProjectExpanded,

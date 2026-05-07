@@ -39,6 +39,13 @@ export interface OrchestratorMessage {
   role: OrchestratorMessageRole;
   content: string;
   timestamp: string;
+  /**
+   * True while the message is being streamed in piece-by-piece. The renderer
+   * uses this to defer expensive work (e.g. Shiki code-block highlighting)
+   * until the message is complete, and to mark the active bubble visually.
+   * Producers should flip to `false` (or omit) once the final token lands.
+   */
+  streaming?: boolean;
 }
 
 export interface ActiveOrchestratorRun {

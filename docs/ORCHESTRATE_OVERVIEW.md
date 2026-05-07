@@ -5,6 +5,7 @@
 **Reading order.** Start with §1 if you've never seen the project. Skip to §3 if you already know it's a multi-agent coding orchestrator and want to know how the pieces fit. Skip to §6 if you want the shared-browser story. Skip to §11 for the current state and roadmap.
 
 **Companion docs.**
+
 - [`README.md`](../README.md) — install + run.
 - [`docs/ORCHESTRATOR.md`](./ORCHESTRATOR.md) — the orchestrator agent's own operating instructions (the system prompt it runs under).
 - [`docs/ORCHESTRATE_ACCEPTANCE_TESTS.md`](./ORCHESTRATE_ACCEPTANCE_TESTS.md) — the catalog of "what passing looks like."
@@ -67,37 +68,37 @@ Orchestrate is a four-layer system. Each layer has a clean boundary and an owner
 
 ### 4.1 Apps
 
-| App | Responsibility |
-|---|---|
-| `apps/desktop` | Electron host. Owns the visible `WebContentsView`. Exposes IPC bridges for the visible browser, the CDP endpoint, and lifecycle. Native theme integration. |
-| `apps/server` | Node/Bun WebSocket server. Wraps `codex app-server` (JSON-RPC over stdio) per session. Runs the orchestration engine. Owns the durable event log, the projection pipeline, the reviewer, and the browser runtime layer. |
-| `apps/web` | React/Vite UI. Connects to `apps/server` via WebSocket. Owns session UX, conversation/event rendering, the orchestrator panel, the browser panel, work-log presentation. |
-| `apps/demo-fullstack` | The smoke target. A small Express + React app the orchestrator can be asked to build. LedgerPilot is its current shape (audit log: Bundle 17W). |
+| App                   | Responsibility                                                                                                                                                                                                          |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop`        | Electron host. Owns the visible `WebContentsView`. Exposes IPC bridges for the visible browser, the CDP endpoint, and lifecycle. Native theme integration.                                                              |
+| `apps/server`         | Node/Bun WebSocket server. Wraps `codex app-server` (JSON-RPC over stdio) per session. Runs the orchestration engine. Owns the durable event log, the projection pipeline, the reviewer, and the browser runtime layer. |
+| `apps/web`            | React/Vite UI. Connects to `apps/server` via WebSocket. Owns session UX, conversation/event rendering, the orchestrator panel, the browser panel, work-log presentation.                                                |
+| `apps/demo-fullstack` | The smoke target. A small Express + React app the orchestrator can be asked to build. LedgerPilot is its current shape (audit log: Bundle 17W).                                                                         |
 
 ### 4.2 Packages
 
-| Package | Responsibility |
-|---|---|
+| Package              | Responsibility                                                                                                                                                                                                                                                                                                       |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/contracts` | Effect/Schema definitions for every wire-format type: orchestration commands, domain events, browser observations, runtime truth, reviewer decisions, evidence artifacts. Schema-only by design — no runtime logic. The single source of truth for what shapes can flow between server, web, desktop, and providers. |
-| `packages/shared` | Runtime utilities consumed by both server and web. Subpath exports (`@orchestrate/shared/git`, `@orchestrate/shared/logging`, etc.) — no barrel index. |
+| `packages/shared`    | Runtime utilities consumed by both server and web. Subpath exports (`@orchestrate/shared/git`, `@orchestrate/shared/logging`, etc.) — no barrel index.                                                                                                                                                               |
 
 ### 4.3 Providers (worker drivers)
 
-| Provider | What it drives |
-|---|---|
-| Codex | The OpenAI [Codex CLI](https://github.com/openai/codex) wrapped via its `codex app-server` JSON-RPC stdio interface. Each session is a child process; messages flow as Codex's typed item events (agent_message, reasoning, command_execution, file_change, tool_call, plan_update). |
-| Claude | The [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript). Subprocess-style adapter; same domain-event projection at the orchestration layer. |
+| Provider | What it drives                                                                                                                                                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Codex    | The OpenAI [Codex CLI](https://github.com/openai/codex) wrapped via its `codex app-server` JSON-RPC stdio interface. Each session is a child process; messages flow as Codex's typed item events (agent_message, reasoning, command_execution, file_change, tool_call, plan_update). |
+| Claude   | The [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript). Subprocess-style adapter; same domain-event projection at the orchestration layer.                                                                                                                |
 
 The orchestration MCP server (`scripts/orchestrate-mcp-server.ts`) is the bridge that gives workers access to orchestration tools (spawn other agents, accept work, etc.) by speaking back to the server's WebSocket as a child process.
 
 ### 4.4 Runtime substrates
 
-| Substrate | What it provides |
-|---|---|
-| Effect-TS | Layered service composition. Every server-side capability is a `Service` exposed via a `Layer`. Test wiring overrides specific layers; production wiring composes the live ones. Errors are typed; effect-y nulls don't escape into call paths. |
-| SQLite (event log + projection) | The durable event store. Each domain event is an append-only row. Projection runs build the read model the web UI consumes. Restart-stable: kill the server, restart, the state replays. |
-| Electron `WebContentsView` | The visible browser surface. The same surface used for both user viewing and (via CDP attach) Playwright-style automation. |
-| Playwright (CDP attach) | The validation runtime. Attaches to the running Electron app's debug port via `chromium.connectOverCDP`. Each `WebContentsView` is a `Page`; correlation by `webContents.id` ↔ CDP `targetId` (not URL). |
+| Substrate                       | What it provides                                                                                                                                                                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Effect-TS                       | Layered service composition. Every server-side capability is a `Service` exposed via a `Layer`. Test wiring overrides specific layers; production wiring composes the live ones. Errors are typed; effect-y nulls don't escape into call paths. |
+| SQLite (event log + projection) | The durable event store. Each domain event is an append-only row. Projection runs build the read model the web UI consumes. Restart-stable: kill the server, restart, the state replays.                                                        |
+| Electron `WebContentsView`      | The visible browser surface. The same surface used for both user viewing and (via CDP attach) Playwright-style automation.                                                                                                                      |
+| Playwright (CDP attach)         | The validation runtime. Attaches to the running Electron app's debug port via `chromium.connectOverCDP`. Each `WebContentsView` is a `Page`; correlation by `webContents.id` ↔ CDP `targetId` (not URL).                                        |
 
 ## 5. The shared visible browser (technical detail)
 
@@ -106,6 +107,7 @@ This is the most distinctive part of the architecture, so it deserves its own se
 ### 5.1 The two-browser failure mode (what we don't do)
 
 A naive multi-agent coder typically:
+
 1. Embeds a `<webview>` or `<iframe>` in its UI for the user to look at.
 2. Spawns a Playwright Chromium process for the agent to automate.
 3. Routes "open page X" to the agent's Playwright; the user's `<webview>` doesn't know.
@@ -128,6 +130,7 @@ If the desktop is unavailable (Electron not running, CDP port unreachable), the 
 ### 5.3 Runtime kinds, surface modes, and "runtime truth"
 
 The contract distinguishes:
+
 - `runtimeKind`: `"electron-visible" | "playwright-headless" | "chrome-extension"`
 - `surfaceMode`: `"live-shared-browser" | "headless-validation-mirror" | "playwright-attached" | "static-screenshot-evidence"`
 - `isUserVisibleSurface: boolean`
@@ -137,9 +140,11 @@ Every browser observation carries a `runtimeTruth` field with these. The UI labe
 ### 5.4 Co-control: human and agent in the same browser
 
 The browser session has an explicit FSM:
+
 ```
 Idle → AgentControl → AwaitingApproval(action) → HumanControl → AgentObserve → AgentControl
 ```
+
 - The user can **take control** at any time. The lease layer transitions to `human-control` and the agent's next action attempt fails until a fresh observation is captured (the agent must not act on stale state).
 - **Risky actions** (form submission with auth credentials, payment, anything classified as consequential) require explicit user **approval**. Approvals are single-use, durable, and consumed.
 - **Human input** (keyboard, mouse, navigation) preempts agent control. The transitions are tracked as durable events.
@@ -273,26 +278,26 @@ Future phases (18+) are intentionally undefined here. The doc captures intent up
 
 If you want to read the source, here's the rough map:
 
-| What you want to read | Where it lives |
-|---|---|
-| The orchestrator agent's system prompt | `docs/ORCHESTRATOR.md` and `apps/server/src/orchestration/orchestratorSystemPrompt.ts` |
-| The browser runtime layer (electron-visible + CDP attach) | `apps/server/src/browserRuntime/` |
-| The desktop visible browser | `apps/desktop/src/browserManager.ts` |
-| The CDP port allocator | `apps/desktop/src/electronCdpPort.ts` |
-| Browser evidence persistence | `apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts` |
-| The reviewer service | `apps/server/src/reviewer/Layers/ReviewerDecisionService.ts` |
-| The orchestration tool router | `apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts` |
-| The orchestration MCP bridge | `scripts/orchestrate-mcp-server.ts` |
-| The annotation service | `apps/server/src/browserAnnotations/Layers/BrowserAnnotationService.ts` |
-| The web app shell | `apps/web/src/components/ChatView.tsx` |
-| The work-log presentation | `apps/web/src/browserWorkLog.ts` |
-| The shared phase mapper | `apps/web/src/orchestratorPresentation.ts` |
-| The browser panel | `apps/web/src/components/BrowserPanel.tsx` |
-| The work entry rendering | `apps/web/src/components/chat/WorkEntryRow.tsx` |
-| The compact orchestrator activity row | `apps/web/src/components/orchestrator/CompactActivityRow.tsx` |
-| The contracts | `packages/contracts/src/` (start with `browser.ts`, `browserOrchestration.ts`, `orchestration.ts`) |
-| Migrations | `apps/server/src/persistence/Migrations/` |
-| The demo SaaS smoke target | `apps/demo-fullstack/` |
+| What you want to read                                     | Where it lives                                                                                     |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| The orchestrator agent's system prompt                    | `docs/ORCHESTRATOR.md` and `apps/server/src/orchestration/orchestratorSystemPrompt.ts`             |
+| The browser runtime layer (electron-visible + CDP attach) | `apps/server/src/browserRuntime/`                                                                  |
+| The desktop visible browser                               | `apps/desktop/src/browserManager.ts`                                                               |
+| The CDP port allocator                                    | `apps/desktop/src/electronCdpPort.ts`                                                              |
+| Browser evidence persistence                              | `apps/server/src/browserEvidence/Layers/BrowserEvidenceRecorder.ts`                                |
+| The reviewer service                                      | `apps/server/src/reviewer/Layers/ReviewerDecisionService.ts`                                       |
+| The orchestration tool router                             | `apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts`                                  |
+| The orchestration MCP bridge                              | `scripts/orchestrate-mcp-server.ts`                                                                |
+| The annotation service                                    | `apps/server/src/browserAnnotations/Layers/BrowserAnnotationService.ts`                            |
+| The web app shell                                         | `apps/web/src/components/ChatView.tsx`                                                             |
+| The work-log presentation                                 | `apps/web/src/browserWorkLog.ts`                                                                   |
+| The shared phase mapper                                   | `apps/web/src/orchestratorPresentation.ts`                                                         |
+| The browser panel                                         | `apps/web/src/components/BrowserPanel.tsx`                                                         |
+| The work entry rendering                                  | `apps/web/src/components/chat/WorkEntryRow.tsx`                                                    |
+| The compact orchestrator activity row                     | `apps/web/src/components/orchestrator/CompactActivityRow.tsx`                                      |
+| The contracts                                             | `packages/contracts/src/` (start with `browser.ts`, `browserOrchestration.ts`, `orchestration.ts`) |
+| Migrations                                                | `apps/server/src/persistence/Migrations/`                                                          |
+| The demo SaaS smoke target                                | `apps/demo-fullstack/`                                                                             |
 
 ## 13. The intent — where this is going
 

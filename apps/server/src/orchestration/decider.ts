@@ -1357,6 +1357,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "orchestrator.worker.update-post": {
+      // Worker self-reported turn-end status. Always emits an event — even
+      // for "in-progress" updates — so the orchestrator's polling loop has
+      // a fresh `latestUpdate` to read regardless of how often the worker
+      // posts. The projector overwrites `latestUpdate` so memory stays
+      // bounded (we don't keep a history; the activity log already holds
+      // a trail of past turns).
+      yield* requireOrchestratorWorker({
+        readModel,
+        command,
+        workerId: command.workerId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "orchestrator",
+          aggregateId: command.workerId as unknown as OrchestrationEvent["aggregateId"],
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "orchestrator.worker.update-posted",
+        payload: {
+          workerId: command.workerId,
+          status: command.status,
+          summary: command.summary,
+          ...(command.question !== undefined ? { question: command.question } : {}),
+          ...(command.nextStep !== undefined ? { nextStep: command.nextStep } : {}),
+          ...(command.blockedReason !== undefined ? { blockedReason: command.blockedReason } : {}),
+          postedAt: command.createdAt,
+        },
+      };
+    }
+
     case "orchestrator.evidence.capture": {
       yield* requireOrchestratorTask({
         readModel,

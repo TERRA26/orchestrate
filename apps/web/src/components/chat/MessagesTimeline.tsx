@@ -293,10 +293,48 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     useAnimationFrameWithResizeObserver: true,
     overscan: 8,
   });
+  // Re-measure every visible virtual row from its actual DOM size.
+  //
+  // Why not `rowVirtualizer.measure()`? That call invalidates the measurements
+  // cache and RE-RUNS `estimateSize` for every item — so any row whose
+  // `estimateSize` returns a number larger than the rendered height (e.g.
+  // messages with code blocks Shiki later compacts, or turn-diff summaries
+  // that collapse) gets stuck on the over-estimate. ResizeObserver does not
+  // reliably reconcile this back down: in our session the cached size
+  // remained 562px while the DOM was 301px, leaving 261px of dead space
+  // below the row.
+  //
+  // `measureElement(node)` uses the actual rendered height instead of the
+  // estimate, so iterating it across all visible rows force-syncs the cache
+  // to ground truth. We schedule it on rAF so it lands after the commit.
+  const remeasureAllRowsRef = useRef<(() => void) | null>(null);
+  remeasureAllRowsRef.current = () => {
+    if (!scrollContainer) return;
+    const root = scrollContainer.querySelector<HTMLElement>("[data-timeline-root='true']");
+    if (!root) return;
+    const rowElements = root.querySelectorAll<HTMLElement>(".absolute.left-0[data-index]");
+    rowElements.forEach((el) => rowVirtualizer.measureElement(el));
+  };
+  const scheduleRemeasureFrameRef = useRef<number | null>(null);
+  const scheduleRemeasure = useCallback(() => {
+    if (scheduleRemeasureFrameRef.current !== null) return;
+    scheduleRemeasureFrameRef.current = window.requestAnimationFrame(() => {
+      scheduleRemeasureFrameRef.current = null;
+      remeasureAllRowsRef.current?.();
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      const frame = scheduleRemeasureFrameRef.current;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (timelineWidthPx === null) return;
-    rowVirtualizer.measure();
-  }, [rowVirtualizer, timelineWidthPx]);
+    scheduleRemeasure();
+  }, [timelineWidthPx, scheduleRemeasure]);
   useLayoutEffect(() => {
     if (!scrollContainer || typeof ResizeObserver === "undefined") return;
 
@@ -315,7 +353,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
       lastViewportWidth = nextViewportWidth;
       lastViewportHeight = nextViewportHeight;
-      rowVirtualizer.measure();
+      scheduleRemeasure();
     };
 
     syncViewportSize();
@@ -326,14 +364,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return () => {
       observer.disconnect();
     };
-  }, [rowVirtualizer, scrollContainer]);
+  }, [scrollContainer, scheduleRemeasure]);
   useEffect(() => {
-    rowVirtualizer.measure();
+    scheduleRemeasure();
   }, [
-    rowVirtualizer,
+    scheduleRemeasure,
     expandedWorkGroups,
     allDirectoriesExpandedByTurnId,
     changedFilesExpandedByTurnId,
+    // Re-fire after rows are added/removed and after the boundary between
+    // virtualized and natural-flow rows shifts (when an active turn finishes
+    // streaming and its rows transition into virtualized layout).
+    rows.length,
+    virtualizedRowCount,
   ]);
   useEffect(() => {
     rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
@@ -346,22 +389,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
     };
   }, [rowVirtualizer]);
-  const pendingMeasureFrameRef = useRef<number | null>(null);
-  const onTimelineImageLoad = useCallback(() => {
-    if (pendingMeasureFrameRef.current !== null) return;
-    pendingMeasureFrameRef.current = window.requestAnimationFrame(() => {
-      pendingMeasureFrameRef.current = null;
-      rowVirtualizer.measure();
-    });
-  }, [rowVirtualizer]);
-  useEffect(() => {
-    return () => {
-      const frame = pendingMeasureFrameRef.current;
-      if (frame !== null) {
-        window.cancelAnimationFrame(frame);
-      }
-    };
-  }, []);
+  const onTimelineImageLoad = scheduleRemeasure;
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);

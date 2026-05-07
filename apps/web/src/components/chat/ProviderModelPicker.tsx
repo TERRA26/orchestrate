@@ -1,10 +1,7 @@
 import { type ModelSlug, type ProviderKind, type ServerProvider } from "@orchestrate/contracts";
-import { resolveSelectableModel } from "@orchestrate/shared/model";
+import { formatModelDisplayName, resolveSelectableModel } from "@orchestrate/shared/model";
 import { memo, useState } from "react";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
-import { ChevronDownIcon } from "~/lib/icons";
-import { Button } from "../ui/button";
-import { COMPOSER_PICKER_TRIGGER_TEXT_CLASS_NAME } from "./composerPickerStyles";
 import {
   Menu,
   MenuGroup,
@@ -20,6 +17,8 @@ import {
 } from "../ui/menu";
 import { ClaudeAI, Icon, OpenAI } from "../Icons";
 import { cn } from "~/lib/utils";
+import { PickerTriggerButton } from "./PickerTriggerButton";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -35,35 +34,35 @@ const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
 };
 
 function resolveLiveProviderAvailability(provider: ServerProvider | undefined): {
-  disabled: boolean;
+  /**
+   * Short uppercase status badge shown next to the provider label.
+   *
+   * The picker never hard-disables a provider on a probe failure — the probe
+   * can be wrong (stale, run before the user installed/signed in, run against
+   * a non-default PATH) and blocking selection traps users on the other
+   * provider. The badge gives an actionable hint; the runtime error path
+   * gives the authoritative answer if they actually try to use it.
+   */
   label: string | null;
 } {
   if (!provider) {
-    return {
-      disabled: false,
-      label: null,
-    };
+    return { label: null };
+  }
+
+  if (provider.installed === false) {
+    return { label: "Not installed" };
   }
 
   const authStatus = provider.authStatus ?? provider.auth?.status ?? "unknown";
-  if (provider.available === false) {
-    return {
-      disabled: true,
-      label: authStatus === "unauthenticated" ? "Sign in" : "Unavailable",
-    };
-  }
-
   if (authStatus === "unauthenticated") {
-    return {
-      disabled: true,
-      label: "Sign in",
-    };
+    return { label: "Sign in" };
   }
 
-  return {
-    disabled: false,
-    label: null,
-  };
+  if (provider.available === false) {
+    return { label: "Unavailable" };
+  }
+
+  return { label: null };
 }
 
 export const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
@@ -85,13 +84,24 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
+  /**
+   * Optional shortcut label rendered in a hover tooltip on the trigger so
+   * users can discover the keyboard shortcut without having to dig through
+   * the keybindings UI. Pass e.g. "⌘M" or "Ctrl+M".
+   */
+  shortcutLabel?: string | null;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
+  // Prefer the provider-supplied option name (covers custom slugs); fall back
+  // to the shared display-name table so unknown slugs still render as
+  // "GPT-5.5" / "Claude Opus 4.7" instead of raw lowercase identifiers.
   const selectedModelLabel =
-    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+    selectedProviderOptions.find((option) => option.slug === props.model)?.name ??
+    formatModelDisplayName(props.model) ??
+    props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
@@ -117,38 +127,67 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         setIsMenuOpen(open);
       }}
     >
-      <MenuTrigger
-        render={
-          <Button
-            size="sm"
-            variant="ghost"
-            className={cn(
-              "min-w-0 justify-start overflow-hidden whitespace-nowrap px-1.5 [&_svg]:mx-0",
-              COMPOSER_PICKER_TRIGGER_TEXT_CLASS_NAME,
-              props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-1.5",
-            )}
-            disabled={props.disabled}
-          />
-        }
-      >
-        <span
-          className={cn(
-            "flex min-w-0 w-full items-center gap-2 overflow-hidden",
-            props.compact ? "max-w-36" : undefined,
-          )}
+      {props.shortcutLabel ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <PickerTriggerButton
+                    disabled={props.disabled ?? false}
+                    compact={props.compact ?? false}
+                    icon={
+                      <ProviderIcon
+                        aria-hidden="true"
+                        className={cn(
+                          "size-3.5 shrink-0",
+                          providerIconClassName(activeProvider, "text-muted-foreground/70"),
+                          props.activeProviderIconClassName,
+                        )}
+                      />
+                    }
+                    label={selectedModelLabel}
+                  />
+                }
+              />
+            }
+          >
+            <span className="sr-only">{selectedModelLabel}</span>
+          </TooltipTrigger>
+          {!isMenuOpen ? (
+            <TooltipPopup side="top" sideOffset={6}>
+              <span className="inline-flex items-center gap-2 px-1 py-0.5 text-xs">
+                <span>Change model</span>
+                <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  {props.shortcutLabel}
+                </kbd>
+              </span>
+            </TooltipPopup>
+          ) : null}
+        </Tooltip>
+      ) : (
+        <MenuTrigger
+          render={
+            <PickerTriggerButton
+              disabled={props.disabled ?? false}
+              compact={props.compact ?? false}
+              icon={
+                <ProviderIcon
+                  aria-hidden="true"
+                  className={cn(
+                    "size-3.5 shrink-0",
+                    providerIconClassName(activeProvider, "text-muted-foreground/70"),
+                    props.activeProviderIconClassName,
+                  )}
+                />
+              }
+              label={selectedModelLabel}
+            />
+          }
         >
-          <ProviderIcon
-            aria-hidden="true"
-            className={cn(
-              "size-3.5 shrink-0",
-              providerIconClassName(activeProvider, "text-muted-foreground/70"),
-              props.activeProviderIconClassName,
-            )}
-          />
-          <span className="min-w-0 flex-1 truncate">{selectedModelLabel}</span>
-          <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
-        </span>
-      </MenuTrigger>
+          <span className="sr-only">{selectedModelLabel}</span>
+        </MenuTrigger>
+      )}
       <MenuPopup align="start">
         {props.lockedProvider !== null ? (
           <MenuGroup>
@@ -175,23 +214,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 (entry) => entry.provider === option.value,
               );
               const availability = resolveLiveProviderAvailability(liveProvider);
-              if (availability.disabled) {
-                return (
-                  <MenuItem key={option.value} disabled>
-                    <OptionIcon
-                      aria-hidden="true"
-                      className={cn(
-                        "size-4 shrink-0 opacity-80",
-                        providerIconClassName(option.value, "text-muted-foreground/85"),
-                      )}
-                    />
-                    <span>{option.label}</span>
-                    <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
-                      {availability.label}
-                    </span>
-                  </MenuItem>
-                );
-              }
               return (
                 <MenuSub key={option.value}>
                   <MenuSubTrigger>
@@ -202,7 +224,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                         providerIconClassName(option.value, "text-muted-foreground/85"),
                       )}
                     />
-                    {option.label}
+                    <span>{option.label}</span>
+                    {availability.label ? (
+                      <span className="ms-auto text-[10px] text-muted-foreground/70 uppercase tracking-[0.08em]">
+                        {availability.label}
+                      </span>
+                    ) : null}
                   </MenuSubTrigger>
                   <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
                     <MenuGroup>

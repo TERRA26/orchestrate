@@ -27,6 +27,15 @@ import { ClaudeProvider } from "../Services/ClaudeProvider";
 import { ServerSettingsError, ServerSettingsService } from "../../serverSettings";
 
 const PROVIDER = "claudeAgent" as const;
+
+// Auth probe timeout — the per-attempt budget for `claude auth status`.
+// Standalone the command runs in <1s, but Effect's spawner overhead and
+// first-run JIT can push it past the shared 4s default. 12s comfortably
+// covers the slow-startup case while still bounding the total wait
+// (12s × 2 attempts + 250ms settle ≈ 25s worst case) before the 60s
+// refresh tick gets another chance.
+const AUTH_PROBE_TIMEOUT_MS = 12_000;
+const AUTH_PROBE_RETRY_SETTLE_MS = 250;
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-7",
@@ -68,6 +77,25 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         { value: "1m", label: "1M" },
       ],
       promptInjectedEffortLevels: ["ultrathink"],
+    } satisfies ModelCapabilities,
+  },
+  {
+    slug: "claude-opus-4-5",
+    name: "Claude Opus 4.5",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [
+        { value: "200k", label: "200k", isDefault: true },
+        { value: "1m", label: "1M" },
+      ],
+      promptInjectedEffortLevels: [],
     } satisfies ModelCapabilities,
   },
   {
@@ -553,10 +581,23 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   // ── Auth check + subscription detection ────────────────────────────
 
-  const authProbe = yield* runClaudeCommand(["auth", "status"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  // Run the auth probe with a single retry on timeout. Real CLI errors
+  // (non-zero exit codes, command-not-found) are NOT retried — those are
+  // deterministic and a second attempt would just double the latency.
+  // Timeouts, on the other hand, are usually transient (CPU contention,
+  // cold JIT, spawner overhead) and a single retry catches them silently.
+  const runAuthProbe = runClaudeCommand(["auth", "status"]).pipe(
+    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
     Effect.result,
   );
+  const firstAttempt = yield* runAuthProbe;
+  let authProbe = firstAttempt;
+  // Only the timeout branch (Success<None>) retries — Failure (real error)
+  // and Success<Some> (got an answer) both pass straight through.
+  if (Result.isSuccess(firstAttempt) && Option.isNone(firstAttempt.success)) {
+    yield* Effect.sleep(Duration.millis(AUTH_PROBE_RETRY_SETTLE_MS));
+    authProbe = yield* runAuthProbe;
+  }
 
   // Determine subscription type from multiple sources (cheapest first):
   // 1. `claude auth status` JSON output (may or may not contain it)
@@ -601,6 +642,30 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   if (Option.isNone(authProbe.success)) {
+    // The CLI's `auth status` command timed out after both attempts. That
+    // doesn't necessarily mean auth is broken — `claude --version` worked,
+    // and if the SDK subscription probe succeeded above we already have
+    // proof that a real Claude session can be started. Treat that as
+    // authoritative evidence of auth, and only surface the "could not
+    // verify" warning when we have NO independent signal.
+    if (subscriptionType) {
+      const authMetadata = claudeAuthMetadata({ subscriptionType, authMethod });
+      return buildServerProvider({
+        provider: PROVIDER,
+        enabled: claudeSettings.enabled,
+        checkedAt,
+        models: resolvedModels,
+        probe: {
+          installed: true,
+          version: parsedVersion,
+          status: "ok",
+          auth: {
+            status: "loggedIn",
+            ...(authMetadata ? authMetadata : {}),
+          },
+        },
+      });
+    }
     return buildServerProvider({
       provider: PROVIDER,
       enabled: claudeSettings.enabled,

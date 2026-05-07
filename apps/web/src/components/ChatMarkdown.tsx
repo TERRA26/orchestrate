@@ -15,6 +15,7 @@ import React, {
 } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import { FileWrittenRow, looksLikeAbsoluteFilePath } from "./chat/FileWrittenRow";
 import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openInPreferredEditor } from "../editorPreferences";
@@ -236,6 +237,43 @@ function SuspenseShikiCodeBlock({
   );
 }
 
+// Recursively flatten React children into a single string ONLY if every node
+// is plain text or an inline `<code>`. Returns null if the children include
+// anything else (mixed-content lists must render as ordinary <li>s).
+function inferSinglePathChild(children: React.ReactNode): string | null {
+  let acc = "";
+  let ok = true;
+  const visit = (node: React.ReactNode): void => {
+    if (!ok) return;
+    if (node === null || node === undefined || node === false) return;
+    if (typeof node === "string" || typeof node === "number") {
+      acc += String(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    if (typeof node === "object" && "props" in node) {
+      const elementType = (node as { type?: unknown }).type;
+      const childContent = (node as { props?: { children?: React.ReactNode } }).props?.children;
+      // Allow inline `<code>` (paths often render as code in markdown). Reject
+      // block-level elements (paragraphs etc.) — those signal mixed content.
+      if (elementType === "code" || elementType === "p" || elementType === "span") {
+        visit(childContent);
+        return;
+      }
+      ok = false;
+      return;
+    }
+    ok = false;
+  };
+  visit(children);
+  if (!ok) return null;
+  const trimmed = acc.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -244,6 +282,22 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   }, []);
   const markdownComponents = useMemo<Components>(
     () => ({
+      // Detect "absolute path only" list items (typical of worker REPORT
+      // blocks' `filesWritten:` lists) and render them as expandable file
+      // viewers. Anything else falls through to the default <li>. Note we
+      // intentionally only swap when the entire `<li>` content is exactly
+      // one path string so prose lists remain regular markdown.
+      li({ node: _node, children, ...props }) {
+        const inferredPath = inferSinglePathChild(children);
+        if (inferredPath && looksLikeAbsoluteFilePath(inferredPath)) {
+          return (
+            <li {...props} className="list-none" data-file-written-li>
+              <FileWrittenRow path={inferredPath} />
+            </li>
+          );
+        }
+        return <li {...props}>{children}</li>;
+      },
       a({ node: _node, href, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {

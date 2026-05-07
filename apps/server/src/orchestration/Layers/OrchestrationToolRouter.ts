@@ -26,7 +26,7 @@ import {
   type OrchestratorWorkerId,
 } from "@orchestrate/contracts";
 import * as ToolSchemas from "@orchestrate/contracts";
-import { Effect, Layer, Option, Schema, Stream } from "effect";
+import { Effect, Layer, Option, Result, Schema, Stream } from "effect";
 import crypto from "node:crypto";
 
 import {
@@ -236,8 +236,35 @@ function resolveSpawnObjective(input: {
 }
 
 function browserAutomationUnavailable(toolName: string) {
+  // The string here surfaces to the agent verbatim — keep it actionable.
+  // Two real-world causes share this code path:
+  //   1. The user is running `bun run dev:web` (no Electron). The visible
+  //      Electron WebContentsView doesn't exist, so there's no surface to
+  //      attach Playwright to. Architecture deliberately fails closed
+  //      instead of silently launching a separate headless browser.
+  //   2. The user IS running desktop, but the IPC bridge isn't wired (e.g.
+  //      Electron crashed or hasn't reconnected yet).
+  //
+  // The agent should read this and either (a) ask the user to launch the
+  // desktop app for browser validation, or (b) fall back to opening the
+  // preview URL via `orchestrate_open_browser_preview` and asking for
+  // visual confirmation. The orchestrator playbook
+  // (`docs/ORCHESTRATOR.md` → "Browser validation unavailable") describes
+  // the fallback workflow.
   return {
-    error: `${toolName} is unavailable because the browser automation service is not registered.`,
+    error:
+      `${toolName} is unavailable: orchestrate is running in web-only mode (no Electron desktop app connected), ` +
+      `so there is no visible browser surface to drive. Browser automation requires the desktop app — ` +
+      `launch it with \`bun run dev:desktop\` and re-attempt. ` +
+      `As a fallback you can call \`orchestrate_open_browser_preview\` to open the URL in the iframe ` +
+      `preview panel and ask the user to confirm what they see; flag the validation as ` +
+      `\`static-screenshot-evidence\` rather than \`live-shared-browser\` when reporting.`,
+    code: "browser-automation-unavailable",
+    actionable: true,
+    fallback: {
+      tool: "orchestrate_open_browser_preview",
+      label: "Open URL in the iframe preview panel and ask the user for visual confirmation.",
+    },
   };
 }
 
@@ -366,6 +393,30 @@ function handleGetAgentStatus(
     const activeTask = worker.activeTaskId
       ? (readModel.orchestratorTasks ?? []).find((t) => t.taskId === worker.activeTaskId)
       : undefined;
+
+    // Gap M2: even when the worker hasn't called send_update we want SOMETHING
+    // narrative for the orchestrator to read. Pull the most recent assistant
+    // text from the worker's thread as a fallback. Truncated to keep the tool
+    // result small — the orchestrator can fetch full text via get_agent_logs
+    // (once we surface assistant deltas there too).
+    const workerThread = (readModel.threads ?? []).find((t: any) => t.id === worker.threadId);
+    const lastAssistantMessage = (() => {
+      const messages = (workerThread as any)?.messages;
+      if (!Array.isArray(messages)) return null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m && m.role === "assistant" && typeof m.text === "string" && m.text.trim().length > 0) {
+          const text = m.text.trim();
+          return {
+            text: text.length > 800 ? `${text.slice(0, 800)}…` : text,
+            truncated: text.length > 800,
+            length: text.length,
+          };
+        }
+      }
+      return null;
+    })();
+
     return {
       agentId: worker.workerId,
       status: worker.status,
@@ -373,6 +424,13 @@ function handleGetAgentStatus(
       activeTaskId: worker.activeTaskId ?? null,
       threadId: worker.threadId,
       updatedAt: worker.updatedAt,
+      // Worker-self-reported posture from `orchestrate_send_update_to_orchestrator`.
+      // This is the structured channel — prefer it over `lastAssistantMessage`
+      // when both are present.
+      ...(worker.latestUpdate !== undefined ? { latestUpdate: worker.latestUpdate } : {}),
+      // Narrative fallback so the orchestrator gets useful context even if the
+      // worker forgot to call send_update.
+      ...(lastAssistantMessage !== null ? { lastAssistantMessage } : {}),
       ...(activeTask?.submitSummary !== undefined
         ? { submitSummary: activeTask.submitSummary }
         : {}),
@@ -647,7 +705,15 @@ function handleSpawnAgent(
     // auto-submit. So the reminder asks workers to emit a REPORT block in
     // their FINAL assistant message. The orchestrator's review flow reads
     // this block (via get_agent_logs) plus get_agent_diff to accept/reject.
-    const taskMessage = workerKickoffMessage(normalizedObjective);
+    // Inject the resolved write scope into the kickoff so the worker actually
+    // knows where it's allowed to write. Without this, workers have been
+    // observed silently writing to /tmp/ when given a project-relative
+    // objective, then reporting filesWritten paths the orchestrator's
+    // git-scoped diff cannot see — leaving the orchestrator in a "no work
+    // produced" loop while the worker insists it shipped.
+    const taskMessage = workerKickoffMessage(normalizedObjective, {
+      writeScope: resolvedSpawnBudget.writeScope,
+    });
     yield* dispatch({
       type: "thread.turn.start" as const,
       commandId: uuid() as any,
@@ -877,6 +943,30 @@ function handleDemoteToBackground(
   });
 }
 
+// Wrap untrusted inter-agent content in clearly framed tags so the receiving
+// worker's LLM treats it as data, not as authoritative instructions. Without
+// this, a compromised or untrusted-input-poisoned worker can dispatch a
+// message containing "Ignore previous instructions" to a sibling worker, and
+// the receiver's model has no signal that the text is from a peer rather
+// than from the user/orchestrator. See ORC-025.
+function escapeFramingAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function frameInterAgentMessage(fromAgentId: string, content: string): string {
+  return [
+    `<inter_agent_message from_agent_id="${escapeFramingAttribute(fromAgentId)}">`,
+    `<untrusted_content>`,
+    content,
+    `</untrusted_content>`,
+    `</inter_agent_message>`,
+  ].join("\n");
+}
+
 function handleSendToAgent(
   dispatch: OrchestrationEngineService["Type"]["dispatch"],
   readModel: OrchestrationReadModel,
@@ -927,27 +1017,93 @@ function handleSendToAgent(
     //    new turn on the target thread. The decider queues if the thread is
     //    mid-turn (dispatchMode="queue", default). Delivery = when the turn
     //    actually begins; the orchestrator observes via thread.turn-started.
-    yield* dispatch({
+    // Capture the turn-dispatch outcome instead of silently ignoring it. The
+    // previous `Effect.ignore` was a footgun: the caller would always see
+    // `{ queued: true }` even when the dispatch was rejected (thread mid-
+    // transition, decider validation failure, projector lag), which gave the
+    // orchestrator no way to react when delivery actually failed. The
+    // message.send dispatch above remains durable, so on failure here the
+    // message is still in the audit log — we just need to surface that the
+    // worker's turn-start did NOT happen so the orchestrator can retry or
+    // explicitly poll the target thread instead of trusting `queued: true`.
+    const framedText = frameInterAgentMessage(String(fromWorkerId), decoded.message);
+    const turnDispatchResult = yield* dispatch({
       type: "thread.turn.start" as const,
       commandId: uuid() as any,
       threadId: targetWorker.threadId,
       message: {
         messageId: uuid() as any,
         role: "user" as const,
-        text: decoded.message,
+        text: framedText,
         attachments: [],
       },
       dispatchMode: "queue" as const,
       assistantDeliveryMode: "buffered" as const,
       createdAt: now() as any,
-    } as any).pipe(
-      // Non-fatal: if the dispatch is rejected (e.g., thread already has a
-      // queued turn), leave the message.send durable and let the caller
-      // decide what to do based on the returned { queued: true, messageId }.
-      Effect.ignore,
-    );
+    } as any).pipe(Effect.result);
+
+    if (Result.isFailure(turnDispatchResult)) {
+      const failure = turnDispatchResult.failure;
+      const reason = failure instanceof Error ? failure.message : String(failure);
+      return {
+        queued: false,
+        messageId,
+        deliveredVia: "orchestrator.message.send",
+        turnStartError: reason,
+        note: "Message persisted to message.send log, but the worker's next turn could not be queued. Poll get_agent_status to see when the worker becomes idle, then retry.",
+      };
+    }
 
     return { queued: true, messageId, deliveredVia: "thread.turn.start" };
+  });
+}
+
+// orchestrate_send_update_to_orchestrator — worker → orchestrator turn-end
+// signal. Resolves the calling worker by the calling thread (no need for the
+// worker to pass its own ID — the MCP transport already gives us the threadId
+// of the caller). Dispatches `orchestrator.worker.update-post`; the projector
+// stores it on `OrchestratorWorker.latestUpdate` so subsequent
+// `orchestrate_get_agent_status` polls return useful posture instead of an
+// opaque "running" with empty diff.
+function handleSendUpdateToOrchestrator(
+  dispatch: OrchestrationEngineService["Type"]["dispatch"],
+  readModel: OrchestrationReadModel,
+  callerThreadId: string,
+  input: unknown,
+): Effect.Effect<unknown, Error> {
+  return Effect.gen(function* () {
+    const decoded = yield* decodeInput(ToolSchemas.SendUpdateToOrchestratorInput, input);
+
+    // The calling thread is either the worker's own thread (worker calls it
+    // at end of turn) or — in degenerate cases — an orchestrator-thread call
+    // for testing. Find the worker whose thread matches.
+    const callingWorker = (readModel.orchestratorWorkers ?? []).find(
+      (w) => (w.threadId as unknown as string) === callerThreadId,
+    );
+    if (!callingWorker) {
+      return {
+        error:
+          "orchestrate_send_update_to_orchestrator must be called from a worker thread; " +
+          "no worker is registered for the calling thread.",
+      };
+    }
+
+    yield* dispatch({
+      type: "orchestrator.worker.update-post" as const,
+      commandId: uuid() as any,
+      workerId: callingWorker.workerId,
+      status: decoded.status,
+      summary: decoded.summary,
+      ...(decoded.question !== undefined ? { question: decoded.question } : {}),
+      ...(decoded.nextStep !== undefined ? { nextStep: decoded.nextStep } : {}),
+      ...(decoded.blockedReason !== undefined ? { blockedReason: decoded.blockedReason } : {}),
+      createdAt: now() as any,
+    } as any).pipe(Effect.mapError((e) => new Error(`Dispatch failed: ${e.message}`)));
+
+    return {
+      posted: true,
+      workerId: callingWorker.workerId,
+    };
   });
 }
 
@@ -1067,17 +1223,42 @@ function handleGetAgentDiff(
   return Effect.gen(function* () {
     const decoded = yield* decodeInput(ToolSchemas.GetAgentDiffInput, input);
     const agentId = decoded.agentId as unknown as string;
+    // The diff is GIT-SCOPED — it comes from `git diff` between the worker's
+    // checkpoint commits. Files written outside the project's git tree
+    // (`/tmp`, sibling dirs, .gitignore'd paths) NEVER appear here. The
+    // orchestrator must reconcile this against the worker's REPORT block —
+    // see ORCHESTRATOR.md "Reconcile diff with REPORT" — so we surface
+    // `diffMethod: "git"` explicitly to make the limitation visible.
+    const baseEnvelope = {
+      diffMethod: "git" as const,
+      gitScopeNote:
+        "Diff is git-scoped. Files outside the project's git tree do not appear here. Cross-check against the worker's REPORT `filesWritten` before concluding no work was done.",
+    };
     const worker = (readModel.orchestratorWorkers ?? []).find(
       (w) => (w.workerId as unknown as string) === agentId,
     );
     if (!worker) {
-      return { agentId: decoded.agentId, diff: "", filesChanged: 0, additions: 0, deletions: 0 };
+      return {
+        agentId: decoded.agentId,
+        diff: "",
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+        ...baseEnvelope,
+      };
     }
     const thread = readModel.threads.find(
       (t) => (t.id as unknown as string) === (worker.threadId as unknown as string),
     );
     if (!thread || !thread.checkpoints || thread.checkpoints.length === 0) {
-      return { agentId: decoded.agentId, diff: "", filesChanged: 0, additions: 0, deletions: 0 };
+      return {
+        agentId: decoded.agentId,
+        diff: "",
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+        ...baseEnvelope,
+      };
     }
     const latest = thread.checkpoints[thread.checkpoints.length - 1];
     const files = latest?.files ?? [];
@@ -1092,6 +1273,7 @@ function handleGetAgentDiff(
       filesChanged: files.length,
       additions,
       deletions,
+      ...baseEnvelope,
     };
   });
 }
@@ -1358,6 +1540,13 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
           return yield* handleDemoteToBackground(engine.dispatch, toolInput);
         case "orchestrate_send_to_agent":
           return yield* handleSendToAgent(engine.dispatch, readModel, toolInput);
+        case "orchestrate_send_update_to_orchestrator":
+          return yield* handleSendUpdateToOrchestrator(
+            engine.dispatch,
+            readModel,
+            input.threadId,
+            toolInput,
+          );
         case "orchestrate_accept_work":
           return yield* handleAcceptWork(
             engine.dispatch,

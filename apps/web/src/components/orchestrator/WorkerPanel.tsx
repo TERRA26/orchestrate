@@ -5,6 +5,36 @@ import { useThreadById } from "~/storeSelectors";
 import { getWorkerStatusStyle } from "./controlRoomHelpers";
 
 // ---------------------------------------------------------------------------
+// Worker accent color from ID hash — gives every worker a visually distinct
+// identity so users can scan a multi-worker grid and tell them apart at a
+// glance instead of having to read the W-abc123 suffix on every card.
+// Pattern lifted from dpcode's `subagentPresentation.ts:206-210`.
+// ---------------------------------------------------------------------------
+const WORKER_ACCENT_PALETTE = [
+  { hue: "violet", border: "border-violet-500/40", bg: "bg-violet-500/[0.06]" },
+  { hue: "fuchsia", border: "border-fuchsia-500/40", bg: "bg-fuchsia-500/[0.06]" },
+  { hue: "teal", border: "border-teal-500/40", bg: "bg-teal-500/[0.06]" },
+  { hue: "cyan", border: "border-cyan-500/40", bg: "bg-cyan-500/[0.06]" },
+  { hue: "amber", border: "border-amber-500/40", bg: "bg-amber-500/[0.06]" },
+  { hue: "orange", border: "border-orange-500/40", bg: "bg-orange-500/[0.06]" },
+  { hue: "sky", border: "border-sky-500/40", bg: "bg-sky-500/[0.06]" },
+  { hue: "rose", border: "border-rose-500/40", bg: "bg-rose-500/[0.06]" },
+] as const;
+
+function hashWorkerId(workerId: string): number {
+  let hash = 0;
+  for (let i = 0; i < workerId.length; i++) {
+    hash = (hash * 31 + workerId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function workerAccent(workerId: string): (typeof WORKER_ACCENT_PALETTE)[number] {
+  const palette = WORKER_ACCENT_PALETTE;
+  return palette[hashWorkerId(workerId) % palette.length] ?? palette[0]!;
+}
+
+// ---------------------------------------------------------------------------
 // WorkerStatusIndicator (small dot)
 // ---------------------------------------------------------------------------
 
@@ -111,13 +141,27 @@ export function WorkerPanel({
       ? (worker.terminationReason ?? "Worker terminated")
       : "Working from the orchestrator brief.");
 
+  // Per-worker color hash (dpcode parity). Renders as a subtle border accent
+  // on the panel + a colored dot in the header so two parallel workers don't
+  // look interchangeable at a glance.
+  const accent = workerAccent(worker.workerId);
+
+  // Task progress badge — surfaces "X/Y verified" right in the header so the
+  // user doesn't have to open the inspector to see how far along the worker is.
+  const checklistCount = task?.checklist.length ?? 0;
+  const passedCount = task?.checklist.filter((item) => item.status === "passed").length ?? 0;
+  const hasProgress = checklistCount > 0;
+  const progressLabel = hasProgress ? `${passedCount}/${checklistCount}` : null;
+
   return (
     <div
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      data-worker-id={worker.workerId}
+      data-worker-accent={accent.hue}
       className={cn(
         "flex flex-col overflow-hidden rounded-md border transition-all duration-200",
-        isFocused ? "border-accent/50 shadow-sm" : "border-border/20",
+        isFocused ? "border-accent/50 shadow-sm" : accent.border,
         isPromoted && !compact && "col-span-full row-span-full",
         statusStyle.border,
         compact && "h-full bg-background/55",
@@ -129,8 +173,19 @@ export function WorkerPanel({
           "flex items-center gap-2 border-b border-border/15 px-2.5 py-1.5",
           compact && "px-2 py-1.5",
           statusStyle.headerBg,
+          accent.bg,
         )}
       >
+        {/* Per-worker accent dot — visual identity at a glance. */}
+        <span
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            `bg-${accent.hue}-400`,
+            "shadow-[0_0_4px_currentColor]",
+          )}
+          style={{ color: `var(--color-${accent.hue}-400, currentColor)` }}
+          aria-hidden
+        />
         <ProviderBadge
           provider={worker.modelBinding?.provider}
           model={worker.modelBinding?.model}
@@ -138,9 +193,19 @@ export function WorkerPanel({
         <span className="truncate font-mono text-[11px] font-medium text-foreground/80">
           W-{worker.workerId.slice(-6)}
         </span>
-        <div className="ml-auto">
-          <WorkerStatusIndicator status={worker.status} />
-        </div>
+        {/* Task progress badge — only shown when the task has a checklist. */}
+        {progressLabel ? (
+          <span
+            className="ml-auto rounded bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-[9.5px] tabular-nums text-foreground/65"
+            title={`${passedCount} of ${checklistCount} acceptance items verified`}
+          >
+            {progressLabel}
+          </span>
+        ) : (
+          <div className="ml-auto">
+            <WorkerStatusIndicator status={worker.status} />
+          </div>
+        )}
       </div>
 
       {/* Content area */}

@@ -1962,6 +1962,8 @@ export default function Sidebar() {
           <SidebarMenuSubButton
             render={<div role="button" tabIndex={0} />}
             data-thread-entry-point={threadEntryPoint}
+            data-sidebar-thread-row="true"
+            data-thread-id={thread.id}
             size="sm"
             isActive={isActive}
             className={resolveThreadRowClassName({
@@ -3107,6 +3109,7 @@ export default function Sidebar() {
                   icon={SquarePenIcon}
                   label="New thread"
                   onClick={handlePrimaryNewThread}
+                  shortcutLabel={newThreadShortcutLabel}
                 />
                 <SidebarPrimaryAction
                   icon={SearchIcon}

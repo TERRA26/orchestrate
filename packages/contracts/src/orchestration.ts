@@ -699,6 +699,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   Schema.suspend(() => OrchestratorWorkerResumeCommand),
   Schema.suspend(() => OrchestratorWorkerPromoteCommand),
   Schema.suspend(() => OrchestratorWorkerDemoteCommand),
+  Schema.suspend(() => OrchestratorWorkerUpdatePostCommand),
   Schema.suspend(() => OrchestratorMessageSendCommand),
   Schema.suspend(() => OrchestratorMessageBroadcastCommand),
   Schema.suspend(() => OrchestratorContextTransferCommand),
@@ -748,6 +749,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   Schema.suspend(() => OrchestratorWorkerResumeCommand),
   Schema.suspend(() => OrchestratorWorkerPromoteCommand),
   Schema.suspend(() => OrchestratorWorkerDemoteCommand),
+  Schema.suspend(() => OrchestratorWorkerUpdatePostCommand),
   Schema.suspend(() => OrchestratorMessageSendCommand),
   Schema.suspend(() => OrchestratorMessageBroadcastCommand),
   Schema.suspend(() => OrchestratorContextTransferCommand),
@@ -884,6 +886,7 @@ export const OrchestrationEventType = Schema.Literals([
   "orchestrator.worker.resumed",
   "orchestrator.worker.promoted",
   "orchestrator.worker.demoted",
+  "orchestrator.worker.update-posted",
   "orchestrator.message.sent",
   "orchestrator.message.broadcast-sent",
   "orchestrator.context.transferred",
@@ -1326,6 +1329,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("orchestrator.worker.update-posted"),
+    payload: Schema.suspend(() => OrchestratorWorkerUpdatePostedPayload),
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("orchestrator.message.sent"),
     payload: Schema.suspend(() => OrchestratorMessageSentPayload),
   }),
@@ -1696,6 +1704,51 @@ export const OrchestratorWorkerVisibility = Schema.Literals(["foreground", "back
 export type OrchestratorWorkerVisibility = typeof OrchestratorWorkerVisibility.Type;
 
 // Worker (uses suspend for WorkerModelBinding forward reference)
+// Worker turn-end signal — what the worker tells the orchestrator at the
+// end of every turn that doesn't end with a final task.submit. Closes the
+// gap where the orchestrator was blind to the worker's narrative replies
+// (e.g. "design done, say 'go' to build") and falsely assumed the worker
+// was still computing when it was actually waiting on user input.
+export const OrchestratorWorkerUpdateStatus = Schema.Literals([
+  // Mid-task; agent will continue working in subsequent turns. Surfaces
+  // progress for streaming dashboards but does NOT block the orchestrator.
+  "in-progress",
+  // Agent is paused awaiting a clarification, confirmation, or design
+  // decision from the orchestrator. The orchestrator MUST respond before
+  // the agent makes further progress.
+  "needs-input",
+  // Agent believes the work is complete and ready for review. Companion
+  // to (or precursor of) `task.submit` — useful for situations where the
+  // agent wants to flag completion separately from emitting the formal
+  // REPORT block.
+  "ready-for-review",
+  // Agent cannot proceed (missing tool, env error, contradictory spec).
+  // Distinct from `needs-input`: input alone won't unblock.
+  "blocked",
+]);
+export type OrchestratorWorkerUpdateStatus = typeof OrchestratorWorkerUpdateStatus.Type;
+
+export const OrchestratorWorkerUpdate = Schema.Struct({
+  status: OrchestratorWorkerUpdateStatus,
+  // One-sentence summary of what the worker accomplished or learned this
+  // turn. Required so `get_agent_status` can render a useful row even if
+  // the orchestrator never opens the worker pane.
+  summary: TrimmedNonEmptyString,
+  // Concrete question the orchestrator should answer (only set when
+  // status === "needs-input"). Examples: "Use violet or amber accent?",
+  // "Should I delete the legacy adapter or just deprecate?".
+  question: Schema.optional(TrimmedNonEmptyString),
+  // What the worker plans to do next once unblocked / on next turn.
+  // Helps the orchestrator decide whether to nudge or wait.
+  nextStep: Schema.optional(TrimmedNonEmptyString),
+  // Reason the worker is blocked (only set when status === "blocked").
+  // Distinct from `question` — this is "why I can't move", not "what I
+  // need from you".
+  blockedReason: Schema.optional(TrimmedNonEmptyString),
+  postedAt: IsoDateTime,
+});
+export type OrchestratorWorkerUpdate = typeof OrchestratorWorkerUpdate.Type;
+
 export const OrchestratorWorker = Schema.Struct({
   workerId: OrchestratorWorkerId,
   runId: OrchestratorRunId,
@@ -1709,6 +1762,12 @@ export const OrchestratorWorker = Schema.Struct({
   spawnBudget: SpawnBudget,
   workspace: OrchestratorWorkspace,
   modelBinding: Schema.optional(Schema.suspend(() => OrchestratorWorkerModelBinding)),
+  // Last turn-end update the worker self-reported via
+  // `orchestrate_send_update_to_orchestrator`. Read by `get_agent_status`
+  // and surfaced in the orchestrator UI so a poll cycle returns useful
+  // context immediately. Optional because legacy/older workers may have
+  // never posted one.
+  latestUpdate: Schema.optional(Schema.suspend(() => OrchestratorWorkerUpdate)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   terminatedAt: Schema.optional(IsoDateTime),
@@ -2003,6 +2062,23 @@ const OrchestratorWorkerTerminateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Worker → orchestrator status broadcast. The worker emits one of these at
+// the end of every turn that doesn't terminate with `task.submit` so the
+// orchestrator's polling loop returns useful context (status, summary,
+// optional question) instead of an opaque "running" with empty diff.
+export const OrchestratorWorkerUpdatePostCommand = Schema.Struct({
+  type: Schema.Literal("orchestrator.worker.update-post"),
+  commandId: CommandId,
+  workerId: OrchestratorWorkerId,
+  status: Schema.suspend(() => OrchestratorWorkerUpdateStatus),
+  summary: TrimmedNonEmptyString,
+  question: Schema.optional(TrimmedNonEmptyString),
+  nextStep: Schema.optional(TrimmedNonEmptyString),
+  blockedReason: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type OrchestratorWorkerUpdatePostCommand = typeof OrchestratorWorkerUpdatePostCommand.Type;
+
 // Worker pause/resume/promote/demote
 export const OrchestratorWorkerPauseCommand = Schema.Struct({
   type: Schema.Literal("orchestrator.worker.pause"),
@@ -2248,6 +2324,21 @@ export const OrchestratorWorkerTerminatedPayload = Schema.Struct({
   reason: Schema.String,
   terminatedAt: IsoDateTime,
 });
+
+// Event payload emitted when a worker calls `orchestrate_send_update`. The
+// projector applies it to `OrchestratorWorker.latestUpdate` so subsequent
+// `get_agent_status` polls return the worker's self-reported posture.
+export const OrchestratorWorkerUpdatePostedPayload = Schema.Struct({
+  workerId: OrchestratorWorkerId,
+  status: Schema.suspend(() => OrchestratorWorkerUpdateStatus),
+  summary: TrimmedNonEmptyString,
+  question: Schema.optional(TrimmedNonEmptyString),
+  nextStep: Schema.optional(TrimmedNonEmptyString),
+  blockedReason: Schema.optional(TrimmedNonEmptyString),
+  postedAt: IsoDateTime,
+});
+export type OrchestratorWorkerUpdatePostedPayload =
+  typeof OrchestratorWorkerUpdatePostedPayload.Type;
 
 export const OrchestratorWorkerPausedPayload = Schema.Struct({
   workerId: OrchestratorWorkerId,

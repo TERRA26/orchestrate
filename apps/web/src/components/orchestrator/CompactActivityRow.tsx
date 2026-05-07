@@ -1,8 +1,31 @@
 import { browserRuntimeTruthLabel, browserScreenshotDataUrls } from "~/browserWorkLog";
 import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
+import { WorkingDots } from "~/components/ui/WorkingDots";
 import { cn } from "~/lib/utils";
 import { phaseForToolEvent } from "~/orchestratorPresentation";
 import type { WorkLogEntry } from "~/session-logic";
+
+// Per-worker accent palette (kept in sync with WorkerPanel.tsx). The
+// orchestrator's compact activity rows often reference workers by their
+// `@workerId.slice(-8)` suffix; coloring the suffix with the worker's
+// accent gives a visual link between the work log and the worker pane.
+const WORKER_ACCENT_TEXT_BY_HUE: ReadonlyArray<string> = [
+  "text-violet-400/85",
+  "text-fuchsia-400/85",
+  "text-teal-400/85",
+  "text-cyan-400/85",
+  "text-amber-400/85",
+  "text-orange-400/85",
+  "text-sky-400/85",
+  "text-rose-400/85",
+];
+
+function workerAccentTextClass(workerId: string | undefined): string | null {
+  if (!workerId) return null;
+  let hash = 0;
+  for (let i = 0; i < workerId.length; i++) hash = (hash * 31 + workerId.charCodeAt(i)) | 0;
+  return WORKER_ACCENT_TEXT_BY_HUE[Math.abs(hash) % WORKER_ACCENT_TEXT_BY_HUE.length] ?? null;
+}
 
 function extractToolArgsPreview(detail: string | undefined): string {
   if (!detail) return "";
@@ -90,6 +113,16 @@ export function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
     changedFiles: workEntry.changedFiles,
   });
 
+  // Split the label so the @workerId tag (if any) can be rendered as a
+  // separately-styled span — colored by the per-worker accent palette and
+  // used as the click-target to focus that worker's pane.
+  const workerTag = workEntry.workerId
+    ? `@${workEntry.workerId.slice(-8)}`
+    : workEntry.threadId
+      ? `@${workEntry.threadId.slice(-8)}`
+      : null;
+  const workerAccentClass = workerAccentTextClass(workEntry.workerId);
+
   const label = (() => {
     if (workEntry.command) {
       return `$ ${workEntry.command.split(" ").slice(0, 4).join(" ")}`;
@@ -98,12 +131,10 @@ export function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
       return "Selecting orchestration tools";
     }
     if (phase) {
-      const target = workEntry.workerId
-        ? ` @${workEntry.workerId.slice(-8)}`
-        : workEntry.threadId
-          ? ` @${workEntry.threadId.slice(-8)}`
-          : "";
-      return `${phase}${target}`;
+      // Note: the worker tag is rendered as a separate span below — keep it
+      // out of the plain label so the accent color and click handler can
+      // attach to just the tag.
+      return phase;
     }
     if (rawToolName === "orchestrate_open_browser_preview") {
       return "Browser preview";
@@ -151,17 +182,65 @@ export function CompactActivityRow({ workEntry }: { workEntry: WorkLogEntry }) {
           ? "text-muted-foreground/65"
           : "text-muted-foreground/50";
 
+  // "thinking" tone marks an in-flight tool call — surface a working-dots
+  // glyph next to the label so users can see at a glance which row is the
+  // currently-running step. Once the tool completes, tone shifts to "tool"
+  // (or "error") and the glyph disappears.
+  const isInFlight = workEntry.tone === "thinking";
+
   return (
     <div data-activity-row={isOrchTool ? "orchestration" : (rawToolName ?? "x")}>
       <div className="flex items-baseline gap-2 px-3 py-0.5">
+        {isInFlight ? (
+          <span className="shrink-0 self-center" aria-hidden>
+            <WorkingDots size="sm" tone="accent" />
+          </span>
+        ) : null}
         <span
           className={cn(
             "shrink-0 font-mono text-[10px] leading-[1.5] whitespace-nowrap",
             toneClass,
           )}
+          title={workEntry.command ? workEntry.command : undefined}
         >
           {label}
         </span>
+        {/* Per-worker accent tag — clicking jumps to the worker pane.
+            The dispatch is a window event so the handler can live in a
+            sibling component without prop drilling through the work log. */}
+        {workerTag && phase ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (workEntry.workerId) {
+                window.dispatchEvent(
+                  new CustomEvent("orchestrate:focus-worker", {
+                    detail: { workerId: workEntry.workerId },
+                  }),
+                );
+              } else if (workEntry.threadId) {
+                window.dispatchEvent(
+                  new CustomEvent("orchestrate:focus-thread", {
+                    detail: { threadId: workEntry.threadId },
+                  }),
+                );
+              }
+            }}
+            className={cn(
+              "shrink-0 rounded font-mono text-[10px] leading-[1.5] whitespace-nowrap underline-offset-2 hover:underline",
+              workerAccentClass ?? "text-muted-foreground/55",
+            )}
+            title={
+              workEntry.workerId
+                ? `Focus worker ${workEntry.workerId.slice(-8)}`
+                : `Focus thread ${workEntry.threadId?.slice(-8) ?? ""}`
+            }
+          >
+            {workerTag}
+          </button>
+        ) : null}
         {preview ? (
           <span className="min-w-0 flex-1 truncate font-mono text-[10px] leading-[1.5] text-muted-foreground/35">
             {preview}

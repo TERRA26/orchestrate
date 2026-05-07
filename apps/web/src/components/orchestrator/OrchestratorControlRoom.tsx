@@ -142,6 +142,27 @@ export function OrchestratorControlRoom({
     }
   }, [defaultSelectedEntityId, panelState]);
 
+  // Listen for cross-pane "focus this worker" events fired by clickable
+  // @worker-id tags in the activity rows. Bridges the orchestrator's
+  // narrative view ("worker @abc12345 ran build") to the worker canvas
+  // (the actual pane showing that worker's transcript) without requiring
+  // the user to scan the grid manually.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ workerId?: string }>).detail;
+      const workerId = detail?.workerId;
+      if (!workerId) return;
+      const exists = workers.some((w) => w.workerId === workerId);
+      if (!exists) return;
+      panelState.focus(workerId);
+      if (panelState.inspectorCollapsed) {
+        panelState.toggleInspector();
+      }
+    };
+    window.addEventListener("orchestrate:focus-worker", handler);
+    return () => window.removeEventListener("orchestrate:focus-worker", handler);
+  }, [workers, panelState]);
+
   // Resolve the currently selected entity from its ID
   const selectedEntity = useMemo((): SelectedEntity | null => {
     if (!selectedEntityId) return null;

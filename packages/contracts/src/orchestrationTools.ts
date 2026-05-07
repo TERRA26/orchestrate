@@ -129,6 +129,23 @@ export const SendToAgentOutput = Schema.Struct({
   messageId: Schema.String,
 });
 
+// orchestrate_send_update_to_orchestrator — worker → orchestrator turn-end
+// signal. Workers are required to call this at the end of every turn that
+// doesn't terminate with a final task.submit so the orchestrator's polling
+// loop returns useful posture (status + summary + optional question)
+// instead of an opaque "running" with empty diff.
+export const SendUpdateToOrchestratorInput = Schema.Struct({
+  status: Schema.Literals(["in-progress", "needs-input", "ready-for-review", "blocked"]),
+  summary: Schema.String,
+  question: Schema.optional(Schema.String),
+  nextStep: Schema.optional(Schema.String),
+  blockedReason: Schema.optional(Schema.String),
+});
+export const SendUpdateToOrchestratorOutput = Schema.Struct({
+  posted: Schema.Boolean,
+  workerId: WorkerId,
+});
+
 export const BroadcastInput = Schema.Struct({
   message: Schema.String,
   metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -522,6 +539,10 @@ export const ORCHESTRATION_TOOL_NAMES_LIST = [
   "orchestrate_demote_to_background",
   // Communication
   "orchestrate_send_to_agent",
+  // Worker → orchestrator turn-end signal. Workers MUST call this at the
+  // end of every turn that doesn't end with task.submit. Closes the gap
+  // where the orchestrator was blind to worker narrative replies.
+  "orchestrate_send_update_to_orchestrator",
   "orchestrate_broadcast",
   "orchestrate_transfer_context",
   "orchestrate_ask_agent",

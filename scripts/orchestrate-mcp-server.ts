@@ -208,6 +208,42 @@ const TOOLS = [
     },
   },
   {
+    name: "orchestrate_send_update_to_orchestrator",
+    description:
+      "Worker → orchestrator turn-end signal. Workers MUST call this at the end of every NON-final turn. " +
+      "On the final turn, end the assistant message with a `## REPORT` block instead (no submit tool exists — the REPORT block is parsed server-side). " +
+      "Statuses: `in-progress` (continuing next turn), `needs-input` (waiting on a clarification — set `question`), " +
+      "`ready-for-review` (work is done; final REPORT block follows in the same or next turn), `blocked` (cannot proceed — set `blockedReason`). " +
+      "Without this call the orchestrator sees only your tool calls and diffs — it has no way to know you're waiting on a reply.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        status: {
+          type: "string",
+          enum: ["in-progress", "needs-input", "ready-for-review", "blocked"],
+        },
+        summary: {
+          type: "string",
+          description: "One-sentence account of what you did or learned this turn.",
+        },
+        question: {
+          type: "string",
+          description:
+            "Concrete question for the orchestrator (only set when status is 'needs-input').",
+        },
+        nextStep: {
+          type: "string",
+          description: "What you plan to do on the next turn once unblocked.",
+        },
+        blockedReason: {
+          type: "string",
+          description: "Why you cannot proceed (only set when status is 'blocked').",
+        },
+      },
+      required: ["status", "summary"],
+    },
+  },
+  {
     name: "orchestrate_wait_agent",
     description: "Block until agent completes",
     inputSchema: {

@@ -28,13 +28,18 @@ export function getDefaultModel(provider: ProviderKind): string {
 /** Known model slugs per provider with human-readable names. */
 const MODEL_OPTIONS_BY_PROVIDER: Record<ProviderKind, ReadonlyArray<SelectableModelOption>> = {
   codex: [
+    { slug: "gpt-5.5", name: "GPT-5.5" },
     { slug: "gpt-5.4", name: "GPT-5.4" },
+    { slug: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
     { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
     { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
+    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
+    { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
   claudeAgent: [
     { slug: "claude-opus-4-7", name: "Claude Opus 4.7" },
     { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+    { slug: "claude-opus-4-5", name: "Claude Opus 4.5" },
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
   ],
@@ -45,6 +50,32 @@ const MODEL_OPTIONS_BY_PROVIDER: Record<ProviderKind, ReadonlyArray<SelectableMo
  */
 export function getModelOptions(provider: ProviderKind): ReadonlyArray<SelectableModelOption> {
   return MODEL_OPTIONS_BY_PROVIDER[provider] ?? [];
+}
+
+const MODEL_NAME_BY_SLUG = new Map(
+  Object.values(MODEL_OPTIONS_BY_PROVIDER)
+    .flat()
+    .map((option) => [option.slug.toLowerCase(), option.name] as const),
+);
+
+function humanizeUnknownModelSlug(slug: string): string {
+  if (!slug.toLowerCase().startsWith("gpt-")) return slug;
+  const [, version, ...rest] = slug.split("-");
+  if (rest.length === 0) return `GPT-${version}`;
+  return `GPT-${version} ${rest.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ")}`;
+}
+
+/**
+ * Map a raw model slug (e.g. "gpt-5.5", "claude-opus-4-7") to a friendly
+ * display name (e.g. "GPT-5.5", "Claude Opus 4.7"). Falls back to a
+ * humanized version of unknown slugs so custom models don't render as
+ * raw lowercase identifiers.
+ */
+export function formatModelDisplayName(model: string | null | undefined): string | undefined {
+  if (typeof model !== "string") return undefined;
+  const normalized = model.trim();
+  if (normalized.length === 0) return undefined;
+  return MODEL_NAME_BY_SLUG.get(normalized.toLowerCase()) ?? humanizeUnknownModelSlug(normalized);
 }
 
 // ── Default model capabilities ────────────────────────────────────────
@@ -66,7 +97,7 @@ const DEFAULT_CLAUDE_CAPABILITIES: ModelCapabilities = {
   supportsFastMode: true,
   supportsThinkingToggle: true,
   contextWindowOptions: [
-    { value: "default", label: "Default", isDefault: true },
+    { value: "200k", label: "200k", isDefault: true },
     { value: "1m", label: "1M" },
   ],
   promptInjectedEffortLevels: ["ultrathink"],

@@ -3,9 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { EmbeddedBrowserPane } from "../components/EmbeddedBrowserPane";
 import ThreadSidebar from "../components/Sidebar";
 import { isElectron } from "../env";
+import { isMacPlatform } from "../lib/utils";
 import { useDisposableThreadLifecycle } from "../hooks/useDisposableThreadLifecycle";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { resolveThreadEnvironmentMode } from "../lib/threadEnvironment";
@@ -23,6 +23,8 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "~/components/ui/sidebar";
+import { useAppTypography } from "~/hooks/useAppTypography";
+import { useNativeFontSmoothing } from "~/hooks/useNativeFontSmoothing";
 import { useUIFont } from "~/hooks/useUIFont";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -61,6 +63,31 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         clearSelection();
         return;
+      }
+
+      // Cmd/Ctrl + 1..9 — quick-jump to the Nth visible thread (dpcode parity).
+      // Uses the actual keyboard layout digit, not the localized one, so the
+      // shortcut is the same on every layout. Skip when an editable element
+      // has focus so it doesn't fight with text input shortcuts.
+      const usesPrimaryModifier = isMacPlatform(navigator.platform)
+        ? event.metaKey && !event.ctrlKey && !event.altKey
+        : event.ctrlKey && !event.metaKey && !event.altKey;
+      if (usesPrimaryModifier && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        const target = document.activeElement;
+        const isEditable =
+          target instanceof HTMLElement &&
+          (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+        if (!isEditable) {
+          const index = Number.parseInt(event.key, 10) - 1;
+          // Look up the Nth thread row rendered in the sidebar by data-attr.
+          const rows = document.querySelectorAll<HTMLElement>("[data-sidebar-thread-row]");
+          const row = rows[index];
+          if (row) {
+            event.preventDefault();
+            event.stopPropagation();
+            row.click();
+          }
+        }
       }
 
       const command = resolveShortcutCommand(event, keybindings, {
@@ -182,6 +209,8 @@ function CollapsedSidebarStrip() {
 
 function ChatRouteLayout() {
   useUIFont();
+  useAppTypography();
+  useNativeFontSmoothing();
   return (
     <SidebarProvider defaultOpen>
       <ChatRouteGlobalShortcuts />
@@ -204,7 +233,6 @@ function ChatRouteLayout() {
       </Sidebar>
       <CollapsedSidebarStrip />
       <Outlet />
-      <EmbeddedBrowserPane currentThreadId={null} />
     </SidebarProvider>
   );
 }

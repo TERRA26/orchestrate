@@ -140,7 +140,9 @@ export function OrchestratorHeader({
         ? "Show browser workspace"
         : browserState === "idle"
           ? "Browser workspace is ready and will attach when validation opens a session"
-          : "No browser workspace is attached to this thread";
+          : // "unavailable" branch — the user is almost certainly running web-only mode.
+            // Make the recovery path obvious instead of just saying "unavailable".
+            "Live browser validation requires the desktop app — quit this tab and run `bun run dev:desktop`. The orchestrator can still open URL previews in the side panel via `orchestrate_open_browser_preview` and ask you to confirm what you see.";
 
   return (
     <>
@@ -155,13 +157,24 @@ export function OrchestratorHeader({
           <Button
             type="button"
             variant="ghost"
-            className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground/50 hover:text-foreground/70 disabled:opacity-45"
+            className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground/55 hover:text-foreground/70 disabled:opacity-45"
             title={browserTitle}
             aria-label={browserTitle}
             disabled={!hasBrowserWorkspace}
             onClick={onToggleBrowserPreview}
           >
-            <span className="size-1 rounded-full bg-foreground/30" />
+            <span
+              className={cn(
+                "size-1.5 rounded-full transition-colors",
+                browserState === "live"
+                  ? "bg-emerald-400/85 shadow-[0_0_5px_rgba(52,211,153,0.55)]"
+                  : browserState === "hidden"
+                    ? "bg-amber-400/70"
+                    : browserState === "idle"
+                      ? "bg-sky-400/70"
+                      : "bg-foreground/25",
+              )}
+            />
             <GlobeIcon className="size-3.5" />
             <span className="hidden sm:inline">{browserLabel}</span>
           </Button>

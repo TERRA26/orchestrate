@@ -516,6 +516,13 @@ if (typeof window !== "undefined") {
   });
 }
 
+// Expose the store to the browser console in dev mode so the team can inspect
+// projects/threads/etc. while debugging without wiring devtools each time.
+// Production builds skip this — Vite's `import.meta.env.DEV` is false there.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as { __orchestrateStore: typeof useStore }).__orchestrateStore = useStore;
+}
+
 // ── Memoized selectors ──────────────────────────────────────────────
 
 export function selectProjectById(projectId: Project["id"] | null | undefined) {

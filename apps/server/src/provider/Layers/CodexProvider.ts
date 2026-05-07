@@ -50,108 +50,61 @@ import { ServerSettingsError, ServerSettingsService } from "../../serverSettings
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
+const CODEX_GPT_5_CAPABILITIES: ServerProviderModel["capabilities"] = {
+  reasoningEffortLevels: [
+    { value: "xhigh", label: "Extra High" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "medium", label: "Medium" },
+    { value: "low", label: "Low" },
+  ],
+  supportsFastMode: true,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "gpt-5.5",
+    name: "GPT-5.5",
+    isCustom: false,
+    capabilities: CODEX_GPT_5_CAPABILITIES,
+  },
   {
     slug: "gpt-5.4",
     name: "GPT-5.4",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
+    capabilities: CODEX_GPT_5_CAPABILITIES,
   },
   {
     slug: "gpt-5.4-mini",
     name: "GPT-5.4 Mini",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
+    capabilities: CODEX_GPT_5_CAPABILITIES,
   },
   {
     slug: "gpt-5.3-codex",
     name: "GPT-5.3 Codex",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
+    capabilities: CODEX_GPT_5_CAPABILITIES,
   },
   {
     slug: "gpt-5.3-codex-spark",
     name: "GPT-5.3 Codex Spark",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
+    capabilities: CODEX_GPT_5_CAPABILITIES,
   },
   {
     slug: "gpt-5.2-codex",
     name: "GPT-5.2 Codex",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
+    capabilities: CODEX_GPT_5_CAPABILITIES,
   },
   {
     slug: "gpt-5.2",
     name: "GPT-5.2",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
+    capabilities: CODEX_GPT_5_CAPABILITIES,
   },
 ];
 

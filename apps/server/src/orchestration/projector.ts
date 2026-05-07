@@ -1054,6 +1054,36 @@ export function projectEvent(
         })),
       );
 
+    case "orchestrator.worker.update-posted":
+      return decodeForEvent(
+        OrchestratorWorkerUpdatePostedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          orchestratorWorkers: updateWorker(nextBase.orchestratorWorkers ?? [], payload.workerId, {
+            // Overwrite — only the latest update is retained on the read
+            // model (the activity log holds a history of past updates).
+            // `summary` is required, `question`/`nextStep`/`blockedReason`
+            // are optional in the schema; spread them conditionally so we
+            // don't write `undefined` to the projection.
+            latestUpdate: {
+              status: payload.status,
+              summary: payload.summary,
+              ...(payload.question !== undefined ? { question: payload.question } : {}),
+              ...(payload.nextStep !== undefined ? { nextStep: payload.nextStep } : {}),
+              ...(payload.blockedReason !== undefined
+                ? { blockedReason: payload.blockedReason }
+                : {}),
+              postedAt: payload.postedAt,
+            },
+            updatedAt: payload.postedAt,
+          }),
+        })),
+      );
+
     case "orchestrator.evidence.captured":
       // Evidence is persisted directly to DB via the repository,
       // not stored in the in-memory read model.

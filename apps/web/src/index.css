@@ -115,17 +115,20 @@
 
   @variant dark {
     color-scheme: dark;
-    /* Orchestrate design — Ink (dark) theme: pure-black panels, lifted sidebar */
+    /* Orchestrate design — Ink (dark) theme.
+       Sidebar sits a half-step below the panes so it reads as a quiet rail
+       rather than a brighter chrome plane (was `#1f1f1f`, which produced
+       too much contrast against the `#0a0a0a` workspace). */
     --background: #0a0a0a;
     --foreground: #ffffff;
     --card: #0f0f0f;
     --card-foreground: #e8e8e8;
     --popover: #141414;
     --popover-foreground: #ffffff;
-    --sidebar-bg: #1f1f1f;
+    --sidebar-bg: #060606;
     --workspace-bg: #0a0a0a;
     --surface-raised: #141414;
-    --surface-sunken: #1f1f1f;
+    --surface-sunken: #050505;
     --provider-claude: #d97757;
     --provider-codex: currentColor;
     --primary: oklch(0.588 0.217 264);
@@ -208,12 +211,12 @@ input {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollbar styling — hidden by default, revealed on hover over the scrolling
-   container. Uses a fallback-friendly pattern: the thumb is transparent until
-   the container (or the scrollbar itself) is hovered. */
+/* Scrollbar styling — slim by default, more visible on hover. Wider hit area
+   makes the scrollbar grabbable; the thumb stays subtle so it doesn't visually
+   compete with content. Pre-existing 3px was too easy to miss. */
 ::-webkit-scrollbar {
-  width: 3px;
-  height: 3px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -222,26 +225,65 @@ input {
 
 ::-webkit-scrollbar-thumb {
   background: transparent;
-  border-radius: 3px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
   transition: background-color 150ms ease;
 }
 
 *:hover > ::-webkit-scrollbar-thumb,
 *:hover::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
+  background-color: rgba(0, 0, 0, 0.18);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3) !important;
+  background-color: rgba(0, 0, 0, 0.32) !important;
 }
 
 .dark *:hover > ::-webkit-scrollbar-thumb,
 .dark *:hover::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.14);
 }
 
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22) !important;
+  background-color: rgba(255, 255, 255, 0.26) !important;
+}
+
+/* Focus ring polish — accessible focus visible without being garish. Scoped
+   to interactive elements so it doesn't bleed onto wrapper divs (the
+   composer's surrounding `<div>` was inheriting a thick blue outline because
+   the focus-within state on its contenteditable child counted as
+   `:focus-visible` on the ancestor). Buttons/inputs/textareas/links/native
+   selects/checkboxes/contenteditables get the ring; layout containers do not. */
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="menuitem"]:focus-visible,
+[role="option"]:focus-visible,
+[role="tab"]:focus-visible,
+[role="link"]:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[contenteditable="true"]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ring) 65%, transparent);
+  outline-offset: 1px;
+}
+
+/* The composer's contenteditable provides its own focus-within treatment on
+   the surrounding card (soft shadow + border). Suppress the contenteditable's
+   own outline to avoid stacking two focus signals. */
+[data-chat-composer-form] [contenteditable="true"]:focus-visible,
+[contenteditable="true"][data-lexical-editor]:focus-visible {
+  outline: none;
+}
+
+/* Selection color — matches the accent so highlighted text reads as
+   intentional design rather than browser default. */
+::selection {
+  background: color-mix(in srgb, var(--foreground) 18%, transparent);
+  color: var(--foreground);
 }
 
 .turn-chip-strip {
@@ -547,6 +589,88 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown .chat-markdown-shiki .shiki * {
   font-family: inherit !important;
+}
+
+/* ----- File viewer (FileWrittenRow) -------------------------------------- */
+/* The dropdown that opens when a worker's `filesWritten` path is clicked.
+   Shiki output gets wrapped in `.file-viewer-shiki`; we add CSS-counter
+   line numbers and tighten the spacing so it reads like a code editor
+   embedded inside the chat. Values picked to match GitHub's monospace
+   leading (~1.32), not the wider chat-prose leading. */
+.file-viewer-shiki .file-viewer-shiki-host > .shiki {
+  margin: 0 !important;
+  padding: 0.125rem 0 !important;
+  background: color-mix(in srgb, var(--muted) 30%, var(--background)) !important;
+  font-family: var(--font-mono-family) !important;
+  font-size: 11px;
+  line-height: 1.35;
+  border-radius: 0;
+  counter-reset: file-viewer-line;
+}
+
+.file-viewer-shiki .file-viewer-shiki-host > .shiki code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  padding: 0;
+  font-family: inherit !important;
+  line-height: inherit;
+}
+
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line {
+  display: block;
+  padding: 0 0.75rem 0 0.5rem;
+  counter-increment: file-viewer-line;
+  line-height: 1.35;
+  /* Reserve space for the line-number gutter + diff marker so each row stays
+     a uniform height regardless of whether it's a +/-/context line. */
+}
+
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line::before {
+  content: counter(file-viewer-line);
+  display: inline-block;
+  width: 2.5em;
+  margin-right: 0.65rem;
+  text-align: right;
+  color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 6%, transparent);
+}
+
+/* Diff rows — rendered when the file viewer is in diff mode. We mark each
+   `<span class="line">` with a data attribute and color the row + override
+   the line-number gutter to mimic GitHub's `+`/`-` columns. */
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line[data-diff-kind="add"] {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line[data-diff-kind="del"] {
+  background: color-mix(in srgb, var(--destructive) 16%, transparent);
+}
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line[data-diff-kind="add"]::before {
+  color: color-mix(in srgb, var(--success) 70%, var(--foreground));
+  content: "+";
+  text-align: center;
+  font-weight: 600;
+}
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line[data-diff-kind="del"]::before {
+  color: color-mix(in srgb, var(--destructive) 70%, var(--foreground));
+  content: "−";
+  text-align: center;
+  font-weight: 600;
+}
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line[data-diff-kind="hunk"] {
+  background: color-mix(in srgb, var(--muted-foreground) 10%, transparent);
+  color: color-mix(in srgb, var(--muted-foreground) 80%, var(--foreground));
+}
+.file-viewer-shiki .file-viewer-shiki-host > .shiki .line[data-diff-kind="hunk"]::before {
+  content: "";
+  width: 2.5em;
+  margin-right: 0.65rem;
 }
 
 /* ----- Tables ------------------------------------------------------------- */
@@ -1196,6 +1320,163 @@ diffs-container {
   width: 2px;
   border-radius: 2px;
   background: var(--foreground);
+}
+
+/* ----- Sidebar thread row polish (dpcode parity) -----
+   Three coordinated transitions:
+   1. Inactive thread title fades in on hover (perceived responsiveness).
+   2. Timestamp fades OUT on row hover so trailing actions don't double up.
+   3. Trailing actions fade IN on row hover (already handled by group-hover).
+
+   The sidebar-menu-sub-button is the row container; we mark it as a
+   `group/thread-row` via the className in Sidebar.tsx. The three rules below
+   apply when that group is hovered or the row is keyboard-focused.
+*/
+[data-slot="sidebar"] [data-slot="sidebar-menu-sub-button"] {
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+[data-slot="sidebar"] [data-slot="sidebar-menu-sub-button"]:hover {
+  /* Soft inset glow on hover — clearer than a flat bg change. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+[data-slot="sidebar"] [data-slot="sidebar-menu-sub-button"][data-active="true"] {
+  /* Active row gets a slightly stronger ring. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+
+/* Trailing meta cluster (timestamp + action icons) — paired with
+   `data-thread-row-meta` on the wrapper element. The timestamp is the
+   default; trailing actions show on hover. */
+[data-thread-row-meta="default"] [data-thread-time],
+[data-thread-row-meta="default"] .orch-thread-time {
+  transition: opacity 140ms ease;
+}
+[data-slot="sidebar-menu-sub-button"]:hover [data-thread-row-meta="default"] [data-thread-time],
+[data-slot="sidebar-menu-sub-button"]:hover [data-thread-row-meta="default"] .orch-thread-time,
+[data-slot="sidebar-menu-sub-button"]:focus-visible
+  [data-thread-row-meta="default"]
+  [data-thread-time],
+[data-slot="sidebar-menu-sub-button"]:focus-visible
+  [data-thread-row-meta="default"]
+  .orch-thread-time {
+  opacity: 0.35;
+}
+
+/* Title text — inactive rows fade slightly so the active row reads as the
+   focal point. Hovered rows brighten back to full intensity. */
+[data-slot="sidebar"]
+  [data-slot="sidebar-menu-sub-button"]:not([data-active="true"])
+  [data-thread-title] {
+  opacity: 0.85;
+  transition: opacity 140ms ease;
+}
+[data-slot="sidebar"]
+  [data-slot="sidebar-menu-sub-button"]:not([data-active="true"]):hover
+  [data-thread-title] {
+  opacity: 1;
+}
+
+/* Subagent (worker) child rows — slimmer, with a colored accent dot drawn
+   into the connector line so the user can see "this thread is owned by
+   that orchestrator" at a glance. */
+[data-slot="sidebar"] [data-thread-subagent="true"] {
+  font-size: 11.5px;
+  min-height: 22px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+[data-thread-subagent-marker] {
+  position: relative;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+[data-thread-subagent-marker]::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  bottom: 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+[data-thread-subagent-marker]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 1px;
+  background: color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+[data-thread-subagent-marker] > [data-thread-subagent-dot] {
+  position: relative;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--foreground) 35%, transparent);
+}
+
+/* Inline status badges — pending approval (amber), PR open (emerald),
+   PR merged (violet), PR closed (rose). Compact and used inline next to
+   the thread title. */
+.orch-thread-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono-family);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning-foreground);
+  white-space: nowrap;
+}
+.orch-thread-pr-badge[data-pr-state="open"] {
+  color: var(--success-foreground);
+}
+.orch-thread-pr-badge[data-pr-state="merged"] {
+  color: oklch(0.66 0.18 295);
+}
+.orch-thread-pr-badge[data-pr-state="closed"] {
+  color: var(--destructive-foreground);
+}
+
+/* Thread origin chip stack — disposable / fork / sidechat indicators. */
+.orch-thread-origin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono-family);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  color: color-mix(in srgb, var(--foreground) 60%, transparent);
+}
+.orch-thread-origin-chip[data-origin="disposable"] {
+  border: 1px dashed color-mix(in srgb, var(--foreground) 22%, transparent);
+  background: transparent;
+}
+.orch-thread-origin-chip[data-origin="fork"] {
+  color: color-mix(in srgb, var(--success) 80%, var(--foreground));
+}
+.orch-thread-origin-chip[data-origin="sidechat"] {
+  color: color-mix(in srgb, var(--info) 80%, var(--foreground));
 }
 
 /* Running agent glow dot (sidebar active-session cue) */

@@ -54,7 +54,7 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
 export type ModelSlug = string;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
-  codex: "gpt-5.4",
+  codex: "gpt-5.5",
   claudeAgent: "claude-opus-4-7",
 };
 
@@ -70,19 +70,29 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind,
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
   codex: {
+    "5.5": "gpt-5.5",
     "5.4": "gpt-5.4",
+    "5.4-mini": "gpt-5.4-mini",
+    "gpt-5.4-mini": "gpt-5.4-mini",
     "5.3": "gpt-5.3-codex",
     "gpt-5.3": "gpt-5.3-codex",
     "5.3-spark": "gpt-5.3-codex-spark",
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
+    "5.2": "gpt-5.2",
+    "5.2-codex": "gpt-5.2-codex",
+    "gpt-5.2-codex": "gpt-5.2-codex",
   },
   claudeAgent: {
     opus: "claude-opus-4-7",
     "opus-4.7": "claude-opus-4-7",
     "claude-opus-4.7": "claude-opus-4-7",
+    "claude-opus-4-7-20260416": "claude-opus-4-7",
     "opus-4.6": "claude-opus-4-6",
     "claude-opus-4.6": "claude-opus-4-6",
     "claude-opus-4-6-20251117": "claude-opus-4-6",
+    "opus-4.5": "claude-opus-4-5",
+    "claude-opus-4.5": "claude-opus-4-5",
+    "claude-opus-4-5-20250120": "claude-opus-4-5",
     sonnet: "claude-sonnet-4-6",
     "sonnet-4.6": "claude-sonnet-4-6",
     "claude-sonnet-4.6": "claude-sonnet-4-6",
