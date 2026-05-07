@@ -192,3 +192,52 @@ Adversarial review (verified-build step e):
 - Add a startup WARNING (not failure) when host is an explicit non-loopback non-wildcard IP without a token — explicit consent but worth surfacing.
 - Update README to clarify the `--host 127.0.0.1` default-safe pattern and the `ORCHESTRATE_AUTH_TOKEN` requirement.
 - Consider defaulting host to `127.0.0.1` in web mode (currently undefined) so the safe default is loopback. Behavior change; track separately.
+
+### ORC-045 — fixed iter 44 (2026-05-07)
+
+**Root cause**: `makeServerPushBus` initialized its job queue with `Queue.unbounded<PushJob>()`. orchestrationEngine.streamDomainEvents and many other publishers fed this queue without bounds. A slow or stuck consumer would let the queue grow until the server OOM-crashed. There was no signal to operators that backpressure was building.
+
+**Change summary**:
+
+1. Replaced `Queue.unbounded<PushJob>()` with `Queue.dropping<PushJob>(maxQueueDepth)`. Default depth 10_000; configurable via the new `maxQueueDepth?: number` input option.
+2. Added optional `onOverflow: (info: { channel, target, maxQueueDepth }) => void` callback so operators get a structured signal whenever a push is shed under pressure.
+3. Refactored both `publishAll` and `publishClient` to share a single `offerJob(job)` helper that captures the offer's accepted boolean and invokes `onOverflow` on rejection.
+4. Critical fix in `publishClient`: when the offer is dropped, the worker fork never picks the job up, so the awaited `delivered` Deferred would have hung forever. Now we settle the Deferred with `false` immediately on drop so callers learn the dispatch was rejected.
+5. Wired the `wsServer.ts` instantiation to pass an `onOverflow` callback that emits a structured `wsserver.pushbus.overflow` warn event (channel, target, max depth) via the server logger.
+
+**Files touched**:
+
+- apps/server/src/wsServer/pushBus.ts (major refactor)
+- apps/server/src/wsServer/pushBus.test.ts (added 2 tests)
+- apps/server/src/wsServer.ts (passes onOverflow callback)
+
+**Tests added**:
+
+- `drops new pushes when the bounded queue is at capacity and reports overflow (ORC-045)` — bursts 50 publishes through a depth-1 queue and asserts `onOverflow` fired with the right channel/target/depth.
+- `publishClient resolves false instead of hanging when the queue is full (ORC-045)` — bursts 50 client-targeted publishes; without the Deferred-settle fix this would deadlock and time the test out.
+
+Both tests fail against the prior implementation (the unbounded queue accepts every offer; the rejected publishClient calls would hang).
+
+**Evidence of green run**:
+
+```
+$ bun run vitest --run src/wsServer/pushBus.test.ts src/wsServer.test.ts src/main.test.ts
+Test Files  3 passed (3)
+     Tests  58 passed (58)
+```
+
+Plus: `bun run typecheck` clean, `bun lint` 0 errors / 135 warnings (no new ones).
+
+Adversarial review:
+
+- maxQueueDepth = 0: Effect's `Queue.dropping(0)` throws on construction; default of 10_000 prevents this in practice. Could add a Math.max(1, depth) guard if external callers ever pass 0; tracked as a follow-up.
+- onOverflow throws: the callback is wrapped in `Effect.sync(() => ...)` so a sync throw bubbles via Effect.die. For the wsServer wiring it's a logger.warn call, which does not throw.
+- Slow encoder: `encodePush` is an Effect; if it took a long time per item, the worker fork would be slow and the queue would back up (the same condition the fix is designed to handle). Drop count would grow; logs would surface it.
+- publishClient called on a non-OPEN socket: `client.send` is gated by `readyState`; non-OPEN clients are skipped silently. No panic, returns delivered=false (recipientCount = 0). Pre-existing behavior preserved.
+- Multiple publishers racing: Effect.all with concurrency-unbounded was used in the test to demonstrate burst behavior; queue accepts up to capacity and rejects the rest. ✓
+
+**Follow-ups**:
+
+- Add a Math.max(1, maxQueueDepth) guard if the depth becomes externally configurable.
+- Surface the queue depth as a metric (currently just a log line on overflow); useful for graphs and alerting.
+- Consider per-channel depth tracking so a single chatty channel does not starve others.

@@ -420,6 +420,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:967-969,(pushBus.ts queue init)
 - evidence: orchestrationEngine.streamDomainEvents pipes to pushBus.publishAll without backpressure. The pushBus uses Queue.unbounded internally. A slow WebSocket consumer blocks frame processing and causes the in-memory push queue to grow without bound until the server is OOM-killed.
 - proposed_fix: Replace Queue.unbounded with Queue.bounded(N) (e.g. 10000). On overflow drop oldest or oldest-per-channel. Emit a structured warn event with the dropped count and current depth.
+- status: DONE
+- fixed_iter: 44
 - status: PENDING
 
 ### ORC-046

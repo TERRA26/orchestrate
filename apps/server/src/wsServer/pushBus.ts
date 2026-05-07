@@ -31,13 +31,29 @@ export interface ServerPushBus {
   ) => Effect.Effect<boolean>;
 }
 
+export interface PushBusOverflowInfo {
+  readonly channel: WsPushChannel;
+  readonly target: "all" | "client";
+  readonly maxQueueDepth: number;
+}
+
+// ORC-045: cap the in-memory push queue. With Queue.unbounded a slow client
+// would balloon the queue until the server OOMed. Queue.dropping rejects
+// new offers when full, so the publisher learns immediately and the worker
+// fork keeps draining. 10_000 is large enough that healthy operation never
+// trips it; if it does, the structured overflow callback fires.
+const DEFAULT_PUSH_QUEUE_DEPTH = 10_000;
+
 export const makeServerPushBus = (input: {
   readonly clients: Ref.Ref<Set<WebSocket>>;
   readonly logOutgoingPush: (push: WsPushEnvelopeBase, recipients: number) => void;
+  readonly maxQueueDepth?: number;
+  readonly onOverflow?: (info: PushBusOverflowInfo) => void;
 }): Effect.Effect<ServerPushBus, never, Scope.Scope> =>
   Effect.gen(function* () {
     const nextSequence = yield* Ref.make(0);
-    const queue = yield* Queue.unbounded<PushJob>();
+    const maxQueueDepth = input.maxQueueDepth ?? DEFAULT_PUSH_QUEUE_DEPTH;
+    const queue = yield* Queue.dropping<PushJob>(maxQueueDepth);
     const encodePush = Schema.encodeUnknownEffect(Schema.fromJsonString(WsPush));
 
     const settleDelivery = (job: PushJob, delivered: boolean) =>
@@ -87,10 +103,31 @@ export const makeServerPushBus = (input: {
       ),
     );
 
+    const reportOverflow = (job: PushJob): void => {
+      if (input.onOverflow) {
+        input.onOverflow({
+          channel: job.channel,
+          target: job.target.kind === "all" ? "all" : "client",
+          maxQueueDepth,
+        });
+      }
+    };
+
+    const offerJob = (job: PushJob): Effect.Effect<boolean> =>
+      Queue.offer(queue, job).pipe(
+        Effect.tap((accepted) =>
+          accepted
+            ? Effect.void
+            : Effect.sync(() => {
+                reportOverflow(job);
+              }),
+        ),
+      );
+
     const publish =
       (target: PushTarget) =>
       <C extends WsPushChannel>(channel: C, data: WsPushData<C>) =>
-        Queue.offer(queue, {
+        offerJob({
           channel,
           data,
           target,
@@ -102,12 +139,20 @@ export const makeServerPushBus = (input: {
       publishClient: (client, channel, data) =>
         Effect.gen(function* () {
           const delivered = yield* Deferred.make<boolean>();
-          yield* Queue.offer(queue, {
+          const job: PushJob = {
             channel,
             data,
             target: { kind: "client", client },
             delivered,
-          }).pipe(Effect.asVoid);
+          };
+          const accepted = yield* offerJob(job);
+          // ORC-045: when the queue is full the offer is dropped so the
+          // worker fork never picks the job up, which means the delivered
+          // Deferred would never settle and the caller would hang. Settle
+          // it here with false so callers learn the dispatch was dropped.
+          if (!accepted) {
+            yield* Deferred.succeed(delivered, false).pipe(Effect.orDie);
+          }
           return yield* Deferred.await(delivered);
         }),
     } satisfies ServerPushBus;

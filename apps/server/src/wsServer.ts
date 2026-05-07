@@ -609,6 +609,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const pushBus = yield* makeServerPushBus({
     clients,
     logOutgoingPush,
+    // ORC-045: log structured overflow events so operators see when the
+    // bounded push queue is shedding load. The push is dropped (matches
+    // the bus's dropping-queue policy) but the operator now sees it
+    // instead of an OOM crash.
+    onOverflow: (info) => {
+      logger.warn(
+        {
+          event: "wsserver.pushbus.overflow",
+          channel: info.channel,
+          target: info.target,
+          maxQueueDepth: info.maxQueueDepth,
+        },
+        "ws push queue full; dropping push",
+      );
+    },
   });
   setDesktopBrowserBridgePublisher((clientId, channel, data) =>
     Effect.gen(function* () {
