@@ -1399,3 +1399,40 @@ Adversarial review:
 - Wire the rejection back to the dispatchCommand caller via a queue-rejected event so the orchestrator can react programmatically rather than wait for the missing turn to surface via polling.
 - Add a metric counting per-thread queue depth so operators can graph hot threads before they hit the limit.
 - Consider differentiating the limit by dispatch mode: "steer" might warrant a smaller bypass-limit since it's used for safety overrides.
+
+## ORC-047 [iter 71] DrainableWorker queue is unbounded
+
+**Root cause**: `makeDrainableWorker` in packages/shared/src/DrainableWorker.ts used `TxQueue.unbounded` and processed items serially. CheckpointReactor, ProviderCommandReactor, and ProviderRuntimeIngestion all share this primitive. A fast producer (burst of provider events, runaway projection backfill, malformed input loop) could grow the queue without bound and push the server toward OOM, with no operator visibility into the build-up.
+
+**Change summary**:
+- packages/shared/src/DrainableWorker.ts: Added `MakeDrainableWorkerOptions<A>` with `maxQueueDepth` (default `DEFAULT_MAX_QUEUE_DEPTH = 5000`) and `onOverflow` callback. Switched the underlying queue to `TxQueue.dropping(limit)` when bounded; `maxQueueDepth: 0` opts back into unbounded for callers that need it. enqueue's outstanding counter is bumped only when `TxQueue.offer` returns true (item actually accepted), and `onOverflow` fires outside the transaction when the item was dropped.
+- apps/server/src/orchestration/Layers/CheckpointReactor.ts: Wired `onOverflow` to log a structured warn `checkpointReactor.queue-overflow` carrying source + eventType.
+- apps/server/src/orchestration/Layers/ProviderCommandReactor.ts: Wired `onOverflow` to log `providerCommandReactor.queue-overflow` carrying eventType + threadId.
+- apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts: Wired `onOverflow` to log `providerRuntimeIngestion.queue-overflow` carrying source + eventType.
+
+**Files touched**:
+- packages/shared/src/DrainableWorker.ts
+- packages/shared/src/DrainableWorker.test.ts
+- apps/server/src/orchestration/Layers/CheckpointReactor.ts
+- apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
+- apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
+
+**Tests added**: 4 new cases in DrainableWorker.test.ts pinning the bound:
+1. "drops items beyond maxQueueDepth and invokes onOverflow [ORC-047]" (capacity=2, blocks worker on first item, asserts the 3rd and 4th non-blocked items overflow with the right values)
+2. "does not call onOverflow when the queue has room [ORC-047]" (capacity=4, 3 items, asserts no overflow callback fires)
+3. "treats maxQueueDepth=0 as unbounded [ORC-047]" (50 items past the default cap, asserts zero drops)
+4. "exposes a sane default cap that matches DEFAULT_MAX_QUEUE_DEPTH [ORC-047]" (constant pinned at 5000)
+
+All 4 would fail before the change: the options parameter, `onOverflow`, and `DEFAULT_MAX_QUEUE_DEPTH` did not exist.
+
+**Green-run evidence**:
+- `cd packages/shared && bun run test src/DrainableWorker.test.ts` -> Test Files 1 passed (1) | Tests 5 passed (5)
+- `cd apps/server && bun run test src/orchestration/Layers/CheckpointReactor.test.ts src/orchestration/Layers/ProviderCommandReactor.test.ts src/orchestration/Layers/ProviderRuntimeIngestion.test.ts` (Node 24) -> Test Files 3 passed (3) | Tests 71 passed (71)
+- `bun typecheck` (apps/server, packages/shared) -> tsc --noEmit clean
+- `bun lint` -> 141 warnings (pre-existing), 0 errors
+
+**Follow-ups**:
+- Consider exposing `maxQueueDepth` as a per-reactor config option so deployments can tune for memory profile.
+- Add a depth-watermark metric (95th percentile queue depth over a sliding window) so operators can graph approach to the limit before drops occur.
+- For ProviderRuntimeIngestion specifically, drops mean lost provider events; consider promoting the overflow-warn to an error-channel signal so the runtime can fail-stop or restart the session rather than silently lose events.
+- Outbox pattern (deferred): persisting the queue to SQLite would let the worker survive a process crash, replacing the in-memory dropping with durable backpressure on the producer.

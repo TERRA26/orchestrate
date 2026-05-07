@@ -462,7 +462,7 @@ Schema per entry:
 - files: packages/shared/src/DrainableWorker.ts:42-54
 - evidence: makeDrainableWorker uses an unbounded internal queue and processes serially. Both CheckpointReactor and ProviderCommandReactor depend on it. A burst of provider events or checkpoint requests grows the queue indefinitely.
 - proposed_fix: Add a maxQueueDepth parameter (default 5000) and enforce it on enqueue. On overflow either drop oldest or fail the producer with a clear error. Optionally support bounded parallelism via Effect.parallelN.
-- status: PENDING
+- status: DONE
 
 ### ORC-048
 

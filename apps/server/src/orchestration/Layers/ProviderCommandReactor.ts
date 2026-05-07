@@ -1049,7 +1049,14 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const worker = yield* makeDrainableWorker(processDomainEventSafely, {
+    onOverflow: (event) =>
+      Effect.logWarning("provider command reactor dropped event: queue full", {
+        event: "providerCommandReactor.queue-overflow",
+        eventType: event.type,
+        threadId: event.threadId,
+      }),
+  });
 
   const start: ProviderCommandReactorShape["start"] = Effect.all([
     Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {

@@ -799,7 +799,14 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processInputSafely);
+  const worker = yield* makeDrainableWorker(processInputSafely, {
+    onOverflow: (item) =>
+      Effect.logWarning("checkpoint reactor dropped event: queue full", {
+        event: "checkpointReactor.queue-overflow",
+        source: item.source,
+        eventType: item.event.type,
+      }),
+  });
 
   const start: CheckpointReactorShape["start"] = Effect.gen(function* () {
     yield* Effect.forkScoped(

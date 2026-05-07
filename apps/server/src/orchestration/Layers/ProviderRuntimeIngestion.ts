@@ -1554,7 +1554,14 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processInputSafely);
+  const worker = yield* makeDrainableWorker(processInputSafely, {
+    onOverflow: (input) =>
+      Effect.logWarning("provider runtime ingestion dropped event: queue full", {
+        event: "providerRuntimeIngestion.queue-overflow",
+        source: input.source,
+        eventType: input.event.type,
+      }),
+  });
 
   const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
     yield* Effect.forkScoped(

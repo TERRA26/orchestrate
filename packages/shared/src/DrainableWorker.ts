@@ -17,6 +17,10 @@ export interface DrainableWorker<A> {
    *
    * This wraps `Queue.offer` so drain state is updated atomically with the
    * enqueue path instead of inferring it from queue internals.
+   *
+   * Returns void; when the queue is bounded and full the item is dropped
+   * silently from the consumer's perspective. Use `options.onOverflow`
+   * to observe drops.
    */
   readonly enqueue: (item: A) => Effect.Effect<void>;
 
@@ -27,19 +31,57 @@ export interface DrainableWorker<A> {
 }
 
 /**
- * Create a drainable worker that processes items from an unbounded queue.
+ * Default upper bound on queued items per worker. Prevents unbounded memory
+ * growth from a fast producer (e.g. burst of provider events) outpacing a
+ * serial consumer. Picked to be high enough that legitimate workloads never
+ * notice but low enough to detect a runaway producer before OOM. [ORC-047]
+ */
+export const DEFAULT_MAX_QUEUE_DEPTH = 5000;
+
+export interface MakeDrainableWorkerOptions<A> {
+  /**
+   * Maximum number of items the queue can hold before backpressure kicks in.
+   * Defaults to {@link DEFAULT_MAX_QUEUE_DEPTH}. Set to `0` to disable the
+   * limit (unbounded queue).
+   *
+   * When the queue is full, additional offers are dropped (the dropping
+   * strategy: new items are rejected, existing items keep their place).
+   */
+  readonly maxQueueDepth?: number | undefined;
+
+  /**
+   * Called when an item is dropped because the queue is full. Use this to
+   * emit a structured warning, increment a metric, or escalate to an error
+   * channel. Errors raised here are isolated from the producer's enqueue
+   * call (they fail the enqueue effect, but never block the queue).
+   */
+  readonly onOverflow?: ((item: A) => Effect.Effect<void>) | undefined;
+}
+
+/**
+ * Create a drainable worker that processes items from an internal queue.
  *
  * The worker is forked into the current scope and will be interrupted when
  * the scope closes. A finalizer shuts down the queue.
  *
+ * By default the queue is bounded to {@link DEFAULT_MAX_QUEUE_DEPTH} items
+ * with a dropping strategy. Pass `{ maxQueueDepth: 0 }` to opt back into
+ * an unbounded queue (not recommended for production reactors).
+ *
  * @param process - The effect to run for each queued item.
- * @returns A `DrainableWorker` with `queue` and `drain`.
+ * @param options - Optional capacity and overflow handling.
+ * @returns A `DrainableWorker` with `enqueue` and `drain`.
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
+  options?: MakeDrainableWorkerOptions<A>,
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
-    const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
+    const limit = options?.maxQueueDepth ?? DEFAULT_MAX_QUEUE_DEPTH;
+    const queue =
+      limit > 0
+        ? yield* Effect.acquireRelease(TxQueue.dropping<A>(limit), TxQueue.shutdown)
+        : yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
     const outstanding = yield* TxRef.make(0);
 
     yield* TxQueue.take(queue).pipe(
@@ -58,10 +100,17 @@ export const makeDrainableWorker = <A, E, R>(
       Effect.tx,
     );
 
-    const enqueue = (element: A): Effect.Effect<boolean, never, never> =>
+    const onOverflow = options?.onOverflow;
+
+    const enqueue = (element: A): Effect.Effect<void> =>
       TxQueue.offer(queue, element).pipe(
-        Effect.tap(() => TxRef.update(outstanding, (n) => n + 1)),
+        Effect.tap((accepted) =>
+          accepted ? TxRef.update(outstanding, (n) => n + 1) : Effect.void,
+        ),
         Effect.tx,
+        Effect.flatMap((accepted) =>
+          accepted || !onOverflow ? Effect.void : onOverflow(element),
+        ),
       );
 
     return { enqueue, drain } satisfies DrainableWorker<A>;
