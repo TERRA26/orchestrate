@@ -421,7 +421,9 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1127-1131
 - evidence: dispatchCommand accepts arbitrary `command` and dispatches without verifying the caller "owns" the target resource. getSnapshot returns ALL threads/projects regardless of caller. Single-user today; multi-user-ready: no.
 - proposed_fix: Add an ownerUserId field to projects/threads at creation. dispatchCommand and getSnapshot must filter by the authenticated caller's user id. For single-user deployments the user id is "default" and no behavior changes.
-- status: PENDING
+- status: DEFERRED
+- defer_iter: 69
+- defer_reason: see blockers.md (multi-tenant ownership requires schema migration + projector updates + dispatch invariant + auth identity plumbing across many files; a minimal stub would be misleading and a complete fix needs design discussion + multiple iterations).
 
 ### ORC-044
 
