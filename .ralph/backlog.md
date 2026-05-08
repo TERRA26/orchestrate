@@ -777,7 +777,8 @@ Schema per entry:
 - files: package.json (catalog: effect@4.0.0-beta.43, @effect/platform-node@4.0.0-beta.43, @effect/sql-sqlite-bun@4.0.0-beta.43, @effect/vitest@4.0.0-beta.43)
 - evidence: Production runtime depends on a beta major (4.0-beta.43) of Effect across server, contracts, shared packages. Earlier in this session a beta-API mismatch broke a Effect.either call site, requiring a switch to Effect.result. Beta APIs may shift again before 4.0 GA.
 - proposed_fix: Add a CI step that runs against Effect's published nightly to catch breaks early. Document the API surface relied on. When 4.0 stabilizes, schedule a coordinated upgrade PR with regression test coverage.
-- status: PENDING
+- status: DONE
+- fixed_iter: 86
 
 ### ORC-082
 

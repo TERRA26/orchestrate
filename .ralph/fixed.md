@@ -1985,3 +1985,45 @@ Both would fail before the change (the root had no a11y attributes).
 - Real-device test with VoiceOver (macOS), NVDA (Windows), and TalkBack (Android web) to confirm announcement cadence is acceptable. The current attributes are conservative; if announcements become noisy a future change could narrow `aria-relevant` further or add a user-toggle.
 - Apply the same pattern to the worker-pane streaming containers (e.g., `apps/web/src/components/orchestrator/WorkerPane.tsx`) once that surface lands a similar streaming UI.
 - Consider an `aria-describedby` link from the dialog/section heading to the log so AT users entering the chat hear "Conversation messages" in addition to the visible label.
+
+## ORC-081 [iter 86] No regression net for Effect 4.0-beta API drift
+
+**Root cause**: The codebase pins Effect at 4.0.0-beta.43 (effect, @effect/platform-node, @effect/sql-sqlite-bun, @effect/vitest). Several APIs from earlier Effect releases were renamed or removed during the 4.x beta cycle. Earlier in this Ralph Loop session (iter 60), a `Cause.isFailType` call site broke when the beta renamed it to `Cause.isFailReason`; the failing test surfaced the issue but only after the runtime crash. Without a regression net, future contributors pasting from older docs / ChatGPT / stale tutorials would re-introduce the same drift.
+
+**Change summary**:
+- New `apps/server/src/observability/effectBetaCompat.test.ts`: forbidden-list regression test that scans the entire repo's TypeScript source for known beta-renamed names and asserts none appear. Each forbidden entry records:
+  - The deprecated name (regex pattern).
+  - The replacement / migration guidance.
+  - A short rationale explaining why the rename happened, so a maintainer evaluating "should we relax this rule when 4.0 GA lands?" has the context inline.
+- Initial forbidden set covers 4 known renames:
+  - `Effect.either` -> `Effect.result`
+  - `Cause.isFailType` -> `Cause.isFailReason`
+  - `Cause.parallel` -> construct via `Cause.failure` / squash via `Cause.squash`
+  - `Effect.cause(...)` (function call) -> `Effect.exit + Exit.isFailure` narrowing
+
+**Files touched**:
+- apps/server/src/observability/effectBetaCompat.test.ts (NEW)
+
+**Tests added**: 5 cases:
+1-4. One test per forbidden name, asserting an empty offender list with file/line/source on failure.
+5. A meta-test asserting the forbidden list has at least 3 entries and every entry has a non-trivial rationale (>20 chars), so the regression net stays meaningful as the list grows.
+
+The 4 name-specific tests would fail if any matching reference were re-introduced. They pass on the current tree because all known sites were already migrated.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability/effectBetaCompat.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 5 passed (5)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The forbidden patterns are word-bounded regexes (`\bEffect\.either\b`), so substrings like `Effect.eitherSomething` or `someEither.fn` won't false-match.
+- Self-exclusion: the test file itself contains the forbidden names as regex sources (and would otherwise self-trip). The scanner skips `__filename` so the test never reports itself.
+- Repo coverage: walks `apps/server/src`, `apps/web/src`, `packages/contracts/src`, `packages/shared/src`. Skips node_modules, dist, .turbo. If a new package lands at the top level, add its src root to `REPO_ROOTS`.
+- Effect.cause as a property reference (e.g., `someExit.cause`) is NOT forbidden — only the function-call pattern `Effect.cause(...)` is, since that's the deprecated signature.
+- False positive risk: a JSDoc comment that mentions "Effect.either" would trip. Mitigation: the test reports the file/line/source so the reviewer can quickly judge whether to refactor or deliberately exclude. The forbidden list is short enough that documentation comments referencing these names are rare.
+
+**Follow-ups**:
+- Add a CI workflow that runs the test on every PR (currently runs only via local `bun run test`).
+- When Effect 4.0 GA lands: re-evaluate the forbidden list; the renames will likely be permanent so the rules can stay.
+- Add a similar forbidden-list test for @effect/sql / @effect/platform-node beta renames if any surface during the upgrade.
+- Document the API surface used (separate doc file) once the 4.0 -> 4.x upgrade strategy is decided.
