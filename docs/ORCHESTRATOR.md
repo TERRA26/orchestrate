@@ -260,6 +260,34 @@ Model-family → provider rules:
 
 If you only specify `task` (no `model`/`provider`), the server inherits the orchestrator's current selection — that's fine and preferred unless you have a specific reason to override.
 
+### Capability Matrix
+
+Before spawning, check that the chosen model/provider actually has the capabilities the task requires. Spawning a non-vision model on a screenshot acceptance criterion wastes a worker round-trip; spawning a small-context model on a large-repo navigation task forces unnecessary chunking and rework.
+
+| Capability                | claude-opus-4-7 | claude-sonnet-4-6 | claude-haiku-4-5 | gpt-5-codex |
+| ------------------------- | --------------- | ----------------- | ---------------- | ----------- |
+| Vision / screenshots      | yes             | yes               | yes              | no          |
+| Browser validation tools  | yes             | yes               | limited          | no          |
+| Large context (1M tokens) | yes             | no                | no               | no          |
+| Native repo navigation    | shared          | shared            | shared           | yes         |
+| Fast / cost-efficient     | no              | yes               | yes              | yes         |
+| Best multi-step reasoning | yes             | partial           | no               | partial     |
+| Code edits across files   | yes             | yes               | yes              | yes         |
+
+The values above describe the orchestrator's first-line preferences, not hard provider limits. When in doubt, prefer the higher-capability model and downshift only after a successful first run shows the task is small.
+
+### Check-before-spawn rule
+
+When deriving a worker's `model` and `provider`, walk the task's acceptance criteria and `evidenceRequired` set:
+
+1. If any criterion uses the `screenshot:` tag (see Task Design), the worker must be vision-capable. Filter to vision-capable rows of the matrix.
+2. If `evidenceRequired.includes("browser")` or the task explicitly orchestrates a browser session, the worker must have browser validation tools. Filter again.
+3. If the task description mentions multi-thousand-line files, large monorepo navigation, or "the whole repo", prefer 1M-context or native-repo-navigation rows.
+4. If after all filters the candidate set is empty, do NOT spawn. Surface the gap to the user with a concrete recommendation: "This task needs vision + browser validation; no available worker has both. Consider enabling claude-opus-4-7 with browser tools, or splitting the task into a code-edit subtask (any model) and a screenshot-verification subtask (claude-opus-4-7)." Wait for explicit user direction before spawning.
+5. If the candidate set has more than one row, pick the cheapest row that still satisfies all required capabilities (fast / cost-efficient column wins ties).
+
+The check-before-spawn rule turns "no fit" failures into a deterministic escalation rather than a silent guess that wastes a worker turn.
+
 ### Monitoring
 
 - Watch for `thread.turn-diff-completed` events — the worker finished a turn

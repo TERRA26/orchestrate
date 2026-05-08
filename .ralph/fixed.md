@@ -3234,3 +3234,46 @@ mention of the prefix convention. Verified failing-before by stashing
     enforcement can be automated.
   - Add a thread state field for `needs-input` so the UI can render
     a clarification card distinct from a normal assistant message.
+
+## ORC-143 (iter 110): document Capability Matrix + check-before-spawn rule
+
+- root cause: ORCHESTRATOR.md had a "preferred model by task type"
+  table but no capability matrix (vision, browser tools, large
+  context, native repo navigation, fast / cost-efficient) and no
+  rule for what to do when no available worker has the required
+  capability. The orchestrator either guessed or spawned a no-fit
+  worker that wasted a turn before failing.
+- change summary: added two subsections to docs/ORCHESTRATOR.md
+  inside the Worker Management / Model Selection block:
+  - "Capability Matrix": 4-row x 7-column table mapping the four
+    in-use models (claude-opus-4-7, claude-sonnet-4-6,
+    claude-haiku-4-5, gpt-5-codex) against the canonical
+    capabilities (vision, browser, 1M context, native repo, fast,
+    multi-step reasoning, cross-file edits).
+  - "Check-before-spawn rule": 5-step procedure that walks
+    acceptance-criteria tags + evidenceRequired, filters the matrix,
+    and on empty-candidate set escalates to the user with a concrete
+    recommendation rather than spawning. Tie-break: cheapest
+    capable wins.
+- files touched:
+  - docs/ORCHESTRATOR.md
+  - apps/server/src/orchestration/orchestratorCapabilityMatrixDoc.test.ts (new)
+- tests added: 7 doc-pinning cases verifying the subsection
+  headings, all four model rows, all five canonical columns, the
+  screenshot:/evidenceRequired/browser inputs to the gate, the
+  empty-candidate-set escalation, and the cheapest-capable
+  tie-break.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/orchestratorCapabilityMatrixDoc.test.ts
+   Test Files  1 passed (1)
+        Tests  7 passed (7)
+  ```
+  Failing-before verified: stash + rerun produced 7/7 failures.
+- follow-ups:
+  - Encode the matrix as machine-readable data in
+    packages/contracts/src/providerCapabilities.ts so the runtime
+    can validate spawn requests against it instead of relying on
+    the orchestrator prompt alone.
+  - Add a startup health check that warns when a configured model
+    is missing a capability declared by any task in the read model.

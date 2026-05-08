@@ -1360,7 +1360,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestratorRuntime.ts:50-51 (allowedTools, evidenceRequired)
 - evidence: CreateTaskInput supports allowedTools and evidenceRequired but the orchestrator's prompt has no heuristics for matching task requirements to provider/model capabilities. No guidance on when to escalate "no fit" to the user vs guess.
 - proposed_fix: Document a simple capability table (Claude vs Codex, Haiku vs Opus, browser-enabled vs not) in ORCHESTRATOR.md. Add a check-before-spawn rule: if the task needs capability X and no available worker has it, escalate to the user with a recommended provider/model.
-- status: PENDING
+- status: DONE
+- fixed_iter: 110
 
 ### ORC-144
 
