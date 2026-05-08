@@ -3314,3 +3314,52 @@ mention of the prefix convention. Verified failing-before by stashing
   - Add a runtime warning when a single thread spawns 5+ tasks
     inside the same writeScope so over-decomposition surfaces in
     the UI.
+
+## ORC-148 (iter 112): build a decomposition fixture corpus + structural pins
+
+- root cause: Decomposition is fully prompt-driven. There was no
+  `(userRequest -> expectedDecomposition)` corpus anywhere in the
+  repo, no structural rules tested, and no harness wired into CI to
+  detect prompt drift. A future ORCHESTRATOR.md edit could silently
+  change decomposition behavior with no test failure.
+- change summary:
+  - Added `apps/server/src/orchestration/decompositionFixtures.ts`
+    with the `DecompositionFixture` /  `ExpectedTask` /
+    `ExpectedTaskCapability` typed contract and a 5-entry corpus
+    covering: single-task fold, three-task parallel, capability
+    split (vision after edit), approval-gate (design then run), and
+    a 7-step over-decomposition anti-pattern that should fold to 1.
+  - Added `decompositionFixtures.test.ts` with 11 structural pins:
+    canonical-id presence, id uniqueness, non-empty fields, intra-
+    fixture id uniqueness, dependsOn resolvability, cycle freedom
+    (DFS-based), ORC-137 acceptance-criteria tag conformance,
+    Capability Matrix tag conformance, plus three pattern-specific
+    pins (parallel fixture has 3 empty-dep tasks; capability-split
+    fixture has verify->refactor and verify.requiredCapability=
+    "browser"; over-decomposition fixture folds to 1).
+- files touched:
+  - apps/server/src/orchestration/decompositionFixtures.ts (new)
+  - apps/server/src/orchestration/decompositionFixtures.test.ts (new)
+- tests added: 11 structural pins. Failing-before verified two ways:
+  (a) moving the fixture file aside makes the test fail with
+  `Cannot find module './decompositionFixtures'`, proving the test
+  is anchored to the fixture; (b) injecting a synthetic cycle
+  (`design.dependsOn=["run"]`) trips the acyclicity test
+  immediately, proving the cycle detector is not vacuous.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/decompositionFixtures.test.ts
+   Test Files  1 passed (1)
+        Tests  11 passed (11)
+  ```
+- follow-ups:
+  - Build a deterministic harness that drives the orchestrator with
+    a mock provider returning canned tool calls, then iterates over
+    `DECOMPOSITION_FIXTURES` and asserts the live decomposition
+    matches the expected one. Wire into CI as a soft signal first
+    (warn-only) so prompt iteration stays fast, then make hard
+    after the fixture set has stabilized.
+  - Extend the fixture corpus to cover edge cases as they come up
+    in production: ambiguous requests that should trigger the
+    Clarifying Questions loop, mixed Direct-control + decompose
+    requests, and explicit-bypass requests.

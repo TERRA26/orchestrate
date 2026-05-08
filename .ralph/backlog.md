@@ -1407,7 +1407,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.orchestrator.test.ts (one task example),no decomposition contract tests
 - evidence: There is no test that asserts "orchestrator given user request X produces decomposition Y." Decomposition is fully prompt-driven; if the prompt drifts, decompositions silently change. There is no fast-check or property test for "and then" -> N tasks.
 - proposed_fix: Build a small fixture corpus of (request -> expected task structure) examples. Run them through a deterministic harness (mock LLM with canned output, or property-based test on a parser). Wire into CI to catch prompt drift.
-- status: PENDING
+- status: DONE
+- fixed_iter: 112
 
 ### ORC-149
 
