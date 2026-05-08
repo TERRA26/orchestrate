@@ -1774,7 +1774,8 @@ Schema per entry:
 - files: apps/server/src/telemetry/Identify.ts:35-54
 - evidence: ~/.codex/auth.json and ~/.claude.json are read for telemetry user IDs without verifying ownership or restrictive mode. A symlink replacement attack or a race condition could leak more than the user id.
 - proposed_fix: Stat the file first; require owner = process uid and mode <= 0o600. Hash the resolved id before storing. Discard the parsed object immediately; do not retain raw token material.
-- status: PENDING
+- status: DONE
+- fixed_iter: 126
 
 ### ORC-188
 

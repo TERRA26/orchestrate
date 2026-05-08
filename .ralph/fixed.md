@@ -3913,3 +3913,54 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider rotating logs to also redact recent backups on
     sensitive parameter changes, since a token leak can persist in
     logfile.1, logfile.2, etc.
+
+## ORC-187 (iter 126): integrity check for telemetry config-file reads
+
+- root cause: `apps/server/src/telemetry/Identify.ts` read
+  `~/.codex/auth.json` and `~/.claude.json` to derive a hashed
+  telemetry identifier, but never verified that the path resolved to
+  a regular file owned by the current uid with restrictive mode. A
+  symlink replacement attack or a race condition could redirect the
+  read to an attacker-controlled file. The hash step protected the
+  resulting id from raw exposure, but the parsed JSON object kept
+  the entire decoded structure (including refresh tokens / oauth
+  state) in memory longer than needed.
+- change summary:
+  - Added `validateRestrictedConfigFile(absolutePath)` exported from
+    `Identify.ts`. It performs:
+    - `lstatSync` with `isFile()` rejection (catches symlinks,
+      directories, fifos, sockets).
+    - uid match against `process.getuid()` (skipped on platforms
+      where getuid is undefined).
+    - mode permissiveness check `(mode & 0o077) !== 0` (rejects any
+      group or world bit set).
+  - Both `getCodexAccountId` and `getClaudeUserId` now run the
+    validation and surface a `TelemetryFileNotTrustedError`
+    tagged error on rejection. The Effect.result wrapping in
+    `getTelemetryIdentifier` already falls through to the next
+    source on any failure, so untrusted config files now degrade
+    cleanly to the anonymous-id path instead of silently leaking.
+  - The Codex / Claude id fields are now copied into a local
+    variable before return so the rest of the parsed object is
+    eligible for GC immediately.
+- files touched:
+  - apps/server/src/telemetry/Identify.ts
+  - apps/server/src/telemetry/Identify.test.ts (new)
+- tests added: 8 unit tests covering: regular file with 0o600
+  passes, missing file rejected, symlink rejected, directory
+  rejected, mode 0o644 rejected, mode 0o640 rejected, mode 0o400
+  passes, default-ok platform check.
+- evidence of green run:
+  ```
+  bun run test src/telemetry/Identify.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run typecheck   # clean
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Apply the same validator to other config-file reads that
+    inform telemetry or auth (look for `homedir()` joins to
+    auth-bearing files).
+  - Consider running the validator under a sigchild-based audit
+    so a swap between the lstat and stat is also caught (TOCTOU).
