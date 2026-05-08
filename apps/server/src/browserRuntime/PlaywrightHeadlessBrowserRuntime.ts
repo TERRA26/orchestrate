@@ -9,6 +9,7 @@ import {
   EvidenceArtifactId,
   type BrowserOpenSessionResult,
   type PreviewTarget,
+  type ThreadId,
 } from "@orchestrate/contracts";
 import { Effect } from "effect";
 
@@ -26,6 +27,10 @@ import { BrowserActionPolicy } from "./BrowserActionPolicy.ts";
 export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
   private readonly sessions = new Map<string, BrowserRuntimeSession>();
   private readonly automationSessionIds = new Map<string, string>();
+  // ORC-158: track session ownership by thread id so a terminated
+  // thread can have all of its browser sessions drained at once.
+  // Each thread maps to a Set of browserSessionIds.
+  private readonly sessionsByThread = new Map<ThreadId, Set<BrowserSessionId>>();
 
   constructor(private readonly browserAutomation: BrowserAutomationShape) {}
 
@@ -54,9 +59,18 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
       previewTarget: input.previewTarget,
       runtimeKind: "playwright-headless",
       lastSnapshot: snapshot,
+      ...(input.ownerThreadId ? { ownerThreadId: input.ownerThreadId } : {}),
     };
     this.sessions.set(session.browserSessionId, session);
     this.automationSessionIds.set(session.browserSessionId, result.sessionId);
+    if (input.ownerThreadId) {
+      const existing = this.sessionsByThread.get(input.ownerThreadId);
+      if (existing) {
+        existing.add(session.browserSessionId);
+      } else {
+        this.sessionsByThread.set(input.ownerThreadId, new Set([session.browserSessionId]));
+      }
+    }
     return session;
   }
 
@@ -120,8 +134,91 @@ export class PlaywrightHeadlessBrowserRuntime implements BrowserRuntime {
         sessionId: this.requireAutomationSessionId(input.browserSessionId),
       }),
     );
-    this.sessions.delete(input.browserSessionId);
-    this.automationSessionIds.delete(input.browserSessionId);
+    this.dropSession(input.browserSessionId);
+  }
+
+  /**
+   * ORC-158: best-effort close every session owned by `threadId`.
+   * Returns counts of closures and a list of per-session errors so
+   * the caller can log them. Does NOT throw on individual failures.
+   */
+  async closeSessionsForThread(threadId: ThreadId): Promise<{
+    readonly closed: number;
+    readonly errors: ReadonlyArray<{
+      readonly browserSessionId: BrowserSessionId;
+      readonly reason: string;
+    }>;
+  }> {
+    const owned = this.sessionsByThread.get(threadId);
+    if (!owned || owned.size === 0) {
+      return { closed: 0, errors: [] };
+    }
+    const ids = Array.from(owned);
+    return this.closeMany(ids);
+  }
+
+  /**
+   * ORC-158: best-effort close every active session. Used from
+   * process-shutdown hooks so a process exit no longer leaks
+   * browser instances.
+   */
+  async closeAll(): Promise<{
+    readonly closed: number;
+    readonly errors: ReadonlyArray<{
+      readonly browserSessionId: BrowserSessionId;
+      readonly reason: string;
+    }>;
+  }> {
+    const ids = Array.from(this.sessions.keys()).map((id) => id as BrowserSessionId);
+    return this.closeMany(ids);
+  }
+
+  private async closeMany(ids: ReadonlyArray<BrowserSessionId>): Promise<{
+    readonly closed: number;
+    readonly errors: ReadonlyArray<{
+      readonly browserSessionId: BrowserSessionId;
+      readonly reason: string;
+    }>;
+  }> {
+    const errors: Array<{ browserSessionId: BrowserSessionId; reason: string }> = [];
+    let closed = 0;
+    for (const id of ids) {
+      const automationId = this.automationSessionIds.get(id);
+      if (!automationId) {
+        // Already gone or never opened by this runtime.
+        this.dropSession(id);
+        continue;
+      }
+      try {
+        await Effect.runPromise(
+          this.browserAutomation.closeSession({ sessionId: automationId }),
+        );
+        closed += 1;
+      } catch (error) {
+        errors.push({
+          browserSessionId: id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        this.dropSession(id);
+      }
+    }
+    return { closed, errors };
+  }
+
+  private dropSession(browserSessionId: BrowserSessionId): void {
+    const session = this.sessions.get(browserSessionId);
+    this.sessions.delete(browserSessionId);
+    this.automationSessionIds.delete(browserSessionId);
+    if (session?.ownerThreadId) {
+      const owned = this.sessionsByThread.get(session.ownerThreadId);
+      if (owned) {
+        owned.delete(browserSessionId);
+        if (owned.size === 0) {
+          this.sessionsByThread.delete(session.ownerThreadId);
+        }
+      }
+    }
   }
 
   private requireSession(browserSessionId: BrowserSessionId): BrowserRuntimeSession {

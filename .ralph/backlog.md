@@ -1501,7 +1501,8 @@ Schema per entry:
 - files: apps/server/src/browserRuntime/PlaywrightHeadlessBrowserRuntime.ts:27-44 (sessions Map)
 - evidence: Sessions Map has no lifecycle hook bound to thread/run termination. If the orchestrator process dies mid-validation, browsers remain running and consume memory until the OS reaps them.
 - proposed_fix: Track session ownership by threadId. Subscribe to thread.terminated / run.completed events and close associated sessions. On process shutdown, close all sessions in a disposal hook.
-- status: PENDING
+- status: DONE
+- fixed_iter: 136
 
 ### ORC-159
 

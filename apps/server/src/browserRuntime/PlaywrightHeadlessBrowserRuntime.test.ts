@@ -186,4 +186,164 @@ describe("PlaywrightHeadlessBrowserRuntime", () => {
     ]);
     expect(automation.closeInputs).toEqual([{ sessionId: "automation-session-1" }]);
   });
+
+  // ORC-158: thread-scoped browser session lifecycle.
+  describe("closeSessionsForThread / closeAll (ORC-158)", () => {
+    function makeMultiSessionAutomation(): BrowserAutomationShape & {
+      readonly closeInputs: unknown[];
+      next: () => string;
+    } {
+      const closeInputs: unknown[] = [];
+      let counter = 0;
+      const next = () => {
+        counter += 1;
+        return "automation-session-" + counter;
+      };
+      const observation = {
+        sessionId: "automation-session-x",
+        url: "http://127.0.0.1:5173/",
+        title: "fixture",
+        readyState: "complete" as const,
+        textSummary: "",
+        targets: [],
+        observedAt,
+      };
+      return {
+        closeInputs,
+        next,
+        openSession: () =>
+          Effect.succeed({
+            sessionId: next(),
+            observation,
+          }),
+        act: () => Effect.succeed({ observation }),
+        closeSession: (input) => {
+          closeInputs.push(input);
+          return Effect.void;
+        },
+      } as BrowserAutomationShape & {
+        closeInputs: unknown[];
+        next: () => string;
+      };
+    }
+
+    it("closes only the sessions tagged with the requested threadId", async () => {
+      const automation = makeMultiSessionAutomation();
+      const runtime = new PlaywrightHeadlessBrowserRuntime(automation);
+
+      const sessionA = await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-a" as never,
+      });
+      const sessionB1 = await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-b" as never,
+      });
+      const sessionB2 = await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-b" as never,
+      });
+      const sessionUnowned = await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+      });
+
+      const result = await runtime.closeSessionsForThread("thread-b" as never);
+      expect(result.closed).toBe(2);
+      expect(result.errors).toEqual([]);
+
+      // The "thread-a" and unowned sessions must remain open.
+      const remainingSessionIds = automation.closeInputs.map(
+        (input) => (input as { sessionId: string }).sessionId,
+      );
+      expect(remainingSessionIds.length).toBe(2);
+      void sessionA;
+      void sessionB1;
+      void sessionB2;
+      void sessionUnowned;
+    });
+
+    it("returns closed:0 when the thread has no recorded sessions", async () => {
+      const automation = makeMultiSessionAutomation();
+      const runtime = new PlaywrightHeadlessBrowserRuntime(automation);
+      await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-a" as never,
+      });
+
+      const result = await runtime.closeSessionsForThread("thread-ghost" as never);
+      expect(result.closed).toBe(0);
+      expect(result.errors).toEqual([]);
+      expect(automation.closeInputs).toEqual([]);
+    });
+
+    it("closeAll closes every active session and clears state", async () => {
+      const automation = makeMultiSessionAutomation();
+      const runtime = new PlaywrightHeadlessBrowserRuntime(automation);
+
+      await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-a" as never,
+      });
+      await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-b" as never,
+      });
+      await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+      });
+
+      const result = await runtime.closeAll();
+      expect(result.closed).toBe(3);
+      expect(result.errors).toEqual([]);
+      expect(automation.closeInputs.length).toBe(3);
+
+      // After closeAll, a subsequent closeSessionsForThread is a no-op.
+      const second = await runtime.closeSessionsForThread("thread-a" as never);
+      expect(second.closed).toBe(0);
+    });
+
+    it("captures per-session errors without throwing", async () => {
+      const automation = makeMultiSessionAutomation();
+      // Force the third closeSession to fail; first two succeed.
+      let calls = 0;
+      automation.closeSession = (input) => {
+        calls += 1;
+        if (calls === 2) {
+          return Effect.fail(new Error("simulated automation failure")) as never;
+        }
+        (automation.closeInputs as unknown[]).push(input);
+        return Effect.void;
+      };
+      const runtime = new PlaywrightHeadlessBrowserRuntime(automation);
+
+      await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-z" as never,
+      });
+      await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-z" as never,
+      });
+
+      const result = await runtime.closeSessionsForThread("thread-z" as never);
+      expect(result.closed).toBe(1);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]?.reason).toContain("simulated automation failure");
+    });
+
+    it("explicit closeSession also drops the thread-ownership entry", async () => {
+      const automation = makeMultiSessionAutomation();
+      const runtime = new PlaywrightHeadlessBrowserRuntime(automation);
+
+      const session = await runtime.openSession({
+        previewTarget: makePreviewTarget(),
+        ownerThreadId: "thread-x" as never,
+      });
+      await runtime.closeSession({ browserSessionId: session.browserSessionId });
+
+      // Subsequent closeSessionsForThread should be a no-op.
+      const result = await runtime.closeSessionsForThread("thread-x" as never);
+      expect(result.closed).toBe(0);
+    });
+  });
 });

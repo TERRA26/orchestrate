@@ -4228,3 +4228,59 @@ mention of the prefix convention. Verified failing-before by stashing
   - Wire the same guard into the Claude provider tool-call path
     (apps/server/src/provider/Layers/ClaudeProvider.ts) once the
     Claude side has an analogous boundary.
+
+## ORC-158 (iter 136): thread-scoped browser session lifecycle hooks
+
+- root cause: `PlaywrightHeadlessBrowserRuntime.sessions` was a flat
+  Map with no ownership tracking. If the orchestrator process died
+  mid-validation or a thread was terminated, the runtime had no way
+  to find and drain the affected sessions; browser instances stayed
+  alive consuming memory until the OS reaped them.
+- change summary:
+  - Extended `BrowserRuntimeOpenSessionInput` and
+    `BrowserRuntimeSession` in
+    `apps/server/src/browserRuntime/BrowserRuntime.ts` with an
+    optional `ownerThreadId` field. Existing callers that pass no
+    ownerThreadId still work; the tag is purely additive.
+  - Added two optional methods to the `BrowserRuntime` interface:
+    `closeSessionsForThread(threadId)` and `closeAll()`. Both
+    return `{ closed: number, errors: ReadonlyArray<{ ... }> }`
+    so callers can log per-session failures without throwing.
+  - Implemented both in
+    `apps/server/src/browserRuntime/PlaywrightHeadlessBrowserRuntime.ts`.
+    Internal `sessionsByThread: Map<ThreadId, Set<BrowserSessionId>>`
+    indexes ownership. The shared `closeMany` helper does the
+    best-effort drain and falls back to dropping local state when
+    automation already lost the underlying session id.
+  - Updated `dropSession` to also clean up the thread-ownership
+    entry so explicit `closeSession` calls keep the index
+    consistent.
+- files touched:
+  - apps/server/src/browserRuntime/BrowserRuntime.ts
+  - apps/server/src/browserRuntime/PlaywrightHeadlessBrowserRuntime.ts
+  - apps/server/src/browserRuntime/PlaywrightHeadlessBrowserRuntime.test.ts
+- tests added: 5 new unit tests under "closeSessionsForThread /
+  closeAll (ORC-158)":
+  - closes only sessions tagged with the requested threadId
+  - returns closed:0 when the thread has no sessions
+  - closeAll closes every active session and clears state
+  - captures per-session errors without throwing
+  - explicit closeSession drops the thread-ownership index
+- evidence of green run:
+  ```
+  bun run test src/browserRuntime/PlaywrightHeadlessBrowserRuntime.test.ts
+   Test Files  1 passed (1)
+        Tests  9 passed (9)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Wire `closeSessionsForThread` into the orchestration reactor on
+    `thread.terminated` / `orchestrator.run.completed` events so the
+    new hook is actually called in production. Currently only the
+    runtime API surface is in place.
+  - Add a process-level shutdown hook that calls `closeAll()`
+    inside `Effect.addFinalizer` so SIGTERM no longer leaks
+    browsers.
+  - Apply the same ownership tracking to the Electron-visible
+    runtime (`ElectronVisibleBrowserRuntime` if/when implemented).
