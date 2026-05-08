@@ -1474,7 +1474,9 @@ Schema per entry:
 - files: apps/server/src/browser/Layers/BrowserAutomation.ts:218 (findAttachedPage)
 - evidence: Click and navigate actions only target the primary page. window.open() popups and target="\_blank" links open new pages but the screenshot/ARIA still reflect the original page. The orchestrator misses the actual UI it should be evaluating.
 - proposed_fix: Listen for `context.on("page", ...)` and add a "switch to popup" action. Optionally auto-switch when a click triggers a new page within a debounce window. Capture observations from the popup as well.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 137
+- deferred_reason: Multi-component scope: (1) Playwright `context.on("page", ...)` subscription + popup tracking in BrowserSessionState, (2) new BrowserAction kind `switchToPage` in @orchestrate/contracts (schema bump), (3) runtime act() switch-case for the new kind, (4) optional click-then-popup auto-switch with debounce, (5) tests across all four. Single-iteration scope risks shipping a half-wired feature where the action exists but the page-event subscription isn't tracking. Plan recorded as ORC-155a..e in blockers.md.
 
 ### ORC-156
 

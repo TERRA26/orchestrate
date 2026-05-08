@@ -178,3 +178,32 @@ The emit boundaries are spread across the provider adapters (Codex, Claude), the
 
 Track as ORC-201a (move helper), ORC-201b (trace), ORC-201c..(impl per issue).
 
+
+## ORC-155 (deferred at iter 137): popup window tracking + switchToPage action
+
+### What was attempted
+
+Surveyed `apps/server/src/browser/Layers/BrowserAutomation.ts`. Confirmed the only page lookup is `findAttachedPage` at line 225 which uses `browser.contexts().flatMap((context) => context.pages())` to enumerate but never subscribes to `context.on("page", handler)` events. When window.open or target=_blank fires, the new page joins the context's page list but the runtime keeps acting on the original page.
+
+### Why a single-iteration fix is risky
+
+Five distinct components, each non-trivial:
+
+1. **Page-event subscription**: persistent `context.on("page", handler)` lifecycle inside the BrowserSessionState construction. Needs to survive Playwright's frame-detached errors and align with the session-reaper.
+2. **Popup id allocation**: stable `BrowserPageId` per popup (already exists in @orchestrate/contracts) plus a session-local index so the orchestrator can name a popup later.
+3. **BrowserAction union extension**: add `{ kind: "switchToPage", targetPageId }` to the schema in `packages/contracts/src/browser.ts` and the runtime act() handler. Schema bump means the contracts test suite needs the new shape pinned.
+4. **Auto-switch heuristic** (optional): debounce window after a click that produces a new page event, so a worker can do `clickAt + observe` without an explicit switch. Decide whether the active page tracker is replaced or stacked.
+5. **Tests**: at least one for each of (1)-(4); ideally an integration test with a real Playwright headless context that exercises window.open.
+
+That's a 5-day project, not a 1-iteration fix.
+
+### What would unblock it
+
+A 5-step plan tracked as ORC-155a..e:
+
+- **155a**: schema bump + contract test for the new `switchToPage` action kind.
+- **155b**: page-event subscription in BrowserSessionState; track popups by Playwright Page reference + assigned BrowserPageId.
+- **155c**: runtime act() handler for switchToPage that swaps the "active page" used by subsequent actions.
+- **155d**: per-session "list pages" surface (or include pages in the observation envelope) so the orchestrator can name a popup.
+- **155e**: optional auto-switch heuristic + tests + docs.
+
