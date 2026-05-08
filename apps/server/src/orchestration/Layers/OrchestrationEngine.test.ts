@@ -805,4 +805,169 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  // ORC-180: a network retry that includes the same commandId must NOT
+  // re-apply the command. The receipt repository keys by commandId; the
+  // engine's processEnvelope flow consults it before dispatch and returns
+  // the cached `{ sequence }` when the receipt is "accepted". This test
+  // pins both the dedup return path and that no extra event is appended
+  // on the retry.
+  it("dedupes a re-dispatched command with the same commandId (ORC-180)", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const commandId = CommandId.makeUnsafe("cmd-orc180-dedup-create");
+
+    const first = await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId,
+        projectId: asProjectId("project-orc180"),
+        title: "ORC-180 dedup",
+        workspaceRoot: "/tmp/project-orc180",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    const eventsAfterFirst = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((c) => Array.from(c))),
+    );
+    const projectsAfterFirst = (await system.run(engine.getReadModel())).projects;
+    expect(projectsAfterFirst).toHaveLength(1);
+
+    // Replay the same commandId. The engine MUST return the same sequence
+    // and MUST NOT append a new event.
+    const second = await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId,
+        projectId: asProjectId("project-orc180"),
+        title: "ORC-180 dedup",
+        workspaceRoot: "/tmp/project-orc180",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    expect(second.sequence).toBe(first.sequence);
+
+    const eventsAfterSecond = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((c) => Array.from(c))),
+    );
+    expect(eventsAfterSecond.length).toBe(eventsAfterFirst.length);
+
+    const projectsAfterSecond = (await system.run(engine.getReadModel())).projects;
+    expect(projectsAfterSecond).toHaveLength(1);
+
+    await system.dispose();
+  });
+
+  // ORC-180: a retry of a previously-rejected commandId must surface the
+  // cached rejection rather than re-running the decider. This protects
+  // against a client that retries after network drop and gets a fresh
+  // rejection that no longer makes sense (state has moved on).
+  it("returns OrchestrationCommandPreviouslyRejectedError on retry of a rejected commandId (ORC-180)", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const commandId = CommandId.makeUnsafe("cmd-orc180-rejected-retry");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-orc180-rejected-base"),
+        projectId: asProjectId("project-orc180-r"),
+        title: "Base",
+        workspaceRoot: "/tmp/project-orc180-r",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-orc180-rejected-thread"),
+        threadId: ThreadId.makeUnsafe("thread-orc180-r"),
+        projectId: asProjectId("project-orc180-r"),
+        title: "Existing",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    // First attempt: violate the unique-thread invariant under our
+    // synthetic commandId. The engine writes a "rejected" receipt for
+    // OrchestrationCommandInvariantError.
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId,
+          threadId: ThreadId.makeUnsafe("thread-orc180-r"),
+          projectId: asProjectId("project-orc180-r"),
+          title: "Conflict",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow();
+
+    // Retry: should hit the receipt repository's "rejected" status and
+    // surface OrchestrationCommandPreviouslyRejectedError instead of
+    // re-running the decider.
+    let secondError: unknown = null;
+    try {
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId,
+          threadId: ThreadId.makeUnsafe("thread-orc180-r"),
+          projectId: asProjectId("project-orc180-r"),
+          title: "Conflict-retry",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+    } catch (error) {
+      secondError = error;
+    }
+
+    expect(secondError).not.toBeNull();
+    expect(String(secondError)).toMatch(
+      /OrchestrationCommandPreviouslyRejectedError|previously rejected/i,
+    );
+
+    await system.dispose();
+  });
 });

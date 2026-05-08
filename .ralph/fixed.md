@@ -3710,3 +3710,57 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider also rendering the shell briefly when `threadExists`
     is false but the snapshot is mid-flight, instead of immediately
     redirecting home.
+
+## ORC-180 (iter 121): pin command-receipt dedup contract with regression tests
+
+- root cause: The bug-as-filed described "dispatchCommand takes a
+  commandId but the decider does not check if it has been processed
+  before. A network retry that includes the same commandId applies
+  the command twice, creating duplicate state." Investigation showed
+  the dedup IS implemented in
+  `apps/server/src/orchestration/Layers/OrchestrationEngine.ts:124-143`
+  via the `OrchestrationCommandReceiptRepository`: the engine looks
+  up the receipt before dispatch and returns the cached
+  `{ sequence }` for "accepted" or surfaces
+  `OrchestrationCommandPreviouslyRejectedError` for "rejected".
+  The `command_id TEXT PRIMARY KEY` schema in migration 002 plus the
+  `ON CONFLICT (command_id) DO UPDATE` upsert close the persistence
+  loop. The actual gap was that **no test pinned this contract**, so
+  a future engine refactor could silently regress dedup.
+- change summary: Added two regression tests to
+  `OrchestrationEngine.test.ts`:
+  - `dedupes a re-dispatched command with the same commandId`:
+    dispatches the same `project.create` twice. Asserts both calls
+    return the same `{ sequence }`, the event log length does NOT
+    grow, and the read model still has exactly one project.
+  - `returns OrchestrationCommandPreviouslyRejectedError on retry
+    of a rejected commandId`: provokes an invariant rejection on
+    first dispatch (creating a duplicate thread), then retries the
+    SAME commandId. Asserts the second attempt surfaces
+    `OrchestrationCommandPreviouslyRejectedError` rather than
+    re-running the decider.
+- files touched:
+  - apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts
+- tests added: 2 regression tests; total now 12 passed in the file.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/Layers/OrchestrationEngine.test.ts
+   Test Files  1 passed (1)
+        Tests  12 passed (12)
+  bun run typecheck   # clean
+  ```
+  Failing-before VERIFIED by temporarily commenting out the dedup
+  short-circuit in OrchestrationEngine.ts:125-143, re-running the
+  test (2/2 new cases failed), then reverting. The new cases are
+  load-bearing.
+- follow-ups:
+  - The dispatch-failure path at OrchestrationEngine.ts:217-230
+    only writes a "rejected" receipt for
+    `OrchestrationCommandInvariantError`. Other rejection causes
+    (`OrchestrationProjectorDecodeError`,
+    `OrchestrationListenerCallbackError`) leave no receipt, so a
+    retry re-dispatches. Extend the rejection-receipt write to
+    cover those tagged errors as well.
+  - Document the dedup contract in
+    docs/architecture/orchestration-engine.md so future contributors
+    understand it is a load-bearing invariant, not a coincidence.

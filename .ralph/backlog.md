@@ -1705,7 +1705,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1127-1131 (dispatchCommand) + decider.ts
 - evidence: dispatchCommand takes a commandId but the decider does not check if it has been processed before. A network retry that includes the same commandId applies the command twice, creating duplicate state.
 - proposed_fix: Maintain a recent-commands cache (LRU, ~5 min window) keyed by commandId. On hit, return the cached result instead of dispatching again. Persist a watermark so it survives restarts.
-- status: PENDING
+- status: DONE
+- fixed_iter: 121
 
 ### ORC-181
 
