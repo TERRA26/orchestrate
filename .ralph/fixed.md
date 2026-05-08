@@ -4960,3 +4960,45 @@ mention of the prefix convention. Verified failing-before by stashing
     (currently only the single-thread route uses it).
   - Add a "tab title" announcement story for split-pane mode so
     each pane's focused thread shows up.
+
+## ORC-251 (iter 158): aria-live announcement for worker status row
+
+- root cause: `OrchThinkRow` in `WorkEntryRow.tsx` rendered the
+  worker-status label ("Waiting on agent" / "Agent ready" /
+  "Reviewing agent work" / "Review complete") as plain text
+  inside an unannouncing `<div>`. Screen-reader users missed
+  the transition to "ready-for-review" or task completion
+  because the DOM update produced no auditory cue.
+- change summary:
+  - Added `role="status"`, `aria-live="polite"`,
+    `aria-atomic="true"` to the OrchThinkRow root `<div>`. The
+    polite live region announces the entire label whenever its
+    text content changes; aria-atomic ensures the full string
+    is read out (Waiting on agent -> Agent ready) instead of
+    just the diff ("ready").
+  - Marked the loading spinner svg and the success check glyph
+    (`✓`) with `aria-hidden="true"` so they do not pollute the
+    announced text.
+  - Exported OrchThinkRow so the regression test can pin the
+    contract without standing up the full WorkEntryRow stack.
+- files touched:
+  - apps/web/src/components/chat/WorkEntryRow.tsx
+  - apps/web/src/components/chat/OrchThinkRow.aria.test.tsx (new)
+- tests added: 5 jsdom tests covering: role=status with
+  aria-live=polite + aria-atomic=true, label inside the region,
+  spinner svg hidden, check glyph hidden, label transition
+  (Waiting -> Ready) rerender pattern.
+- evidence of green run:
+  ```
+  bun run test src/components/chat/OrchThinkRow.aria.test.tsx
+   Test Files  1 passed (1)
+        Tests  5 passed (5)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Audit other status-bearing rows (BrowserPanel "Working on
+    capture", DiffPanel "Loading diff viewer") for the same
+    pattern; they likely also need role=status.
+  - Consider a higher-level `<StatusBadge>` primitive so future
+    additions inherit the aria-live behavior automatically.

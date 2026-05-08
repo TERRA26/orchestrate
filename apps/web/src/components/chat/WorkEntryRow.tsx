@@ -945,7 +945,7 @@ function OrchAcceptCard({
   );
 }
 
-function OrchThinkRow({
+export function OrchThinkRow({
   label,
   isLoading,
   detail,
@@ -958,7 +958,19 @@ function OrchThinkRow({
   startedAt?: string;
 }) {
   return (
-    <div className={cn("orch-think-row", isLoading ? "orch-think-live" : "")}>
+    // ORC-251: announce worker status transitions (Waiting on agent
+    // -> Agent ready, Reviewing agent work -> Review complete, etc.)
+    // to assistive tech. role=status + aria-live="polite" announces
+    // when the text inside the region changes; aria-atomic="true"
+    // ensures the full label is read out instead of just the diff.
+    // The spinner svg uses aria-hidden so it does not pollute the
+    // announcement.
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      className={cn("orch-think-row", isLoading ? "orch-think-live" : "")}
+    >
       {isLoading ? (
         <span className="orch-think-spin">
           <svg
@@ -976,7 +988,9 @@ function OrchThinkRow({
           </svg>
         </span>
       ) : (
-        <span className="orch-think-check">✓</span>
+        <span className="orch-think-check" aria-hidden="true">
+          ✓
+        </span>
       )}
       <span>{label}</span>
       {detail ? <span className="orch-think-dur">{detail}</span> : null}

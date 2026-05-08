@@ -2399,6 +2399,8 @@ Schema per entry:
 - files: apps/web/src/components/chat/WorkEntryRow.tsx (worker status label)
 - evidence: WorkEntryRow renders "Waiting on agent" / "Agent ready" as static text. State changes (worker becomes ready-for-review, task completes) are not announced via aria-live; screen reader users miss the transition.
 - proposed_fix: Wrap the worker-status label in `<span role="status" aria-live="polite" aria-atomic="true">`. Trigger an announcement only on actual state change, not on every re-render.
+- status: DONE
+- fixed_iter: 158
 - status: PENDING
 
 ### ORC-252
