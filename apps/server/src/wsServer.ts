@@ -731,6 +731,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         "ws client buffered-amount over threshold; skipping push to that client",
       );
     },
+    // ORC-247: escalate after the grace window. close(1008) signals
+    // "policy violation" with our slow_consumer reason; terminate()
+    // afterwards is a belt-and-braces guarantee that the socket is
+    // released even if the peer's TCP receive window is closed and
+    // the close frame would otherwise hang.
+    disconnectSlowClient: (client, info) => {
+      logger.warn(
+        {
+          event: "wsserver.pushbus.slow-client-disconnect",
+          reason: info.reason,
+          bufferedAmount: info.bufferedAmount,
+          durationMs: info.durationMs,
+        },
+        "ws client over backpressure threshold beyond grace window; terminating",
+      );
+      try {
+        client.close(1008, info.reason);
+      } catch {
+        // close() can throw if the socket is mid-close; fall through.
+      }
+      try {
+        client.terminate();
+      } catch {
+        // Already destroyed; nothing to do.
+      }
+    },
   });
   setDesktopBrowserBridgePublisher((clientId, channel, data) =>
     Effect.gen(function* () {

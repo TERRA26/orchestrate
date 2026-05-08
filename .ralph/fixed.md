@@ -5211,3 +5211,63 @@ mention of the prefix convention. Verified failing-before by stashing
     frames still flow through with no main-thread cost.
   - Add a metric counter for dropped frames so an operator can
     detect when the cap is being hit.
+
+## ORC-247: pushBus per-client backpressure escalates to disconnect
+
+- root cause: ORC-055 introduced the per-client skip-on-overflow path
+  but a permanently stuck client whose `bufferedAmount` never drained
+  remained connected forever. Each subsequent push merely incremented
+  the skip log; the connection slot stayed live, the desktop bridge
+  mapping stayed bound, and the only resolution path was restarting
+  the server. ORC-247 closes that loop: once a client has been
+  continuously over the threshold for a grace window, the bus invokes
+  a `disconnectSlowClient` hook so wsServer can close+terminate the
+  socket and free the per-client state.
+- change summary:
+  - Extended `makeServerPushBus` with three new options: `slowClientGraceMs`
+    (default 30 000 ms), `disconnectSlowClient` callback, and an
+    injectable `now()` clock for deterministic testing.
+  - Added a `WeakMap<WebSocket, number>` that records the timestamp at
+    which each socket first crossed the threshold. WeakMap so an evicted
+    socket cannot keep the entry pinned in memory.
+  - First over-threshold detection arms the timer; subsequent detections
+    compute the elapsed time and, once `>= slowClientGraceMs`, invoke
+    `disconnectSlowClient({ reason: "slow_consumer", bufferedAmount,
+    durationMs })` and clear the entry. A push under the threshold
+    clears any pending arm so the timer restarts on the next stall
+    rather than carrying state forward.
+  - In `wsServer.ts`, wired the disconnect hook to log a structured
+    `wsserver.pushbus.slow-client-disconnect` warn event then call
+    `client.close(1008, "slow_consumer")` followed by
+    `client.terminate()`. Both are wrapped in try/catch because a
+    socket mid-close can throw; we want a belt-and-braces guarantee
+    that the slot is freed even if the peer's TCP receive window is
+    closed and the close frame would otherwise hang.
+- files touched:
+  - apps/server/src/wsServer/pushBus.ts
+  - apps/server/src/wsServer/pushBus.test.ts
+  - apps/server/src/wsServer.ts
+- tests added:
+  - "ORC-247 escalates to disconnect after the grace window": a slow
+    client over threshold receives no disconnect on the first push;
+    after advancing the injected clock past the grace window, the next
+    push triggers the disconnect callback with `reason="slow_consumer"`
+    and the recorded `bufferedAmount` and `durationMs`.
+  - "ORC-247 resets the slow timer when bufferedAmount recovers":
+    proves that draining the buffer between the first trip and the
+    grace expiry resets the arm so the next stall starts a fresh
+    grace window rather than inheriting the previous one.
+- evidence of green run:
+  ```
+  bun run vitest run src/wsServer/pushBus.test.ts
+   Test Files  1 passed (1)
+        Tests  6 passed (6)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Wire a Prometheus counter for the slow-client-disconnect event so
+    SREs can alert on a sustained rate (the structured log is enough
+    for now; metrics make trend visualization easier).
+  - Consider exposing `slowClientGraceMs` via env var so an operator
+    can tune the grace window without a deploy.

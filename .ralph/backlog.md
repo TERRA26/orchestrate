@@ -2366,7 +2366,7 @@ Schema per entry:
 - files: apps/server/src/wsServer/pushBus.ts:62-66 (client.send fanout)
 - evidence: pushBus calls client.send without inspecting the return value or listening for the `drain` event. ws buffers writes in memory when the kernel cannot accept more; a slow client makes the server's heap grow until OOM. Pass 1's ORC-055 flagged the architectural concern; this finding pins the concrete code site.
 - proposed_fix: Track per-client buffered bytes via `bufferedAmount`. When over a threshold (e.g. 10 MB), pause sending to that client and listen for `drain`. If still over after a grace period, disconnect with a `slow_consumer` reason.
-- status: PENDING
+- status: DONE
 
 ### ORC-248
 

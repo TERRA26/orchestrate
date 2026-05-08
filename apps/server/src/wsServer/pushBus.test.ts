@@ -221,4 +221,117 @@ describe("makeServerPushBus", () => {
       }),
     ),
   );
+
+  // ORC-247: skip-only is not enough; a stuck client whose buffer never
+  // drains keeps occupying a connection slot, leaks state per-client, and
+  // bypasses fair backoff. Once a client has been over-threshold for a
+  // grace window, the bus must escalate by invoking disconnectSlowClient.
+  it.live("ORC-247 escalates to disconnect after the grace window", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const slow = new MockWebSocket();
+        slow.bufferedAmount = 50_000_000;
+
+        let currentTime = 1_700_000_000_000;
+        const disconnects: Array<{
+          readonly reason: string;
+          readonly bufferedAmount: number;
+          readonly durationMs: number;
+        }> = [];
+
+        const clients = yield* Ref.make(new Set<WebSocket>([slow as unknown as WebSocket]));
+        const pushBus = yield* makeServerPushBus({
+          clients,
+          logOutgoingPush: () => {},
+          maxBufferedBytesPerClient: 8_000_000,
+          slowClientGraceMs: 5_000,
+          now: () => currentTime,
+          onSlowClient: () => {},
+          disconnectSlowClient: (_client, info) =>
+            disconnects.push({
+              reason: info.reason,
+              bufferedAmount: info.bufferedAmount,
+              durationMs: info.durationMs,
+            }),
+        });
+
+        // First publish: client is over threshold but the timer is just
+        // starting. Disconnect must NOT fire on the very first detection.
+        yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: [],
+          providers: [],
+        });
+        // Allow the worker fork to drain the publish.
+        yield* Effect.sleep(10);
+        expect(disconnects.length).toBe(0);
+
+        // Advance the clock past the grace window. Next publish should
+        // trigger the disconnect with reason "slow_consumer".
+        currentTime += 6_000;
+        yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: [],
+          providers: [],
+        });
+        yield* Effect.sleep(10);
+
+        expect(disconnects.length).toBe(1);
+        expect(disconnects[0]!.reason).toBe("slow_consumer");
+        expect(disconnects[0]!.bufferedAmount).toBe(50_000_000);
+        expect(disconnects[0]!.durationMs).toBeGreaterThanOrEqual(5_000);
+      }),
+    ),
+  );
+
+  it.live("ORC-247 resets the slow timer when bufferedAmount recovers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const flaky = new MockWebSocket();
+        flaky.bufferedAmount = 50_000_000;
+
+        let currentTime = 1_700_000_000_000;
+        const disconnects: number[] = [];
+
+        const clients = yield* Ref.make(new Set<WebSocket>([flaky as unknown as WebSocket]));
+        const pushBus = yield* makeServerPushBus({
+          clients,
+          logOutgoingPush: () => {},
+          maxBufferedBytesPerClient: 8_000_000,
+          slowClientGraceMs: 5_000,
+          now: () => currentTime,
+          onSlowClient: () => {},
+          disconnectSlowClient: () => disconnects.push(currentTime),
+        });
+
+        // Trip threshold.
+        yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: [],
+          providers: [],
+        });
+        yield* Effect.sleep(10);
+
+        // Client drains before grace expires.
+        currentTime += 1_000;
+        flaky.bufferedAmount = 0;
+        yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: [],
+          providers: [],
+        });
+        yield* Effect.sleep(10);
+        expect(flaky.sent.length).toBeGreaterThan(0);
+
+        // Buffer fills again; the timer must restart, not carry forward.
+        flaky.bufferedAmount = 50_000_000;
+        currentTime += 1_000;
+        yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: [],
+          providers: [],
+        });
+        yield* Effect.sleep(10);
+
+        // Even though >5_000 ms passed since FIRST trip, the timer was
+        // reset by the recovery, so disconnect must NOT have fired.
+        expect(disconnects.length).toBe(0);
+      }),
+    ),
+  );
 });

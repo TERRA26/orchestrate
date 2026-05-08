@@ -43,6 +43,12 @@ export interface PushBusSlowClientInfo {
   readonly maxBufferedBytesPerClient: number;
 }
 
+export interface PushBusSlowClientDisconnectInfo {
+  readonly reason: string;
+  readonly bufferedAmount: number;
+  readonly durationMs: number;
+}
+
 // ORC-045: cap the in-memory push queue. With Queue.unbounded a slow client
 // would balloon the queue until the server OOMed. Queue.dropping rejects
 // new offers when full, so the publisher learns immediately and the worker
@@ -58,6 +64,15 @@ const DEFAULT_PUSH_QUEUE_DEPTH = 10_000;
 // threshold so they cannot starve healthy clients.
 const DEFAULT_MAX_BUFFERED_BYTES_PER_CLIENT = 8 * 1024 * 1024;
 
+// ORC-247: skip-only is necessary but not sufficient. A client whose
+// buffer never drains keeps occupying a slot, leaks per-client state
+// (subscriptions, desktop bridge mappings, watchers), and benefits
+// indefinitely from the bus's "fairness for healthy clients." After
+// this grace window of continuous over-threshold detections, escalate
+// by disconnecting the offending client. 30 s is long enough to ride
+// out a transient network stall and short enough to free state.
+const DEFAULT_SLOW_CLIENT_GRACE_MS = 30_000;
+
 export const makeServerPushBus = (input: {
   readonly clients: Ref.Ref<Set<WebSocket>>;
   readonly logOutgoingPush: (push: WsPushEnvelopeBase, recipients: number) => void;
@@ -65,12 +80,24 @@ export const makeServerPushBus = (input: {
   readonly onOverflow?: (info: PushBusOverflowInfo) => void;
   readonly maxBufferedBytesPerClient?: number;
   readonly onSlowClient?: (info: PushBusSlowClientInfo) => void;
+  readonly slowClientGraceMs?: number;
+  readonly disconnectSlowClient?: (
+    client: WebSocket,
+    info: PushBusSlowClientDisconnectInfo,
+  ) => void;
+  readonly now?: () => number;
 }): Effect.Effect<ServerPushBus, never, Scope.Scope> =>
   Effect.gen(function* () {
     const nextSequence = yield* Ref.make(0);
     const maxQueueDepth = input.maxQueueDepth ?? DEFAULT_PUSH_QUEUE_DEPTH;
     const maxBufferedBytesPerClient =
       input.maxBufferedBytesPerClient ?? DEFAULT_MAX_BUFFERED_BYTES_PER_CLIENT;
+    const slowClientGraceMs = input.slowClientGraceMs ?? DEFAULT_SLOW_CLIENT_GRACE_MS;
+    const now = input.now ?? Date.now;
+    // WeakMap so an evicted/closed socket doesn't keep the entry alive.
+    // Key: WebSocket; value: epoch millis at which the client first went
+    // over threshold and stayed there.
+    const slowClientFirstSeenAt = new WeakMap<WebSocket, number>();
     const queue = yield* Queue.dropping<PushJob>(maxQueueDepth);
     const encodePush = Schema.encodeUnknownEffect(Schema.fromJsonString(WsPush));
 
@@ -103,8 +130,17 @@ export const makeServerPushBus = (input: {
             // once it crosses the threshold so a single stuck consumer
             // cannot OOM the server by accumulating in its private
             // send buffer.
+            //
+            // ORC-247: track how long the client has been over threshold
+            // and escalate to a disconnect once the grace window elapses
+            // so a permanently stuck client cannot retain state forever.
             const bufferedAmount = client.bufferedAmount ?? 0;
             if (bufferedAmount >= maxBufferedBytesPerClient) {
+              const ts = now();
+              const firstSeenAt = slowClientFirstSeenAt.get(client);
+              if (firstSeenAt === undefined) {
+                slowClientFirstSeenAt.set(client, ts);
+              }
               if (input.onSlowClient) {
                 input.onSlowClient({
                   channel: job.channel,
@@ -112,7 +148,22 @@ export const makeServerPushBus = (input: {
                   maxBufferedBytesPerClient,
                 });
               }
+              const overThresholdSince = firstSeenAt ?? ts;
+              const overThresholdFor = ts - overThresholdSince;
+              if (overThresholdFor >= slowClientGraceMs && input.disconnectSlowClient) {
+                slowClientFirstSeenAt.delete(client);
+                input.disconnectSlowClient(client, {
+                  reason: "slow_consumer",
+                  bufferedAmount,
+                  durationMs: overThresholdFor,
+                });
+              }
               continue;
+            }
+            // Recovered: clear any pending escalation so the next stall
+            // restarts the grace window from scratch.
+            if (slowClientFirstSeenAt.has(client)) {
+              slowClientFirstSeenAt.delete(client);
             }
             client.send(message);
             recipientCount += 1;
