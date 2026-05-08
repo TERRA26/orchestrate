@@ -4660,3 +4660,58 @@ mention of the prefix convention. Verified failing-before by stashing
   - Decide a single error-reporting layer (probably the inner
     ones for highlighter failures, the outer for unexpected
     state-hook bugs).
+
+## ORC-220 (iter 147): WS close cancels MCP-client pending requests immediately
+
+- root cause: `scripts/orchestrate-mcp-server.ts` opened a WebSocket
+  to the orchestration server but registered only `onopen`,
+  `onerror` (one-shot, fires only on initial connect failure), and
+  `onmessage`. There was NO `onclose` handler. After the connection
+  was established and then dropped (server restart, network blip,
+  long pause then TCP reset), every in-flight `wsRequest` pending
+  promise hung until its per-request 30-second timeout fired. CI
+  jobs and upstream MCP callers experienced 30s deadlocks per
+  in-flight request.
+  Note: the web client's `wsTransport.ts` already handled this
+  correctly (lines 241-247); the gap was specifically in the MCP
+  client.
+- change summary:
+  - Added `drainPendingRequestsWith(pending, error)` and
+    `formatConnectionClosedReason(closeEvent)` helpers in
+    `scripts/lib/idempotentDispatch.ts`. The drain helper iterates a
+    snapshot and clears the Map so a synchronous reject handler
+    cannot re-enter the loop. The format helper produces a
+    consistent `connection_closed (code N: reason)` string when
+    available and falls back to bare `connection_closed`.
+  - Wired `ws.onclose` in the MCP server's `connectWs`. On close,
+    the global `wsConnection` is reset and all pending requests
+    are drained with the formatted reason. Idempotent if the
+    handler somehow fires twice (the second pass sees an empty
+    Map).
+- files touched:
+  - scripts/lib/idempotentDispatch.ts
+  - scripts/lib/idempotentDispatch.test.ts
+  - scripts/orchestrate-mcp-server.ts
+- tests added: 8 new unit tests (3 for the drain helper:
+  rejects-and-clears, idempotent on empty, snapshot semantics
+  protect against synchronous re-entry; 5 for the format helper:
+  null event, missing code, code only, code+reason, empty-string
+  reason). Plus the existing 11 retry tests and 1 UUID shape
+  test stay green; total 19 passed.
+- evidence of green run:
+  ```
+  bunx vitest run scripts/lib/idempotentDispatch.test.ts
+   Test Files  1 passed (1)
+        Tests  19 passed (19)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 errors on changed files (5 pre-existing
+                        warnings in orchestrate-mcp-server.ts unrelated)
+  ```
+- follow-ups:
+  - Migrate the rest of the MCP server to use the existing
+    `withStableCommandId` retry helper for the remaining ~20
+    dispatch sites (started with the spawn-agent flow in
+    ORC-171).
+  - Consider switching to `addEventListener` over `onfoo` setters
+    so the linter's `prefer-add-event-listener` warnings clear
+    out and so multiple consumers can co-register handlers.

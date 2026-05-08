@@ -2106,6 +2106,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:2000-2020 (handleMessage error path)
 - evidence: handleMessage uses Effect.ignoreCause; if an error occurs mid-response after the socket closed, the request is silently dropped. The client's pending promise hangs until its own timeout fires.
 - proposed_fix: On WS close, fail all pending requests for that connection with a clear "connection_closed" error so the client (or MCP) can react immediately. Don't rely on per-request timeouts to detect this.
+- status: DONE
+- fixed_iter: 147
 - status: PENDING
 
 ### ORC-221

@@ -65,6 +65,44 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 /**
+ * ORC-220: drain every entry in a wsPending Map, rejecting each with
+ * the supplied error and clearing the Map. Idempotent if called twice
+ * (the second call sees an empty Map). Iterates a snapshot so that
+ * reject handlers running synchronously cannot mutate the Map mid
+ * iteration.
+ *
+ * @see ORC-220
+ */
+export function drainPendingRequestsWith(
+  pending: Map<string, { reject: (error: Error) => void }>,
+  error: Error,
+): { readonly drained: number } {
+  const snapshot = Array.from(pending.entries());
+  pending.clear();
+  for (const [, entry] of snapshot) {
+    entry.reject(error);
+  }
+  return { drained: snapshot.length };
+}
+
+/**
+ * ORC-220: build a structured connection_closed error message that
+ * includes a WebSocket close code and reason when available. Pure
+ * helper so the MCP client and the close-handler share one wording.
+ */
+export function formatConnectionClosedReason(
+  closeEvent: { readonly code?: number; readonly reason?: string } | null,
+): string {
+  if (closeEvent && typeof closeEvent.code === "number") {
+    if (closeEvent.reason && closeEvent.reason.length > 0) {
+      return "connection_closed (code " + closeEvent.code + ": " + closeEvent.reason + ")";
+    }
+    return "connection_closed (code " + closeEvent.code + ")";
+  }
+  return "connection_closed";
+}
+
+/**
  * Run `operation` with a stable `commandId` reused across retry
  * attempts. The operation receives the captured id as its argument so
  * the dispatched command body can include it.

@@ -17,7 +17,11 @@ import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { withStableCommandId } from "./lib/idempotentDispatch.ts";
+import {
+  drainPendingRequestsWith,
+  formatConnectionClosedReason,
+  withStableCommandId,
+} from "./lib/idempotentDispatch.ts";
 
 const ORCHESTRATOR_PID_SIDECAR_DIR = path.join(os.tmpdir(), "orchestrate-codex-pid-map");
 
@@ -708,6 +712,23 @@ function connectWs(url: string): Promise<WebSocket> {
           }
         }
       } catch {}
+    };
+    // ORC-220: when the WebSocket closes after the connection was
+    // established, every in-flight wsRequest must reject immediately
+    // with a clear "connection_closed" error. Without this handler,
+    // pending promises hung until the per-request 30s timeout, so
+    // upstream MCP callers and CI jobs experienced 30s deadlocks per
+    // dropped request. The drain helper iterates a snapshot so a
+    // reject handler running synchronously cannot mutate the Map
+    // mid-iteration.
+    ws.onclose = (closeEvent) => {
+      if (wsConnection === ws) {
+        wsConnection = null;
+      }
+      drainPendingRequestsWith(
+        wsPending,
+        new Error(formatConnectionClosedReason(closeEvent ?? null)),
+      );
     };
   });
 }
