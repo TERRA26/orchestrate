@@ -4284,3 +4284,57 @@ mention of the prefix convention. Verified failing-before by stashing
     browsers.
   - Apply the same ownership tracking to the Electron-visible
     runtime (`ElectronVisibleBrowserRuntime` if/when implemented).
+
+## ORC-206 (iter 138): orchestrator-control directive detection at spawn boundary
+
+- root cause: ORC-026 added `objectiveContainsFabricatedReport` to
+  reject pre-baked `## REPORT` blocks at spawn time. But other
+  orchestrator-control directive families could still ride into a
+  worker's task: `[ORCHESTRATOR_OVERRIDE: ...]` tokens, closing
+  `</task_objective>` tags (frame-escape attempts), closing
+  `</untrusted_*>` tags, "ignore previous instructions" prompts,
+  and bare `<orchestrator_*>` XML. The kickoff frame in ORC-026
+  protected the worker from a forged REPORT but not from these
+  other classes.
+- change summary:
+  - Added `detectObjectiveInjection(objective)` to
+    `apps/server/src/orchestration/reportProtocol.ts`. Returns
+    `{ pattern, excerpt }` for the FIRST matching pattern across
+    five named regexes (orchestrator-override-token,
+    task-objective-closing-tag, untrusted-content-closing-tag,
+    ignore-previous-instructions, orchestrator-tag), or null
+    when the objective is clean.
+  - Wired the new check immediately after the existing
+    `objectiveContainsFabricatedReport` gate in
+    `OrchestrationToolRouter.ts handleSpawnAgent`. On a hit, the
+    spawn returns a structured `{ error }` naming the offending
+    pattern and a short excerpt around the match, mirroring the
+    existing fabricated-REPORT rejection style.
+- files touched:
+  - apps/server/src/orchestration/reportProtocol.ts
+  - apps/server/src/orchestration/reportProtocol.test.ts (new)
+  - apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts
+- tests added: 15 unit tests (4 pinning the existing
+  `objectiveContainsFabricatedReport` behavior, 11 new for the
+  injection detector). Cover: benign pass-through,
+  `[ORCHESTRATOR_OVERRIDE]` tokens with and without colon-payloads,
+  `[ORCHESTRATOR_DO_X]` variants, closing `</task_objective>` tag,
+  closing `</untrusted_*>` tag, "ignore previous instructions"
+  case-insensitivity (plural and singular), `<orchestrator_command>`
+  bare XML, excerpt around match, deterministic first-match order,
+  and benign prose mentioning "orchestrator" passing through.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/reportProtocol.test.ts
+   Test Files  1 passed (1)
+        Tests  15 passed (15)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Apply the same detector to MCP `send_to_agent` inter-agent
+    message text in OrchestrationToolRouter so a worker cannot
+    smuggle directives into a peer worker.
+  - Update ORCHESTRATOR.md to enumerate the rejected directive
+    families so the orchestrator's own LLM understands why a spawn
+    can fail with `orchestrator-control directive` errors.

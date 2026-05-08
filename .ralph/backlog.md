@@ -1964,7 +1964,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/orchestratorSystemPrompt.ts:49-52 (worker spawn objective passes through)
 - evidence: When the orchestrator spawns a sub-agent the `objective` text is set by the orchestrator. If the orchestrator was injected (via handoff text, message, or replayed history) it can craft an objective that pivots a sub-agent.
 - proposed_fix: Frame the objective in worker kickoff under `<task_objective>...</task_objective>` and instruct the worker to treat anything inside as the task description, not authoritative instruction. Already partly addressed in ORC-026 for the kickoff text; extend to spawn-time validation.
-- status: PENDING
+- status: DONE
+- fixed_iter: 138
 
 ### ORC-207
 

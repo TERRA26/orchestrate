@@ -37,7 +37,11 @@ import {
   BrowserOrchestrationEvidenceRepository,
   type BrowserOrchestrationEvidenceRepositoryShape,
 } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
-import { objectiveContainsFabricatedReport, workerKickoffMessage } from "../reportProtocol.ts";
+import {
+  detectObjectiveInjection,
+  objectiveContainsFabricatedReport,
+  workerKickoffMessage,
+} from "../reportProtocol.ts";
 import { evaluateTurnStaleness } from "../turnStaleness.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -597,6 +601,21 @@ function handleSpawnAgent(
       return {
         error:
           "Objective contains a fabricated REPORT block. REPORT blocks must be authored by the spawned worker on its final turn. Strip the '## REPORT' section from the objective and try again.",
+      };
+    }
+    // ORC-206: defense in depth. The objective is set by the orchestrator,
+    // but a replayed-history or injected-message orchestrator could plant
+    // orchestrator-control directives inside the objective text to pivot
+    // the worker. Reject at the spawn boundary.
+    const injection = detectObjectiveInjection(normalizedObjective);
+    if (injection) {
+      return {
+        error:
+          "Objective contains an orchestrator-control directive (" +
+          injection.pattern +
+          "): \"" +
+          injection.excerpt +
+          "\". Strip the directive from the objective; the orchestrator must not pass control sequences through the spawn boundary.",
       };
     }
     const normalizedCriteria = resolveSpawnAcceptanceCriteria({

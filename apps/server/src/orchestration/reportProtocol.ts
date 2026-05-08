@@ -79,6 +79,50 @@ export function objectiveContainsFabricatedReport(objective: string): boolean {
   return FABRICATED_REPORT_PATTERN.test(objective);
 }
 
+// ORC-206: detect orchestrator-control directives that should never appear
+// inside an objective at spawn time. A compromised or replayed orchestrator
+// could plant `[ORCHESTRATOR_OVERRIDE: ...]` or a closing `</task_objective>`
+// inside the objective text to pivot the worker. Reject those at the
+// boundary so they never reach the worker's LLM.
+const OBJECTIVE_INJECTION_PATTERNS: readonly { name: string; pattern: RegExp }[] = [
+  { name: "orchestrator-override-token", pattern: /\[ORCHESTRATOR_[A-Z_][^\]]*\]/ },
+  { name: "task-objective-closing-tag", pattern: /<\/task_objective\s*>/i },
+  { name: "untrusted-content-closing-tag", pattern: /<\/untrusted_[a-z_]+\s*>/i },
+  {
+    name: "ignore-previous-instructions",
+    pattern: /\bignore (?:all |the |any |my )?previous instructions?\b/i,
+  },
+  { name: "orchestrator-tag", pattern: /<\/?orchestrator(?:_[a-z_]*)?\b[^>]*>/i },
+];
+
+export interface ObjectiveInjectionFinding {
+  readonly pattern: string;
+  readonly excerpt: string;
+}
+
+/**
+ * Inspect an objective for orchestrator-control injection patterns at
+ * spawn time. Returns null when the objective is clean; otherwise the
+ * first matching pattern's name + a small excerpt around the match for
+ * the rejection error message.
+ *
+ * @see ORC-206
+ */
+export function detectObjectiveInjection(
+  objective: string,
+): ObjectiveInjectionFinding | null {
+  for (const { name, pattern } of OBJECTIVE_INJECTION_PATTERNS) {
+    const match = pattern.exec(objective);
+    if (match) {
+      const start = Math.max(0, match.index - 16);
+      const end = Math.min(objective.length, match.index + match[0].length + 16);
+      const excerpt = objective.slice(start, end).replace(/\s+/g, " ").trim();
+      return { pattern: name, excerpt };
+    }
+  }
+  return null;
+}
+
 export function workerKickoffMessage(
   objective: string,
   options: { readonly writeScope?: ReadonlyArray<string> } = {},
