@@ -235,6 +235,7 @@ import {
   revokeUserMessagePreviewUrls,
   SendPhase,
 } from "./ChatView.logic";
+import { useFocusTrapAndRestore } from "~/hooks/useFocusTrapAndRestore";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerSlashCommands } from "../hooks/useComposerSlashCommands";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -583,6 +584,7 @@ export default function ChatView({
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const expandedImageDialogRef = useRef<HTMLDivElement | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -2959,6 +2961,14 @@ export default function ChatView({
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
   }, []);
+  // ORC-073: capture/restore focus + Escape-to-close for the custom
+  // expanded-image dialog so screen-reader users aren't dropped on body
+  // after dismissing.
+  useFocusTrapAndRestore({
+    isOpen: expandedImage !== null,
+    overlayRef: expandedImageDialogRef,
+    onClose: closeExpandedImage,
+  });
   const navigateExpandedImage = useCallback((direction: -1 | 1) => {
     setExpandedImage((existing) => {
       if (!existing || existing.images.length <= 1) {
@@ -5824,6 +5834,7 @@ export default function ChatView({
 
       {expandedImage && expandedImageItem && (
         <div
+          ref={expandedImageDialogRef}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
           role="dialog"
           aria-modal="true"

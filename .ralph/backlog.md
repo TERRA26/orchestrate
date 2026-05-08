@@ -701,7 +701,8 @@ Schema per entry:
 - files: apps/web/src/components/SettingsModal.tsx:42-72,apps/web/src/components/ChatView.tsx:5825-5850 (custom expanded image preview)
 - evidence: SettingsModal uses @base-ui Dialog (likely correct focus management), but the custom expanded-image preview is a plain div with role="dialog" and no focus trap or focus-return. After dismissing, focus floats to body.
 - proposed_fix: Replace the custom dialog with @base-ui's Dialog primitive (consistent focus trap + restore). If keeping the custom version, use focus-trap-react or implement focus capture on open and focus restoration on close.
-- status: PENDING
+- status: DONE
+- fixed_iter: 82
 
 ### ORC-074
 

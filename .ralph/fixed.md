@@ -1819,3 +1819,51 @@ All 4 default-behavior tests would fail before the change because the icons had 
 - Remove the now-redundant manual `aria-hidden="true"` props on icon usages in Sidebar.tsx, ChatView.tsx, OrchestratorComposer.tsx etc. (purely cosmetic; the default does the work).
 - Audit `apps/web/src/components/composer/`, `BranchToolbar.tsx`, modal close-X buttons for icon-only buttons missing aria-labels (lower priority since the sidebar audit found none).
 - Consider extracting `decorativeIconProps` to `apps/web/src/lib/a11y.ts` if the pattern starts being used by non-Icons.tsx components.
+
+## ORC-073 [iter 82] Custom expanded-image dialog had no focus trap or restoration
+
+**Root cause**: `apps/web/src/components/ChatView.tsx:5825-5891` rendered the expanded-image preview as a plain `<div role="dialog">` without focus management. After a user opened the dialog (via clicking a thumbnail) and dismissed it (via Escape, X button, or backdrop click), focus floated back to the document body. Screen-reader users lost their position in the message list and keyboard-only users lost their place. SettingsModal already uses @base-ui's Dialog primitive (with built-in focus management), but porting the multi-image preview to the same primitive would require restructuring its prev/next button logic.
+
+**Change summary**:
+- New `apps/web/src/hooks/useFocusTrapAndRestore.ts`: small hook that
+  - Captures `document.activeElement` when `isOpen` flips to true.
+  - Sets `tabindex=-1` on the supplied `overlayRef` element if absent and focuses it.
+  - Adds a document-level `keydown` listener that fires `onClose` on Escape (with `preventDefault` to swallow the key).
+  - On `isOpen=false` or unmount: removes the listener and restores focus to the captured element if it's still in the DOM.
+- `apps/web/src/components/ChatView.tsx`:
+  - Imported the hook.
+  - Added `expandedImageDialogRef` next to `expandedImage` state.
+  - Wired `useFocusTrapAndRestore({ isOpen: expandedImage !== null, overlayRef, onClose: closeExpandedImage })`.
+  - Attached the ref to the existing dialog `<div>`.
+
+**Files touched**:
+- apps/web/src/hooks/useFocusTrapAndRestore.ts (NEW)
+- apps/web/src/hooks/useFocusTrapAndRestore.test.tsx (NEW)
+- apps/web/src/components/ChatView.tsx
+
+**Tests added**: 6 jsdom render tests in `useFocusTrapAndRestore.test.tsx`:
+1. Focuses the overlay element when opened (programmatic focus via tabindex=-1).
+2. Restores focus to the previously-focused element on Escape.
+3. Invokes `onClose` exactly once on Escape.
+4. Does not invoke `onClose` for non-Escape keys (Enter, Tab).
+5. Removes the keydown listener on unmount (Escape after unmount is a no-op).
+6. Sets `tabindex=-1` on the overlay if not already set.
+
+All 6 would fail before the change because the hook did not exist.
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/hooks/useFocusTrapAndRestore.test.tsx` (Node 24) -> Test Files 1 passed (1) | Tests 6 passed (6)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Race when the previously-focused element is removed before close: the hook checks `document.contains(target)` before calling focus(), so a removed element is silently skipped instead of throwing.
+- Multiple overlays simultaneously: each invocation of the hook captures its own `previousFocusRef`, so a stack of overlays restores focus through the chain naturally as each closes.
+- onClose closure freshness: `onCloseRef.current` is updated every render, so callers can pass an inline arrow without re-installing the keydown listener.
+- Native-app dragging interferes with focus: the dialog already has `[-webkit-app-region:no-drag]` so focus calls are not stolen by the Electron title-bar drag region.
+- Prev/next image navigation does not unmount the dialog: focus stays on the dialog ref because `isOpen` only flips on null state changes; navigating images keeps the same expanded preview open.
+
+**Follow-ups**:
+- Consider porting the expanded-image dialog to `@base-ui/react/dialog` for full WAI-ARIA Tab-cycling focus trap (the current hook only restores focus, it does not constrain Tab to dialog-internal elements).
+- Audit other custom dialogs for the same pattern (composer attachment confirm, terminal expand modal, etc.) and apply the hook.
+- If the prev/next buttons should be reachable via ArrowLeft/ArrowRight, add those keydown handlers in the hook or inside the dialog itself.
