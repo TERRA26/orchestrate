@@ -2199,6 +2199,9 @@ Schema per entry:
 - files: apps/server/src (after ORC-062 traceId is added)
 - evidence: Once a traceId exists, it must propagate from web to MCP to WS to provider RPC. Today there is no baggage mechanism; trace context is lost across boundaries.
 - proposed_fix: Use Effect.annotateLogs / FiberRef to thread the traceId through Effect chains. Add it as an explicit header on WS frames and on Codex JSON-RPC envelopes.
+- status: DEFERRED
+- deferred_iter: 152
+- deferred_reason: Cross-boundary traceId propagation needs (1) WS envelope schema bump for `traceId?: string` on inbound and outbound frames in @orchestrate/contracts/ws.ts, (2) Codex JSON-RPC envelope addition + reception, (3) MCP server passing through, (4) web client generating + propagating, (5) reception/extraction at every Effect boundary. ORC-062 already established the in-process trace context; cross-process propagation is its own multi-iteration build. Plan recorded as ORC-229a..d in blockers.md.
 - status: PENDING
 
 ### ORC-230

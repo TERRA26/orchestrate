@@ -287,3 +287,31 @@ Per-component plan ORC-224a..d:
 - **224c**: classify and wire one round of audit-worthy commands (project.delete, worker.terminate, auth attempts) with integration tests.
 - **224d**: retrieval script + retention policy doc + SIEM export adapter.
 
+
+## ORC-229 (deferred at iter 152): cross-boundary traceId propagation
+
+### What was attempted
+
+ORC-062 (`apps/server/src/observability/traceContext.ts`) already establishes in-process trace context via FiberRef + `Effect.annotateLogs`. ORC-229 extends this across boundaries: a request that originates in the web client, passes through the WS server, dispatches to a worker thread (which itself spawns Codex/Claude RPC), should retain the same `traceId` across every log record so a single end-to-end search reconstructs the request flow.
+
+### Why a single-iteration fix is risky
+
+Five touchpoints, each with its own consumer:
+
+1. **WS envelope contract**: add `traceId?: string` to `WsRequestEnvelope`, `WsResponseEnvelope`, `WsPushEnvelope` in `packages/contracts/src/ws.ts`. The literal-union types ripple into every encoder and consumer.
+2. **WS server reception**: extract `traceId` from inbound envelopes; if missing, generate one. Wrap the route handler in `withTraceContext` so the FiberRef carries it through Effect chains.
+3. **WS server emission**: stamp the `traceId` on outbound responses and pushes (via the pushBus).
+4. **MCP server passthrough**: `scripts/orchestrate-mcp-server.ts` `wsRequest` adds `traceId` to outgoing frames; on inbound responses, surfaces it back to the caller (or stamps it on subsequent dispatches via the existing `withStableCommandId` flow).
+5. **Codex JSON-RPC envelope**: add `traceId` (or X-Trace-Id header equivalent) to outgoing app-server requests and read it back from responses; thread through the existing manager session context.
+
+Each touchpoint has its own backward-compat concern (existing clients will not send the header) and integration test (round-trip verification). Doing all five in one iteration risks shipping a contract bump where the field exists but never gets populated end-to-end.
+
+### What would unblock it
+
+Per-boundary plan ORC-229a..d:
+
+- **229a**: WS envelope contract bump + server reception with FiberRef propagation. Test: an inbound request with `traceId` produces log lines annotated with that id.
+- **229b**: outbound WS response/push emission stamps the same traceId. Test: a synthetic round trip echoes the id.
+- **229c**: MCP client + Codex JSON-RPC envelope. Test: a wsRequest from MCP carries the id; Codex responses preserve it.
+- **229d**: web client generation; integration test that captures logs across the full chain.
+
