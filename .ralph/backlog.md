@@ -2347,7 +2347,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 164
 - deferred_reason: Multi-user readiness needs (1) `projects.owner_user_id TEXT NOT NULL DEFAULT 'default'` migration, (2) propagation of caller identity from WS auth into the decider via command field, (3) decider assertion + error type for project.delete (and audit of every other destructive project-level command: project.update, project.archive, etc.), (4) projection schema bump to expose owner in read model. Each step has cross-cutting rollout concerns. Single-iteration scope risks shipping a half-wired check that fails open for some commands. Plan recorded as ORC-245a..d in blockers.md.
-- status: PENDING
 
 ### ORC-246
 
@@ -2394,7 +2393,7 @@ Schema per entry:
 - files: apps/web/src/components/Sidebar.tsx:3145-3388 (dnd-kit drag-reorder)
 - evidence: Projects/workspaces are reordered via dnd-kit's PointerSensor. There is no keyboard handler (Arrow keys + Enter/Space) to move items. Keyboard-only users cannot reorder.
 - proposed_fix: Use dnd-kit's KeyboardSensor in the sensors array. Bind ArrowUp/ArrowDown to move-up/move-down within the sortable list; announce moves via aria-live.
-- status: PENDING
+- status: DONE
 
 ### ORC-251
 

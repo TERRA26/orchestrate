@@ -33,14 +33,12 @@ import {
   DndContext,
   type DragCancelEvent,
   type CollisionDetection,
-  PointerSensor,
   type DragStartEvent,
   closestCorners,
   pointerWithin,
-  useSensor,
-  useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import { useProjectDnDSensors } from "../hooks/useProjectDnDSensors";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
@@ -1644,11 +1642,10 @@ export default function Sidebar() {
     [clearProjectDraftThreads, projects, threads],
   );
 
-  const projectDnDSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    }),
-  );
+  // ORC-250: pointer + keyboard sensors so keyboard-only users can
+  // also reorder projects (Space picks up, Arrow keys move, Space
+  // drops, Escape cancels).
+  const projectDnDSensors = useProjectDnDSensors();
   const projectCollisionDetection = useCallback<CollisionDetection>((args) => {
     const pointerCollisions = pointerWithin(args);
     if (pointerCollisions.length > 0) {

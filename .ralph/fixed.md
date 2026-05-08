@@ -5271,3 +5271,49 @@ mention of the prefix convention. Verified failing-before by stashing
     for now; metrics make trend visualization easier).
   - Consider exposing `slowClientGraceMs` via env var so an operator
     can tune the grace window without a deploy.
+
+## ORC-250: KeyboardSensor for project drag-reorder
+
+- root cause: Sidebar.tsx wired only a PointerSensor for dnd-kit
+  drag-reorder of projects. dnd-kit ships a KeyboardSensor and the
+  sortable preset ships sortableKeyboardCoordinates, but neither was
+  registered, so a keyboard-only user could focus a project row and
+  had no way to reorder. WCAG 2.1.1 (Keyboard) failure.
+- change summary:
+  - Extracted the sensors instantiation from Sidebar.tsx into a small
+    hook `useProjectDnDSensors` so the contract can be pinned without
+    mounting the full 4 000 line sidebar.
+  - The new hook returns `useSensors(useSensor(PointerSensor, ...),
+    useSensor(KeyboardSensor, { coordinateGetter:
+    sortableKeyboardCoordinates }))`. The PointerSensor preserves the
+    existing 6 px activation distance.
+  - Sidebar.tsx now imports the hook and drops its direct dnd-kit
+    sensor imports.
+- files touched:
+  - apps/web/src/hooks/useProjectDnDSensors.ts (new)
+  - apps/web/src/hooks/useProjectDnDSensors.test.ts (new)
+  - apps/web/src/components/Sidebar.tsx
+- tests added:
+  - "returns at least two sensor descriptors": guards against future
+    edits that drop the keyboard sensor.
+  - "includes a PointerSensor descriptor": pins the existing pointer
+    UX so accessibility work cannot regress mouse/touch.
+  - "includes a KeyboardSensor descriptor": the actual a11y fix.
+  - "KeyboardSensor wires sortableKeyboardCoordinates": pins the
+    coordinate getter so a11y users get the dnd-kit/sortable arrow
+    movement, not the default coordinate getter.
+- evidence of green run:
+  ```
+  bun run vitest run src/hooks/useProjectDnDSensors.test.ts
+   Test Files  1 passed (1)
+        Tests  4 passed (4)
+  bun run typecheck   # apps/web clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Add an aria-live announcement when a draggable is picked up,
+    moved, or dropped so screen-reader users get parity with the
+    visual feedback. dnd-kit's `announcements` prop on DndContext is
+    the documented surface.
+  - Document the keybindings in the in-app help or tooltip on the
+    drag handle.
