@@ -1609,7 +1609,8 @@ Schema per entry:
 - files: apps/web/src/diffRouteSearch.ts:38-56
 - evidence: Search-param decoder normalizes unknown shapes to undefined silently. Inputs like `?diffTurnId=NaN`, `?count=Infinity`, or duplicated `?ids=1&ids=2` are all dropped. Users pasting stale URLs see empty state with no signal.
 - proposed_fix: Add an explicit type guard for each id/number param (regex for ids, finite-number check for counts). Return a typed parse error so the caller can route to a 404/redirect instead of silently rendering empty.
-- status: PENDING
+- status: DONE
+- fixed_iter: 116
 
 ### ORC-171
 

@@ -3525,3 +3525,52 @@ mention of the prefix convention. Verified failing-before by stashing
     Playwright-stub Page so the wiring itself (descriptor lookup +
     evaluator construction) is covered by integration-style tests
     instead of relying on production traffic.
+
+## ORC-170 (iter 116): typed parse errors for diff route search
+
+- root cause: `parseDiffRouteSearch` silently dropped any input it
+  could not coerce. URLs like `?diffTurnId=NaN`,
+  `?diffTurnId=A&diffTurnId=B` (two params -> Array<string>),
+  `?diffTurnId=42` (number coerced from a typo), or
+  `?panel=settings` (unknown literal) all rendered an empty diff
+  panel with no signal that anything went wrong. Pasted-stale URL
+  bug class.
+- change summary:
+  - Added a `parseId` helper that returns a discriminated outcome
+    `{ value | error }` per field. Errors carry `key`, `reason`
+    (`duplicated` | `non-string` | `empty` | `invalid-shape` |
+    `out-of-range`), and a truncated `received` snippet.
+  - Added `parseDiffRouteSearchStrict(search): DiffRouteParseResult`
+    that returns both the parsed value and a list of errors.
+  - Refactored `parseDiffRouteSearch` to delegate to the strict
+    variant and return only the value, preserving every existing
+    caller's expected shape.
+  - Defined `DiffRouteParseError` and `DiffRouteParseResult` as
+    public types so router callers can decide whether to redirect,
+    render a 404, or surface a toast.
+- files touched:
+  - apps/web/src/diffRouteSearch.ts
+  - apps/web/src/diffRouteSearch.test.ts
+- tests added: 9 new `parseDiffRouteSearchStrict` cases on top of
+  the existing 7 loose-parser cases. Cover: valid input ->
+  no errors; duplicated diffTurnId; non-string (number / boolean)
+  diffTurnId; invalid-shape (e.g. `../etc/passwd`); 'NaN'
+  literal accepted (it matches the id pattern; emptiness is the
+  read-model's job, not the parser's); unknown panel value;
+  duplicated splitViewId; absent params; bogus diffTurnId
+  silently ignored when diff is closed.
+- evidence of green run:
+  ```
+  bun run test src/diffRouteSearch.test.ts
+   Test Files  1 passed (1)
+        Tests  16 passed (16)
+  bun lint apps/web/src/diffRouteSearch.ts # 0 warnings, 0 errors
+  ```
+  Failing-before: the strict variant did not exist; the new tests
+  reference `parseDiffRouteSearchStrict` and would error on import.
+- follow-ups:
+  - Wire strict-variant call sites in the router so users see a
+    "URL was rewritten because <reason>" toast instead of an
+    empty panel.
+  - Apply the same parse-error shape to other client-side route
+    parsers (sidebar id, project id, etc).
