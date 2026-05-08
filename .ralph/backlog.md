@@ -2419,6 +2419,9 @@ Schema per entry:
 - files: apps/server/package.json (devDependency on @orchestrate/web)
 - evidence: The server has @orchestrate/web as a devDependency. Architecturally the server should not depend on the frontend even at dev time; the dependency is likely a leftover or test-fixture pull-through.
 - proposed_fix: Audit the server's tests for actual @orchestrate/web imports. If tests reference UI fixtures, extract them into a shared test-fixtures package. Otherwise drop the devDep.
+- status: DEFERRED
+- deferred_iter: 159
+- deferred_reason: Audit found the @orchestrate/web devDep IS load-bearing, not a leftover. `apps/server/scripts/cli.ts:143-152` bundles `apps/web/dist` into `apps/server/dist/client` at build time, and `turbo.json` has `build.dependsOn: ["^build"]` which uses the package.json deps to derive build order. NO server-side imports of @orchestrate/web exist (verified via grep). Removing the workspace dep would break the bundle ordering and ship a server with no web client. The architectural concern (server should not depend on frontend) is real but resolving it requires a separate "extract web bundle into a shared dist artifact" lift, not a simple package.json scrub. Plan recorded in blockers.md.
 - status: PENDING
 
 ### ORC-254

@@ -360,3 +360,38 @@ Four steps with cross-cutting consequences:
 
 ORC-238a (persistence + migration + admin CLI), ORC-238b (per-request check + cache), ORC-238c (eviction policy + tests), ORC-238d (docs).
 
+
+## ORC-253 (deferred at iter 159): server -> web devDep architectural concern
+
+### What was attempted
+
+Confirmed there are NO server-side imports of `@orchestrate/web` (grep against `apps/server/src/` returned zero hits). At first glance the devDep looks droppable.
+
+Then surveyed `apps/server/scripts/cli.ts:143-152`:
+
+```
+const webDist = path.join(repoRoot, "apps/web/dist");
+const clientTarget = path.join(serverDir, "dist/client");
+if (yield* fs.exists(webDist)) {
+  yield* fs.copy(webDist, clientTarget);
+  yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
+  yield* Effect.log("[cli] Bundled web app into dist/client");
+}
+```
+
+Plus `turbo.json` declares `build.dependsOn: ["^build"]`, which uses the package.json `dependencies` / `devDependencies` graph to compute build order. Drop the workspace dep and turbo will run the server build BEFORE the web build, the `webDist` check will fail, and the published server ships with no client. No tests would catch this.
+
+### Why a single-iteration fix is risky
+
+The architectural cleanup the bug-as-filed wants requires:
+
+1. Extract `apps/web/dist` into a third package (e.g. `@orchestrate/client-bundle`) that the server can depend on without depending on the React/Vite app sources.
+2. Or move the bundle step into a top-level orchestration package that builds web + server in correct order without requiring the dep edge.
+3. Or adopt a different build orchestrator that supports cross-cutting "produces this artifact" declarations.
+
+Each option is a build-system project of its own, with regressions visible only at desktop-package or end-to-end smoke time.
+
+### What would unblock it
+
+Track as ORC-253a (decide bundling strategy), ORC-253b (implement chosen strategy, drop dep, verify desktop smoke + npm publish path).
+
