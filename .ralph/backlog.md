@@ -2443,7 +2443,7 @@ Schema per entry:
 - files: apps/server/package.json (node-pty ^1.1.0),package.json (trustedDependencies)
 - evidence: node-pty needs platform-specific compilation. There is no fallback to prebuilt binaries; CI machines and contributor machines without Python + C++ toolchain fail at install.
 - proposed_fix: Use a node-pty-prebuilt fork or @mapbox/node-pre-gyp configuration so prebuilt binaries are downloaded on install. Document the build prerequisites for platforms where prebuilts are missing.
-- status: PENDING
+- status: DONE
 
 ### ORC-256
 

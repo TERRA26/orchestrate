@@ -5317,3 +5317,57 @@ mention of the prefix convention. Verified failing-before by stashing
     the documented surface.
   - Document the keybindings in the in-app help or tooltip on the
     drag handle.
+
+## ORC-255: graceful node-pty load failure with platform install hints
+
+- root cause: `apps/server/src/terminal/Layers/NodePTY.ts` resolved
+  the PtyAdapter via `Effect.promise(() => import("node-pty"))`. If
+  node-pty failed to load (no prebuilt for the platform AND no C++
+  toolchain to build from source), `Effect.promise` died with the
+  raw import error and the entire layer failed, taking server boot
+  down with it. Operators saw a generic "module not found" stack
+  trace with no hint about how to recover.
+- change summary:
+  - Extracted the layer body into `makeNodePtyAdapter(loader:
+    NodePtyModuleLoader)` so the import surface is parameterizable
+    (and testable).
+  - Inside `makeNodePtyAdapter`, switched from `Effect.promise` to
+    `Effect.tryPromise + Effect.exit`. On Failure the layer resolves
+    to a stub `PtyAdapterShape` whose `spawn` always returns
+    `PtySpawnError({ adapter: "node-pty", message:
+    NODE_PTY_INSTALL_HINT, cause })`.
+  - `NODE_PTY_INSTALL_HINT` lists the platform-specific build
+    prerequisites (Xcode CLT on darwin, python3 + build-essential on
+    linux, Visual Studio Build Tools on win32) plus the recovery
+    command (`bun install`).
+  - `layer` now calls `makeNodePtyAdapter(() => import("node-pty"))`
+    so the production wiring is identical, just thread through the
+    new helper.
+- files touched:
+  - apps/server/src/terminal/Layers/NodePTY.ts
+  - apps/server/src/terminal/Layers/NodePTY.test.ts
+- tests added:
+  - "makeNodePtyAdapter falls back to failing-spawn when the loader
+    rejects": injects a rejecting loader, asserts that
+    `adapter.spawn(...)` produces a Failure exit whose `Cause.pretty`
+    rendering contains `PtySpawnError`, the adapter name, and the
+    install-hint keywords (`prebuilt|toolchain|install`). The two
+    pre-existing spawn-helper tests still pass.
+- evidence of green run:
+  ```
+  bun run vitest run src/terminal/Layers/NodePTY.test.ts
+   Test Files  1 passed (1)
+        Tests  3 passed (3)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - The server still ATTEMPTS to load node-pty on every boot. A
+    follow-up could detect a missing prebuilt earlier and skip the
+    require entirely, but the present behavior is fine.
+  - Surface the same install hints in the web client when the user
+    triggers a terminal action with no pty available.
+  - Consider migrating to a pre-built fork (e.g.
+    `node-pty-prebuilt-multiarch`) so the failure path is rarer.
+    That requires fork-CVE/fork-maintenance research outside this
+    iteration; the graceful fallback addresses the immediate UX.
