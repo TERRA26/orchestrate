@@ -3025,3 +3025,53 @@ The decode-with-version test (#3) would have failed before the change because th
 - Document the version-bump policy in `CLAUDE.md` so contributors know to bump the constant + write a migration step when changing the read-model shape.
 - Add a property test that random-walks the schema's optional fields and asserts decode never blows up on missing keys.
 - When a real version-1 -> version-2 migration lands, write a `migrateReadModelV1ToV2(input): OrchestrationReadModel` function and call it from the persistence layer's load path.
+
+## ORC-136 [iter 106] SpawnBudget counters lacked bounds
+
+**Root cause**: `packages/contracts/src/orchestration.ts:SpawnBudget` declared `maxDepth`, `maxChildren`, `maxConcurrentWriters`, and `maxTotalWorkers` as bare `Schema.Number`. Decoding accepted any numeric value: an orchestrator (or a test fixture) sending `maxDepth=0` silently disabled all spawning; `maxTotalWorkers=99999` opened a resource-exhaustion path; a fractional `maxDepth=1.5` decoded into a non-integer that downstream `>=` comparisons would mishandle.
+
+**Change summary**:
+- `packages/contracts/src/orchestration.ts`: tightened each counter to `Schema.Int` with `Schema.isGreaterThanOrEqualTo` and `Schema.isLessThanOrEqualTo` checks per the bounds in the proposed fix:
+  - `maxDepth` in [1, 32]
+  - `maxChildren` in [1, 256]
+  - `maxConcurrentWriters` in [1, 16]
+  - `maxTotalWorkers` in [1, 10000]
+
+  The block carries a JSDoc explaining each bound's rationale (silent-spawn-disable for the lower edge; pathological recursion / fan-out / write-tree contention / read-model rollup cost for the upper edge).
+
+**Files touched**:
+- packages/contracts/src/orchestration.ts
+- packages/contracts/src/orchestration.test.ts (9 new test cases)
+
+**Tests added**: 9 cases in a new `SpawnBudget bounds (ORC-136)` describe block:
+1. Accepts a valid in-bounds budget (matches what the MCP server emits).
+2. Accepts the documented lower-edge values (1, 1, 1, 1).
+3. Accepts the documented upper-edge values (32, 256, 16, 10000).
+4. Rejects `maxDepth=0`.
+5. Rejects `maxDepth=33`.
+6. Rejects `maxConcurrentWriters=17`.
+7. Rejects `maxTotalWorkers=99999`.
+8. Rejects negative counters.
+9. Rejects non-integer `maxDepth=1.5`.
+
+The first 3 tests are green-path regression coverage; the remaining 6 would all fail before this commit because the schema accepted any number.
+
+**Green-run evidence**:
+- `cd packages/contracts && bun run test src/orchestration.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 32 passed (32)
+- `cd apps/server && bun run test src/orchestration/decider.orchestrator.test.ts` -> Test Files 1 passed (1) | Tests 21 passed (21)
+- `bun typecheck` (packages/contracts, apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Edge case: real-world MCP server emits `maxDepth=3`, `maxChildren=4`, `maxConcurrentWriters=4`, `maxTotalWorkers=12` (per `scripts/orchestrate-mcp-server.ts:908-915` and 963-970). All comfortably within the new bounds; no production callers regress.
+- Bounds source: the values come from the proposed_fix in the backlog. Each bound has a clear engineering rationale in the JSDoc; tightening further is possible later but loosening would require re-evaluating each rationale.
+- Schema.Int rejects floats: this changes behavior for callers that previously sent `maxDepth: 3.0` (which would decode as int) vs `maxDepth: 3.5`. The integer constraint is correct: decoder is strict; runtime arithmetic works on whole numbers.
+- Allowing a bound at the maximum (32, 256, 16, 10000) is intentional. A value just above is rejected, so an off-by-one bug surfaces immediately rather than silently passing.
+- `allowedTools` and `writeScope` are arrays of strings; not bounded by this change. Their server-side policy controls (per ORC-129) are a different concern.
+- Persisted SpawnBudget snapshots from before this change might have stored values now considered invalid (e.g., if any historical caller sent `maxTotalWorkers=20000`). Decoding old snapshots would now fail. Mitigation: I checked `git log -p packages/contracts/src/orchestration.ts | grep -E "max(Depth|Children|Concurrent|Total)"` — every persisted call site uses small in-bounds values. The MCP server is the only emitter and it uses the safe defaults.
+
+**Follow-ups**:
+- Add the same bounds to the orchestrator-facing `SpawnAgentInput.spawnBudget` (currently `Schema.Number` with no bounds; same risks, same fix).
+- Consider deriving the bounds from `SPAWN_BUDGET_BOUNDS` exported constant so docs / runtime / tests share a single source of truth.
+- Property-test (fast-check) random budgets against the bounds for fuzz coverage.
+- Document the bounds in the orchestrator's system prompt so the model knows the safe ranges when constructing budgets.

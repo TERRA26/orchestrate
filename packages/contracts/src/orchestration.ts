@@ -1607,11 +1607,33 @@ export const RequiredCapability = Schema.Literals([
 export type RequiredCapability = typeof RequiredCapability.Type;
 
 // SpawnBudget
+//
+// ORC-136: bounded counters reject invalid budgets at decode time.
+// - maxDepth in [1, 32]: 0 silently disables spawning; >32 is a
+//   pathological recursion path that the runtime never wants to honor.
+// - maxChildren in [1, 256]: same reasoning, with a higher ceiling for
+//   wide fan-out tasks.
+// - maxConcurrentWriters in [1, 16]: writers contend for the same
+//   working tree; 16 is generous, more usually thrashes.
+// - maxTotalWorkers in [1, 10000]: hard cap before the read-model rollup
+//   gets unreasonably slow.
 export const SpawnBudget = Schema.Struct({
-  maxDepth: Schema.Number,
-  maxChildren: Schema.Number,
-  maxConcurrentWriters: Schema.Number,
-  maxTotalWorkers: Schema.Number,
+  maxDepth: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(32),
+  ),
+  maxChildren: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(256),
+  ),
+  maxConcurrentWriters: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(16),
+  ),
+  maxTotalWorkers: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(10_000),
+  ),
   allowedTools: Schema.Array(Schema.String),
   writeScope: Schema.Array(Schema.String),
 });

@@ -1293,7 +1293,8 @@ Schema per entry:
 - files: packages/contracts/src/orchestration.ts:1589-1596 (SpawnBudget)
 - evidence: maxDepth, maxChildren, maxConcurrentWriters, maxTotalWorkers are bare Schema.Number with no bounds. A test/orchestrator that sends maxDepth=0 silently disables spawning; maxTotalWorkers=99999 invites resource exhaustion.
 - proposed_fix: Add bounds: maxDepth in [1, 32], maxChildren in [1, 256], maxConcurrentWriters in [1, 16], maxTotalWorkers in [1, 10000]. Reject invalid budgets at decode time.
-- status: PENDING
+- status: DONE
+- fixed_iter: 106
 
 ### ORC-137
 

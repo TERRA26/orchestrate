@@ -14,6 +14,7 @@ import {
   OrchestrationProposedPlan,
   OrchestrationSession,
   ProjectCreateCommand,
+  SpawnBudget,
   ThreadMetaUpdatedPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -453,3 +454,118 @@ it.effect("OrchestrationReadModel rejects a non-numeric schemaVersion", () =>
     assert.strictEqual((result as { _tag: string })._tag, "Failure");
   }),
 );
+
+describe("SpawnBudget bounds (ORC-136)", () => {
+  const decode = (input: unknown) =>
+    Effect.runSync(
+      Schema.decodeUnknownEffect(SpawnBudget)(input).pipe(Effect.result),
+    );
+
+  plainIt("accepts a valid budget within all bounds", () => {
+    const result = decode({
+      maxDepth: 3,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Success");
+  });
+
+  plainIt("accepts the documented edge values (lower bounds)", () => {
+    const result = decode({
+      maxDepth: 1,
+      maxChildren: 1,
+      maxConcurrentWriters: 1,
+      maxTotalWorkers: 1,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Success");
+  });
+
+  plainIt("accepts the documented edge values (upper bounds)", () => {
+    const result = decode({
+      maxDepth: 32,
+      maxChildren: 256,
+      maxConcurrentWriters: 16,
+      maxTotalWorkers: 10_000,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Success");
+  });
+
+  plainIt("rejects maxDepth=0 (silently disables spawning)", () => {
+    const result = decode({
+      maxDepth: 0,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects maxDepth above 32 (pathological recursion)", () => {
+    const result = decode({
+      maxDepth: 33,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects maxConcurrentWriters above 16 (write-tree contention)", () => {
+    const result = decode({
+      maxDepth: 3,
+      maxChildren: 4,
+      maxConcurrentWriters: 17,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects maxTotalWorkers=99999 (resource exhaustion)", () => {
+    const result = decode({
+      maxDepth: 3,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 99_999,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects negative counters", () => {
+    const result = decode({
+      maxDepth: -1,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects non-integer maxDepth", () => {
+    const result = decode({
+      maxDepth: 1.5,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+});
