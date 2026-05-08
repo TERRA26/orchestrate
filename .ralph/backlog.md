@@ -1313,7 +1313,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts:868-886 (proposed-plan-upserted),docs/ORCHESTRATOR.md (no proposed-plan section)
 - evidence: thread.proposed-plan-upserted exists in code but ORCHESTRATOR.md has zero documentation on when to emit a plan, whether to wait for user approval before spawning, or how plan revisions flow.
 - proposed_fix: Add a "Proposed Plans" section in ORCHESTRATOR.md describing: when to upsert (multi-step decompositions), required fields, the user-approval expectation, and the relationship to subsequent spawn commands.
-- status: PENDING
+- status: DONE
+- fixed_iter: 108
 
 ### ORC-139
 

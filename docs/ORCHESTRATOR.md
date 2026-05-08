@@ -153,6 +153,48 @@ settings page" task might have `test: typecheck passes` (worker),
 Bad acceptance criteria: `Code should be clean`
 Good acceptance criteria: `test: All new functions have JSDoc comments`, `test: bun typecheck passes`, `screenshot: POST /api/auth/login renders the success toast`, `manual: error messages match the design system tone`
 
+## Proposed Plans
+
+A "proposed plan" is a structured, user-visible decomposition of a multi-step request that you commit to the thread BEFORE spawning workers. The decider event is `thread.proposed-plan-upserted`; the underlying command is `thread.proposed-plan.upsert`.
+
+### When to upsert a plan
+
+Emit a proposed plan when ALL of the following are true:
+
+- The request is a `decompose` route (3+ files / multiple distinct deliverables) per the routing table above.
+- You have not yet spawned any worker for this request.
+- The user has not given an explicit standing approval that bypasses planning ("just go ahead and ship X" with a clear scope).
+
+For `answer`, `inspect`, `delegate` routes, do NOT emit a plan. They are too small to warrant the overhead.
+
+### Plan shape (required fields)
+
+A proposed plan must carry at minimum:
+
+- `planId`: a stable id you can later reference from `orchestrator.run.create.sourceProposedPlan`.
+- `title`: short imperative (echoes the user request).
+- `summary`: 2-3 sentences capturing scope and deliverables.
+- `taskOutline`: an ordered list of `{ taskId, title, dependsOn, estimatedComplexity }` entries. The taskIds in this outline become the actual `orchestrator.task.create` taskIds when the plan is accepted.
+- `acceptanceCriteria`: top-level run-scoped criteria using the `test:` / `screenshot:` / `manual:` tags from the Task Design section.
+
+You can revise a plan before workers are spawned by re-issuing `thread.proposed-plan.upsert` with the same `planId`; the projector treats it as an in-place update. Once any worker has been spawned referencing the plan via `sourceProposedPlan`, treat the plan as immutable and revise scope by editing individual tasks instead.
+
+### User approval expectation
+
+By default, after upserting a plan you should:
+
+1. Render the plan to the user in your assistant message (markdown list of tasks; one line per acceptance criterion with its tag).
+2. Wait for explicit user approval before issuing `orchestrator.run.create` and the per-task `orchestrator.worker.spawn` commands.
+3. If the user requests revisions, upsert again with the same planId. Track the revision count in the plan summary so the user sees you accumulated their feedback.
+
+If the user supplied an explicit "skip planning, just do it" instruction (or the project-level setting overrides planning for trivial decompositions), you may proceed directly to `orchestrator.run.create`. Document the bypass in your assistant message so the user knows planning was skipped.
+
+### Plan -> Run -> Spawn relationship
+
+The chain is: `thread.proposed-plan.upsert` (one) -> user approval (or bypass) -> `orchestrator.run.create` with `sourceProposedPlan: { threadId, planId }` (one) -> per-task `orchestrator.task.create` (N) -> per-task `orchestrator.worker.spawn` (N gated by ORC-126 dependsOn satisfaction).
+
+The decider rejects a `run.create` whose `sourceProposedPlan` references a non-existent plan or a plan in a different project than the run. Keep planId references exact.
+
 ## Worker Management
 
 ### Spawning

@@ -3153,3 +3153,45 @@ mention of the prefix convention. Verified failing-before by stashing
   orchestrator has captured a browser session for it.
 - Update the worker's system prompt to reinforce that `test:` items
   must appear in REPORT.testsRun.
+
+## ORC-138 (iter 108): document Proposed Plans flow in ORCHESTRATOR.md
+
+- root cause: `thread.proposed-plan-upserted` exists in the decider
+  (apps/server/src/orchestration/decider.ts:874) but ORCHESTRATOR.md
+  had no instructions telling the orchestrator agent when to upsert a
+  plan, what fields it must carry, whether to wait for user approval
+  before spawning, or how the plan composes with `run.create` and the
+  per-task `worker.spawn` chain. Result: planning was an unwired
+  capability with no surface in the system prompt.
+- change summary: added `## Proposed Plans` section to
+  docs/ORCHESTRATOR.md between Task Design and Worker Management,
+  covering: (1) when to upsert (decompose route, pre-spawn, no
+  standing approval), (2) required fields (planId, title, summary,
+  taskOutline, acceptanceCriteria), (3) user-approval expectation
+  with revision flow, (4) immutability once spawning begins, and
+  (5) the plan -> run -> spawn chain via `sourceProposedPlan`,
+  pointing at the ORC-126 dependsOn satisfaction gate so the chain
+  story is internally consistent.
+- files touched:
+  - docs/ORCHESTRATOR.md
+  - apps/server/src/orchestration/orchestratorProposedPlanDoc.test.ts (new)
+- tests added: 8 doc-pinning cases verifying the new section heading,
+  decider event names, when-to-upsert language, required fields,
+  approval expectation, revision/immutability rule, and the
+  chain references.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/orchestratorProposedPlanDoc.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  ```
+  Failing-before verified: `git stash push -- docs/ORCHESTRATOR.md`
+  then re-running the same test produced 8/8 failures, confirming
+  every assertion is load-bearing.
+- follow-ups:
+  - Wire `thread.proposed-plan.upsert` into the orchestrator's
+    spawn-side helper so the plan id is automatically threaded into
+    `orchestrator.run.create.sourceProposedPlan`.
+  - Add an integration test that walks the full
+    plan-upsert -> approval -> run.create -> task.create chain end
+    to end so the doc and runtime stay synchronized.
