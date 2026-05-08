@@ -4815,3 +4815,53 @@ mention of the prefix convention. Verified failing-before by stashing
   - Promote the all-failed branch to abort startup behind a
     `--strict-orphan-reap` CLI flag for production environments
     that want fail-fast behavior.
+
+## ORC-228 (iter 151): PII redaction hook in the structured logger
+
+- root cause: `apps/server/src/logger.ts` had no redaction layer.
+  Operational call sites passed user-typed prompts, file paths,
+  project titles, and other arguably-PII fields straight into the
+  formatted log line. Log aggregators (CloudWatch, Datadog,
+  whatever upstream pipeline runs) index those lines, so anyone
+  with log read access could recover the user's prompts and
+  paths.
+- change summary:
+  - Added `redactLogValue(key, value)` exported from `logger.ts`.
+    The helper checks (case-insensitively) against a default PII
+    key set (`prompt`, `filePath`, `path`, `projectTitle`, `title`,
+    `userMessage`, `objective`, `instruction`, `body`, `text`,
+    `summary`, `submitSummary`, `submitNotes`, plus snake_case
+    variants) and replaces the value with
+    `[REDACTED](len=N)` for strings (preserving length signal) or
+    `[REDACTED](array,len=N)` for arrays.
+  - Reads env vars per invocation:
+    - `ORCHESTRATE_LOG_RAW=1` disables redaction (local debug only).
+    - `ORCHESTRATE_LOG_REDACT_KEYS=foo,bar` extends the default set.
+  - Wired the helper into `formatContext` so every `logger.info /
+    .warn / .error / .event` call automatically redacts.
+- files touched:
+  - apps/server/src/logger.ts
+  - apps/server/src/logger.test.ts (new)
+- tests added: 11 unit tests covering: default PII key
+  redaction (prompt/filePath/projectTitle/body/text/summary),
+  case-insensitive match, empty-string placeholder, array length
+  signal, non-PII keys pass through, RAW mode disables
+  redaction, undefined/null pass-through, REDACT_KEYS extension.
+  Plus 2 integration tests using a captured `console.log` that
+  prove the formatted line redacts in normal mode and emits raw
+  values in RAW mode.
+- evidence of green run:
+  ```
+  bun run test src/logger.test.ts
+   Test Files  1 passed (1)
+        Tests  11 passed (11)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Audit existing log call sites for any that bake the PII into
+    the message string (e.g. `log.info("user said: " + prompt)`)
+    instead of passing it as a context field; those bypass the
+    redactor.
+  - Add an oxlint rule that flags string-template logging of
+    likely-PII values.

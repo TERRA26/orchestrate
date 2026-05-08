@@ -2188,6 +2188,8 @@ Schema per entry:
 - files: apps/server/src/logger.ts (no redaction hook)
 - evidence: User-typed prompts, file paths, and project titles appear in logs unredacted. Log aggregators index this content; PII is exposed.
 - proposed_fix: Add a redactValue(key, value) hook in the logger. Redact known PII fields (prompt, filePath, projectTitle) by default. Provide an opt-in raw mode for local debugging.
+- status: DONE
+- fixed_iter: 151
 - status: PENDING
 
 ### ORC-229
