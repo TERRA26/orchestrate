@@ -787,7 +787,8 @@ Schema per entry:
 - files: package.json (root engines node ^24.13.1),apps/server/package.json (engines node ^22.16 || ^23.11 || >=24.10),actual runtime Node v20.19.6
 - evidence: The root engines field declares Node ^24.13.1 but the apps/server field tolerates 22.16+. The user is observably running Node 20.19.6 (per ps output earlier). The marketing app's Astro requires Node 22+. Result: typecheck fails in marketing, server runs on a Node version it claims not to support.
 - proposed_fix: Establish ONE supported Node range across the monorepo and unify all engine fields to it. If 20 must be supported (e.g. for CI/macs without Homebrew nvm), match server's tolerance everywhere AND verify Astro/marketing actually works on the chosen version.
-- status: PENDING
+- status: DONE
+- fixed_iter: 87
 
 ### ORC-083
 

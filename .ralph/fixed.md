@@ -2027,3 +2027,44 @@ The 4 name-specific tests would fail if any matching reference were re-introduce
 - When Effect 4.0 GA lands: re-evaluate the forbidden list; the renames will likely be permanent so the rules can stay.
 - Add a similar forbidden-list test for @effect/sql / @effect/platform-node beta renames if any surface during the upgrade.
 - Document the API surface used (separate doc file) once the 4.0 -> 4.x upgrade strategy is decided.
+
+## ORC-082 [iter 87] Node engines field drift between root and apps/server
+
+**Root cause**: The root `package.json` declared `engines.node = "^24.13.1"` while `apps/server/package.json` tolerated `"^22.16 || ^23.11 || >=24.10"`. Because:
+- Bun's `node:sqlite` builtin needs Node 22.5+ (server requirement).
+- Astro 5 in apps/marketing needs Node 22.12+.
+- Production target is Node 24.x (per the original root pin).
+
+The narrower root pin of `^24.13.1` falsely advertised "this monorepo only runs on Node 24" while the server field said otherwise. CI / contributor onboarding hit confusing "engines mismatch" warnings, and the host running Node 20 (observably the case earlier in this session) had no clear signal which version was actually required.
+
+**Change summary**:
+- `package.json` (root): `engines.node` updated from `^24.13.1` to `^22.16 || ^23.11 || >=24.10`. The new value is the union of all current sub-package requirements (server's range is the broadest superset that still excludes the unsupported Node 18-20 range).
+
+**Files touched**:
+- package.json
+- apps/server/src/observability/enginesField.test.ts (NEW)
+
+**Tests added**: 5 cases in `enginesField.test.ts`:
+1. Root `package.json` declares the canonical Node range.
+2. `apps/server/package.json` declares the canonical Node range.
+3. Sanity: the canonical range admits Node 22.16 (Astro requirement).
+4. Sanity: the canonical range admits Node 24.10 (production / bun-sqlite target).
+5. Every workspace package that has its own `engines.node` matches the canonical string. Workspaces without `engines.node` fall through to the root, which is fine.
+
+The first two would fail before the change (root was `^24.13.1`); verified by stashing the package.json edit and re-running the test (1 failure on the root assertion).
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability/enginesField.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 5 passed (5)
+- Stash-pop verification: with root reverted, the root-pin assertion fails as expected.
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The canonical string is exact-string compared. Reordering operands (`>=24.10 || ^22.16 || ^23.11`) would trip the test. Acceptable: enforces a single canonical form; future contributors editing the field have a clear signal.
+- Workspaces without engines.node fall through to root: documented in the test that it's OK to omit. If a sub-package needs a tighter range (e.g., a marketing-only requirement), the test will report that as a violation, prompting a deliberate decision.
+- The host runtime situation (user's macOS has nvm with both Node 20 and Node 24 installed): unchanged. Bun selects Node 20 by default unless PATH is configured. The engines field is advisory at install time; it doesn't force Node selection. A separate concern (not covered here) is to ensure the dev-runner / start scripts pick Node 24.x explicitly when the host has multiple installed.
+- The 22.16 / 23.11 specific minor floors come from Node's release notes for stable WebSocket and stable test-runner support; documented in the test rationale.
+
+**Follow-ups**:
+- Wire the dev-runner / start script to select the right Node binary when the host has multiple nvm-managed Node versions, so contributors with old default Node don't have to manually `nvm use 24` before bun.
+- Add a contributing.md note pointing at the canonical engines value and explaining how to bump it monorepo-wide via a single PR.
+- When Node 22 hits LTS sunset, drop the 22 clause and bump the floor; the test will guide the migration.
