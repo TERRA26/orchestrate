@@ -46,6 +46,14 @@ import {
   buildCodexLifecycleLog,
   type CodexLifecycleEvent,
 } from "./observability/codexLifecycleLog.ts";
+import { logBestEffortFailure } from "./observability/bestEffortLog.ts";
+import { createLogger } from "./logger";
+
+// ORC-065: small synchronous logger for module-level helpers (sidecar
+// write/remove, taskkill fallback) so empty catches no longer silently
+// swallow filesystem errors.
+const sidecarLogger = createLogger("codex.sidecar");
+const processControlLogger = createLogger("codex.process-control");
 
 import {
   formatCodexCliUpgradeMessage,
@@ -240,14 +248,23 @@ function writeOrchestratorPidSidecar(input: {
       path.join(ORCHESTRATOR_PID_SIDECAR_DIR, `${input.codexPid}.json`),
       JSON.stringify({ orchestratorThreadId: input.threadId, writtenAt: Date.now() }),
     );
-  } catch {}
+  } catch (error) {
+    logBestEffortFailure(sidecarLogger, "codex.sidecar", "write", error, {
+      codexPid: input.codexPid,
+      threadId: input.threadId,
+    });
+  }
 }
 
 function removeOrchestratorPidSidecar(codexPid: number | undefined): void {
   if (codexPid === undefined) return;
   try {
     rmSync(path.join(ORCHESTRATOR_PID_SIDECAR_DIR, `${codexPid}.json`), { force: true });
-  } catch {}
+  } catch (error) {
+    logBestEffortFailure(sidecarLogger, "codex.sidecar", "remove", error, {
+      codexPid,
+    });
+  }
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
@@ -463,8 +480,12 @@ function killChildTree(child: ChildProcessWithoutNullStreams): void {
     try {
       spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
       return;
-    } catch {
-      // fallback to direct kill
+    } catch (error) {
+      // ORC-065: log the taskkill failure before falling back to direct
+      // child.kill() so operators see why a Windows tree-kill regressed.
+      logBestEffortFailure(processControlLogger, "codex.process-control", "taskkill", error, {
+        pid: child.pid,
+      });
     }
   }
   child.kill();
@@ -1443,8 +1464,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       try {
         const accountReadResponse = await this.sendRequest(context, "account/read", {});
         context.account = readCodexAccountSnapshot(accountReadResponse);
-      } catch {
-        // Fork can proceed without account metadata; model fallback will stay best-effort.
+      } catch (error) {
+        // ORC-065: fork can proceed without account metadata; model fallback
+        // stays best-effort. Log so operators see when this fallback path
+        // is exercised (it usually means a transient codex hiccup).
+        await Effect.logWarning("codex fork: account/read failed; continuing without account metadata", {
+          scope: "codex.manager",
+          action: "fork.account-read",
+          threadId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }).pipe(this.runPromise);
       }
 
       const normalizedModel =
@@ -1819,10 +1848,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         if (!normalizedCwd || session.session.cwd === normalizedCwd) {
           return session;
         }
-      } catch {
-        // Discovery is read-only metadata, so if the current draft thread does not
-        // have a live Codex session yet we can still service repo-scoped
-        // discovery through a dedicated discovery session for that cwd.
+      } catch (error) {
+        // ORC-065: control-flow exception when the draft thread has no live
+        // session yet; we fall through to discovery. Log at debug level so
+        // the path stays auditable without spamming warn logs.
+        void this.runPromise(
+          Effect.logDebug("codex discovery: requireSession miss; falling back to discovery session", {
+            scope: "codex.discovery",
+            action: "require-session-fallback",
+            threadId: normalizedThreadId,
+            cwd: normalizedCwd ?? null,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          }),
+        );
       }
     }
     if (normalizedCwd) {
@@ -1911,8 +1949,15 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       try {
         const accountReadResponse = await this.sendRequest(context, "account/read", {});
         context.account = readCodexAccountSnapshot(accountReadResponse);
-      } catch {
-        // Discovery can still function without account metadata.
+      } catch (error) {
+        // ORC-065: discovery can still function without account metadata,
+        // but operators should see when the discovery codex flapped.
+        await Effect.logWarning("codex discovery: account/read failed; continuing", {
+          scope: "codex.discovery",
+          action: "account-read",
+          cwd: normalizedCwd,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }).pipe(this.runPromise);
       }
       this.updateSession(context, { status: "ready" });
       return context;
@@ -2015,7 +2060,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
-    } catch {
+    } catch (error) {
+      // ORC-065: also log the parse failure so operators have a programmatic
+      // signal when codex starts emitting malformed JSON. The client-facing
+      // error event handles UX; this handles ops.
+      void this.runPromise(
+        Effect.logWarning("codex stdout: invalid JSON line received", {
+          scope: "codex.protocol",
+          action: "parse-stdout-line",
+          threadId: context.session.threadId,
+          linePreview: line.slice(0, 200),
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }),
+      );
       this.emitErrorEvent(
         context,
         "protocol/parseError",

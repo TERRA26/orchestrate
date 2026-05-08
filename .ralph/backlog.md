@@ -627,7 +627,8 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:236,243,459,1311,1681,1846
 - evidence: Multiple `catch {}` blocks swallow errors with no logging. rmSync cleanup, child-process cleanup, sidecar lifecycle. When transient outages occur, there is no signal until the system has accumulated enough orphaned state to fail loudly.
 - proposed_fix: Replace empty catches with `catch (err) { logger.warn("scope: action failed", { err: errorToFields(err) }); }`. Use Cause.pretty for Effect causes. Decide per site whether to also rethrow.
-- status: PENDING
+- status: DONE
+- fixed_iter: 79
 
 ### ORC-066
 

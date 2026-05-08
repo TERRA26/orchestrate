@@ -1738,3 +1738,45 @@ All 9 would fail before the change because the helper module didn't exist.
 - Wire `kind: "retry"` at the existing `Effect.logWarning("codex app-server thread resume failed", ...)` site so the retry attempt count and reason are normalized (currently uses ad-hoc warning messages).
 - Mirror the same lifecycle log helper for ClaudeAdapter when its session-start/exit paths get a similar audit pass.
 - Add a structured log handler that ships these events to an external sink (Loki/Logflare/etc.); the discriminating `event` tag makes routing trivial.
+
+## ORC-065 [iter 79] Silent catch blocks in codex manager swallowed errors
+
+**Root cause**: `apps/server/src/codexAppServerManager.ts` had 7 `catch {}` (or `catch { /* comment-only */ }`) blocks that silenced errors during sidecar write/remove, Windows taskkill fallback, fork+discovery account/read failures, the requireSession control-flow miss, and the JSON-parse path on stdout. Transient filesystem failures, codex hiccups, and protocol corruption were invisible to operators until the system had accumulated enough orphaned state to fail loudly.
+
+**Change summary**:
+- New `apps/server/src/observability/bestEffortLog.ts`: pure helpers `errorToLogFields(error)` (extracts message + Node fs `code`) and `logBestEffortFailure(logger, scope, action, error, extra?)` (warn log with consistent shape `best-effort failure: <scope>:<action>`).
+- `apps/server/src/codexAppServerManager.ts`:
+  - 2 sync sidecar functions (`writeOrchestratorPidSidecar`, `removeOrchestratorPidSidecar`): silent catches replaced with `logBestEffortFailure(sidecarLogger, "codex.sidecar", "write"|"remove", error, { codexPid, threadId? })`.
+  - 1 sync helper (`killChildTree` Windows taskkill fallback): now logs the taskkill failure before falling back to `child.kill()`.
+  - 2 async account/read failures (fork session at line ~1456 and discovery at line ~1944): replaced with `await Effect.logWarning("...account/read failed; continuing...", { scope: "codex.<manager|discovery>", action, ...errorMessage }).pipe(this.runPromise)`.
+  - 1 control-flow catch (`requireSession` miss in `resolveContextForDiscovery`): now emits `Effect.logDebug` so the path stays auditable without spamming warn logs.
+  - 1 JSON-parse failure on stdout: now emits `Effect.logWarning` with linePreview + errorMessage in addition to the existing client-facing error event.
+
+**Files touched**:
+- apps/server/src/observability/bestEffortLog.ts (NEW)
+- apps/server/src/observability/bestEffortLog.test.ts (NEW)
+- apps/server/src/observability/noEmptyCatch.test.ts (NEW)
+- apps/server/src/codexAppServerManager.ts
+
+**Tests added**:
+- `bestEffortLog.test.ts` (7 cases): `errorToLogFields` extracts message, includes Node fs code, falls back to `String()` for non-Errors. `logBestEffortFailure` emits a warn line with `scope/action/errorMessage`, merges extra fields, and forwards the error code.
+- `noEmptyCatch.test.ts` (1 case, stand-in lint rule): walks `apps/server/src/**/*.{ts,tsx}` (excluding tests) and asserts no `} catch {}` patterns remain. Reports any offender with file path + line + source for actionable failure.
+
+The lint test would fail before the change (the codex manager had 2 such literal patterns at lines 243 and 250). It passes after.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability src/codexAppServerManager.test.ts` (Node 24) -> Test Files 6 passed (6) | Tests 79 passed | 1 skipped
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Recovery from a stale stash collision: during this iteration a `git stash pop` from a prior aborted state introduced 44 unmerged conflicts plus 5796 lines of stale t3tools-era content. Recovered by `git checkout HEAD -- .` (preserving only the one M file via /tmp backup) plus `git stash drop`. Iter 79 commit contains only the intended changes; nothing leaked.
+- Fire-and-forget logs: the sync `void this.runPromise(Effect.log...)` pattern swallows any logger failures. Acceptable since the structured logger writes synchronously.
+- requireSession control-flow log at debug level: avoids noisy warn output for the normal "no live session for this draft thread yet" path while keeping the trail auditable.
+- Comment-only catches: replaced even where the comment explained "fallback intentional" because the original explanation didn't justify zero observability.
+- Test isolation: the lint-style tests walk filesystem deterministically and only inspect tracked source files (not node_modules / dist).
+
+**Follow-ups**:
+- Audit `apps/web/src` for empty catches as a separate ticket.
+- Consider promoting `logBestEffortFailure` to `@orchestrate/shared/observability` once a second consumer appears.
+- Wire `noEmptyCatch.test.ts` style scan as an oxlint rule when oxlint adds the corresponding eslint rule (`no-empty` covers part of this but not catch-specific).
