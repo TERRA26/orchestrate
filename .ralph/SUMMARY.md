@@ -1,21 +1,23 @@
 # Ralph Loop Summary
 
-This file is the high-level summary of the Ralph hardening sweep against the Orchestrate codebase. Refreshed at iter 187 after the final round of P1 closures.
+This file is the high-level summary of the Ralph hardening sweep against the Orchestrate codebase. Refreshed at iter 194 after `bun run test` from the repo root passed cleanly (criterion 5).
 
 ## Counts by severity
 
-Tallied from `.ralph/backlog.md` at iter 187. Read first-occurrence pairs (`severity:` then `status:`) per ORC entry to avoid double-counting cleanup duplicates.
+Tallied from `.ralph/backlog.md` at iter 194. Read first-occurrence pairs (`severity:` then `status:`) per ORC entry to avoid double-counting cleanup duplicates.
 
 | Severity | DONE | DEFERRED | PENDING | Total |
 | -------- | ---- | -------- | ------- | ----- |
 | P0       | 12   | 1        | 0       | 13    |
-| P1       | 111  | 19       | 0       | 130   |
+| P1       | 113  | 19       | 0       | 132   |
 | P2       | 0    | 0        | 130     | 130   |
 | P3       | 0    | 0        | 18      | 18    |
-| **Total** | **123** | **20** | **148** | **291** |
+| **Total** | **125** | **20** | **148** | **293** |
 
 P0 + P1 in PENDING/FIXING: **0**.
-DONE entries in fixed.md (h2 + h3 ORC headings): **123** (matches backlog).
+DONE entries in fixed.md (h2 + h3 ORC headings): **125** (matches backlog).
+
+Iter 187 closed ORC-277 (cross-run isolation). Iter 188 fixed Sqlite.ts Effect.try options-form (filed retroactively as ORC-292). Iter 192 fixed three pre-existing test failures that blocked criterion 5 (filed retroactively as ORC-293).
 
 ## Areas covered per pass
 
@@ -63,22 +65,26 @@ Iter range:
 
 Best-effort instrumentation; many "before" baselines were established mid-loop because the loop began on a partially-hardened repo.
 
-| Metric                                          | Before (early loop) | After (iter 187) |
+| Metric                                          | Before (early loop) | After (iter 194) |
 | ------------------------------------------------ | ------------------- | ---------------- |
 | Test files (`apps/**/*.test.ts`, `packages/**`) | ~245                | 270              |
+| Server vitest pass count                         | (not measured)      | 1289 passed (3 skipped) |
+| Web vitest pass count                            | (not measured)      | 976 passed |
 | P0 issues PENDING                                | 12 (later DONE)     | 0                |
 | P1 issues PENDING                                | ~50 (peak)          | 0                |
-| P0/P1 DONE                                       | 0 -> ~50            | 12 / 111 (123)   |
+| P0/P1 DONE                                       | 0 -> ~50            | 12 / 113 (125)   |
 | Lint errors (workspace-wide)                     | 0                   | 0                |
 | Lint warnings                                    | 147                 | 149              |
 | Type errors (server / web / contracts / shared)  | 0                   | 0                |
-| `bun run vitest run` (apps/server, targeted)     | green               | green            |
+| `bun run test` (turbo, all 11 packages)          | failing (orig)      | 11/11 successful |
 
 Notes:
 
 - Bundle size and Lighthouse score are not collected by the loop; would need a separate snapshot pass.
 - The 2 new lint warnings come from added test files; warnings, not errors.
 - Test-file count grew because closures introduced new test files (one per fix on average) plus a few helpers in `__fixtures__/`.
+- The 3 skipped server tests are: `integration/providerService.integration.test.ts` (live providers required) plus 2 platform-specific helper tests.
+- Criterion 5 verification ran under Node 24.14.1 (per package.json engines `^22.16 || ^23.11 || >=24.10`); the recovery suite uses `node:sqlite` which is Node 22+ only.
 
 ## Recommended next sweep for a human reviewer
 
