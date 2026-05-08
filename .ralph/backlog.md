@@ -2289,7 +2289,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1965-1978 (token comparison path)
 - evidence: A failed token attempt returns 401 immediately. There is no per-IP attempt counter, no exponential backoff, no log line. An attacker can run unlimited guesses.
 - proposed_fix: Add a per-IP failure counter with exponential backoff (e.g. block after 5 fails for 30s, then 60s, etc.). Log every failed attempt at warn with the source IP.
-- status: PENDING
+- status: DONE
+- fixed_iter: 161
 
 ### ORC-240
 

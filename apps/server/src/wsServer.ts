@@ -62,6 +62,7 @@ import {
   markConnectionAuthenticated,
 } from "./connectionAuth.ts";
 import { buildTraceContext, withTraceContext } from "./observability/traceContext.ts";
+import { makeAuthAttemptLimiter } from "./observability/authAttemptLimiter.ts";
 import { ignoreCauseDefectAware } from "./observability/defectAwareIgnore.ts";
 import { reapOrphanWorkers } from "./orchestration/orphanReap.ts";
 import { createLogger } from "./logger";
@@ -145,14 +146,27 @@ const isServerNotRunningError = (error: Error): boolean => {
   );
 };
 
-function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
+function rejectUpgrade(
+  socket: Duplex,
+  statusCode: number,
+  message: string,
+  extraHeaders?: Record<string, string>,
+): void {
+  const reason =
+    statusCode === 401
+      ? "Unauthorized"
+      : statusCode === 429
+        ? "Too Many Requests"
+        : "Bad Request";
+  const headerLines = ["Connection: close", "Content-Type: text/plain"];
+  if (extraHeaders) {
+    for (const [name, value] of Object.entries(extraHeaders)) {
+      headerLines.push(`${name}: ${value}`);
+    }
+  }
+  headerLines.push(`Content-Length: ${Buffer.byteLength(message)}`);
   socket.end(
-    `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
-      "Connection: close\r\n" +
-      "Content-Type: text/plain\r\n" +
-      `Content-Length: ${Buffer.byteLength(message)}\r\n` +
-      "\r\n" +
-      message,
+    `HTTP/1.1 ${statusCode} ${reason}\r\n` + headerLines.join("\r\n") + "\r\n\r\n" + message,
   );
 }
 
@@ -1046,6 +1060,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   // WebSocket server — upgrades from the HTTP server
   const wss = new WebSocketServer({ noServer: true });
+  // ORC-239: per-IP auth-attempt limiter. Default 5 fails before
+  // exponential backoff starting at 30s, clamped at 30 minutes.
+  const authAttemptLimiter = makeAuthAttemptLimiter();
 
   const closeWebSocketServer = Effect.callback<void, ServerLifecycleError>((resume) => {
     wss.close((error) => {
@@ -2209,10 +2226,41 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         `http://localhost:${port}`,
       );
 
+      // ORC-239: per-IP auth-attempt rate limit. Reject already-blocked
+      // IPs immediately with 429 + Retry-After. Record failures and
+      // log every bad attempt at warn so operators can spot brute-force.
+      const sourceIp =
+        (typeof request.socket.remoteAddress === "string" && request.socket.remoteAddress) ||
+        "unknown";
+      const blockState = authAttemptLimiter.isBlocked(sourceIp);
+      if (blockState.blocked) {
+        const retrySeconds = Math.ceil((blockState.retryAfterMs ?? 30_000) / 1000);
+        rejectUpgrade(
+          socket,
+          429,
+          "Too many failed auth attempts; retry after " + String(retrySeconds) + "s",
+          { "Retry-After": String(retrySeconds) },
+        );
+        logger.warn("ws.auth.blocked", {
+          sourceIp,
+          failureCount: blockState.failureCount,
+          retryAfterMs: blockState.retryAfterMs,
+        });
+        return;
+      }
+
       if (providedToken !== authToken) {
+        const next = authAttemptLimiter.recordFailure(sourceIp);
+        logger.warn("ws.auth.failure", {
+          sourceIp,
+          failureCount: next.failureCount,
+          blocked: next.blocked,
+          retryAfterMs: next.retryAfterMs,
+        });
         rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
         return;
       }
+      authAttemptLimiter.recordSuccess(sourceIp);
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {

@@ -5055,3 +5055,54 @@ mention of the prefix convention. Verified failing-before by stashing
   - Document the empty-list convention in
     `docs/ORCHESTRATOR.md` so the orchestrator's prompt teaches
     the right intuition when configuring spawnBudget.
+
+## ORC-239 (iter 161): per-IP auth-attempt rate limit + exponential backoff
+
+- root cause: `wsServer.ts` upgrade handler rejected bad tokens
+  with a bare 401 and no record. There was no per-IP failure
+  counter, no backoff, and no log line. An attacker could run
+  unlimited token guesses from a single source IP.
+- change summary:
+  - Added `apps/server/src/observability/authAttemptLimiter.ts`
+    exporting `makeAuthAttemptLimiter({ threshold, baseBlockMs,
+    maxBlockMs, now })`. Default 5-fail threshold, 30s base
+    window, 30-minute clamp. Per-IP state tracks
+    `{ failures, blockedUntilMs }`. Block window grows
+    exponentially per failure beyond the threshold; failure count
+    is persistent across cleared windows so post-window attempts
+    keep escalating.
+  - Wired into the upgrade handler in `wsServer.ts`. Before token
+    comparison, `authAttemptLimiter.isBlocked(sourceIp)` rejects
+    blocked IPs immediately with 429 + `Retry-After` header. On
+    bad token, `recordFailure(sourceIp)` increments and the
+    handler logs `ws.auth.failure` at warn with structured
+    metadata. On success, `recordSuccess` clears state.
+  - Extended `rejectUpgrade` to accept an optional
+    `extraHeaders` map and to recognize 429 (Too Many Requests)
+    in the status line.
+- files touched:
+  - apps/server/src/observability/authAttemptLimiter.ts (new)
+  - apps/server/src/observability/authAttemptLimiter.test.ts (new)
+  - apps/server/src/wsServer.ts
+- tests added: 10 unit tests covering: unknown IP not blocked,
+  threshold-respecting accumulation, block at threshold, block
+  persists during window, window clears after retry-after,
+  exponential growth (30s, 60s, 120s), max-block clamp,
+  recordSuccess clears state, per-IP isolation, post-window
+  failures continue to escalate (failure count persists).
+- evidence of green run:
+  ```
+  bun run test src/observability/authAttemptLimiter.test.ts
+   Test Files  1 passed (1)
+        Tests  10 passed (10)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 errors on changed files
+  ```
+- follow-ups:
+  - Persist counter state across server restarts (currently
+    in-memory) so a planned rolling restart doesn't reset
+    accumulated knowledge of a brute-force source.
+  - Add a global rate ceiling (sum of failures across all IPs)
+    so distributed attempts also trip the gate.
+  - Promote thresholds to env vars
+    (`ORCHESTRATE_AUTH_FAIL_THRESHOLD`, etc.) for ops tuning.
