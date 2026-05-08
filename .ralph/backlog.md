@@ -1743,7 +1743,9 @@ Schema per entry:
 - files: scripts/orchestrate-mcp-server.ts:615-628 (response routing)
 - evidence: WS responses are routed via a global pendingMap keyed by requestId. If the user navigates between threads while a request is in flight, the response is applied to whichever thread is current at the time, not the originating thread.
 - proposed_fix: Tag each request with the originating threadId; on response, route the result through a thread-scoped handler so it applies only to the right thread's state.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 123
+- deferred_reason: Filed file location (scripts/orchestrate-mcp-server.ts:615-628) is wrong; that range is URL parsing, not request routing. The actual race surface is in apps/web/src/wsTransport.ts response handling and the React Query / zustand store consumers that apply WS results without checking "is this still the active thread". Fix needs an audit of every store mutation triggered by a WS response, plus either AbortController cancellation on navigation or per-result staleness checks. Multi-iteration scope.
 
 ### ORC-185
 

@@ -82,3 +82,34 @@ A multi-iteration plan with explicit checkpoints:
 
 Each step is one iteration. Track as separate ORC ids (ORC-179a..d) when the next sweep picks this up.
 
+
+## ORC-184 (deferred at iter 123): thread-scoped WS response routing
+
+### What was attempted
+
+Reviewed scripts/orchestrate-mcp-server.ts:615-628 — the cited range is URL parsing (`buildOrchestrationWsUrls` and `redactOrchestrationWsUrlForLog`), NOT request/response routing. The actual `wsRequest` lives at lines 713-726 and the pendingMap at line 651 keys by `wsRequestId`. The MCP server is a one-shot tool dispatcher; it does not have a "navigate between threads" UI concept. The bug as described applies to apps/web/src/wsTransport.ts and the consumers of its responses.
+
+Surveyed apps/web/src/wsTransport.ts. Each request resolves its own promise via the requestId routing. The race condition is in the CONSUMERS: React Query mutations and zustand store actions apply results without checking if the originating thread is still the active one.
+
+### Why a single-iteration fix is risky
+
+The complete fix needs:
+
+1. **Audit pass**: identify every WS-driven mutation in apps/web/src/store.ts, the lib/* React Query options, and per-feature stores (composerDraft, splitView, terminalState, orchestratorPane). Some are inherently safe (replace-all snapshot updates), some are racy (per-thread diff cache, per-thread terminal state).
+2. **Decision per call site**: AbortController on navigation OR per-result threadId equality check before applying. Both have tradeoffs.
+3. **Contract change**: WS request envelope gains an optional `originatingThreadId`; the response middleware stamps it back on the resolved value so consumers can compare.
+4. **Tests**: an integration test that simulates a fast thread-switch and asserts the response of the abandoned thread does NOT mutate the new thread's state.
+
+That's a 5-7 file change spanning transport, contracts, three to five store modules, and tests. Not a one-iteration scope.
+
+### What would unblock it
+
+A staged plan, similar to ORC-179:
+
+- **Step A**: extend the WS request contract with optional `originatingThreadId` (no behavior change).
+- **Step B**: add a `useStaleSafeQuery` hook that wraps React Query with an originating-thread check.
+- **Step C**: migrate the highest-risk per-thread queries (diff, turn detail, terminal state) one by one, each with a regression test simulating thread switch.
+- **Step D**: extend to remaining call sites; add a lint rule banning bare WS-response mutations against thread-scoped state.
+
+Track as ORC-184a..d.
+
