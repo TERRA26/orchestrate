@@ -16,6 +16,8 @@ import {
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
+  findProposedPlanHistory,
+  findThreadProposedPlanHistory,
   findSidebarProposedPlan,
   hasActionableProposedPlan,
   hasToolActivityForTurn,
@@ -412,6 +414,142 @@ describe("findLatestProposedPlan", () => {
     );
 
     expect(latestPlan?.planMarkdown).toBe("# Latest");
+  });
+});
+
+/**
+ * Pins the proposed-plan version-history helpers introduced by
+ * ORC-281. proposedPlans is already a versioned array; the helper
+ * exposes it ordered oldest-first so the UI can render an audit
+ * trail without a server-side schema bump.
+ *
+ * @see ORC-281
+ */
+describe("findProposedPlanHistory (ORC-281)", () => {
+  const planA = {
+    id: "plan:a",
+    turnId: TurnId.makeUnsafe("turn-1"),
+    planMarkdown: "# Plan A",
+    implementedAt: null,
+    implementationThreadId: null,
+    createdAt: "2026-02-23T00:00:01.000Z",
+    updatedAt: "2026-02-23T00:00:01.000Z",
+  };
+  const planB = {
+    id: "plan:b",
+    turnId: TurnId.makeUnsafe("turn-1"),
+    planMarkdown: "# Plan B",
+    implementedAt: null,
+    implementationThreadId: null,
+    createdAt: "2026-02-23T00:00:02.000Z",
+    updatedAt: "2026-02-23T00:00:02.000Z",
+  };
+  const planC = {
+    id: "plan:c",
+    turnId: TurnId.makeUnsafe("turn-2"),
+    planMarkdown: "# Plan C",
+    implementedAt: "2026-02-23T00:00:05.000Z",
+    implementationThreadId: ThreadId.makeUnsafe("thread-2"),
+    createdAt: "2026-02-23T00:00:03.000Z",
+    updatedAt: "2026-02-23T00:00:04.000Z",
+  };
+
+  it("returns an empty array when proposedPlans is empty", () => {
+    expect(findProposedPlanHistory([])).toEqual([]);
+  });
+
+  it("returns plans sorted oldest-first by createdAt", () => {
+    const result = findProposedPlanHistory([planC, planA, planB]);
+    expect(result.map((p) => p.id)).toEqual(["plan:a", "plan:b", "plan:c"]);
+  });
+
+  it("breaks ties on updatedAt then id (stable order)", () => {
+    const tieA = { ...planA, id: "plan:tie-a", updatedAt: "2026-02-23T00:00:01.000Z" };
+    const tieB = {
+      ...planA,
+      id: "plan:tie-b",
+      updatedAt: "2026-02-23T00:00:02.000Z",
+    };
+    const result = findProposedPlanHistory([tieB, tieA]);
+    expect(result.map((p) => p.id)).toEqual(["plan:tie-a", "plan:tie-b"]);
+  });
+
+  it("preserves implementedAt and implementationThreadId on each entry", () => {
+    const result = findProposedPlanHistory([planC]);
+    expect(result[0]?.implementedAt).toBe("2026-02-23T00:00:05.000Z");
+    expect(result[0]?.implementationThreadId).toBe("thread-2");
+  });
+
+  it("returns LatestProposedPlanState shape (not raw ProposedPlan)", () => {
+    const result = findProposedPlanHistory([planA]);
+    expect(result[0]).toEqual({
+      id: planA.id,
+      turnId: planA.turnId,
+      planMarkdown: planA.planMarkdown,
+      implementedAt: planA.implementedAt,
+      implementationThreadId: planA.implementationThreadId,
+      createdAt: planA.createdAt,
+      updatedAt: planA.updatedAt,
+    });
+  });
+});
+
+describe("findThreadProposedPlanHistory (ORC-281)", () => {
+  const threadA = {
+    id: ThreadId.makeUnsafe("thread-a"),
+    proposedPlans: [
+      {
+        id: "plan:a:1",
+        turnId: TurnId.makeUnsafe("turn-1"),
+        planMarkdown: "# v1",
+        implementedAt: null,
+        implementationThreadId: null,
+        createdAt: "2026-02-23T00:00:01.000Z",
+        updatedAt: "2026-02-23T00:00:01.000Z",
+      },
+      {
+        id: "plan:a:2",
+        turnId: TurnId.makeUnsafe("turn-1"),
+        planMarkdown: "# v2",
+        implementedAt: null,
+        implementationThreadId: null,
+        createdAt: "2026-02-23T00:00:02.000Z",
+        updatedAt: "2026-02-23T00:00:02.000Z",
+      },
+    ],
+  };
+  const threadB = {
+    id: ThreadId.makeUnsafe("thread-b"),
+    proposedPlans: [],
+  };
+
+  it("returns the thread's plan history sorted oldest-first", () => {
+    const result = findThreadProposedPlanHistory({
+      threads: [threadA, threadB],
+      threadId: threadA.id,
+    });
+    expect(result.map((p) => p.id)).toEqual(["plan:a:1", "plan:a:2"]);
+  });
+
+  it("returns empty when the thread id is null", () => {
+    expect(
+      findThreadProposedPlanHistory({ threads: [threadA, threadB], threadId: null }),
+    ).toEqual([]);
+  });
+
+  it("returns empty when the thread id does not match any thread", () => {
+    expect(
+      findThreadProposedPlanHistory({
+        threads: [threadA, threadB],
+        threadId: ThreadId.makeUnsafe("thread-missing"),
+      }),
+    ).toEqual([]);
+  });
+
+  it("returns empty when the thread has no proposed plans", () => {
+    expect(
+      findThreadProposedPlanHistory({ threads: [threadA, threadB], threadId: threadB.id }),
+    ).toEqual([]);
   });
 });
 

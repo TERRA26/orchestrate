@@ -5883,3 +5883,65 @@ mention of the prefix convention. Verified failing-before by stashing
     sequence end-to-end. Today the section is documented but no
     integration test confirms the runtime supports the documented
     flow without rough edges.
+
+## ORC-281: expose proposed-plan version history via pure helpers
+
+- root cause: `findLatestProposedPlan` returned only the latest
+  `LatestProposedPlanState`. `proposedPlans: ReadonlyArray<ProposedPlan>`
+  on each thread already stores every revision (the runtime
+  appends a new entry on each upsert), but no helper exposed that
+  history. The UI claim "no audit trail of proposed vs executed
+  plans" was a UX gap, not a data gap; the fix is to surface the
+  existing array in a sorted, type-shaped form so a downstream
+  PlanSidebar render can display it.
+- change summary:
+  - Added `findProposedPlanHistory(proposedPlans)` to
+    `apps/web/src/session-logic.ts`. Returns
+    `ReadonlyArray<LatestProposedPlanState>` sorted oldest-first
+    by `createdAt`, with stable id-tiebreak so two plans with the
+    same createdAt do not flicker between renders.
+  - Added `findThreadProposedPlanHistory({ threads, threadId })`
+    that resolves the thread by id and delegates to the array
+    helper. Returns an empty array on null thread id, missing
+    thread, or empty plan list.
+  - Both helpers re-use the existing private `toLatestProposedPlanState`
+    mapping so the shape stays identical to what the latest-plan
+    accessor returns; the UI can render history rows with the same
+    component used for the active plan.
+- files touched:
+  - apps/web/src/session-logic.ts
+  - apps/web/src/session-logic.test.ts
+- tests added (10 total):
+  - `findProposedPlanHistory`:
+    - empty-input -> empty-array
+    - sorted oldest-first by createdAt
+    - tie-broken by updatedAt then id
+    - preserves implementedAt + implementationThreadId
+    - returns LatestProposedPlanState shape
+  - `findThreadProposedPlanHistory`:
+    - returns the thread's history
+    - empty on null threadId
+    - empty on missing thread
+    - empty on thread with no proposed plans
+- evidence of green run:
+  ```
+  bun run vitest run src/session-logic.test.ts
+   Test Files  1 passed (1)
+        Tests  51 passed (51)
+  bun run typecheck   # apps/web clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - PlanSidebar / PlanInline render: a downstream UI commit can
+    consume the new helper and show "5 versions, see history"
+    plus a chronologically sorted list. The contract is now
+    pinned, so the UI can land independently.
+  - Trigger-reason tagging (user_approval, re_decompose,
+    correction) requires a server-side schema bump on
+    OrchestrationProposedPlan to add a `triggerReason` field
+    plus matching projector logic. Tracked as ORC-281a in
+    blockers.md if it surfaces again.
+  - Diff-between-revisions: with the history exposed, a
+    follow-up can render a markdown diff between adjacent
+    versions (use a small diff library or unified-diff format
+    via the existing diff utilities).

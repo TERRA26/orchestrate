@@ -399,6 +399,47 @@ export function deriveActivePlanState(
   };
 }
 
+/**
+ * Returns the chronological history of proposed plans for the
+ * caller. Each plan upsert produces a new entry in `proposedPlans`,
+ * so the array IS the version history; this helper exposes it
+ * sorted oldest-first with stable id-tiebreak so a UI surface can
+ * render an audit trail of "proposed vs executed" plans alongside
+ * `findLatestProposedPlan`.
+ *
+ * @see ORC-281
+ */
+export function findProposedPlanHistory(
+  proposedPlans: ReadonlyArray<ProposedPlan>,
+): ReadonlyArray<LatestProposedPlanState> {
+  if (proposedPlans.length === 0) return [];
+  return [...proposedPlans]
+    .toSorted(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.updatedAt.localeCompare(right.updatedAt) ||
+        left.id.localeCompare(right.id),
+    )
+    .map(toLatestProposedPlanState);
+}
+
+/**
+ * Thread-scoped variant of `findProposedPlanHistory`. Resolves the
+ * thread by id and returns its plan history; returns an empty
+ * array when the thread is missing or no thread id is supplied.
+ *
+ * @see ORC-281
+ */
+export function findThreadProposedPlanHistory(input: {
+  threads: ReadonlyArray<Pick<Thread, "id" | "proposedPlans">>;
+  threadId: ThreadId | string | null | undefined;
+}): ReadonlyArray<LatestProposedPlanState> {
+  if (input.threadId == null) return [];
+  const thread = input.threads.find((t) => t.id === input.threadId);
+  if (!thread) return [];
+  return findProposedPlanHistory(thread.proposedPlans);
+}
+
 export function findLatestProposedPlan(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   latestTurnId: TurnId | string | null | undefined,

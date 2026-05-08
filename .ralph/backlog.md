@@ -2681,7 +2681,7 @@ Schema per entry:
 - files: apps/web/src/session-logic.ts:81-89 (LatestProposedPlanState),apps/web/src/components/PlanSidebar.tsx
 - evidence: LatestProposedPlanState only stores the latest plan (no version history). Plan revisions overwrite. The user has no audit trail of "proposed vs executed" plans, no diff between revisions.
 - proposed_fix: Add a versions array (or persist plan-upsert events) so the UI can render a history. Tag each upsert with a trigger reason (user_approval, re_decompose, correction).
-- status: PENDING
+- status: DONE
 
 ### ORC-282
 
