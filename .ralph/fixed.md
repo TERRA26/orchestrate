@@ -4338,3 +4338,61 @@ mention of the prefix convention. Verified failing-before by stashing
   - Update ORCHESTRATOR.md to enumerate the rejected directive
     families so the orchestrator's own LLM understands why a spawn
     can fail with `orchestrator-control directive` errors.
+
+## ORC-208 (iter 139): wrap get_agent_diff output + promote promptFraming to shared
+
+- root cause: `handleGetAgentDiff` returned a plain text diff
+  summary (`M  src/foo.ts  +5 -2`) into the orchestrator's review
+  context. File paths are worker-controlled. A worker that wrote a
+  file named `[ORCHESTRATOR_OVERRIDE].md` or `## REPORT.txt` would
+  have that path land in the orchestrator's prompt unframed.
+  Additionally, the `wrapUntrustedContent` helper from ORC-200
+  lived in apps/web only; server-side handlers had no shared way
+  to apply the same framing.
+- change summary:
+  - Promoted `promptFraming` to `@orchestrate/shared/promptFraming`.
+    Added a `./promptFraming` export in
+    `packages/shared/package.json`. Original implementation moved
+    verbatim plus a new `"diff"` kind for diff envelopes
+    (`<untrusted_diff ...>`). The web-side
+    `apps/web/src/promptFraming.ts` is now a thin re-export so
+    every existing import keeps resolving.
+  - Wired the shared helper into `handleGetAgentDiff` in
+    `OrchestrationToolRouter.ts`. The diff field is now a
+    `<untrusted_diff agentId="..." filesChanged="N">` envelope
+    around the same body string; directive-shaped path entries
+    are neutralized inside.
+- files touched:
+  - packages/shared/package.json
+  - packages/shared/src/promptFraming.ts (new, canonical)
+  - packages/shared/src/promptFraming.test.ts (new)
+  - apps/web/src/promptFraming.ts (now re-export)
+  - apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts
+- tests added: 15 unit tests in the shared package mirror the
+  original web tests plus 1 new case for the `"diff"` kind. The
+  existing 14-test web suite still passes through the re-export.
+  The 21-test OrchestrationToolRouter suite stays green; the
+  diff-format test asserts the body content (M  path  +N -M)
+  which is preserved inside the wrapper.
+- evidence of green run:
+  ```
+  bun run test (packages/shared promptFraming)
+   Test Files  1 passed (1)
+        Tests  15 passed (15)
+  bun run test (apps/web promptFraming through re-export)
+   Test Files  1 passed (1)
+        Tests  14 passed (14)
+  bun run test (apps/server OrchestrationToolRouter)
+   Test Files  1 passed (1)
+        Tests  21 passed (21)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Apply the same shared helper at additional server-side emit
+    sites: browser ingestion (ORC-201), tool RETURN values
+    (ORC-202), and tool error messages (ORC-204). The deferral
+    plan in blockers.md (ORC-201a..c+) referenced this promotion
+    as the prerequisite step; that step is now done.
+  - Update the docs/ORCHESTRATOR.md system prompt to declare
+    `<untrusted_diff>` as a data-only tag.

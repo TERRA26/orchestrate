@@ -1983,7 +1983,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/EvidenceCapture.ts,get_agent_diff handler
 - evidence: get*agent_diff returns raw file contents in the diff text. A file with embedded `## REPORT` blocks or `[ORCHESTRATOR*` markers gets read by the orchestrator unframed during review.
 - proposed_fix: When formatting diff hunks for return, wrap file sections in `<file_diff path="...">...</file_diff>` tags. Apply the same framing in any UI surface that renders the diff for human review.
-- status: PENDING
+- status: DONE
+- fixed_iter: 139
 
 ### ORC-209
 

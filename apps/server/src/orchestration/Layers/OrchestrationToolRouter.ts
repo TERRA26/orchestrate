@@ -37,6 +37,8 @@ import {
   BrowserOrchestrationEvidenceRepository,
   type BrowserOrchestrationEvidenceRepositoryShape,
 } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
+import { wrapUntrustedContent } from "@orchestrate/shared/promptFraming";
+
 import {
   detectObjectiveInjection,
   objectiveContainsFabricatedReport,
@@ -1308,9 +1310,21 @@ function handleGetAgentDiff(
     const files = latest?.files ?? [];
     const additions = files.reduce((sum, f) => sum + (f.additions ?? 0), 0);
     const deletions = files.reduce((sum, f) => sum + (f.deletions ?? 0), 0);
-    const diff = files
+    const diffBody = files
       .map((f) => `${f.kind ?? "M"}  ${f.path}  +${f.additions ?? 0} -${f.deletions ?? 0}`)
       .join("\n");
+    // ORC-208: file paths are worker-controlled. A malicious or
+    // compromised worker could create files with directive-shaped
+    // names like `[ORCHESTRATOR_OVERRIDE].md`; the path then reaches
+    // the orchestrator's review prompt unframed. Wrap the whole diff
+    // summary in <untrusted_diff> tags and run the body through the
+    // neutralizer. The orchestrator system prompt already declares
+    // <untrusted_*> tagged content as data, not authority.
+    const diff = wrapUntrustedContent({
+      kind: "diff",
+      content: diffBody,
+      metadata: { agentId: String(decoded.agentId), filesChanged: files.length },
+    });
     return {
       agentId: decoded.agentId,
       diff,

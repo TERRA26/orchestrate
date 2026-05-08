@@ -67,6 +67,10 @@
     "./worktreeHandoff": {
       "types": "./src/worktreeHandoff.ts",
       "import": "./src/worktreeHandoff.ts"
+    },
+    "./promptFraming": {
+      "types": "./src/promptFraming.ts",
+      "import": "./src/promptFraming.ts"
     }
   },
   "scripts": {
