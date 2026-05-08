@@ -476,3 +476,27 @@ Only `apps/server/vitest.config.ts` declares parallelism (`fileParallelism: fals
 - ORC-265a: audit web + contracts tests for module-level mutable state. Specifically grep for `let` declarations in test setup, `vi.useFakeTimers` without reset, or shared `Map`/`Set` instances that span describe blocks.
 - ORC-265b: if a deterministic race is found, capture it as a failing test under `fileParallelism: true` and ship the fix together with the config change.
 - ORC-265c: if no race is found, the issue collapses to documentation only and can be closed as wontfix or downgraded to P3.
+
+## ORC-284: visual-diff regression assertion (deferred)
+
+### Context
+
+`BrowserWorkflowPurpose` includes "regression-check" and `BrowserAssertion` has "screenshot-captured" (presence-only), but there is no actual pixel-comparison assertion. The promise of regression detection is unimplemented.
+
+### Why deferring
+
+The proposed_fix has four load-bearing pieces, each of which is its own decision:
+
+1. **Library choice (pixelmatch vs jimp vs sharp)** needs live network research: CVE history, maintenance state, bundle size, and Playwright integration patterns. Pinning a library from training-data memory risks an abandoned package.
+2. **Contract extension** (BrowserAssertion union + baseline + tolerance fields) is a small change but only useful once the handler exists; shipped alone, it is a dead schema variant a worker would have no path to use.
+3. **runAssertion handler** with PNG decode + perceptual diff + tolerance check is the meaty implementation; it depends on (1).
+4. **Baseline-screenshot storage** as evidence artifacts requires a new artifact mime/format (PNG), an `evidence.artifact.upload` flow that distinguishes baselines from per-run captures, and possibly a content-addressable storage layer to prevent baseline duplication. Today evidence artifacts are untyped strings.
+
+Doing any one of these without the others ships dead code. The "test that would have failed before" framing for the contract-only step is tautological (a schema test that just re-reads the schema). The handler step needs the library choice first. The baseline storage step is a substantial separate refactor.
+
+### What would unblock it
+
+- ORC-284a: live research on pixelmatch vs jimp vs sharp; capture CVE state + last-release date in research.md.
+- ORC-284b: extend BrowserAssertion union with `visual-diff` variant carrying `{ baselineRef: EvidenceArtifactId, tolerancePercent: number }`. Add contract test.
+- ORC-284c: implement runAssertion handler. Decode both PNGs, compare with chosen library, emit failure when diffRatio > tolerance.
+- ORC-284d: define a baseline-screenshot evidence-artifact protocol (typed mime, dedup-by-content-hash if duplication becomes a problem, baseline-vs-snapshot lifecycle in the read model).

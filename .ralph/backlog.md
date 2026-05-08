@@ -2708,7 +2708,9 @@ Schema per entry:
 - files: packages/contracts/src/browserOrchestration.ts:533 (BrowserWorkflowPurpose includes "regression-check"),apps/server/src/browserWorkflow/Layers/BrowserWorkflowManager.ts:197 (runAssertion handler)
 - evidence: BrowserAssertion includes "screenshot-captured" (presence-only) and BrowserWorkflowPurpose includes "regression-check", but there is no visual-diff or pixel-comparison assertion type. The promise of regression detection is unimplemented.
 - proposed_fix: Add a `visual-diff` assertion type with baseline-screenshot ref + tolerance %. Implement perceptual diff (pixelmatch or jimp) in runAssertion. Store baseline screenshots as evidence artifacts.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 184
+- deferred_reason: Implementing visual-diff requires (a) choosing a perceptual-diff library (pixelmatch + pngjs vs jimp; CVE history + bundle size + maintenance state need live research), (b) extending the BrowserAssertion union with a `visual-diff` variant that carries baselineRef + tolerance, (c) wiring the runAssertion handler with PNG decode + diff + tolerance check, (d) baseline-screenshot storage into evidence artifacts (new artifact mime/format). Each step is its own load-bearing decision; doing any one without the others ships dead code. Plan recorded as ORC-284a..d in blockers.md.
 
 ### ORC-285
 
