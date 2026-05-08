@@ -2535,7 +2535,9 @@ Schema per entry:
 - files: apps/server/vitest.config.ts:13 (fileParallelism: false),root vitest.config.ts (no parallelism constraints elsewhere)
 - evidence: Server tests explicitly disable file parallelism due to git+SQLite resource contention. Web/contracts tests have no parallelism config and may have order-dependent state. Tests pass locally but can flake under CI parallelism.
 - proposed_fix: Document the per-workspace parallelism policy. For web/contracts, explicitly opt into `fileParallelism: true` only after verifying isolation; add `pool: "forks"` or test-isolation guards.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 173
+- deferred_reason: The fix is two-part: (a) documentation of the per-workspace parallelism policy and (b) adding explicit `fileParallelism: true` + `pool: "forks"` configs to apps/web and packages/contracts. Part (a) is a docs change with no behavior-pinning test. Part (b) writes the current default explicitly, which means the runtime behavior is unchanged and any test would just re-read the config file. A real "would-have-failed-before" signal needs a contention reproducer (parallel-mutation isolation regression), which requires identifying actual ordering-dependent tests across the web/contracts workspaces. Plan recorded as ORC-265a..c in blockers.md.
 
 ### ORC-266
 

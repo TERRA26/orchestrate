@@ -458,3 +458,21 @@ ORC-254c: catalog migration (`electron`, `electron-builder`, `electron-updater` 
 - ORC-256a: Effect 4.0 RC or GA tag lands and breaks a public name. Capture the breaking diff in research.md.
 - ORC-256b: introduce `packages/shared/src/effect-compat.ts` that re-exports the broken-and-renamed surface.
 - ORC-256c: codemod-style migration commit (one PR per package, kept under ~50 file diff each).
+
+## ORC-265: per-workspace vitest parallelism policy (deferred)
+
+### Context
+
+Only `apps/server/vitest.config.ts` declares parallelism (`fileParallelism: false`, justified by git + SQLite contention). Web, contracts, and shared rely on vitest defaults (parallel files, isolated worker forks). The proposed fix asks for explicit documentation plus per-workspace opt-in.
+
+### Why deferring
+
+1. **The "test that would have failed before" requirement is hard to satisfy.** Adding `fileParallelism: true` to apps/web is a no-op because that already is the default; the only meaningful test would be to re-read the config file. Adding `pool: "forks"` is similarly a no-op against the current default. Behavior-pinning needs a real contention reproducer.
+2. **A real reproducer requires test-suite ordering analysis.** To prove an isolation gap exists, we would need to grep web/contracts tests for shared module-level state, then construct a deterministic two-test-file race that fails under `fileParallelism: true` and passes under `false`. That analysis is broader than a single-issue iteration.
+3. **Documentation alone does not justify a fix entry.** The protocol requires a failing-then-passing test; a comment-only commit is not testable.
+
+### What would unblock it
+
+- ORC-265a: audit web + contracts tests for module-level mutable state. Specifically grep for `let` declarations in test setup, `vi.useFakeTimers` without reset, or shared `Map`/`Set` instances that span describe blocks.
+- ORC-265b: if a deterministic race is found, capture it as a failing test under `fileParallelism: true` and ship the fix together with the config change.
+- ORC-265c: if no race is found, the issue collapses to documentation only and can be closed as wontfix or downgraded to P3.
