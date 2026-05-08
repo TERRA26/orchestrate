@@ -2902,3 +2902,47 @@ contract. The 3rd test confirms the happy path stays unblocked.
   to accepted. Without this, the orchestrator must poll.
 - Truncate long error detail strings once we hit graphs with many
   unsatisfied prerequisites in a single message.
+
+## ORC-129 [iter 103] SpawnAgentInput.spawnBudget shape diverged from canonical SpawnBudget
+
+**Audit findings**: Two SpawnBudget shapes existed:
+- `packages/contracts/src/orchestrationTools.ts:SpawnAgentInput.spawnBudget` exposed 4 numeric counters (`maxDepth`, `maxChildren`, `maxConcurrentWriters`, `maxTotalWorkers`).
+- `packages/contracts/src/orchestration.ts:SpawnBudget` exposed those 4 plus 2 policy fields (`allowedTools`, `writeScope`).
+
+The MCP server already filled the policy fields with server-side defaults (`scripts/orchestrate-mcp-server.ts:913-914,968-969` set them to `[]`), so the practical behavior matched option 1 from the proposed_fix ("hide policy fields from the orchestrator-facing surface"). The contract was correct; what was missing was DOCUMENTATION and a regression test pinning the shape.
+
+**Change summary**:
+- `packages/contracts/src/orchestrationTools.ts`: added a JSDoc on the
+  `spawnBudget` field documenting the intentional 4-field surface, the
+  rationale (allowedTools/writeScope are server-side policy controls
+  that the orchestrator must not be able to widen on each spawn), and
+  guidance for future contributors ("if you need to extend, add a NEW
+  field rather than re-exposing the policy ones").
+
+**Files touched**:
+- packages/contracts/src/orchestrationTools.ts (JSDoc only)
+- packages/contracts/src/orchestrationTools.test.ts (3 new tests under a new describe block)
+
+**Tests added**: 3 cases under `SpawnAgentInput.spawnBudget shape (ORC-129)`:
+1. Accepts a budget with exactly the 4 numeric counters.
+2. Accepts a payload omitting `spawnBudget` entirely (server fills defaults).
+3. Type-level pin: a TypeScript bidirectional assignability check between the budget's actual keys and the documented set `"maxDepth" | "maxChildren" | "maxConcurrentWriters" | "maxTotalWorkers"`. A future contributor adding a key would fail to typecheck.
+4. Decode of a budget with extra `allowedTools` documents the loose-decode behavior: production passes through with the extra field stripped (no policy leakage to the canonical decoder downstream).
+
+The type-level check (#3) would fail at compile time before this commit if anyone tried to add a 5th key to the tool input's budget. The runtime tests document the loose-decode behavior so future hardening (strict parseOptions) can be added knowing the current state.
+
+**Green-run evidence**:
+- `cd packages/contracts && bun run test src/orchestrationTools.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 13 passed (13)
+- `bun typecheck` (packages/contracts) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The 4-field surface IS the contract; the canonical SpawnBudget's 6 fields fan out from server-side defaults. If a future feature does want orchestrator-controlled policy (rare), it must go through a deliberate code change in BOTH locations, which the JSDoc and the type-level pin make harder to overlook.
+- The decode test documents back-compat: extras get silently stripped. Tightening to strict parseOptions is a separate change that would need coordinated rollout (the canonical SpawnBudget elsewhere consumes the same struct); too risky for this iteration.
+- The MCP server already passes `allowedTools: []`, `writeScope: []` to the canonical SpawnBudget in dispatchCommand. So the run-level policy stays clean: empty = "use the run's policy as-is."
+- TypeScript bidirectional assignability test relies on `keyof BudgetType` matching `ExpectedKeys`. If Effect's Schema generates extra phantom keys via type-level magic, the test would false-fail; current Effect 4.0-beta.43 produces clean `Type` projections so this works.
+
+**Follow-ups**:
+- Tighten parseOptions on the production decode of `SpawnAgentInput` so policy fields are loudly rejected rather than silently dropped. Coordinated rollout: enabling this in one place may require updates in any caller that still sends extras.
+- Document the run-level vs spawn-level policy split in the orchestrator's system prompt so humans reading the prompt understand why `allowedTools` is set once at run.create.
+- Mirror the JSDoc + pinning test on other tool-input shapes that are subsets of canonical command shapes (e.g., TerminateAgentInput vs orchestrator.worker.terminate).

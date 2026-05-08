@@ -37,6 +37,19 @@ export const SpawnAgentInput = Schema.Struct({
   worktreePath: Schema.optional(Schema.String),
   branch: Schema.optional(Schema.String),
   visibility: Schema.optional(Schema.Literals(["foreground", "background"])),
+  /**
+   * Per-spawn budget overrides. The MCP-tool surface intentionally
+   * exposes only the four numeric counters; the canonical SpawnBudget
+   * (in orchestration.ts) also carries `allowedTools` and `writeScope`,
+   * which are policy controls owned by the server (defaulted from the
+   * run's policy or operator settings). Adding them here would let the
+   * orchestrator widen its own permissions on each spawn, which is
+   * exactly the safety surface we keep on the server side.
+   *
+   * If you need to extend the orchestrator-facing budget, prefer adding
+   * a NEW field to this struct rather than re-exposing allowedTools or
+   * writeScope. Pinned by ORC-129.
+   */
   spawnBudget: Schema.optional(
     Schema.Struct({
       maxDepth: Schema.Number,

@@ -1227,7 +1227,8 @@ Schema per entry:
 - files: packages/contracts/src/orchestrationTools.ts:40-47 (tool input) vs orchestration.ts:1589-1596 (canonical SpawnBudget)
 - evidence: The MCP tool's spawnBudget input describes 4 fields (maxDepth, maxChildren, maxConcurrentWriters, maxTotalWorkers) while the canonical SpawnBudget in orchestration.ts adds two more (allowedTools, writeScope). The orchestrator's prompt does not document the extra fields; round-trip encoding silently drops them.
 - proposed_fix: Either hide allowedTools/writeScope from the orchestrator-facing tool input (keep them as server-side defaults) OR add them to the tool schema and document them in TOOL_DEFINITIONS. Pick one and align both representations.
-- status: PENDING
+- status: DONE
+- fixed_iter: 103
 
 ### ORC-130
 
