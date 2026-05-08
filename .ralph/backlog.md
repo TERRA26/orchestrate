@@ -1436,7 +1436,8 @@ Schema per entry:
 - files: apps/server/src/browser/Layers/BrowserAutomation.ts:557-559
 - evidence: Observation captures readyState + console errors but never the navigation HTTP status. A page that 404'd and rendered a custom error UI looks identical to a successful page that legitimately renders an error UI on purpose.
 - proposed_fix: Capture the response.status() of the initial navigation in the observation envelope. Add an optional pattern matcher for "this looks like an error page" (heuristic) so the orchestrator can flag suspect captures.
-- status: PENDING
+- status: DONE
+- fixed_iter: 114
 
 ### ORC-152
 

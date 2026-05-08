@@ -3414,3 +3414,59 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider a `readyHint` allowlist policy so untrusted task
     inputs cannot supply expensive `:has-text` selectors that block
     on every navigation.
+
+## ORC-151 (iter 114): capture navigationStatus + looksLikeErrorPage heuristic
+
+- root cause: BrowserObservation captured readyState and console
+  errors but never the navigation HTTP status. A page that 404'd and
+  rendered a custom error UI looked identical to a successful page
+  that legitimately renders an error UI on purpose. The orchestrator
+  had no signal to flag suspect captures.
+- change summary:
+  - Extended `BrowserObservation` schema in
+    `packages/contracts/src/browser.ts` with two optional fields:
+    `navigationStatus` (Schema.Int 100..599) and
+    `navigationStatusText` (string max 128).
+  - Updated `BrowserAutomation.openSession` to capture
+    `response.status()` and `response.statusText()` from the initial
+    `page.goto(...)` call and surface both in the observation
+    envelope. Status is bounds-checked to 100..599 to match the
+    schema.
+  - Added a pure heuristic helper
+    `apps/server/src/browser/navigationStatus.ts` exporting
+    `looksLikeErrorPage()`. Three failure modes:
+    1. HTTP 4xx/5xx response (deterministic).
+    2. HTTP 200 + body contains a known error pattern
+       ("Page not found", "Something went wrong", etc).
+    3. HTTP 200 + nearly-empty body (likely JS shell crash).
+    The patterns are conservative: a page titled "Error Tracking"
+    that legitimately discusses errors is NOT flagged.
+- files touched:
+  - packages/contracts/src/browser.ts
+  - apps/server/src/browser/Layers/BrowserAutomation.ts
+  - apps/server/src/browser/navigationStatus.ts (new)
+  - apps/server/src/browser/navigationStatus.test.ts (new)
+- tests added: 10 unit tests covering 4xx/5xx detection (with and
+  without statusText), custom-404 text-pattern detection,
+  "Something went wrong" body, empty-body crash, healthy 200,
+  undefined-status healthy body, conservative non-flag for "error
+  tracking" topical content, "Internal Server Error" body, and
+  redirect (302) not flagged.
+- evidence of green run:
+  ```
+  bun run test src/browser/navigationStatus.test.ts
+   Test Files  1 passed (1)
+        Tests  10 passed (10)
+  bun run test (packages/contracts)
+   Test Files  13 passed (13)
+        Tests  163 passed (163)
+  bun run typecheck (apps/server, packages/contracts)  # clean
+  ```
+- follow-ups:
+  - Wire `looksLikeErrorPage()` into the orchestrator's review flow
+    so a flagged observation triggers a "this capture looks like a
+    rendered error page; reject the worker?" pause instead of
+    silently accepting.
+  - Capture intermediate redirect chain in the observation so the
+    orchestrator can see e.g. a 301 -> 200 chain ended at a login
+    page, which is its own failure mode for unauthenticated runs.

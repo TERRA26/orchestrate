@@ -364,6 +364,13 @@ export const BrowserObservation = Schema.Struct({
     Schema.String.check(Schema.isMaxLength(BROWSER_MAX_ARIA_SNAPSHOT_LENGTH)),
   ),
   navigationError: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
+  navigationStatus: Schema.optionalKey(
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(100),
+      Schema.isLessThanOrEqualTo(599),
+    ),
+  ),
+  navigationStatusText: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
   evaluateResult: Schema.optionalKey(
     Schema.String.check(Schema.isMaxLength(BROWSER_MAX_EVALUATE_RESULT_LENGTH)),
   ),

@@ -835,12 +835,26 @@ const makeBrowserAutomation = () =>
         const consoleBuffer: BrowserConsoleEntry[] = [];
         const networkErrorBuffer: BrowserNetworkError[] = [];
         let openNavigationError: string | undefined;
+        let openNavigationStatus: number | undefined;
+        let openNavigationStatusText: string | undefined;
 
         yield* Effect.tryPromise({
           try: async () => {
             try {
               if (!input.cdpEndpointUrl) {
-                await page.goto(input.url, { waitUntil: "domcontentloaded" });
+                const response = await page.goto(input.url, {
+                  waitUntil: "domcontentloaded",
+                });
+                if (response) {
+                  const status = response.status();
+                  if (Number.isFinite(status) && status >= 100 && status <= 599) {
+                    openNavigationStatus = status;
+                    const statusText = response.statusText();
+                    if (typeof statusText === "string" && statusText.length > 0) {
+                      openNavigationStatusText = truncateText(statusText, 128);
+                    }
+                  }
+                }
               }
             } catch (navError) {
               openNavigationError = truncateText(
@@ -925,6 +939,12 @@ const makeBrowserAutomation = () =>
             ...observation,
             sessionId,
             ...(openNavigationError ? { navigationError: openNavigationError } : {}),
+            ...(typeof openNavigationStatus === "number"
+              ? { navigationStatus: openNavigationStatus }
+              : {}),
+            ...(typeof openNavigationStatusText === "string"
+              ? { navigationStatusText: openNavigationStatusText }
+              : {}),
           },
         };
       });
