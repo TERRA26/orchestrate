@@ -373,7 +373,27 @@ export const OrchestrationThread = Schema.Struct({
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
+/**
+ * Current schema version stamped on newly-created read models. Bumped
+ * whenever the read-model shape changes in a way that requires
+ * migration on decode. Legacy snapshots that pre-date the field decode
+ * with `schemaVersion === undefined`; treat those as version 0 in
+ * migration code and write up a per-version transformer for each step.
+ *
+ * Version policy:
+ *  - 0 (implicit): legacy snapshots without the field.
+ *  - 1: introduces the field; otherwise identical to legacy shape.
+ *
+ * @see ORC-132
+ */
+export const CURRENT_READ_MODEL_SCHEMA_VERSION = 1;
+
 export const OrchestrationReadModel = Schema.Struct({
+  /**
+   * ORC-132: optional schema-version marker for forward migrations.
+   * Absent on legacy data; present on snapshots produced after iter 105.
+   */
+  schemaVersion: Schema.optional(Schema.Number),
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),

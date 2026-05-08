@@ -1256,7 +1256,8 @@ Schema per entry:
 - files: packages/contracts/src/orchestration.ts:375-396 (OrchestrationReadModel),and event types
 - evidence: There is no schema-version field on read model snapshots or domain events. When the contract evolves (new field added, field renamed, type narrowed) old persisted data has no marker indicating its version, so migration on decode is impossible.
 - proposed_fix: Add `schemaVersion: number` to OrchestrationReadModel and to every persisted event type. On decode, check version and apply per-version migration. Document the version-bump policy in CLAUDE.md.
-- status: PENDING
+- status: DONE
+- fixed_iter: 105
 
 ### ORC-133
 

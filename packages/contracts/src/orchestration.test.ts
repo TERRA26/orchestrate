@@ -3,10 +3,12 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  CURRENT_READ_MODEL_SCHEMA_VERSION,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationReadModel,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -380,5 +382,74 @@ it.effect("preserves proposed plan implementation metadata when present", () =>
     });
     assert.strictEqual(parsed.implementedAt, "2026-01-02T00:00:00.000Z");
     assert.strictEqual(parsed.implementationThreadId, "thread-2");
+  }),
+);
+
+import { describe, it as plainIt } from "vitest";
+
+describe("ORC-132 schema-version constant", () => {
+  plainIt("CURRENT_READ_MODEL_SCHEMA_VERSION is 1", () => {
+    assert.strictEqual(CURRENT_READ_MODEL_SCHEMA_VERSION, 1);
+  });
+});
+
+it.effect("OrchestrationReadModel decodes a payload WITHOUT schemaVersion (legacy snapshots)", () =>
+  Effect.gen(function* () {
+    const decode = Schema.decodeUnknownEffect(OrchestrationReadModel);
+    const parsed = yield* decode({
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      orchestratorRuns: [],
+      orchestratorTasks: [],
+      orchestratorWorkers: [],
+      orchestratorMessages: [],
+      orchestratorDependencies: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.schemaVersion, undefined);
+  }),
+);
+
+it.effect("OrchestrationReadModel decodes a payload WITH schemaVersion=1 (current snapshots)", () =>
+  Effect.gen(function* () {
+    const decode = Schema.decodeUnknownEffect(OrchestrationReadModel);
+    const parsed = yield* decode({
+      schemaVersion: 1,
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      orchestratorRuns: [],
+      orchestratorTasks: [],
+      orchestratorWorkers: [],
+      orchestratorMessages: [],
+      orchestratorDependencies: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.schemaVersion, 1);
+  }),
+);
+
+it.effect("OrchestrationReadModel rejects a non-numeric schemaVersion", () =>
+  Effect.gen(function* () {
+    const decode = Schema.decodeUnknownEffect(OrchestrationReadModel);
+    const result = yield* decode({
+      schemaVersion: "v1" as unknown as number,
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      orchestratorRuns: [],
+      orchestratorTasks: [],
+      orchestratorWorkers: [],
+      orchestratorMessages: [],
+      orchestratorDependencies: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }).pipe(Effect.result);
+    // Result.isFailure on a bad-shape decode.
+    assert.ok(!result._tag || result._tag === "Failure" || result._tag === "Success");
+    // Either the result is Failure (rejection) OR Success with the bad
+    // value coerced. Strict-decode of Number type rejects strings, so
+    // we expect Failure.
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
   }),
 );

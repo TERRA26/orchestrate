@@ -11,6 +11,7 @@ import type {
   ThreadId,
 } from "@orchestrate/contracts";
 import {
+  CURRENT_READ_MODEL_SCHEMA_VERSION,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -221,6 +222,9 @@ function compareThreadActivities(
 
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
+    // ORC-132: stamp every newly-created read model with the current
+    // schema version so future decoders can branch on it.
+    schemaVersion: CURRENT_READ_MODEL_SCHEMA_VERSION,
     snapshotSequence: 0,
     projects: [],
     threads: [],

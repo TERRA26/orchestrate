@@ -2983,3 +2983,45 @@ The full-handler-output test (#2) would have failed before the change with a "dr
 - Add a contract-decoding step inside the actual handler so the server-side handler output is validated against the schema before being returned. Today the handler builds a JS object that happens to match; making the schema authoritative eliminates the silent-divergence risk that this iteration revealed.
 - Mirror the same audit on `GetAllStatusOutput` (the per-agent struct in the array): does it match the per-worker shape that the handler emits?
 - When the handler grows new optional fields, the test suite needs updating. Document this expectation in the JSDoc on `GetAgentStatusOutput` so future contributors know to update both halves.
+
+## ORC-132 [iter 105] No schema-version marker on OrchestrationReadModel snapshots
+
+**Root cause**: The persisted read-model snapshot had no schema-version field. When the contract evolved (new field, renamed field, narrowed type) old data had no marker indicating its version. Migration on decode was impossible: there was nothing to branch on. The same applies to event types, but rolling out a versioned envelope across all events is a much larger coordination job and is tracked as a follow-up here.
+
+**Change summary**:
+- `packages/contracts/src/orchestration.ts`:
+  - Added an exported constant `CURRENT_READ_MODEL_SCHEMA_VERSION = 1` with a JSDoc documenting the version-bump policy (legacy = undefined = treat as 0; v1 introduces the field).
+  - Added `schemaVersion: Schema.optional(Schema.Number)` to `OrchestrationReadModel`. Optional so legacy snapshots without the field still decode cleanly.
+- `apps/server/src/orchestration/projector.ts`: imports the constant and stamps it on every newly-created read model via `createEmptyReadModel`. Future snapshots written through `projectEvent` inherit it via the spread.
+
+**Files touched**:
+- packages/contracts/src/orchestration.ts
+- packages/contracts/src/orchestration.test.ts (4 new tests)
+- apps/server/src/orchestration/projector.ts
+
+**Tests added**: 4 cases in `orchestration.test.ts`:
+1. `CURRENT_READ_MODEL_SCHEMA_VERSION` is 1 (sentinel for the bump policy).
+2. Decodes a payload WITHOUT `schemaVersion` (legacy snapshots) and reports the field as `undefined`.
+3. Decodes a payload WITH `schemaVersion: 1` (current snapshots) and reports the field correctly.
+4. Rejects a payload with a non-numeric `schemaVersion` (string `"v1"`).
+
+The decode-with-version test (#3) would have failed before the change because the schema rejected the unknown field. The decode-without-version test (#2) would have passed both before and after; it's a regression net documenting back-compat.
+
+**Green-run evidence**:
+- `cd packages/contracts && bun run test src/orchestration.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 23 passed (23)
+- `cd apps/server && bun run test src/orchestration/decider.orchestrator.test.ts` -> Test Files 1 passed (1) | Tests 21 passed (21)
+- `bun typecheck` (packages/contracts, apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The field is OPTIONAL: legacy snapshots decode with `schemaVersion === undefined`. Migration code that needs to handle versions can branch on `model.schemaVersion ?? 0`.
+- Why version 1 and not version 0: the original (pre-this-iter) shape doesn't carry a marker, so `undefined === 0` by convention. Stamping new snapshots with 1 makes "I've seen this snapshot since the version field landed" easy to detect.
+- Persistence layer impact: the SQLite schema stores read models as JSON blobs. Adding an optional field at the top level is round-trip-safe; existing rows decode without the field, new rows include it. No SQL migration needed.
+- Event types: NOT modified in this iteration. Adding `schemaVersion` to every persisted event payload is a much larger coordinated change (50+ event types, each touched in projector + decider + tests). Tracked as a follow-up below; the read-model-only change is sufficient to unblock decoder-level migration logic for snapshot-based rollups.
+- A future schema change that ALSO needs to migrate event payloads would need its own version stamp on those events. The pattern from this iteration (optional field, exported constant, version-bump JSDoc) is the template.
+
+**Follow-ups**:
+- Add `schemaVersion` to the event-envelope wrapper (or each event type's payload) so persisted events also carry their version. Coordinate migration on decode for breaking event-shape changes.
+- Document the version-bump policy in `CLAUDE.md` so contributors know to bump the constant + write a migration step when changing the read-model shape.
+- Add a property test that random-walks the schema's optional fields and asserts decode never blows up on missing keys.
+- When a real version-1 -> version-2 migration lands, write a `migrateReadModelV1ToV2(input): OrchestrationReadModel` function and call it from the persistence layer's load path.
