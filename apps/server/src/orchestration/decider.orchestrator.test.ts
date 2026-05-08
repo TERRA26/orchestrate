@@ -594,6 +594,93 @@ describe("orchestrator decider — task lifecycle", () => {
 // Worker lifecycle
 // ---------------------------------------------------------------------------
 
+describe("orchestrator decider — task dependency cycles (ORC-118)", () => {
+  it("rejects task.create that would form a self-dependency", async () => {
+    const model = await applyCommands(modelWithProject(), [createRunCommand]);
+    const detail = await decideFailure(model, {
+      type: "orchestrator.task.create",
+      commandId: cmd("cmd-task-self-cycle"),
+      taskId,
+      runId,
+      title: "Self-loop",
+      objective: "Self loops should be rejected",
+      acceptanceCriteria: ["depends on itself"],
+      dependsOn: [taskId],
+      createdAt: now,
+    });
+    expect(detail).toContain("dependency cycle");
+    expect(detail).toContain(taskId);
+  });
+
+  it("rejects task.create that would close a 2-node cycle (A -> B, then B -> A)", async () => {
+    const taskAId = "task-a" as OrchestratorTaskId;
+    const taskBId = "task-b" as OrchestratorTaskId;
+
+    const modelWithA = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-a"),
+        taskId: taskAId,
+        runId,
+        title: "Task A",
+        objective: "First task",
+        acceptanceCriteria: ["a"],
+        dependsOn: [taskBId],
+        createdAt: now,
+      },
+    ]);
+
+    const detail = await decideFailure(modelWithA, {
+      type: "orchestrator.task.create",
+      commandId: cmd("cmd-task-b"),
+      taskId: taskBId,
+      runId,
+      title: "Task B",
+      objective: "Second task",
+      acceptanceCriteria: ["b"],
+      dependsOn: [taskAId],
+      createdAt: later,
+    });
+    expect(detail).toContain("dependency cycle");
+    expect(detail).toContain(taskAId);
+    expect(detail).toContain(taskBId);
+  });
+
+  it("accepts a linear dependency chain", async () => {
+    const taskAId = "task-a" as OrchestratorTaskId;
+    const taskBId = "task-b" as OrchestratorTaskId;
+
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-a-acyclic"),
+        taskId: taskAId,
+        runId,
+        title: "Task A",
+        objective: "First",
+        acceptanceCriteria: ["a"],
+        createdAt: now,
+      },
+    ]);
+
+    const events = await decide(model, {
+      type: "orchestrator.task.create",
+      commandId: cmd("cmd-task-b-acyclic"),
+      taskId: taskBId,
+      runId,
+      title: "Task B",
+      objective: "Second, depends on A",
+      acceptanceCriteria: ["b"],
+      dependsOn: [taskAId],
+      createdAt: later,
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe("orchestrator.task.created");
+  });
+});
+
 describe("orchestrator decider — worker resume invariants (ORC-117)", () => {
   it("rejects resume when the worker has been terminated", async () => {
     const model = await applyCommands(modelWithProject(), [

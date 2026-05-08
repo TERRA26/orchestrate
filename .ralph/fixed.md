@@ -2570,3 +2570,81 @@ the transition guard.
 - Add a property test that fuzzes worker status values and asserts
   every legal transition pair appears in the graph — guards against
   silent edits to the WORKER_LEGAL_TRANSITIONS map.
+
+## ORC-118 [iter 99] task.create accepted dependsOn arrays without cycle detection
+
+**Root cause**: `apps/server/src/orchestration/decider.ts`'s
+`orchestrator.task.create` case persisted the `dependsOn` array
+verbatim. A circular chain (A -> B -> A, or longer transitively) was
+silently committed. Every task in the cycle then became unscheduleable
+forever; no error fired, no health check caught it. The orchestrator's
+scheduling layer just stalled.
+
+**Change summary**:
+- New `apps/server/src/orchestration/taskDependencyGraph.ts`:
+  - `detectDependencyCycle({ existingTasks, newTaskId, newDependsOn })`
+    builds the prospective post-create graph and runs iterative DFS
+    with WHITE/GRAY/BLACK coloring. Returns the cycle as a path
+    (start = end) when one exists, otherwise null. Self-edges
+    (`taskId in dependsOn`) count as cycles.
+  - `toDependencyTasks(tasks)` adapter strips OrchestratorTask shapes
+    to the minimal fields needed for cycle detection.
+  - Edges to unknown taskIds are treated as leaves (the validity of
+    referenced ids is a separate invariant tracked in commandInvariants).
+- `apps/server/src/orchestration/decider.ts`:
+  - `orchestrator.task.create` now calls `detectDependencyCycle`. If a
+    cycle is found, the case fails with a clear
+    `OrchestrationCommandInvariantError` whose detail string includes
+    the path (e.g., `Task 'b' would introduce a dependency cycle: a -> b -> a.`).
+
+**Files touched**:
+- apps/server/src/orchestration/taskDependencyGraph.ts (NEW)
+- apps/server/src/orchestration/taskDependencyGraph.test.ts (NEW)
+- apps/server/src/orchestration/decider.ts
+- apps/server/src/orchestration/decider.orchestrator.test.ts
+
+**Tests added**: 11 cases in `taskDependencyGraph.test.ts` plus 3
+integration cases in `decider.orchestrator.test.ts`:
+
+Helper unit tests:
+1. Empty graph -> null.
+2. Linear chain -> null.
+3. Self-dependency cycle detected.
+4. 2-node cycle (A -> B -> A) detected.
+5. 3-node cycle (A -> B -> C -> A) detected.
+6. Edge to unknown id -> null (treated as leaf).
+7. Diamond DAG -> null (no false positives on shared roots).
+8. Transitive cycle hidden behind a chain -> detected.
+9. undefined dependsOn = empty array.
+10. Returned cycle path has start = end.
+11. Complex acyclic graph -> null.
+
+Decider integration tests:
+12. self-dependency rejected; error includes "dependency cycle" + the taskId.
+13. 2-node cycle rejected (creating A->B then B->A); error mentions both tasks.
+14. Acyclic chain succeeds and produces an `orchestrator.task.created` event.
+
+The first cycle test would fail before the change (the decider would happily emit `orchestrator.task.created` for a self-loop). It now produces an `OrchestrationCommandInvariantError`.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/taskDependencyGraph.test.ts src/orchestration/decider.orchestrator.test.ts` (Node 24) -> Test Files 2 passed (2) | Tests 26 passed | 18 in decider suite
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The DFS only walks the new task's reachable set. Existing cycles (which the prior store theoretically allowed) are not surfaced; the assumption is that with this guard in place, no new cycle can land. Existing run histories should be migrated by ops if cycles exist.
+- The cycle reporter slices the recursion stack from the back-edge target onward. For deeply nested transitive cycles the path could be long; truncating to the first 8 nodes might be friendlier in error messages, but the current full-path approach is more diagnostic and the typical orchestrator graph is small.
+- Self-edges (taskId in own dependsOn): caught explicitly by including the new task in the adjacency map before DFS.
+- Unknown id references: treated as leaves rather than rejecting. This keeps the cycle helper a pure graph algorithm; referential integrity is a separate concern (tracked in commandInvariants).
+- The check runs in O(V+E) which for orchestrator-typical graphs (<= 100 tasks) is microseconds. No measurable hot-path impact.
+- Concurrent inserts: the readModel is the source of truth at decide time. If two task.create commands race, the second sees the first's projected state via the standard event-store sequencing; the cycle check is correct because each command is decoded against a consistent snapshot.
+
+**Follow-ups**:
+- Apply the same pattern to `orchestrator.dependency.set` (currently in
+  KNOWN_UNTESTED): edges added post-create can also form cycles.
+- Add a property test using fast-check to randomly generate dependency
+  graphs and assert the helper agrees with a topological-sort oracle.
+- Consider exporting `topologicalOrder(tasks)` so the scheduler has a
+  single source for ordering.
+- Truncate cycle paths in error messages once we hit production volumes
+  where 50+ task graphs are common.

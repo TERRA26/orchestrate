@@ -25,6 +25,7 @@ import {
   requireThreadAbsent,
 } from "./commandInvariants.ts";
 import { requireLegalWorkerTransition } from "./workerTransitions.ts";
+import { detectDependencyCycle, toDependencyTasks } from "./taskDependencyGraph.ts";
 
 const nowIso = () => new Date().toISOString();
 const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
@@ -1070,6 +1071,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         runId: command.runId,
       });
+      // ORC-118: reject create when the prospective dependsOn graph
+      // contains a cycle. Without this, a circular chain (e.g., A -> B
+      // -> A introduced via the new task) silently persists and every
+      // task in the cycle becomes unscheduleable forever.
+      const cycle = detectDependencyCycle({
+        existingTasks: toDependencyTasks(readModel.orchestratorTasks ?? []),
+        newTaskId: command.taskId,
+        newDependsOn: command.dependsOn,
+      });
+      if (cycle !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${command.taskId}' would introduce a dependency cycle: ${cycle.join(" -> ")}.`,
+        });
+      }
       return {
         ...withEventBase({
           aggregateKind: "orchestrator",

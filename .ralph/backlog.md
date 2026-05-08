@@ -1123,7 +1123,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts:1092,commandInvariants.ts (task.create accepts dependsOn)
 - evidence: orchestrator.task.create accepts a dependsOn array with no cycle detection. A circular chain (A->B->A) is silently persisted, making both tasks unscheduleable forever.
 - proposed_fix: Topological-sort validation in the decider: build the new dependency graph and reject create if it produces a cycle. Add a fast-check property test.
-- status: PENDING
+- status: DONE
+- fixed_iter: 99
 
 ### ORC-119
 
