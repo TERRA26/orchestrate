@@ -1754,7 +1754,8 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:230-242
 - evidence: writeFileSync writes the orchestrator-thread sidecar without an explicit mode. Default mode is 0o644 (world-readable). Any local user can read the orchestrator-thread mapping. Cleanup uses `force: true` but does not verify deletion success.
 - proposed_fix: Pass `{ mode: 0o600 }` to writeFileSync and `{ mode: 0o700 }` to mkdirSync. Verify deletion by checking the file no longer exists; log if cleanup fails.
-- status: PENDING
+- status: DONE
+- fixed_iter: 124
 
 ### ORC-186
 

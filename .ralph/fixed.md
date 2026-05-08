@@ -3816,3 +3816,53 @@ mention of the prefix convention. Verified failing-before by stashing
   - Add a server-side audit log entry when a parent-link
     rejection fires, since this is the kind of request that
     indicates either a bug in the caller or an active probe.
+
+## ORC-185 (iter 124): tighten orchestrator-pid sidecar permissions and verify cleanup
+
+- root cause: `writeOrchestratorPidSidecar` in
+  `apps/server/src/codexAppServerManager.ts` called `mkdirSync` and
+  `writeFileSync` with no explicit mode. Default umask gave 0o755 /
+  0o644 (world-readable). The sidecar maps codex pid -> orchestrator
+  thread id; with the directory in the shared `os.tmpdir`, any local
+  user could enumerate orchestrator threads. `removeOrchestratorPidSidecar`
+  used `rmSync({ force: true })` which silently ignores deletion
+  failures; stale sidecars could accumulate without any signal.
+- change summary:
+  - Added `SIDECAR_DIR_MODE = 0o700` and `SIDECAR_FILE_MODE = 0o600`
+    constants exported from `codexAppServerManager.ts`.
+  - Extracted two pure helpers parameterized over `dir`:
+    `writeOrchestratorPidSidecarToDir({ dir, codexPid, threadId })`
+    and `removeOrchestratorPidSidecarAtDir({ dir, codexPid })`. The
+    write helper passes `mode` explicitly to both `mkdirSync` and
+    `writeFileSync`. The remove helper returns
+    `{ removed: true } | { removed: false; reason }` so callers can
+    log a structured failure instead of relying on rmSync's silent
+    success path.
+  - Refactored the existing private wrappers
+    (`writeOrchestratorPidSidecar`, `removeOrchestratorPidSidecar`)
+    to delegate to the helpers. They preserve the
+    `logBestEffortFailure` behavior on errors but now ALSO log when
+    rmSync returned successfully but the file is still on disk.
+- files touched:
+  - apps/server/src/codexAppServerManager.ts
+  - apps/server/src/codexAppServerManager.sidecar.test.ts (new)
+- tests added: 6 unit tests under a temp directory covering:
+  directory mode 0o700, file mode 0o600, JSON payload shape,
+  successful rm + post-rm absence check, idempotent rm of missing
+  files, and double-rm sequence (write -> rm -> write -> rm) to
+  confirm the helper does not accumulate state.
+- evidence of green run:
+  ```
+  bun run test src/codexAppServerManager.sidecar.test.ts
+   Test Files  1 passed (1)
+        Tests  6 passed (6)
+  bun run typecheck   # clean
+  bun lint apps/server/src/codexAppServerManager.ts # 0 errors
+  ```
+- follow-ups:
+  - Audit other tmp-dir sidecars in the codebase for the same
+    permission gap (Claude pid map, terminal log files, MCP
+    handshake files).
+  - Add a startup self-check that re-asserts the mode on the
+    sidecar directory in case it was created by an older build
+    with looser permissions.

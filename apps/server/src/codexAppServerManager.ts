@@ -234,6 +234,63 @@ const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "p
 
 const ORCHESTRATOR_PID_SIDECAR_DIR = path.join(os.tmpdir(), "orchestrate-codex-pid-map");
 
+// ORC-185: sidecar files map codex pids to orchestrator thread ids.
+// They live in the shared os.tmpdir so any local user can list them.
+// Restrict the directory to 0o700 and the files to 0o600 so the
+// thread mapping is not world-readable.
+export const SIDECAR_DIR_MODE = 0o700;
+export const SIDECAR_FILE_MODE = 0o600;
+
+/**
+ * Write a single orchestrator-thread sidecar file under `dir` with
+ * restricted permissions. Exported with `dir` as a parameter so the
+ * helper is unit-testable against a temp directory.
+ *
+ * @see ORC-185
+ */
+export function writeOrchestratorPidSidecarToDir(input: {
+  readonly dir: string;
+  readonly codexPid: number;
+  readonly threadId: string;
+}): void {
+  mkdirSync(input.dir, { recursive: true, mode: SIDECAR_DIR_MODE });
+  writeFileSync(
+    path.join(input.dir, `${input.codexPid}.json`),
+    JSON.stringify({ orchestratorThreadId: input.threadId, writtenAt: Date.now() }),
+    { mode: SIDECAR_FILE_MODE },
+  );
+}
+
+/**
+ * Remove the orchestrator-thread sidecar at `dir/{pid}.json` and
+ * verify the file is actually gone. Returns `{ removed: true }` on
+ * success; `{ removed: false, reason }` if the file persists or rm
+ * threw. Exported with `dir` as a parameter for testability.
+ *
+ * @see ORC-185
+ */
+export function removeOrchestratorPidSidecarAtDir(input: {
+  readonly dir: string;
+  readonly codexPid: number;
+}): { readonly removed: true } | { readonly removed: false; readonly reason: string } {
+  const sidecarPath = path.join(input.dir, `${input.codexPid}.json`);
+  try {
+    rmSync(sidecarPath, { force: true });
+  } catch (error) {
+    return {
+      removed: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (existsSync(sidecarPath)) {
+    return {
+      removed: false,
+      reason: "rmSync returned successfully but file still exists",
+    };
+  }
+  return { removed: true };
+}
+
 function writeOrchestratorPidSidecar(input: {
   readonly codexPid: number | undefined;
   readonly threadId: string;
@@ -243,11 +300,11 @@ function writeOrchestratorPidSidecar(input: {
     return;
   }
   try {
-    mkdirSync(ORCHESTRATOR_PID_SIDECAR_DIR, { recursive: true });
-    writeFileSync(
-      path.join(ORCHESTRATOR_PID_SIDECAR_DIR, `${input.codexPid}.json`),
-      JSON.stringify({ orchestratorThreadId: input.threadId, writtenAt: Date.now() }),
-    );
+    writeOrchestratorPidSidecarToDir({
+      dir: ORCHESTRATOR_PID_SIDECAR_DIR,
+      codexPid: input.codexPid,
+      threadId: input.threadId,
+    });
   } catch (error) {
     logBestEffortFailure(sidecarLogger, "codex.sidecar", "write", error, {
       codexPid: input.codexPid,
@@ -258,12 +315,18 @@ function writeOrchestratorPidSidecar(input: {
 
 function removeOrchestratorPidSidecar(codexPid: number | undefined): void {
   if (codexPid === undefined) return;
-  try {
-    rmSync(path.join(ORCHESTRATOR_PID_SIDECAR_DIR, `${codexPid}.json`), { force: true });
-  } catch (error) {
-    logBestEffortFailure(sidecarLogger, "codex.sidecar", "remove", error, {
-      codexPid,
-    });
+  const result = removeOrchestratorPidSidecarAtDir({
+    dir: ORCHESTRATOR_PID_SIDECAR_DIR,
+    codexPid,
+  });
+  if (!result.removed) {
+    logBestEffortFailure(
+      sidecarLogger,
+      "codex.sidecar",
+      "remove",
+      new Error(result.reason),
+      { codexPid },
+    );
   }
 }
 
