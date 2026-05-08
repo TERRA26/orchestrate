@@ -9,12 +9,12 @@ Tallied from `.ralph/backlog.md` at iter 133. Note: a phantom "P0 PENDING" entry
 | Severity | DONE | DEFERRED | PENDING |
 | -------- | ---- | -------- | ------- |
 | P0       | 12   | 1        | 0       |
-| P1       | 75   | 5        | 50      |
+| P1       | 75   | 8        | 47      |
 | P2       | 0    | 0        | 130     |
 | P3       | 0    | 0        | 18      |
-| **Totals** | **87** | **6** | **198** |
+| **Totals** | **87** | **9** | **195** |
 
-(The 75 P1 DONE figure includes pre-session work; this resumed session contributed 18 of those P1 fixes between iter 108 and iter 132.)
+(The 75 P1 DONE figure includes pre-session work; this resumed session contributed 18 of those P1 fixes between iter 108 and iter 132. The 8 P1 DEFERRED includes ORC-179 / 184 / 194 / 199 / 201 / 202 / 204 from this session plus ORC-043 from earlier.)
 
 ## Areas covered per pass
 
@@ -36,6 +36,9 @@ The discovery sweep is complete; later iterations operated in Phase B (FIX) only
 | ORC-184 | P1 | routing | filed file location was wrong; actual fix surface is web client WS response consumers, requiring an audit of every store mutation. 4-step plan recorded as ORC-184a..d. |
 | ORC-194 | P1 | persistence | repo-wide transaction-coverage audit + custom lint rule. 2-part scope; needs build-system spike for the lint rule. |
 | ORC-199 | P1 | persistence | FK CASCADE/SET NULL audit across ~10 relationships. SQLite cannot ALTER TABLE FKs in place; each rewrite is a shadow-table migration with its own fixture. Per-FK breakdown recorded as ORC-199a..j. |
+| ORC-201 | P1 | prompt injection | server-side browser content emit sites unidentified; needs ARIA-framing trace before wiring `wrapUntrustedContent`. Plan recorded as ORC-201a..c+. |
+| ORC-202 | P1 | prompt injection | MCP tool RETURN value handling spans Codex/Claude adapters; same trace required. |
+| ORC-204 | P1 | prompt injection | error-message echo path crosses Effect tagged errors + persistence; sanitize+wrap shim needs site survey first. |
 | ORC-188 | P0 | secret handling | (legacy deferral; addressed by ORC-011/012 sibling work) |
 
 ## Before/after metrics
@@ -100,7 +103,7 @@ The following lanes are the most-impactful PENDING work for a future hardening s
 | --------- | ------ | ----- |
 | 1. Backlog has at least 20 DONE | ✅ | 87 DONE total. |
 | 2. Every DONE has a `fixed.md` entry | ✅ | Spot-checked; the 18 fixes added this session each have a green-run-evidence block. |
-| 3. No P0 or P1 in PENDING/FIXING | ❌ | 50 P1 remain. The deferrals (ORC-179, 184, 194, 199) account for the highest-scope items; the rest are individually shippable but require 50+ more iterations to clear. |
+| 3. No P0 or P1 in PENDING/FIXING | ❌ | 47 P1 remain (8 deferred with structured plans). Areas with the most PENDING: error handling (8), observability (5), auth/authz (5), test coverage (4), accessibility (3). Each is individually shippable but requires sustained additional iterations. |
 | 4. Rotation list swept ≥2 times | ✅ | Pass 1 + Pass 2 complete (19 areas each). |
 | 5. Full project test suite, lint, type check pass on a fresh clean run from repo root | ⚠️ | Verified incrementally per touched package after every commit. The full `bun run test && bun lint && bun run typecheck` from a clean checkout has not been executed in a single pass during this session; per-iteration evidence stands in. |
 | 6. SUMMARY.md exists | ✅ | This file. |
