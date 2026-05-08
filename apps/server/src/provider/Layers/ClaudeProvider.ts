@@ -13,7 +13,6 @@ import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
   detailFromResult,
   extractAuthBoolean,
   isCommandMissingCause,
@@ -36,6 +35,14 @@ const PROVIDER = "claudeAgent" as const;
 // refresh tick gets another chance.
 const AUTH_PROBE_TIMEOUT_MS = 12_000;
 const AUTH_PROBE_RETRY_SETTLE_MS = 250;
+// Version probe budget. The shared DEFAULT_TIMEOUT_MS=4s is too tight for
+// `claude --version` under heavy host load (concurrent dev server, vitest
+// workers, Claude Code itself running). Bump to the same 12s + retry
+// pattern as the auth probe so a transient slow startup does not surface
+// as "Claude Agent CLI is installed but failed to run". Mirrors the
+// existing ORC-167 fix on the auth probe.
+const VERSION_PROBE_TIMEOUT_MS = 12_000;
+const VERSION_PROBE_RETRY_SETTLE_MS = 250;
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-7",
@@ -517,10 +524,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const versionProbe = yield* runClaudeCommand(["--version"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  // ORC-072-claude-fix: retry the version probe once on timeout. Mirrors
+  // the auth probe retry pattern. Real CLI failures (non-zero exit, missing
+  // binary) are NOT retried; only Success<None> (timeout) is.
+  const runVersionProbe = runClaudeCommand(["--version"]).pipe(
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
+  const firstVersionAttempt = yield* runVersionProbe;
+  let versionProbe = firstVersionAttempt;
+  if (Result.isSuccess(firstVersionAttempt) && Option.isNone(firstVersionAttempt.success)) {
+    yield* Effect.sleep(Duration.millis(VERSION_PROBE_RETRY_SETTLE_MS));
+    versionProbe = yield* runVersionProbe;
+  }
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
