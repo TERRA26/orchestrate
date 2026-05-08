@@ -44,6 +44,7 @@ import {
   parseDiffRouteSearch,
   stripDiffSearchParams,
 } from "../diffRouteSearch";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { resolveActiveSplitView, isSplitRoute } from "../splitViewRoute";
 import {
@@ -1500,6 +1501,19 @@ function ChatThreadRouteView() {
   const threadProjectId = useStore(
     (store) => store.threads.find((thread) => thread.id === threadId)?.projectId ?? null,
   );
+  // ORC-248: read the thread title and project name so we can update
+  // document.title on every navigation. Screen-reader users rely on
+  // the window/page title to know what context they are in.
+  const threadTitle = useStore(
+    (store) => store.threads.find((thread) => thread.id === threadId)?.title ?? null,
+  );
+  const projectName = useStore((store) => {
+    const projectId =
+      store.threads.find((thread) => thread.id === threadId)?.projectId ?? null;
+    if (!projectId) return null;
+    return store.projects.find((p) => p.id === projectId)?.name ?? null;
+  });
+  useDocumentTitle([threadTitle, projectName, "Orchestrate"]);
   const threadType = useStore(
     (store) => store.threads.find((thread) => thread.id === threadId)?.threadType ?? null,
   );

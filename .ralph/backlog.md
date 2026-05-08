@@ -2370,6 +2370,8 @@ Schema per entry:
 - files: apps/web/src/main.tsx:18 (document.title set once)
 - evidence: document.title is set to APP_DISPLAY_NAME at app init and never updated. Screen reader users rely on the window/page title to know what context they are in. Switching threads or projects gives no auditory cue.
 - proposed_fix: In the active route component (or a dedicated hook), update document.title on thread/project change. Pattern: `${threadTitle} -- ${projectName} -- Orchestrate`.
+- status: DONE
+- fixed_iter: 157
 - status: PENDING
 
 ### ORC-249

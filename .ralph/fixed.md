@@ -4914,3 +4914,49 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider a JSON-line format toggle (e.g.
     `ORCHESTRATE_LOG_FORMAT=ndjson`) so log shippers can parse
     structured events without ad-hoc regex.
+
+## ORC-248 (iter 157): document.title updates on thread/project change
+
+- root cause: `apps/web/src/main.tsx:18` set
+  `document.title = APP_DISPLAY_NAME` once at app boot and never
+  updated it. Screen-reader users rely on the window/page title
+  to know what context they are in; switching threads or projects
+  produced no auditory cue.
+- change summary:
+  - Added `apps/web/src/hooks/useDocumentTitle.ts` exporting:
+    1. `formatDocumentTitle(parts)`: pure helper that filters
+       null/undefined/empty/whitespace-only parts and joins the
+       rest with " - " (regular hyphen with spaces, NOT em dash).
+    2. `useDocumentTitle(parts)`: React hook that updates
+       `document.title` when `formatDocumentTitle` produces a
+       non-empty string and restores the previous title on
+       unmount. SSR-safe (skips the effect when `document` is
+       undefined).
+  - Wired the hook into `_chat.$threadId.tsx ChatThreadRouteView`
+    with `[threadTitle, projectName, "Orchestrate"]`. Both
+    threadTitle and projectName come from the existing zustand
+    store; the hook reacts to changes and announces the new
+    title to assistive tech via the standard
+    document.title -> aria-live behavior.
+- files touched:
+  - apps/web/src/hooks/useDocumentTitle.ts (new)
+  - apps/web/src/hooks/useDocumentTitle.test.ts (new)
+  - apps/web/src/routes/_chat.$threadId.tsx
+- tests added: 8 jsdom tests for `formatDocumentTitle` covering:
+  hyphen-space-hyphen separator, null/undefined filtering, empty
+  and whitespace filtering, trim per part, all-absent returns
+  empty, Unicode preservation, no-leading/trailing separator,
+  no-doubled separator when a middle part is absent.
+- evidence of green run:
+  ```
+  bun run test src/hooks/useDocumentTitle.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 errors on changed files
+  ```
+- follow-ups:
+  - Wire the same hook into the orchestrator multi-pane surface
+    (currently only the single-thread route uses it).
+  - Add a "tab title" announcement story for split-pane mode so
+    each pane's focused thread shows up.
