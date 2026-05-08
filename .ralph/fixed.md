@@ -5476,3 +5476,50 @@ mention of the prefix convention. Verified failing-before by stashing
     invocation. If N grows it could be moved to a useMemo that keys
     on `tasks` only, separately from the worker pass; today N is
     small (single-digit) so this is premature.
+
+## ORC-266: ci.yml exercises marketing build + adds workflow_dispatch
+
+- root cause: ci.yml's quality job built `desktop` but not
+  `marketing`, so an Astro-config / MDX / asset-pipeline regression
+  in apps/marketing only surfaced at release tagging time. ci.yml
+  also lacked a `workflow_dispatch` trigger, so an operator could
+  not run the pipeline against a known-risky branch checkpoint
+  without forcing a PR or push.
+- change summary:
+  - Added `workflow_dispatch:` to `ci.yml.on:` so the workflow can
+    be run manually from the GitHub Actions UI.
+  - Added a "Build marketing pipeline" step that runs
+    `bun run build:marketing` after the desktop build. Placement is
+    after typecheck/test/desktop so a marketing-only failure does
+    not mask earlier diagnostic signal.
+- files touched:
+  - .github/workflows/ci.yml
+  - apps/server/src/observability/ciCoverage.test.ts (new)
+- tests added:
+  - "invokes the marketing build": fails if a future edit removes
+    the `bun run build:marketing` (or
+    `--filter=@orchestrate/marketing`) invocation from ci.yml.
+  - "declares a workflow_dispatch trigger": fails if the manual
+    trigger is dropped from `on:`.
+- evidence of green run:
+  ```
+  bun run vitest run src/observability/ciCoverage.test.ts
+   Test Files  1 passed (1)
+        Tests  2 passed (2)
+  bun run vitest run src/observability/
+   Test Files  12 passed (12)
+        Tests  65 passed (65)
+  bun lint            # 0 errors workspace-wide
+  YAML parse: yaml.parse(ci.yml) OK; on: keys = pull_request, push,
+    workflow_dispatch; quality steps: 17 (was 16).
+  ```
+- follow-ups:
+  - The proposed_fix also asked for a `workflow_dispatch`-triggered
+    desktop platform matrix (macOS arm64/x64, Linux, Windows). That
+    is a release.yml-shaped change that belongs in a separate
+    issue: it requires a self-hosted runner pool or matrix-budget
+    review. Tracking as ORC-266a in blockers.md if it surfaces
+    again.
+  - Consider also adding a nightly cron that exercises the full
+    matrix; would need a quota review since CI minutes are
+    project-shared.

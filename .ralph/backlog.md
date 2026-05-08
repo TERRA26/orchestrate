@@ -2546,7 +2546,7 @@ Schema per entry:
 - files: .github/workflows/ci.yml,release.yml
 - evidence: Marketing app and full desktop platform matrix (macOS arm64/x64, Linux, Windows) are exercised only in release.yml, not on PRs. A change that breaks marketing or platform-specific desktop behavior is not caught until tagging.
 - proposed_fix: Add a marketing build step to ci.yml. Add a manual `workflow_dispatch` trigger that runs the desktop platform matrix on demand for risky branches. Or schedule a nightly that runs the full matrix.
-- status: PENDING
+- status: DONE
 
 ### ORC-267
 

@@ -5,6 +5,10 @@ on:
   push:
     branches:
       - main
+  # ORC-266: a manual trigger lets an operator run the pipeline
+  # against a known-risky branch checkpoint without forcing a PR or
+  # push. Useful for tag-prep dry runs and pre-release validation.
+  workflow_dispatch:
 
 jobs:
   quality:
@@ -80,6 +84,12 @@ jobs:
 
       - name: Build desktop pipeline
         run: bun run build:desktop
+
+      # ORC-266: catch marketing-app regressions (Astro config, MDX
+      # content, asset pipeline) at PR time. Previously this only ran
+      # in release.yml so a broken build only surfaced at tag time.
+      - name: Build marketing pipeline
+        run: bun run build:marketing
 
       - name: Verify preload bundle output
         run: |
