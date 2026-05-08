@@ -11,6 +11,7 @@ import {
 } from "@orchestrate/contracts";
 
 import type { WorkLogEntry } from "../session-logic";
+import { wrapUntrustedContent } from "../promptFraming";
 import type { Thread, TurnDiffSummary } from "../types";
 import type { ActiveOrchestratorRun, OrchestratorMessage } from "../orchestratorStateStore";
 import type { OrchestratorChecklistItem, OrchestratorChecklistStatus } from "../orchestratorTypes";
@@ -913,11 +914,19 @@ function formatReviewFileSnapshot(snapshot: ReviewFileSnapshot): string {
     return `${metadata}\nRead error: ${snapshot.readError}`;
   }
 
-  return [
-    metadata,
-    "Current file contents:",
-    truncateForReview(snapshot.contents ?? "", ORCHESTRATOR_MAX_REVIEW_FILE_CHARS),
-  ].join("\n");
+  // ORC-200: file contents are worker-controlled and reach the
+  // orchestrator's reasoning context. Wrap in <untrusted_file> so the
+  // orchestrator system prompt can instruct the LLM to treat the
+  // interior as data, and neutralize known orchestrator-control
+  // directives so a fake `## REPORT` or `[ORCHESTRATOR_OVERRIDE]`
+  // inside a written file cannot drive orchestrator behavior.
+  const framed = wrapUntrustedContent({
+    kind: "file",
+    content: truncateForReview(snapshot.contents ?? "", ORCHESTRATOR_MAX_REVIEW_FILE_CHARS),
+    metadata: { path: snapshot.path },
+  });
+
+  return [metadata, "Current file contents:", framed].join("\n");
 }
 
 function formatReviewWorkLogEntry(entry: ReviewWorkLogSnapshot): string {

@@ -1900,7 +1900,8 @@ Schema per entry:
 - files: apps/web/src/components/chat/FileWrittenRow.tsx,projects.readFile path
 - evidence: File contents read via projects.readFile reach the orchestrator's reasoning context unframed. A worker can plant adversarial markdown (e.g. a fake `## REPORT` block) inside a written file; when the orchestrator opens it for review, the LLM sees the text without an [UNTRUSTED_FILE_CONTENT] wrapper.
 - proposed*fix: Wrap file contents in `<untrusted_file path="...">...</untrusted_file>` tags before they reach LLM context. Strip or escape known injection sequences (`## REPORT`, `[ORCHESTRATOR*`, etc.) at the framing layer.
-- status: PENDING
+- status: DONE
+- fixed_iter: 132
 
 ### ORC-201
 
