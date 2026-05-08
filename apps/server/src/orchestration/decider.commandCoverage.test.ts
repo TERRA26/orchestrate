@@ -44,7 +44,6 @@ const KNOWN_UNTESTED: ReadonlyArray<{ readonly type: string; readonly reason: st
   { type: "orchestrator.task.block", reason: "follow-up: needs explicit blockedReason payload coverage" },
   { type: "orchestrator.task.cancel", reason: "follow-up: same shape as task.fail; add together" },
   { type: "orchestrator.task.fail", reason: "follow-up: same shape as task.cancel; add together" },
-  { type: "orchestrator.worker.terminate", reason: "follow-up: terminate produces worker.terminated event" },
   { type: "orchestrator.worker.pause", reason: "follow-up: pause/resume pair, test both at once" },
   { type: "orchestrator.worker.resume", reason: "follow-up: paired with pause" },
   { type: "orchestrator.worker.update-post", reason: "follow-up: send_update_to_orchestrator MCP path" },

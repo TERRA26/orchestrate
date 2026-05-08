@@ -2449,3 +2449,49 @@ The tests use `vi.useFakeTimers()` + `vi.setSystemTime()` so the elapsed value i
 - When `tone === "error"`, optionally render the final elapsed time as the duration label so users can see how long the failed work ran.
 - Apply the same WorkingTimer pattern to OrchInstrumentBlock for long-running bash commands (currently only shows a static `duration` prop if pre-computed).
 - Consider a "stale alert" threshold: when a work entry has been running for >5 minutes, render a soft warning indicator next to the timer prompting the user to investigate.
+
+## ORC-116 [iter 97] Worker state-machine transitions had no central graph
+
+**Root cause**: The decider enforced a subset of worker state transitions via inline `expectedStatus` checks scattered across handlers. `worker.pause` and `worker.resume` had explicit checks; `worker.terminate` did not. A duplicate `worker.terminate` command for an already-terminated worker would silently produce a duplicate `worker.terminated` event because the existence-only check passed. There was no single place to read and audit the legal transition graph.
+
+**Change summary**:
+- New `apps/server/src/orchestration/workerTransitions.ts`:
+  - Encodes the full graph as `WORKER_LEGAL_TRANSITIONS: Map<from, Set<to>>` covering all 6 statuses (idle, running, paused, submitted, stuck, terminated).
+  - Treats `terminated` as a strict terminal state (no outgoing edges) so re-terminating fails fast.
+  - Treats self-transitions (X -> X) as illegal so duplicate commands produce errors instead of silent duplicate events.
+  - Exposes `isLegalWorkerTransition(from, to)` as a pure helper plus an Effect-flavored `requireLegalWorkerTransition({ command, workerId, from, to })` that fails with `OrchestrationCommandInvariantError`.
+- `apps/server/src/orchestration/decider.ts`:
+  - `worker.terminate` now reads the existing worker, then calls `requireLegalWorkerTransition({ from: worker.status, to: "terminated" })` before emitting the event. Pre-existing event semantics preserved for legal transitions; double-terminate now fails clean.
+- `apps/server/src/orchestration/decider.commandCoverage.test.ts`:
+  - Removed the `orchestrator.worker.terminate` KNOWN_UNTESTED entry since the new test references the command type via the regex-scanned coverage check.
+
+**Files touched**:
+- apps/server/src/orchestration/workerTransitions.ts (NEW)
+- apps/server/src/orchestration/workerTransitions.test.ts (NEW)
+- apps/server/src/orchestration/decider.ts
+- apps/server/src/orchestration/decider.commandCoverage.test.ts
+
+**Tests added**: 13 cases in `workerTransitions.test.ts`:
+- 7 assert the pure isLegalWorkerTransition graph: rejects self-transitions across all statuses, terminated is terminal, canonical happy-path transitions allowed, pause/resume cycles allowed, stuck-state recovery allowed, termination from every non-terminal state allowed, submitted -> paused rejected, unknown source rejected, the map covers every defined status.
+- 4 assert the Effect-flavored guard: returns Effect.void when legal, fails with `OrchestrationCommandInvariantError` and a clear detail string when illegal, rejects re-termination, rejects illegal self-transition.
+- 2 assert error-message details (workerId, status names appear in the cause).
+
+The pre-existing 21 decider.orchestrator.test.ts tests + the worker-coverage assertion in decider.commandCoverage.test.ts both pass after the change.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/workerTransitions.test.ts src/orchestration/decider.orchestrator.test.ts src/orchestration/decider.commandCoverage.test.ts` (Node 24) -> Test Files 3 passed (3) | Tests 32 passed (32)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The graph treats X -> X as illegal. Existing decider call sites that intentionally re-emit a status (none today) would need a sentinel "no-op" check OR the graph rule would force a refactor. Documented as a follow-up.
+- `worker.update-post` accepts a wide range of incoming statuses from the worker (in-progress, needs-input, ready-for-review, blocked) but those map to *update* events, not state-machine transitions. The status field on update-post is metadata, not a worker.status mutation, so it does not call the new helper.
+- `worker.spawn` creates a worker; there is no "from" status. The helper is not used there. Correct.
+- `worker.promote` / `worker.demote` change visibility, not status. They don't call the new helper. Correct.
+- The graph is conservative: legal edges that aren't actually exercised today still appear (e.g., paused -> idle). This avoids future surprise rejections when the decider grows new commands.
+
+**Follow-ups**:
+- Migrate `worker.pause` and `worker.resume` from per-call `expectedStatus` to `requireLegalWorkerTransition`. Today they each maintain their own list of allowed source statuses; consolidating eliminates drift between the inline list and the central graph.
+- When `orchestrator.worker.update-post` lands a real status-mutation path (not just metadata), wire it to the helper.
+- Add a graph visualizer test that emits a Mermaid diagram of WORKER_LEGAL_TRANSITIONS to keep the doc + code aligned.
+- Promote the same pattern to task transitions (`orchestrator.task.*` cases) where ORC-100 KNOWN_UNTESTED entries have been waiting on a similar treatment.

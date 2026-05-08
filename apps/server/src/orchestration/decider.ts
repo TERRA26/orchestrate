@@ -24,6 +24,7 @@ import {
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
+import { requireLegalWorkerTransition } from "./workerTransitions.ts";
 
 const nowIso = () => new Date().toISOString();
 const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
@@ -1336,10 +1337,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.worker.terminate": {
-      yield* requireOrchestratorWorker({
+      const worker = yield* requireOrchestratorWorker({
         readModel,
         command,
         workerId: command.workerId,
+      });
+      // ORC-116: enforce the centralized transition graph. terminated ->
+      // terminated is illegal so a duplicate terminate command no longer
+      // produces a duplicate event.
+      yield* requireLegalWorkerTransition({
+        command,
+        workerId: command.workerId,
+        from: worker.status,
+        to: "terminated",
       });
       return {
         ...withEventBase({

@@ -1103,7 +1103,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/projector.ts:1017-1049,decider.ts (worker.\* commands)
 - evidence: The worker state machine (idle, running, paused, terminated, ready-for-review) is enforced only by `expectedStatus` checks in some decider cases. There is no central transition table; some commands set status without verifying the predecessor.
 - proposed_fix: Add a single `assertWorkerTransition(from, to)` helper that owns the legal transition graph. All worker.\* command handlers call it before persisting the new status. Add a unit test covering all legal and illegal transitions.
-- status: PENDING
+- status: DONE
+- fixed_iter: 97
 
 ### ORC-117
 
