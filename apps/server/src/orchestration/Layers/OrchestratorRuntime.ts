@@ -29,6 +29,10 @@ import { ModelRegistryService } from "../Services/ModelRegistry.ts";
 import { OrchestratorRunsRepository } from "../../persistence/Services/OrchestratorRuns.ts";
 import { findDependentTasks, toDependencyTasks } from "../taskDependencyGraph.ts";
 import {
+  ORPHAN_RECOVERY_REASON,
+  findOrphanedWorkersOnRecovery,
+} from "../orphanedWorkersOnRecovery.ts";
+import {
   OrchestratorRuntimeService,
   type OrchestratorRuntimeShape,
   type FailureType,
@@ -783,18 +787,22 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
           totalTasks: tasks.length,
         });
 
-        // Active steps without completion are logged for inspection.
-        // Completed steps are permanent (event-sourced) and need no recovery.
-        for (const worker of workers) {
-          if (worker.activeTaskId) {
-            const task = tasks.find((t) => t.taskId === worker.activeTaskId);
-            yield* Effect.logWarning("resumeActiveRuns: worker has incomplete task", {
-              runId: run.runId,
-              workerId: worker.workerId,
-              activeTaskId: worker.activeTaskId,
-              taskStatus: task?.status ?? "unknown",
-            });
-          }
+        // ORC-275: any worker persisted in `running` / `submitted` /
+        // `paused` / `stuck` had its provider session torn down with
+        // the previous server process. Auto-terminate them so the
+        // active task gets blocked, dependent tasks cascade-block,
+        // and the orchestrator's spawn loop can re-plan. Without
+        // this, half-spawned workers from a server crash linger
+        // forever and dependent tasks never unblock.
+        const orphans = findOrphanedWorkersOnRecovery(workers);
+        for (const worker of orphans) {
+          yield* Effect.logWarning("resumeActiveRuns: terminating orphaned worker", {
+            runId: run.runId,
+            workerId: worker.workerId,
+            previousStatus: worker.status,
+            activeTaskId: worker.activeTaskId,
+          });
+          yield* terminateWorker(worker.workerId, ORPHAN_RECOVERY_REASON);
         }
       }
     });

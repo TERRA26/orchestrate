@@ -5574,3 +5574,65 @@ mention of the prefix convention. Verified failing-before by stashing
   - Document the "fix without test = not done" rule in CONTRIBUTING.
     Belongs in the CONTRIBUTING.md file when one is created;
     currently the project has no such file.
+
+## ORC-275: resumeActiveRuns auto-terminates orphaned workers on boot
+
+- root cause: `resumeActiveRuns` walked the read model and emitted a
+  `Effect.logWarning` for any worker holding an incomplete task,
+  but it never dispatched a terminate event. After a server crash,
+  workers persisted as `running` / `submitted` / `paused` / `stuck`
+  had no live provider session yet remained "active" in the read
+  model. Their activeTaskId was never freed, so the existing block
+  cascade did not fire and dependent tasks stayed pending forever.
+- change summary:
+  - Extracted the orphan-detection contract into a pure helper
+    `apps/server/src/orchestration/orphanedWorkersOnRecovery.ts`.
+    The helper exports `ORPHAN_RECOVERY_REASON` (a stable
+    log-grouping string) and `findOrphanedWorkersOnRecovery(workers)`
+    that returns the subset whose status is in the closed set
+    `{running, submitted, paused, stuck}`. `idle` and `terminated`
+    are explicitly NOT orphans (idle holds no task; terminated is
+    already terminal).
+  - In `OrchestratorRuntime.ts`, `resumeActiveRuns` now calls
+    `findOrphanedWorkersOnRecovery` and, for each orphan, calls
+    `terminateWorker(workerId, ORPHAN_RECOVERY_REASON)`. The
+    existing terminate path emits `orchestrator.task.block` for
+    the active task and cascade-blocks every transitive dependent
+    in a runnable / waiting state, so the spawn loop sees the
+    blocked tasks and re-plans on the next pass.
+- files touched:
+  - apps/server/src/orchestration/orphanedWorkersOnRecovery.ts (new)
+  - apps/server/src/orchestration/orphanedWorkersOnRecovery.test.ts (new)
+  - apps/server/src/orchestration/Layers/OrchestratorRuntime.ts
+- tests added:
+  - "includes a `running` worker", `submitted`, `paused`, `stuck`:
+    pin the orphan inclusion set.
+  - "excludes an `idle` worker", `terminated`: pin the exclusions
+    so a future "treat all non-terminated as orphans" regression
+    cannot silently terminate idle workers between runs.
+  - "returns only the orphan subset from a mixed list": exercises
+    the filter end-to-end.
+  - "returns an empty array for an empty input": guard for the
+    no-runs path.
+  - "exports a stable recovery reason for log grouping": ensures
+    the canonical reason text contains `recovery`, `orphaned`, and
+    `no live provider session` so log-aggregation queries keep
+    working.
+- evidence of green run:
+  ```
+  bun run vitest run src/orchestration/orphanedWorkersOnRecovery.test.ts
+   Test Files  1 passed (1)
+        Tests  9 passed (9)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Wire `resumeActiveRuns` into the server boot sequence. It is
+    currently a service contract method but no boot path invokes
+    it; ORC-275a tracks the wiring + integration test that
+    exercises a crash + restart simulation.
+  - Consider preserving the previous status on the terminate event
+    (e.g. an extra `previousStatus` field) so postmortem queries
+    can distinguish "running -> terminated" recoveries from
+    "stuck -> terminated" recoveries. Today the previous status is
+    only in the structured log line, not the event store.

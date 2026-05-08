@@ -2627,7 +2627,7 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestratorRuntime.ts:730-765 (resumeActiveRuns)
 - evidence: On startup, resumeActiveRuns only logs workers in unexpected states; it does not auto-terminate or retry workers that are persisted as `status="running"` but have no live provider session. Half-spawned workers from a server crash linger forever.
 - proposed_fix: On recovery, walk persisted workers; for each one in "running" status without an alive provider session, auto-transition to "crashed" with a recovery_reason, free the activeTaskId, and surface a structured event so the orchestrator can re-plan.
-- status: PENDING
+- status: DONE
 
 ### ORC-276
 
