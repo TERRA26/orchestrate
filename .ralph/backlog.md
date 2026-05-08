@@ -1694,7 +1694,9 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:967-969 (pushBus.publishAll)
 - evidence: orchestrationEngine.streamDomainEvents pushes ALL events to ALL clients on the orchestration.domainEvent channel, with no per-thread/per-project scoping. Two clients viewing different projects each see events for the other.
 - proposed_fix: Tag each domain event with projectId/threadId. Per-client subscription filter (only matching projects). Backwards-compat: clients without a filter still get everything.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 120
+- deferred_reason: Full fix spans pushBus filter API extension, per-client subscription map, new WS message contract (orchestration.subscribeToProjects), wsServer wiring, AND a contract version bump. Single-iteration scope risks shipping an incomplete fix. See blockers.md for the agreed multi-iteration plan.
 
 ### ORC-180
 

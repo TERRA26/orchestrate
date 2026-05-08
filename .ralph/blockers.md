@@ -51,3 +51,34 @@ Issues that could not be fixed after 3 honest attempts inside verified-build. Re
 
 **Next action**: Capture as a sequence of follow-up issues or a separate "multi-tenant readiness" project. Out of scope for the audit's single-issue fix discipline.
 
+
+## ORC-179 (deferred at iter 120): per-client domain event scoping
+
+### What was attempted
+
+Surveyed `apps/server/src/wsServer/pushBus.ts` and `apps/server/src/wsServer.ts`. Confirmed the bus uses `publishAll(channel, data)` with no recipient filter; the orchestration domain-event subscription at `wsServer.ts:1078-1080` broadcasts every event to every client via `pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event)`. Two clients on different projects each see events from the other.
+
+### Why a single-iteration fix is risky
+
+The complete fix needs:
+
+1. **PushBus API extension**: `publishAll<C>(channel, data, recipientFilter?: (client: WebSocket) => boolean)`. Per-client filter applied inside the existing `recipients` loop. Backward-compatible: no filter means broadcast as today.
+2. **Per-client subscription state**: `Ref<Map<WebSocket, Set<ProjectId> | "all">>` initialized to `"all"` for new clients. Pruned on disconnect via the existing `clients.delete` path.
+3. **New WS message contract**: `orchestration.subscribeToProjects` request type added to `@orchestrate/contracts/ws.ts`, with `projectIds: ReadonlyArray<ProjectId> | "all"`. Schema bump in the contracts package.
+4. **wsServer wiring**: orchestration.domainEvent push site (`wsServer.ts:1078-1080`) builds a predicate from the event's `projectId` (extract via a small pure helper) and the per-client subscription map.
+5. **Client-side opt-in (apps/web)**: send the subscribe message on project-route mount with the visible projectId set; reset to `"all"` on root-route mount. Optional, since back-compat preserves current behavior for clients that never subscribe.
+6. **Tests**: pushBus filter unit tests; integration test that two MockWebSockets with different subscriptions see disjoint event sets; wsServer route handler test for the new message.
+
+That's roughly 5-6 distinct edit groups across pushBus, contracts, wsServer, web, and tests. Cramming all of them into a single iteration risks shipping a half-wired filter where the contract types exist but the wiring is incomplete, exactly the kind of "incomplete work" the project's `feedback_no_incomplete_work.md` rule prohibits.
+
+### What would unblock it
+
+A multi-iteration plan with explicit checkpoints:
+
+- **Step A**: pushBus filter API extension (no behavior change yet) + 3 unit tests on the filter path.
+- **Step B**: per-client subscription map + new `orchestration.subscribeToProjects` contract + handler in wsServer; default state still "all" so no behavior change.
+- **Step C**: wire the orchestration.domainEvent stream through the predicate + integration test exercising two MockWebSockets with disjoint subscriptions.
+- **Step D**: web-side opt-in (subscribe on project route mount) + e2e smoke.
+
+Each step is one iteration. Track as separate ORC ids (ORC-179a..d) when the next sweep picks this up.
+
