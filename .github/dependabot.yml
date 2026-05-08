@@ -1,0 +1,42 @@
+version: 2
+# ORC-093: weekly Dependabot scans for npm dependencies and GitHub Actions.
+# Vulnerable transitive deps land silently otherwise; this gives us a single
+# weekly digest PR per ecosystem instead of zero-touch drift.
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    # Group all non-major npm bumps into one PR so review is bounded;
+    # majors land separately because they are usually breaking.
+    groups:
+      npm-minor-and-patch:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      npm-dev:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "automated"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automated"

@@ -889,7 +889,8 @@ Schema per entry:
 - files: .github/workflows/ (no security workflow),no .github/dependabot.yml
 - evidence: No CodeQL, no `bun audit` step, no Dependabot config. Vulnerable transitive deps land silently. We have 90+ transitive deps and a beta major (Effect 4.0) in the critical path.
 - proposed_fix: Add .github/dependabot.yml polling weekly for npm + github-actions. Add a `bun audit --production` step to ci.yml that fails on high/critical findings. Optionally add a CodeQL workflow for TS.
-- status: PENDING
+- status: DONE
+- fixed_iter: 90
 
 ### ORC-094
 

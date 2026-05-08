@@ -45,6 +45,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # ORC-093: surface known vulnerabilities in transitive deps before
+      # they reach production. We fail on high+critical only so a low /
+      # moderate finding does not block a hotfix; weekly Dependabot PRs
+      # carry the longer tail.
+      - name: Dependency audit
+        run: bun audit --audit-level=high
+
       - name: Format
         run: bun run fmt:check
 

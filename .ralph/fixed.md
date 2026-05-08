@@ -2147,3 +2147,46 @@ The first 3 would fail before the change (no such step in ci.yml). The 4th would
 - Promote the orchestrator-smoke step to a required status check in branch protection rules so PRs cannot merge with it red.
 - Add a parallel `Orchestrator journey` step calling `test:orchestrator-journey` once that test stabilizes.
 - Mirror the smoke into release.yml's `release_smoke` (currently runs `release-smoke.ts` only) so a regression that slips through PR CI still trips before publish.
+
+## ORC-093 [iter 90] No dependency-audit baseline
+
+**Root cause**: The repo had no `.github/dependabot.yml` and no `bun audit` step in CI. Vulnerable transitive dependencies (90+ in the install tree, plus a beta major of Effect 4.0 in the critical path) could land silently. There was no automated weekly scan and no PR-time gate on critical CVEs.
+
+**Change summary**:
+- New `.github/dependabot.yml`: schema v2 manifest watching npm and github-actions ecosystems weekly (Mondays 09:00 UTC). Groups non-major npm bumps into single PRs to bound review surface; majors land separately. Caps open PRs at 10 (npm) + 5 (actions) so the queue never floods.
+- `.github/workflows/ci.yml`: added a `Dependency audit` step in the `quality` job, immediately after `Install dependencies` and before `Format`, running `bun audit --audit-level=high`. Fails the build on high+critical findings; low/moderate flow through for Dependabot to PR.
+
+**Files touched**:
+- .github/dependabot.yml (NEW)
+- .github/workflows/ci.yml
+- apps/server/src/observability/dependencyAudit.test.ts (NEW)
+
+**Tests added**: 7 cases pinning both files:
+1. `.github/dependabot.yml` exists.
+2. dependabot.yml declares `version: 2`.
+3. dependabot.yml watches the npm ecosystem on a weekly cadence.
+4. dependabot.yml watches the github-actions ecosystem on a weekly cadence.
+5. ci.yml has a `Dependency audit` step.
+6. The audit step runs `bun audit --audit-level=(high|critical)`.
+7. The audit step is positioned after `Install dependencies` and before `Lint`.
+
+All 7 would fail before the change (verified by moving the files aside and re-running: 7/7 fail). They pass after.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability/dependencyAudit.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 7 passed (7)
+- File-removal verification: with `.github/dependabot.yml` moved aside and ci.yml reverted, all 7 tests fail as expected. Files restored.
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- `bun audit --audit-level=high` was chosen over `--audit-level=moderate` to avoid false-positive churn from advisories that don't actually reach the critical path. Moderate findings still surface in the audit output (just don't fail the build) and Dependabot's weekly digest covers the longer tail.
+- Dependabot grouping: production minor/patch bumps batch into one PR; dev bumps batch into another; majors land alone. This bounds reviewer load while keeping major bumps individually traceable.
+- The audit step runs BEFORE format/lint/typecheck/test so a vulnerable lockfile fails fast (cheap, ~5s) rather than after 30 min of test setup.
+- Unicode quote handling: dependabot.yml uses ASCII double quotes, no smart quotes that would trip YAML parsers.
+- The test position-check uses substring index comparison rather than YAML parsing. A reformat that moves the audit step trips the test, prompting a deliberate update.
+- bun audit's exit code: 0 when no findings ≥ level, non-zero otherwise. Matches GitHub Actions's standard fail-on-nonzero behavior; no extra wiring needed.
+
+**Follow-ups**:
+- Consider adding a `Production audit only` step that runs `bun audit --production --audit-level=high` to catch shifts where a dev-dep advisory bleeds into production via transitive exposure.
+- Add a CodeQL workflow for TypeScript SAST (`github/codeql-action/init` + `analyze`); doesn't catch transitive CVEs but does catch source-level patterns.
+- Wire the audit step into release.yml's `release_smoke` job too so a fresh production build can't ship with a known critical advisory.
+- Promote both gates (audit + dependabot) to required status checks in branch protection.
