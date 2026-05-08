@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { Effect, Schema, Result } from "effect";
 
-import { SendUpdateToOrchestratorInput, SpawnAgentInput } from "./orchestrationTools";
+import {
+  GetAgentStatusOutput,
+  SendUpdateToOrchestratorInput,
+  SpawnAgentInput,
+} from "./orchestrationTools";
 
 function decode(input: unknown) {
   return Effect.runSync(
@@ -164,5 +168,101 @@ describe("SpawnAgentInput.spawnBudget shape (ORC-129)", () => {
       expect((decoded.spawnBudget ?? {})["allowedTools"]).toBeUndefined();
       expect((decoded.spawnBudget ?? {})["writeScope"]).toBeUndefined();
     }
+  });
+});
+
+describe("GetAgentStatusOutput shape (ORC-130)", () => {
+  function decodeStatus(input: unknown) {
+    return Effect.runSync(
+      Schema.decodeUnknownEffect(GetAgentStatusOutput)(input).pipe(Effect.result),
+    );
+  }
+
+  it("decodes the minimal required fields", () => {
+    const result = decodeStatus({
+      agentId: "agent-1",
+      status: "running",
+      visibility: "foreground",
+      activeTaskId: "task-1",
+      threadId: "thread-1",
+      updatedAt: "2026-04-09T12:00:00.000Z",
+    });
+    expect(Result.isSuccess(result)).toBe(true);
+  });
+
+  it("decodes the full handler output (mirrors handleGetAgentStatus)", () => {
+    // Mirrors apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts
+    // handleGetAgentStatus return at lines 430-461 (post-fix). All optional
+    // fields populated together so a decode regression catches drift in
+    // either direction.
+    const result = decodeStatus({
+      agentId: "agent-1",
+      status: "running",
+      visibility: "foreground",
+      activeTaskId: "task-1",
+      threadId: "thread-1",
+      updatedAt: "2026-04-09T12:00:00.000Z",
+      latestUpdate: {
+        status: "in-progress",
+        summary: "Implementing the feature",
+        nextStep: "Run lint",
+        postedAt: "2026-04-09T12:00:30.000Z",
+      },
+      lastAssistantMessage: "Let me check the test results.",
+      submitSummary: "Done; tests passing.",
+      filesWritten: ["src/foo.ts", "src/bar.ts"],
+      testsRun: [
+        { name: "foo.spec.ts", status: "pass" },
+        { name: "bar.spec.ts", status: "pass" },
+      ],
+      submitNotes: "no warnings",
+      hasChanges: true,
+      diffStats: { filesChanged: 2, additions: 12, deletions: 4 },
+      stale: false,
+      idleMs: 1000,
+      stalenessThresholdMs: 600000,
+      stalenessReason: "all good",
+    });
+    expect(Result.isSuccess(result)).toBe(true);
+  });
+
+  it("decodes a status with stale=true and a reason set", () => {
+    const result = decodeStatus({
+      agentId: "agent-1",
+      status: "running",
+      visibility: "foreground",
+      activeTaskId: "task-1",
+      threadId: "thread-1",
+      updatedAt: "2026-04-09T12:00:00.000Z",
+      stale: true,
+      idleMs: 700_000,
+      stalenessThresholdMs: 600_000,
+      stalenessReason: "No worker activity for over 10 minutes.",
+    });
+    expect(Result.isSuccess(result)).toBe(true);
+  });
+
+  it("rejects an output missing the required `agentId` field", () => {
+    const result = decodeStatus({
+      status: "running",
+      visibility: "foreground",
+      activeTaskId: null,
+      threadId: "thread-1",
+      updatedAt: "2026-04-09T12:00:00.000Z",
+    });
+    expect(Result.isFailure(result)).toBe(true);
+  });
+
+  it("rejects an invalid latestUpdate shape", () => {
+    const result = decodeStatus({
+      agentId: "agent-1",
+      status: "running",
+      visibility: "foreground",
+      activeTaskId: null,
+      threadId: "thread-1",
+      updatedAt: "2026-04-09T12:00:00.000Z",
+      latestUpdate: { wrong: "shape" },
+    });
+    expect(Result.isFailure(result)).toBe(true);
   });
 });

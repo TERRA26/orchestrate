@@ -1237,7 +1237,8 @@ Schema per entry:
 - files: packages/contracts/src/orchestrationTools.ts:198-205 (GetAgentStatusOutput) vs apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:420-442 (actual handler return)
 - evidence: GetAgentStatusOutput in contracts lists only status/visibility/activeTaskId/threadId/updatedAt. The handler additionally returns latestUpdate, lastAssistantMessage, submitSummary, filesWritten, testsRun, submitNotes, hasChanges, diffStats, diffMethod, gitScopeNote. The client decoder either drops them silently or fails strict-decode.
 - proposed_fix: Update the contract to include every field the handler returns. Mark optional fields explicitly. Add a contract test that decodes the actual handler output against the schema.
-- status: PENDING
+- status: DONE
+- fixed_iter: 104
 
 ### ORC-131
 

@@ -2946,3 +2946,40 @@ The type-level check (#3) would fail at compile time before this commit if anyon
 - Tighten parseOptions on the production decode of `SpawnAgentInput` so policy fields are loudly rejected rather than silently dropped. Coordinated rollout: enabling this in one place may require updates in any caller that still sends extras.
 - Document the run-level vs spawn-level policy split in the orchestrator's system prompt so humans reading the prompt understand why `allowedTools` is set once at run.create.
 - Mirror the JSDoc + pinning test on other tool-input shapes that are subsets of canonical command shapes (e.g., TerminateAgentInput vs orchestrator.worker.terminate).
+
+## ORC-130 [iter 104] GetAgentStatusOutput contract was missing handler-returned fields
+
+**Root cause**: `packages/contracts/src/orchestrationTools.ts:GetAgentStatusOutput` declared only 6 fields, but `apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:handleGetAgentStatus` returned a much richer payload: `latestUpdate` (worker self-update), `lastAssistantMessage`, `submitSummary`, `filesWritten`, `testsRun`, `submitNotes`, `hasChanges`, `diffStats`, plus the staleness fields (`stale`, `idleMs`, `stalenessThresholdMs`, `stalenessReason`). Clients decoding the result against the contract either silently dropped the rich fields (loose decode) or failed strict-decode. The orchestrator in particular relies on `latestUpdate` to drive its polling loop; a stale contract would have hidden it.
+
+**Change summary**:
+- `packages/contracts/src/orchestrationTools.ts:GetAgentStatusOutput`: added all 12 missing fields as `Schema.optional` so a handler that elides any one of them (because the worker hasn't reached that stage yet) still decodes. The shape mirrors `OrchestratorWorker.latestUpdate`, `OrchestratorTask.diffStats`, etc., from `orchestration.ts`. Each field is documented in a JSDoc reference back to `handleGetAgentStatus` so future drift in either direction is easy to spot.
+
+**Files touched**:
+- packages/contracts/src/orchestrationTools.ts
+- packages/contracts/src/orchestrationTools.test.ts (5 new tests)
+
+**Tests added**: 5 cases under a new `GetAgentStatusOutput shape (ORC-130)` describe block:
+1. Decodes the minimal required-fields-only output.
+2. Decodes the full handler output with every optional field populated (mirrors the actual handler return shape).
+3. Decodes a stale-worker variant with the staleness quartet (`stale=true`, `idleMs`, `stalenessThresholdMs`, `stalenessReason`).
+4. Rejects an output missing the required `agentId` field.
+5. Rejects an output with an invalid `latestUpdate` shape (bad inner keys).
+
+The full-handler-output test (#2) would have failed before the change with a "drop or strict-error" outcome depending on the decode mode; it now decodes cleanly.
+
+**Green-run evidence**:
+- `cd packages/contracts && bun run test src/orchestrationTools.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 18 passed (18)
+- `bun typecheck` (packages/contracts) -> tsc --noEmit clean
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The schema uses inline structs for `latestUpdate`, `testsRun[item]`, `diffStats`. These mirror the shapes in `orchestration.ts` but are not literal references to those types. Keeps the contracts-package independent of server-only types and avoids circular imports. If the canonical shapes change, the contract test catches the drift via the rich-decode case.
+- All 12 added fields are optional. A future tightening (e.g., requiring `updatedAt` always) could be done by removing `Schema.optional`; the test would still pass for the rich-output case.
+- The `runId` field is present on `OrchestratorWorker` but NOT in the handler return; consciously omitted.
+- The handler also includes `diffMethod` and `gitScopeNote` mentioned in the original ORC-130 evidence, but a search of `OrchestrationToolRouter.ts:handleGetAgentStatus` post-iter-99-edit shows those are not present in the return — they live elsewhere in the file (related to diff RPC). Kept the contract focused on what the handler actually returns today.
+
+**Follow-ups**:
+- Add a contract-decoding step inside the actual handler so the server-side handler output is validated against the schema before being returned. Today the handler builds a JS object that happens to match; making the schema authoritative eliminates the silent-divergence risk that this iteration revealed.
+- Mirror the same audit on `GetAllStatusOutput` (the per-agent struct in the array): does it match the per-worker shape that the handler emits?
+- When the handler grows new optional fields, the test suite needs updating. Document this expectation in the JSDoc on `GetAgentStatusOutput` so future contributors know to update both halves.

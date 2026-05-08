@@ -243,6 +243,44 @@ export const GetAgentStatusOutput = Schema.Struct({
   activeTaskId: Schema.NullOr(TaskId),
   threadId: ThreadId,
   updatedAt: Schema.String,
+  // ORC-130: the runtime handler returns these additional fields when
+  // available. Modeled as optional so a handler that elides any one of
+  // them (because the worker hasn't reached that stage) still decodes.
+  // Source-of-truth: apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:handleGetAgentStatus.
+  latestUpdate: Schema.optional(
+    Schema.Struct({
+      status: Schema.String,
+      summary: Schema.String,
+      question: Schema.optional(Schema.String),
+      nextStep: Schema.optional(Schema.String),
+      blockedReason: Schema.optional(Schema.String),
+      postedAt: Schema.String,
+    }),
+  ),
+  lastAssistantMessage: Schema.optional(Schema.String),
+  submitSummary: Schema.optional(Schema.String),
+  filesWritten: Schema.optional(Schema.Array(Schema.String)),
+  testsRun: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        status: Schema.String,
+      }),
+    ),
+  ),
+  submitNotes: Schema.optional(Schema.String),
+  hasChanges: Schema.optional(Schema.Boolean),
+  diffStats: Schema.optional(
+    Schema.Struct({
+      filesChanged: Schema.Number,
+      additions: Schema.Number,
+      deletions: Schema.Number,
+    }),
+  ),
+  stale: Schema.optional(Schema.Boolean),
+  idleMs: Schema.optional(Schema.Number),
+  stalenessThresholdMs: Schema.optional(Schema.Number),
+  stalenessReason: Schema.optional(Schema.String),
 });
 
 export const GetAllStatusInput = Schema.Struct({
