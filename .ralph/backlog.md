@@ -2490,7 +2490,7 @@ Schema per entry:
 - files: apps/web/src/components/settings/SettingsPanels.tsx:1001 (`"settings" as unknown as ThreadId`)
 - evidence: A string literal is double-cast to the branded ThreadId type to satisfy a typed prop. Branded ID schemas (ThreadId is normally validated) are bypassed; if the special-case "settings" ID is ever removed or renamed, this site will not flag.
 - proposed_fix: Either widen the schema to accept "settings" as a constant, or introduce a SettingsThreadId branded type with a single allowed value. Remove the as-unknown-as cast.
-- status: PENDING
+- status: DONE
 
 ### ORC-261
 

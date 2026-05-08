@@ -16,7 +16,7 @@ import {
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
-  ThreadId,
+  type ThreadId,
 } from "@orchestrate/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@orchestrate/contracts/settings";
 import { normalizeModelSlug } from "@orchestrate/shared/model";
@@ -31,6 +31,7 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { SETTINGS_THREAD_ID } from "../../constants/settingsThreadId";
 import { getProviderModels } from "../../providerModels";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
@@ -998,7 +999,7 @@ export function GeneralSettingsPanel() {
               />
               <TraitsPicker
                 provider={textGenProvider}
-                threadId={"settings" as unknown as ThreadId}
+                threadId={SETTINGS_THREAD_ID}
                 models={getProviderModels(serverProviders, textGenProvider)}
                 model={textGenModel}
                 prompt=""

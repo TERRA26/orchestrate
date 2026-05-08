@@ -5371,3 +5371,53 @@ mention of the prefix convention. Verified failing-before by stashing
     `node-pty-prebuilt-multiarch`) so the failure path is rarer.
     That requires fork-CVE/fork-maintenance research outside this
     iteration; the graceful fallback addresses the immediate UX.
+
+## ORC-260: SETTINGS_THREAD_ID sentinel removes load-bearing ThreadId cast
+
+- root cause: SettingsPanels.tsx passed `"settings" as unknown as
+  ThreadId` to TraitsPicker. The double cast bypassed both the
+  branded-string compile-time check and ThreadId's runtime
+  Schema.brand validation. If TraitsPicker's threadId contract ever
+  changed (e.g., to require a leading `thread-` prefix), this call
+  site would silently keep working with stale assumptions.
+- change summary:
+  - Added `apps/web/src/constants/settingsThreadId.ts` exporting
+    `SETTINGS_THREAD_ID: ThreadId = ThreadId.makeUnsafe("settings")`.
+    `makeUnsafe` is the codebase's standard branded-id constructor
+    (used in store.test.ts, splitViewStore.test.ts, etc.); naming
+    the sentinel makes the unsafe-but-intentional construction
+    explicit and grep-discoverable.
+  - SettingsPanels.tsx now imports `SETTINGS_THREAD_ID` and uses it
+    directly. The `ThreadId` value-import is replaced with a
+    `type ThreadId` import (still referenced by
+    `handleArchivedThreadContextMenu`).
+- files touched:
+  - apps/web/src/constants/settingsThreadId.ts (new)
+  - apps/web/src/constants/settingsThreadId.test.ts (new)
+  - apps/web/src/components/settings/SettingsPanels.tsx
+- tests added:
+  - "equals the literal 'settings' at runtime": pins backward
+    compatibility (downstream code may still key state by the bare
+    string "settings"; renaming the value would silently break it).
+  - "is type-assignable to ThreadId without a cast": exercises the
+    branded-type assignment as a real argument pass; proves the
+    cast-free contract holds.
+  - "is non-empty so it cannot be confused with an unset thread":
+    guards against an accidental empty-string regression.
+- evidence of green run:
+  ```
+  bun run vitest run src/constants/settingsThreadId.test.ts
+   Test Files  1 passed (1)
+        Tests  3 passed (3)
+  bun run typecheck   # apps/web clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Consider widening the TraitsPicker threadId prop to
+    `ThreadId | typeof SETTINGS_THREAD_ID` at the type level so
+    consumers know the special case exists. Today consumers see
+    only `ThreadId` and may not realize one specific value carries
+    sentinel semantics.
+  - The composer draft store keys per-thread state by ThreadId; a
+    settings entry now lives under "settings". Audit whether that
+    bleed-through is intended (it predates this fix).
