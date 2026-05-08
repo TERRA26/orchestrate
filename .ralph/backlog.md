@@ -1764,7 +1764,8 @@ Schema per entry:
 - files: apps/desktop/src/main.ts:1614-1617
 - evidence: The desktop bootstrap writes `ws://...?token=<TOKEN>` into the desktop log file. Logs rotate but are never purged before shutdown. A user with read access to the log directory recovers the auth token.
 - proposed_fix: Never log the URL with the token. Write the masked form (`ws://.../?token=[REDACTED]`) or just the host:port. If the URL is needed for diagnosis, store it in memory only.
-- status: PENDING
+- status: DONE
+- fixed_iter: 125
 
 ### ORC-187
 

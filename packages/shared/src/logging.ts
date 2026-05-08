@@ -1,6 +1,53 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/**
+ * Mask sensitive query parameters in a URL before logging.
+ *
+ * The desktop bootstrap and the MCP server both build WebSocket URLs
+ * with `?token=<auth>` and previously logged the full URL into rotating
+ * log files. A user with read access to the log directory could
+ * recover the auth token. This helper rewrites the named parameters
+ * (default: `token`) to a redacted placeholder so the URL is still
+ * useful for diagnosis but no longer leaks credentials.
+ *
+ * @see ORC-186
+ */
+export function redactUrlSecrets(
+  url: string,
+  options: { readonly paramNames?: readonly string[] } = {},
+): string {
+  const paramNames = options.paramNames ?? ["token"];
+  if (paramNames.length === 0) return url;
+
+  try {
+    const parsed = new URL(url);
+    let mutated = false;
+    const lowerTargets = new Set(paramNames.map((n) => n.toLowerCase()));
+    const presentKeys = new Set<string>();
+    for (const key of parsed.searchParams.keys()) {
+      if (lowerTargets.has(key.toLowerCase())) {
+        presentKeys.add(key);
+      }
+    }
+    for (const key of presentKeys) {
+      parsed.searchParams.set(key, "[REDACTED]");
+      mutated = true;
+    }
+    return mutated ? parsed.toString() : url;
+  } catch {
+    let result = url;
+    for (const name of paramNames) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      result = result.replace(
+        new RegExp("([?&]" + escaped + "=)[^&#]*", "gi"),
+        "$1[REDACTED]",
+      );
+    }
+    return result;
+  }
+}
+
 export interface RotatingFileSinkOptions {
   readonly filePath: string;
   readonly maxBytes: number;

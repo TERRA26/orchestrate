@@ -40,7 +40,7 @@ import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@orchestrate/contracts";
 import { NetService } from "@orchestrate/shared/Net";
-import { RotatingFileSink } from "@orchestrate/shared/logging";
+import { RotatingFileSink, redactUrlSecrets } from "@orchestrate/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
@@ -1614,7 +1614,13 @@ async function bootstrap(): Promise<void> {
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
   process.env.ORCHESTRATE_DESKTOP_WS_URL = backendWsUrl;
-  writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
+  // ORC-186: never write the raw token to the rotating log file. The
+  // log directory survives shutdown, and a user with read access can
+  // recover the token from a stale rotation. Mask the query
+  // parameter; the host/port still surfaces for diagnostic logs.
+  writeDesktopLogHeader(
+    `bootstrap resolved websocket url=${redactUrlSecrets(backendWsUrl)}`,
+  );
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");

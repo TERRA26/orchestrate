@@ -3866,3 +3866,50 @@ mention of the prefix convention. Verified failing-before by stashing
   - Add a startup self-check that re-asserts the mode on the
     sidecar directory in case it was created by an older build
     with looser permissions.
+
+## ORC-186 (iter 125): redact auth token from desktop bootstrap log
+
+- root cause: `apps/desktop/src/main.ts:1617` wrote
+  `ws://127.0.0.1:<port>/?token=<TOKEN>` directly to the rotating
+  desktop log. Logs rotate but are never purged on shutdown; a user
+  with read access to the log directory could recover the auth
+  token from a stale rotation file.
+- change summary:
+  - Added `redactUrlSecrets(url, options)` to
+    `packages/shared/src/logging.ts`. Takes an optional
+    `paramNames` (defaults to `["token"]`) and rewrites matching
+    query parameters (case-insensitive) to `[REDACTED]`. Falls
+    back to a regex replace for malformed URLs.
+  - Wired the helper into the desktop bootstrap. The log line at
+    `apps/desktop/src/main.ts:1617` now writes the redacted URL
+    instead of the raw one. The auth token is still in memory and
+    in `process.env.ORCHESTRATE_DESKTOP_WS_URL` for the backend
+    handshake; only the logging path was leaking it.
+- files touched:
+  - packages/shared/src/logging.ts
+  - packages/shared/src/logging.test.ts (new)
+  - apps/desktop/src/main.ts
+- tests added: 9 unit tests covering: default token redaction,
+  pass-through when no token present, single-param redaction
+  preserves siblings, custom paramNames, empty paramNames returns
+  URL unchanged, malformed-URL regex fallback, case-insensitive
+  match (including TOKEN with uppercase scheme), absent-named
+  param returns URL unchanged, multiple-occurrence redaction.
+- evidence of green run:
+  ```
+  bun run test (packages/shared)
+   Test Files  12 passed (12)
+        Tests  89 passed (89)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Audit other log call sites for raw token leakage. Candidates:
+    `apps/server/src/wsServer.ts` (incoming connection logs),
+    `apps/server/src/codexAppServerManager.ts` (codex stdio log),
+    `scripts/orchestrate-mcp-server.ts` (already has a
+    `redactOrchestrationWsUrlForLog` helper but only on
+    connection-failure paths; happy-path logs may still be raw).
+  - Consider rotating logs to also redact recent backups on
+    sensitive parameter changes, since a token leak can persist in
+    logfile.1, logfile.2, etc.
