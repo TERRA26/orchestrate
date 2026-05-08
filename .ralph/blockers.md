@@ -315,3 +315,28 @@ Per-boundary plan ORC-229a..d:
 - **229c**: MCP client + Codex JSON-RPC envelope. Test: a wsRequest from MCP carries the id; Codex responses preserve it.
 - **229d**: web client generation; integration test that captures logs across the full chain.
 
+
+## ORC-231 (deferred at iter 155): external error sink (Sentry-compatible)
+
+### What was attempted
+
+Surveyed `apps/server/src/`. Confirmed there is no error-aggregator integration; all errors land in the local rotating log (now via ORC-228 redaction + ORC-230 file sink). Production incidents require ssh + log access.
+
+### Why a single-iteration fix is risky
+
+Four components:
+
+1. **ErrorSink service interface**: define `apps/server/src/observability/ErrorSink.ts` with `record({ message, level, error?, fingerprint?, metadata })`. Effect Layer pattern.
+2. **Sentry adapter**: `@sentry/node` (or a thin DSN-based POST that sidesteps the SDK), with sampling (default 10% for warn, 100% for error), fingerprint derivation from error class + stack frame.
+3. **Logger hook**: extend `logger.error` (and the `Effect.logError` path used by the orchestration layers) to forward to the sink. Requires careful redaction reuse (ORC-228) so PII does not leak to a third-party service.
+4. **Ops doc**: DSN secrecy, rate limits, retention, opt-out mechanism for self-hosted instances.
+
+### What would unblock it
+
+Per-component plan ORC-231a..d:
+
+- **231a**: ErrorSink service interface + tests (pure no-op default, observable test sink).
+- **231b**: Sentry adapter with sampling + fingerprinting + DSN config.
+- **231c**: logger hook + redaction-aware metadata stripping.
+- **231d**: ops doc + opt-out.
+

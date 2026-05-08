@@ -2203,7 +2203,6 @@ Schema per entry:
 - proposed_fix: Provide a built-in rotating file sink for the server logger when configured. Default to stdout; log target configurable. Document disk-use expectations.
 - status: DONE
 - fixed_iter: 154
-- status: PENDING
 
 ### ORC-231
 
@@ -2212,6 +2211,9 @@ Schema per entry:
 - files: apps/server/src (no external error sink)
 - evidence: All errors go to local logs. There is no Sentry/Rollbar integration. Production incidents require manual log access.
 - proposed_fix: Add an optional Sentry-compatible error sink behind a config flag. Forward errors and high-severity warnings; include traceId + session metadata.
+- status: DEFERRED
+- deferred_iter: 155
+- deferred_reason: External error sink integration is a 4-step build: (1) abstract ErrorSink service interface, (2) Sentry-compatible adapter (DSN config, sampling, fingerprinting), (3) hook into the existing logger.error path so all error-level logs forward, (4) ops doc covering DSN secrecy, rate limits, retention. Single-iteration scope risks shipping a flag with no consumer or a forward path that double-counts errors. Plan recorded as ORC-231a..d in blockers.md.
 - status: PENDING
 
 ### ORC-232
