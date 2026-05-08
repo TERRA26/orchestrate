@@ -43,6 +43,11 @@ import { normalizeModelSlug } from "@orchestrate/shared/model";
 import { Effect, ServiceMap } from "effect";
 
 import {
+  buildCodexLifecycleLog,
+  type CodexLifecycleEvent,
+} from "./observability/codexLifecycleLog.ts";
+
+import {
   formatCodexCliUpgradeMessage,
   isCodexCliVersionSupported,
   parseCodexCliVersion,
@@ -889,6 +894,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       this.attachProcessListeners(context);
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
+      // ORC-064: info log for operators tracking session start latency.
+      this.logLifecycle({
+        kind: "starting",
+        threadId,
+        cwd: resolvedCwd,
+        model: input.model ?? null,
+        runtimeMode: input.runtimeMode,
+      });
 
       await this.sendRequest(context, "initialize", buildCodexInitializeParams());
 
@@ -1028,6 +1041,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         requestedRuntimeMode: input.runtimeMode,
       }).pipe(this.runPromise);
       this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
+      // ORC-064: structured ready log so operators can compute start-to-ready
+      // latency by joining on threadId.
+      this.logLifecycle({
+        kind: "ready",
+        threadId,
+        cwd: context.session.cwd,
+        model: context.session.model ?? null,
+        providerThreadId,
+        pid: context.child.pid,
+      });
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
@@ -1607,6 +1630,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       activeTurnId: undefined,
     });
     this.emitLifecycleEvent(context, "session/closed", "Session stopped");
+    // ORC-064: graceful close log; the exit listener separately handles
+    // unexpected exits at error level.
+    this.logLifecycle({
+      kind: "closed-graceful",
+      threadId: context.session.threadId,
+    });
     this.sessions.delete(threadId);
   }
 
@@ -1939,6 +1968,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         lastError: message,
       });
       this.emitErrorEvent(context, "process/error", message);
+      // ORC-064: structured log so operators can grep "codex.session.process-error"
+      // alongside the client-facing event without scraping the activity log.
+      this.logLifecycle({
+        kind: "process-error",
+        threadId: context.session.threadId,
+        errorMessage: message,
+        pid: context.child.pid,
+      });
     });
 
     context.child.on("exit", (code, signal) => {
@@ -1953,6 +1990,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         lastError: code === 0 ? context.session.lastError : message,
       });
       this.emitLifecycleEvent(context, "session/exited", message);
+      // ORC-064: error-level structured log for unexpected exits
+      // (we already returned early when stopping=true, so any exit here is
+      // unintended from the manager's perspective).
+      this.logLifecycle({
+        kind: "exited-unexpected",
+        threadId: context.session.threadId,
+        code,
+        signal,
+        pid: context.child.pid,
+      });
       if (context.discovery) {
         const discoveryKey = context.session.cwd ?? "";
         if (discoveryKey) {
@@ -2274,6 +2321,22 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       method,
       message,
     });
+  }
+
+  /**
+   * Emit a structured Effect log line for a Codex session lifecycle event
+   * (start/ready/retry/exit). Discovery sessions still log so operators
+   * can see when the discovery process flapped. [ORC-064]
+   */
+  private logLifecycle(event: CodexLifecycleEvent): void {
+    const payload = buildCodexLifecycleLog(event);
+    const effect =
+      payload.level === "info"
+        ? Effect.logInfo(payload.message, payload.fields)
+        : payload.level === "warning"
+          ? Effect.logWarning(payload.message, payload.fields)
+          : Effect.logError(payload.message, payload.fields);
+    void this.runPromise(effect);
   }
 
   private emitErrorEvent(context: CodexSessionContext, method: string, message: string): void {

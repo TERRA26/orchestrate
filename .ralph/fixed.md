@@ -1687,3 +1687,54 @@ The test would fail before the change because there were 8 offenders. It passes 
 - Wire `eslint/no-console` into the oxlint config (when oxlint adds per-file-pattern overrides) to catch additions at lint time, not test time.
 - Audit `apps/web/src` for the same pattern (16 occurrences) as a separate ticket.
 - Once ORC-062's trace context flows into more reactor fibers, the converted log lines automatically gain traceId correlation; verify after wiring follow-ups.
+
+## ORC-064 [iter 78] Codex session lifecycle hooks emitted client events but no operator logs
+
+**Root cause**: `apps/server/src/codexAppServerManager.ts` called `emitLifecycleEvent` (a thin wrapper that pushed a typed event to client subscribers) at every session lifecycle transition, but never logged a parallel structured line. Operators chasing "when did this provider session actually start?" or "did the codex child exit while we were waiting on a turn?" had to scrape the activity log table or the per-thread event stream. Additionally, the unexpected-exit and process-error handlers had no log output at all.
+
+**Change summary**:
+- New `apps/server/src/observability/codexLifecycleLog.ts`: pure `buildCodexLifecycleLog(event)` formatter mapping each lifecycle kind (`starting | ready | retry | closed-graceful | exited-unexpected | process-error`) to `{ level, message, fields }` with a discriminating `event` tag (`codex.session.<kind>`) and the `scope: "codex.session"` annotation. Optional fields are normalized to `null` so log-aggregation tooling sees consistent shapes.
+- `apps/server/src/codexAppServerManager.ts`:
+  - Added private `logLifecycle(event)` that calls the formatter, picks `Effect.logInfo`/`logWarning`/`logError` based on level, and fires through `void this.runPromise(...)` for fire-and-forget.
+  - Wired the helper into 5 sites:
+    1. `startSession` connecting transition: `kind: "starting"` with cwd, requested model, runtime mode (info).
+    2. `startSession` ready transition: `kind: "ready"` with cwd, normalized model, providerThreadId, child pid (info).
+    3. graceful close path: `kind: "closed-graceful"` (info).
+    4. `attachProcessListeners` `child.on("error")`: `kind: "process-error"` with sanitized errorMessage and pid (error).
+    5. `attachProcessListeners` `child.on("exit")` (after the `stopping` early-return so only unintended exits fire): `kind: "exited-unexpected"` with code, signal, pid (error).
+
+**Files touched**:
+- apps/server/src/observability/codexLifecycleLog.ts (NEW)
+- apps/server/src/observability/codexLifecycleLog.test.ts (NEW)
+- apps/server/src/codexAppServerManager.ts
+
+**Tests added**: 9 cases pinning the formatter:
+1. `starting` returns info level + scope + event tag + cwd/model/runtimeMode fields.
+2. `starting` nulls undefined optional fields.
+3. `ready` includes resolved providerThreadId and child pid.
+4. `retry` returns warning level with attempt count + reason.
+5. `closed-graceful` returns info with no exit metadata (code is `undefined`, not present).
+6. `exited-unexpected` returns error level with code/signal/pid.
+7. `exited-unexpected` serializes null code/signal verbatim instead of swallowing.
+8. `process-error` returns error level with sanitized errorMessage.
+9. Distinct `event` tag per kind so a log filter `event=codex.session.exited-unexpected` works.
+
+All 9 would fail before the change because the helper module didn't exist.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability/codexLifecycleLog.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 9 passed (9)
+- `bun run test src/codexAppServerManager.test.ts src/observability` -> Test Files 4 passed (4) | Tests 71 passed | 1 skipped
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Discovery sessions: `emitLifecycleEvent` returns early for discovery contexts (suppresses client events), but `logLifecycle` does NOT suppress them. Operators get to see discovery flapping in logs even when the UI doesn't, which is the right call (discovery flapping is a server-side concern).
+- Already-stopping path: the exit listener returns early when `context.stopping=true`, so the `exited-unexpected` log is only emitted for unintended exits. Graceful stops fire through the explicit `closed-graceful` log path instead.
+- pid-after-exit: `context.child.pid` may be `undefined` on early spawn failure; the formatter normalizes it to `null` so log aggregators don't see a missing key.
+- Fire-and-forget log: any failure inside `Effect.logXxx` is swallowed via `void this.runPromise(...)`. The structured logger writes synchronously to console and is not expected to fail; if it ever does, we should not block the lifecycle hook on it.
+- Type narrowing on level: the helper enforces `"info" | "warning" | "error"` via discriminated union types, eliminating the chance of a typo'd level slipping into the dispatcher.
+
+**Follow-ups**:
+- Wire `kind: "retry"` at the existing `Effect.logWarning("codex app-server thread resume failed", ...)` site so the retry attempt count and reason are normalized (currently uses ad-hoc warning messages).
+- Mirror the same lifecycle log helper for ClaudeAdapter when its session-start/exit paths get a similar audit pass.
+- Add a structured log handler that ships these events to an external sink (Loki/Logflare/etc.); the discriminating `event` tag makes routing trivial.

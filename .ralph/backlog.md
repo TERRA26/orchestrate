@@ -617,7 +617,8 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts (session start/retry/exit paths)
 - evidence: Session state transitions (start, restart, exit unexpectedly) emit client events but no logger output. An operator cannot answer "when did this provider session actually start" without scraping the activity log.
 - proposed_fix: Add structured log entries (info on start/restart, warn on retry, error on unexpected exit) including threadId, model, cwd, retry count, exit code, and child PID where applicable.
-- status: PENDING
+- status: DONE
+- fixed_iter: 78
 
 ### ORC-065
 
