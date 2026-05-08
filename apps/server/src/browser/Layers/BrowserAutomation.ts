@@ -30,6 +30,7 @@ import {
   liveCenterForSelector,
   type LiveCenterEvaluator,
 } from "../clickCoordinates.ts";
+import { captureMultiFrameAriaSnapshot } from "../multiFrameAriaSnapshot.ts";
 import { settle } from "../waitForSettled.ts";
 
 const DEFAULT_VIEWPORT = { width: 1_440, height: 900 } as const;
@@ -623,6 +624,34 @@ async function captureObservation(input: { page: Page; session?: BrowserSessionS
     throw new Error("Could not inspect browser page.");
   }
 
+  // ORC-286: walk all frames so iframes (Stripe, Auth0, embeds) are
+  // visible to the orchestrator. The adapter caches the main-frame
+  // wrapper so the helper's dedupe-by-reference check holds across
+  // the `mainFrame()` and `frames()` calls.
+  const playwrightMainFrame = input.page.mainFrame();
+  const mainFrameAdapter = {
+    url: () => playwrightMainFrame.url(),
+    ariaSnapshot: (opts?: { timeout?: number }) =>
+      playwrightMainFrame.locator("body").ariaSnapshot(opts),
+  };
+  const frameAdapters = input.page.frames().map((f) =>
+    f === playwrightMainFrame
+      ? mainFrameAdapter
+      : {
+          url: () => f.url(),
+          ariaSnapshot: (opts?: { timeout?: number }) =>
+            f.locator("body").ariaSnapshot(opts),
+        },
+  );
+  const ariaSnapshotPromise = captureMultiFrameAriaSnapshot(
+    {
+      url: () => input.page.url(),
+      mainFrame: () => mainFrameAdapter,
+      frames: () => frameAdapters,
+    },
+    { perFrameTimeoutMs: 5_000, maxBytes: 16_000 },
+  ).catch(() => undefined);
+
   const [screenshotDataUrl, previewScreenshotDataUrl, fullPageScreenshotDataUrl, ariaSnapshot] =
     await Promise.all([
       captureScreenshotDataUrl(input.page, {
@@ -633,11 +662,7 @@ async function captureObservation(input: { page: Page; session?: BrowserSessionS
       }),
       capturePreviewScreenshotDataUrl(input.page),
       undefined,
-      input.page
-        .locator("body")
-        .ariaSnapshot({ timeout: 5_000 })
-        .then((snapshot) => truncateText(snapshot, 16_000))
-        .catch(() => undefined),
+      ariaSnapshotPromise,
     ]);
 
   const consoleErrors =

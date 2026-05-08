@@ -5738,3 +5738,77 @@ mention of the prefix convention. Verified failing-before by stashing
     multi-thread session to quantify the render-count reduction.
     The fix is correct by construction, but the observable
     benefit is workload-dependent.
+
+## ORC-286: multi-frame ARIA snapshot covers iframes
+
+- root cause: `BrowserAutomation.ts` captured the ARIA snapshot via
+  `input.page.locator("body").ariaSnapshot()`. Playwright's locator
+  is scoped to the frame on which it was created (default: main
+  frame), so any sub-document inside an iframe (Stripe, Auth0,
+  embedded videos, sandboxed previews) was invisible to the
+  orchestrator. Visual review and accessibility-driven assertions
+  could miss the entire third-party widget.
+- change summary:
+  - Added `apps/server/src/browser/multiFrameAriaSnapshot.ts`
+    exporting `captureMultiFrameAriaSnapshot(page, options)`. The
+    helper iterates `page.frames()`, captures the main frame
+    snapshot first, then appends each child-frame snapshot
+    prefixed with `### frame[N]: <url>` so a downstream reader
+    can tell which subtree a section came from. Per-frame
+    failures (cross-origin, detached, timeout) are caught so a
+    single broken iframe does not erase the whole snapshot.
+    Frame URLs are clipped at 256 chars in the header to defend
+    against megabyte-srcdoc payloads.
+  - Wired `BrowserAutomation.ts` to use the helper. The adapter
+    caches the main-frame wrapper so the helper's
+    dedupe-by-reference check holds across `mainFrame()` and
+    `frames()`. The 5_000 ms per-frame timeout and 16_000 byte
+    cap from the original call are preserved.
+- files touched:
+  - apps/server/src/browser/multiFrameAriaSnapshot.ts (new)
+  - apps/server/src/browser/multiFrameAriaSnapshot.test.ts (new)
+  - apps/server/src/browser/Layers/BrowserAutomation.ts
+  - apps/server/src/browser/Layers/BrowserAutomation.test.ts
+    (mock now exposes mainFrame/frames so the existing
+    "does not close the Electron-owned browser" test still
+    runs).
+- tests added:
+  - "returns just the main frame snapshot when there are no
+    iframes": preserves the existing-behavior baseline.
+  - "merges main and child frames with a frame header":
+    primary new contract.
+  - "skips a frame whose ariaSnapshot rejects, preserving
+    others": resilience to one cross-origin iframe.
+  - "returns undefined when every frame rejects": no
+    silent-empty-string regression.
+  - "clips the merged snapshot to maxBytes": memory-bound guard
+    against an oversize embed.
+  - "truncates an oversize frame URL in the header": defends
+    against megabyte-srcdoc.
+  - "respects per-frame timeout in the option": option plumbing.
+  - "falls back to mainFrame when frames() returns empty":
+    guards a Page implementation that returns empty before
+    first navigation completes.
+- evidence of green run:
+  ```
+  bun run vitest run src/browser/multiFrameAriaSnapshot.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run vitest run src/browser/
+   Test Files  7 passed (7)
+        Tests  49 passed (49)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Shadow DOM coverage: Playwright's ariaSnapshot already
+    traverses shadow roots in 1.50+. No-op on this codebase
+    today, but if Playwright's behavior changes, the helper
+    could pass through `includeHidden: true` per-frame.
+  - Add an integration test against a real page with an iframe
+    (e.g., Stripe Elements or a same-origin sandbox). The unit
+    tests pin the merge logic; an integration test would pin
+    the Playwright API surface.
+  - Consider exposing per-frame size in the metadata so a
+    downstream review can decide which iframe is worth
+    inspecting in detail when the cap is hit.

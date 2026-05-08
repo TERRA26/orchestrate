@@ -2726,7 +2726,7 @@ Schema per entry:
 - files: apps/server/src/browser/Layers/BrowserAutomation.ts:599 (page.locator("body").ariaSnapshot)
 - evidence: ARIA snapshot is captured at the body level; default Playwright behavior does NOT descend into iframes or shadow DOM. Pages embedding third-party widgets (Stripe, Auth0, custom Web Components) are partially invisible to the orchestrator.
 - proposed_fix: Walk page.frames() and merge per-frame ARIA snapshots. For shadow DOM, use Playwright's `includeHidden: true` and traverse shadow roots explicitly. Mark which sub-tree each section came from.
-- status: PENDING
+- status: DONE
 
 ### ORC-287
 

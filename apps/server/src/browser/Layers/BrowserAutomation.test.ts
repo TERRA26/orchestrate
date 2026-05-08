@@ -45,7 +45,19 @@ const mocks = vi.hoisted(() => {
     waitForLoadState: () => Promise.resolve(),
     waitForTimeout: () => Promise.resolve(),
     on: vi.fn(),
+    // ORC-286: page.mainFrame() and page.frames() are now consulted
+    // by captureMultiFrameAriaSnapshot. Provide a single fixture
+    // frame whose locator returns the same ariaSnapshot stub.
+    mainFrame: () => mainFrameMock,
+    frames: () => [mainFrameMock],
   } as unknown as Page;
+
+  const mainFrameMock = {
+    url: () => "http://127.0.0.1:5173/",
+    locator: () => ({
+      ariaSnapshot: () => Promise.resolve("- document: Attached fixture"),
+    }),
+  };
 
   const context = {
     close: contextClose,
