@@ -134,3 +134,24 @@ A focused two-step plan:
 - **Step A**: produce a written audit (`docs/architecture/transaction-coverage.md`) listing every aggregate-write path with its transaction status. Mark gaps with line numbers. Fix the gaps inline as they are found. One iteration per fix.
 - **Step B**: spike the lint rule infrastructure separately. Decide between oxlint-custom-rule (if/when supported), eslint, or a TS-AST script. Land the rule in a follow-up iteration once Step A's gaps are closed.
 
+
+## ORC-199 (deferred at iter 131): FK CASCADE / SET NULL audit
+
+### What was attempted
+
+Confirmed via grep that the FK audit covers ~10 cross-aggregate relationships across migrations 027-045. SQLite ALTER TABLE does not support changing FK constraints in place; each rewrite requires a shadow-table migration (CREATE new table with the desired FK clause, INSERT...SELECT from old, DROP old, RENAME new).
+
+### Why a single-iteration fix is risky
+
+For each FK relationship the audit needs:
+1. Decide the right action: CASCADE (auto-delete dependents) vs SET NULL (orphan dependents) vs RESTRICT (current default; reject delete).
+2. Write a shadow-table migration with all indexes preserved.
+3. Add a fixture test that creates parent + child rows, deletes the parent, and asserts the chosen action.
+4. Confirm projection and reactor flows still terminate correctly when a delete cascades to dependents.
+
+Each FK is roughly an iteration of work. Bundling all 10 risks shipping migrations with an under-tested cascade behavior that data loss could expose in production.
+
+### What would unblock it
+
+Per-FK breakdown into ORC-199a..j (one per relationship). Land them as a sequence of small migrations, each with its own test. Suggested order: leaf-most aggregates first (evidence_artifact_content -> evidence_artifact -> ...) so cascade behavior accumulates predictably.
+

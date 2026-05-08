@@ -1889,7 +1889,9 @@ Schema per entry:
 - files: apps/server/src/persistence/Migrations/034_BrowserOrchestrationEvidence.ts,036_EvidenceArtifactContent.ts (and others with FKs)
 - evidence: Foreign keys are declared but most do not specify ON DELETE CASCADE / SET NULL. With foreign_keys ON, deleting a parent row fails when children exist; or, if FKs are silently disabled, orphaned children persist.
 - proposed_fix: Audit every FK. Decide CASCADE vs SET NULL per relationship and add a migration that ALTERs the constraint where SQLite supports it (or recreate the table where needed). Document the chosen semantics.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 131
+- deferred_reason: SQLite does not support ALTER TABLE for FK constraint changes; the fix requires creating shadow tables, copying data, dropping the original, and renaming. Doing this safely for ~10 FK relationships requires individual migration writeups per relationship, careful ordering, and one new test fixture per migration. Multi-iteration scope; a focused migration audit project rather than a single Phase B.
 
 ### ORC-200
 
