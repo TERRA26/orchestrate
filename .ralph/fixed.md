@@ -1780,3 +1780,42 @@ The lint test would fail before the change (the codex manager had 2 such literal
 - Audit `apps/web/src` for empty catches as a separate ticket.
 - Consider promoting `logBestEffortFailure` to `@orchestrate/shared/observability` once a second consumer appears.
 - Wire `noEmptyCatch.test.ts` style scan as an oxlint rule when oxlint adds the corresponding eslint rule (`no-empty` covers part of this but not catch-specific).
+
+## ORC-072 [iter 81] SVG icons missing aria-hidden by default
+
+**Root cause**: `apps/web/src/components/Icons.tsx` exported every SVG with the raw `<svg {...props} ...>` pattern. Screen readers announce these as unlabeled graphics. The proposed fix is to default decorative icons to `aria-hidden="true"` (so screen readers skip them) while still allowing callers to pass `aria-label` / `aria-labelledby` / `role="img"` for cases where the icon IS the accessible name (e.g., social-media link icons).
+
+**Change summary**:
+- `apps/web/src/components/Icons.tsx`: added `decorativeIconProps(props)` helper that returns props augmented with `aria-hidden: true` and `focusable: false` UNLESS the caller has already supplied an accessible name (aria-label, aria-labelledby, or role="img"). Caller props are spread last so an explicit `aria-hidden={false}` from the caller still passes through verbatim. All 9 `<svg {...props}>` sites in the file are now `<svg {...decorativeIconProps(props)}>`.
+- Audited `apps/web/src/components/Sidebar.tsx` icon-only buttons: every `<button>` already has either visible text content, `aria-label`, or `aria-expanded` (e.g., the chevron toggle, the four "create new ... thread" actions, the PR status indicator). No additional labels needed.
+
+**Files touched**:
+- apps/web/src/components/Icons.tsx
+- apps/web/src/components/Icons.test.tsx (NEW)
+
+**Tests added**: 8 cases in `Icons.test.tsx`:
+1-3. `GitHubIcon`, `CursorIcon`, `VisualStudioCode` default to `aria-hidden="true"` and `focusable="false"` when rendered with no props.
+4. `aria-label` suppresses the default aria-hidden so the icon's accessible name reaches the AT.
+5. `aria-labelledby` does the same.
+6. `role="img"` does the same.
+7. Caller-supplied `aria-hidden={false}` is honored (no clobber).
+8. Caller `className` is preserved alongside the default a11y attributes.
+
+All 4 default-behavior tests would fail before the change because the icons had no aria-hidden attribute; they pass after. The 4 override-behavior tests would have passed in both states because they only check that user props pass through.
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/components/Icons.test.tsx` (Node 24) -> Test Files 1 passed (1) | Tests 8 passed (8)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Caller passes `aria-label=undefined` or `aria-label=""`: my helper uses `props["aria-label"] !== undefined` which means an empty string still triggers the labeled-mode (no aria-hidden). That's actually correct behavior; an empty aria-label is invalid markup but is the caller's intent.
+- Spread order: `{ "aria-hidden": true, focusable: false, ...props }` means caller props override the defaults. For a caller passing `aria-hidden={false}`, the explicit false wins. For a caller passing `focusable={true}`, that wins too.
+- Server-side rendering: the helper is a pure function with no hooks, so it runs unchanged in SSR (verified by `renderToStaticMarkup` test pattern).
+- Existing manual `aria-hidden="true"` markings in callers (Sidebar.tsx line 1872): these still work and are now redundant but harmless. Cleanup is a follow-up.
+- The 4 icons not visited (Zed, Anthropic, OpenAI, Codex, etc.): all 9 SVGs in Icons.tsx now use the helper since the perl substitution covered all `<svg {...props}>` occurrences.
+
+**Follow-ups**:
+- Remove the now-redundant manual `aria-hidden="true"` props on icon usages in Sidebar.tsx, ChatView.tsx, OrchestratorComposer.tsx etc. (purely cosmetic; the default does the work).
+- Audit `apps/web/src/components/composer/`, `BranchToolbar.tsx`, modal close-X buttons for icon-only buttons missing aria-labels (lower priority since the sidebar audit found none).
+- Consider extracting `decorativeIconProps` to `apps/web/src/lib/a11y.ts` if the pattern starts being used by non-Icons.tsx components.

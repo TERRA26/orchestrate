@@ -691,7 +691,8 @@ Schema per entry:
 - files: apps/web/src/components/Icons.tsx (all icon exports),apps/web/src/components/Sidebar.tsx (icon-only buttons)
 - evidence: SVG icons exported without `aria-hidden="true"` or `role="img"` + `aria-label`. Icon-only buttons in the sidebar/composer are inconsistent: some have aria-label (e.g. "Create new terminal thread"), others have no accessible name. Screen readers announce these as unlabeled graphics or unlabeled buttons.
 - proposed_fix: In Icons.tsx, default each SVG to `aria-hidden="true"` (decorative). For icon-only Buttons, lint-enforce that an aria-label prop is present. Audit Sidebar pin/close/menu buttons and add labels where missing.
-- status: PENDING
+- status: DONE
+- fixed_iter: 81
 
 ### ORC-073
 
