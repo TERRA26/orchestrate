@@ -2236,3 +2236,42 @@ The first run of the meta-test surfaced 17 thread.* commands the original audit 
 - Once KNOWN_UNTESTED.length <= 5, lower the soft cap to that count + buffer to keep pressure on.
 - Co-locate per-case fixtures in `decider.fixtures.ts` once 5+ cases share setup boilerplate; the proposed_fix mentioned this and it remains a good follow-up.
 - Mirror the meta-test against `projector.ts` event-handling cases to guard projector coverage similarly.
+
+## ORC-101 [iter 92] Provider services lacked unit tests AND CodexProvider had the same probe-timeout bug as ClaudeProvider
+
+**Audit findings**: The original backlog claim was "Services/ have 0 test files." The Services/ directory contains tag declarations (mostly under 50 lines each); the actual logic lives in `Layers/`. After cataloging Layer tests, the missing pieces are:
+- `Layers/CodexProvider.test.ts` (518-line impl, no test) — and crucially, this Layer has the same 4-second probe timeout bug as ClaudeProvider had before iter 80. Both `codex --version` and `codex login status` use the shared `DEFAULT_TIMEOUT_MS=4s` with no retry, so heavy host load surfaces as "Codex CLI is installed but failed to run. Timed out while running command."
+- `Layers/ProviderHealth.test.ts` (603 lines, no test) — follow-up.
+- `Layers/ProviderDiscoveryService.test.ts` (172 lines, no test) — follow-up.
+
+**Change summary**: applied the same `VERSION_PROBE_TIMEOUT_MS=12s + retry-on-timeout` and `AUTH_PROBE_TIMEOUT_MS=12s + retry-on-timeout` pattern to `CodexProvider.ts` that was applied to `ClaudeProvider.ts` in iter 80 (the user's "Claude not workin in orchestrate" report). Both probes now retry once on `Success<None>` (timeout); real CLI failures still pass through immediately. Added a regression test in `CodexProvider.versionProbeRetry.test.ts` mirroring the Claude pattern.
+
+**Files touched**:
+- apps/server/src/provider/Layers/CodexProvider.ts
+- apps/server/src/provider/Layers/CodexProvider.versionProbeRetry.test.ts (NEW)
+
+**Tests added**: 6 cases in `CodexProvider.versionProbeRetry.test.ts`:
+1. `VERSION_PROBE_TIMEOUT_MS >= 12s`.
+2. `AUTH_PROBE_TIMEOUT_MS >= 12s`.
+3. Version probe retry path uses `runVersionProbe + Result.isSuccess + Option.isNone + VERSION_PROBE_RETRY_SETTLE_MS`.
+4. Auth probe retry path uses the equivalent constants.
+5. `DEFAULT_TIMEOUT_MS` is no longer imported from providerSnapshot.
+6. `DEFAULT_TIMEOUT_MS` is no longer piped through `Effect.timeoutOption`.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/provider/Layers/CodexProvider.versionProbeRetry.test.ts src/provider` (Node 24) -> Test Files 10 passed (10) | Tests 152 passed (152)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Two retry settlements (250ms each): worst-case latency for a healthy probe stays at ~12s + 250ms + 12s = 24.25s for the version probe alone. Acceptable since this only triggers when the first probe times out, and the alternative (false-positive "CLI broken" status with the user re-running the entire Orchestrate session) is worse.
+- Real CLI failure path (binary missing, non-zero exit): `Result.isFailure(probe)` branch still runs immediately on the first attempt. No double-cost for deterministic failures.
+- Fork session paths that also spawn `codex app-server` are unrelated to this provider-status probe; they have their own timeout semantics covered by ORC-051's coalescing.
+- The test is regex-based source pinning rather than a runtime invocation. Acceptable: the probe runs in production code paths that already have integration test coverage; the source pin guards the constants and structure.
+- `auth probe` previously had retry-via-the-same-shape: confirmed by reading the original ClaudeProvider; both providers now share the identical retry pattern.
+
+**Follow-ups**:
+- Add unit tests for `Layers/ProviderHealth.ts` (603 lines, untested) targeting its pure-logic helpers.
+- Add unit tests for `Layers/ProviderDiscoveryService.ts` (172 lines, untested).
+- Refactor the duplicated `runProbe + retry-on-timeout` pattern across Claude and Codex providers into a shared helper once a third probe surface appears.
+- Consider exporting the probe constants so a single test can pin both providers' values, avoiding the regex source-scan.

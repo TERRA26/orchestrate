@@ -23,7 +23,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
   detailFromResult,
   extractAuthBoolean,
   isCommandMissingCause,
@@ -49,6 +48,16 @@ import { CodexProvider } from "../Services/CodexProvider";
 import { ServerSettingsError, ServerSettingsService } from "../../serverSettings";
 
 const PROVIDER = "codex" as const;
+// ORC-101: same probe-budget pattern as ClaudeProvider (ORC-167 / ORC-072
+// follow-up). The shared DEFAULT_TIMEOUT_MS=4s is too tight for `codex
+// --version` and `codex login status` under heavy host load (concurrent
+// vitest workers, dev server, multiple Claude Code sessions). Bump both
+// to 12s and retry once on timeout. Real CLI failures (non-zero exit,
+// missing binary) are NOT retried; only Success<None> (timeout) is.
+const VERSION_PROBE_TIMEOUT_MS = 12_000;
+const VERSION_PROBE_RETRY_SETTLE_MS = 250;
+const AUTH_PROBE_TIMEOUT_MS = 12_000;
+const AUTH_PROBE_RETRY_SETTLE_MS = 250;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
 const CODEX_GPT_5_CAPABILITIES: ServerProviderModel["capabilities"] = {
   reasoningEffortLevels: [
@@ -310,10 +319,19 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
-  const versionProbe = yield* runCodexCommand(["--version"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  // ORC-101: retry the version probe once on timeout. Mirrors the
+  // ClaudeProvider pattern. Only Success<None> (timeout) retries; real
+  // CLI failures (non-zero exit, missing binary) pass through immediately.
+  const runVersionProbe = runCodexCommand(["--version"]).pipe(
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
+  const firstVersionAttempt = yield* runVersionProbe;
+  let versionProbe = firstVersionAttempt;
+  if (Result.isSuccess(firstVersionAttempt) && Option.isNone(firstVersionAttempt.success)) {
+    yield* Effect.sleep(Duration.millis(VERSION_PROBE_RETRY_SETTLE_MS));
+    versionProbe = yield* runVersionProbe;
+  }
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
@@ -405,10 +423,17 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
-  const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  // ORC-101: same retry-on-timeout for the auth probe.
+  const runAuthProbe = runCodexCommand(["login", "status"]).pipe(
+    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
     Effect.result,
   );
+  const firstAuthAttempt = yield* runAuthProbe;
+  let authProbe = firstAuthAttempt;
+  if (Result.isSuccess(firstAuthAttempt) && Option.isNone(firstAuthAttempt.success)) {
+    yield* Effect.sleep(Duration.millis(AUTH_PROBE_RETRY_SETTLE_MS));
+    authProbe = yield* runAuthProbe;
+  }
   const account = resolveAccount
     ? yield* resolveAccount({
         binaryPath: codexSettings.binaryPath,

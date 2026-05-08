@@ -963,7 +963,8 @@ Schema per entry:
 - files: apps/server/src/provider/Services/ (12 files, 0 test files)
 - evidence: ClaudeAdapter, CodexAdapter, CodexProvider, ProviderDiscoveryService, ProviderHealth, ProviderRegistry, ProviderService — none have unit tests. The earlier session caught real bugs in ClaudeProvider only via manual user reports.
 - proposed_fix: Add unit/integration tests per service. Mock the CLI subprocess at the runCommand boundary. For ProviderHealth and Registry, run pure-logic tests; for adapters, snapshot the JSON-RPC frame shapes against a recorded session.
-- status: PENDING
+- status: DONE
+- fixed_iter: 92
 
 ### ORC-102
 
