@@ -439,3 +439,22 @@ apps/desktop/package.json currently pins `electron: 40.6.0` directly. The propos
 ORC-254a: live look at https://releases.electronjs.org/ to identify the latest stable on each supported branch and cross-check the CVE database for 40.6.0.
 ORC-254b: a one-shot manual `bun install` + `bun run build:desktop` on each supported platform (CI matrix or three local machines) to confirm prebuilt resolution.
 ORC-254c: catalog migration (`electron`, `electron-builder`, `electron-updater` -> `catalog:` references in apps/desktop/package.json plus the resolved versions in the root `catalog` block). Mechanical once the version is chosen.
+
+## ORC-256: @orchestrate/effect-compat re-export module (deferred)
+
+### Context
+
+344 call sites import Effect APIs (Stream, Queue, PubSub, Deferred, Schema, Cause, Layer, Effect, ServiceMap, ...) directly. The proposed compat module would centralize the import surface so that an upstream Effect 4.0 rename can be absorbed in one place.
+
+### Why deferring
+
+1. **Without migration, the module is dead code.** Adding `@orchestrate/effect-compat` that re-exports Effect APIs but keeping every existing import unchanged has zero runtime value. The whole point of a compat layer is that callers route through it.
+2. **Bulk migration in a single iteration is unsafe.** Renaming 344 imports across 4 packages is mechanical but the diff is huge; one wrong path resolution yields a broken build. The protocol's "test that would have failed before" requirement also gives no traction here: the migration changes import paths, not behavior, so a meaningful failing-before-passing-after test is hard to construct beyond "the build still passes."
+3. **ORC-081 already covers the early-warning need.** The forbidden-list regression test (`apps/server/src/observability/effectBetaCompat.test.ts`) flags any reintroduction of a beta-renamed API name. That is the practical mechanism the compat module would offer; a re-export layer is mostly future-proofing for a hypothetical rename that may never happen.
+4. **Right-time deferral, not refusal.** When an actual upstream rename forces a multi-file refactor, that is the moment to introduce the compat module: the migration is then justified by an immediate need, the diff splits cleanly into "introduce module" + "rename caller" PRs, and the change is testable against the renamed API. A churn-driven compat layer is more maintainable than a speculative one.
+
+### What would unblock it
+
+- ORC-256a: Effect 4.0 RC or GA tag lands and breaks a public name. Capture the breaking diff in research.md.
+- ORC-256b: introduce `packages/shared/src/effect-compat.ts` that re-exports the broken-and-renamed surface.
+- ORC-256c: codemod-style migration commit (one PR per package, kept under ~50 file diff each).

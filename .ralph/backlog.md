@@ -2452,7 +2452,9 @@ Schema per entry:
 - files: 344 usages of Stream/Queue/PubSub/Deferred/Schema across server (Effect 4.0-beta API surface)
 - evidence: ORC-081 flagged the beta dep itself; pass 2 reveals the API surface is wide (300+ usages). When 4.0 stabilizes (or RC churns), every usage may need to be touched. There is no thin compat layer.
 - proposed_fix: Introduce a small `@orchestrate/effect-compat` module that re-exports the Effect APIs the codebase uses. Migrate hot paths to import from there. When the upstream API changes, the compat layer absorbs most of the diff.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 170
+- deferred_reason: Creating the compat module without migrating the 344 call sites yields dead code; migrating in a single iteration is high-risk mechanical churn touching every package. ORC-081's forbidden-list regression test already provides fast failure when any beta-renamed API name is reintroduced, which is the practical signal the compat layer would offer. The right time to introduce the layer is when an actual upstream rename forces a multi-file refactor; a churn-driven compat module is more maintainable than a speculative one. Plan recorded as ORC-256a..c in blockers.md.
 
 ### ORC-257
 
