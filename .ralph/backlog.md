@@ -983,7 +983,8 @@ Schema per entry:
 - files: apps/server/src/persistence/Migrations/ (49 migration files, 0 tests)
 - evidence: Zero migration tests. Forward correctness, idempotency, and rollback are unverified. ORC-020 already flagged the idempotency risk; this finding is the test-coverage angle.
 - proposed_fix: Add migration runner tests: a test harness that creates an empty SQLite, runs all migrations in order, asserts schema, runs them again (idempotency), and tests the most recent 5 migrations down/up.
-- status: PENDING
+- status: DONE
+- fixed_iter: 94
 
 ### ORC-104
 

@@ -2313,3 +2313,52 @@ The first run of the meta-test surfaced 17 thread.* commands the original audit 
 - Add a coverage-threshold gate in vitest config (`test.coverage.thresholds.lines >= 30%` to start, ratchet up over time).
 - Once 5+ components share render fixtures, extract a `renderWithProviders` helper covering `QueryClient`, `Router`, theme, and toast contexts — without it every component test will reinvent the wrapper.
 - Consider banning new `*.tsx` components without a sibling `*.test.tsx` via a stand-in test similar to the decider command-coverage pattern; keeps the component coverage strictly non-decreasing.
+
+## ORC-103 [iter 94] No migration runner test for the 45-migration schema
+
+**Audit findings**: 4 per-migration tests existed (016, 039, 040, 045) but no end-to-end runner test. The Live `SqlitePersistenceMemory` layer auto-runs all migrations during construction, but no test verified:
+- All 45 migrations applied cleanly to an empty database.
+- The migration tracking table contained the expected entries.
+- Re-running the migration set was idempotent.
+- Specific anchor tables (orchestration_events, orchestrator_runs, orchestrator_tasks) actually exist post-migration.
+
+**Change summary**:
+- New `apps/server/src/persistence/Migrations.runner.test.ts` (uses `SqlitePersistenceMemory` layer + `it.layer` from @effect/vitest):
+  - Asserts the `effect_sql_migrations` tracking table holds exactly `migrationEntries.length` rows in correct order with matching id + name.
+  - Re-runs `runMigrations()` and asserts the tracking table count is unchanged (idempotency).
+  - Asserts three anchor tables exist (one from migration 001, one from 027, one from 028) so the test catches any "applied but no tables created" silent corruption.
+  - Asserts `runMigrations({ toMigrationInclusive: 5 })` is a safe no-op when migrations are already past that boundary (no regression in the tracking table).
+  - Pure invariant (outside the layer harness): the migrationEntries list is gap-free and monotonic; catches a hand-edited skip in the inline migration list.
+
+Down migrations are out of scope: the Effect Migrator does not support automatic rollback. Tracked as a follow-up.
+
+**Files touched**:
+- apps/server/src/persistence/Migrations.runner.test.ts (NEW)
+
+**Tests added**: 7 cases:
+1. Runs all migrations on a fresh in-memory database.
+2. Re-running the migration set is idempotent (no new tracking rows).
+3. orchestration_events table created (anchor: migration 001).
+4. orchestrator_runs table created (anchor: migration 027).
+5. orchestrator_tasks table created (anchor: migration 028).
+6. `runMigrations({ toMigrationInclusive: 5 })` safe no-op once past that boundary.
+7. migrationEntries list is gap-free and monotonic (1, 2, 3, ..., 45 with no gaps or duplicates).
+
+All 7 pass on Node 24. Note that I cannot easily verify "failing-before" for a coverage-introducing test (the file simply did not exist before), but each case asserts a concrete schema fact that would fail if a migration were ever skipped or removed.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/persistence/Migrations.runner.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 7 passed (7)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The "anchor tables exist" assertions are minimal: they prove the table is created but don't enforce the column shape. A migration that drops a column won't fail this test. Acceptable: per-migration tests (016, 039, 040, 045) cover individual schema details; this runner test only guards the wiring.
+- Idempotency check uses row count equality. A migrator that re-inserts and produces the same final count would falsely pass; in practice Effect's Migrator hashes the migration name and skips duplicates, so the contract holds. A more rigorous check would assert specific row IDs are unchanged; deferred.
+- toMigrationInclusive=5 with the layer already past 45: the test asserts no regression. The runner's behavior on a fresh DB with toMigrationInclusive=5 (only first 5 applied) is not tested. Tracked as follow-up.
+- The test file lives at `src/persistence/Migrations.runner.test.ts` rather than under `src/persistence/Migrations/` so vitest picks it up via the standard glob and so `Migrations/` stays a per-migration test directory.
+
+**Follow-ups**:
+- Add a "fresh-DB partial migration" test that constructs a new SqlitePersistenceMemory instance with `toMigrationInclusive: 5` and verifies only those 5 migrations applied. Requires exposing a layer factory that takes the boundary; today the boundary is hardcoded in `runMigrations()`.
+- Down-migration tests are deferred; Effect Migrator doesn't support them, so they'd require a parallel hand-written rollback harness for the most recent N migrations.
+- Add a migration-hash integrity test (similar to the existing Integrity.test.ts) that verifies each migration's content hash matches the recorded hash, catching silent edits to applied migrations.
+- Wire this runner test into `release.yml` as part of the release-smoke job so migration regressions can't ship.
