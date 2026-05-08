@@ -2277,6 +2277,9 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1965-1978 (token read once at startup)
 - evidence: ORCHESTRATE_AUTH_TOKEN is read once at startup. There is no runtime path to revoke or rotate the token. A leaked token is valid until the process restarts.
 - proposed_fix: Persist the active token in SQLite with a version + revoked_at field. Compare incoming requests against the current version. Provide an admin command (or env signal) to bump the version.
+- status: DEFERRED
+- deferred_iter: 156
+- deferred_reason: Runtime token rotation needs (1) `auth_tokens` SQLite table with version + revoked_at columns + migration, (2) auth check on every inbound WS request that compares against the current row, (3) admin CLI/SIGUSR1 signal to bump the version, (4) graceful handling of in-flight connections when revoked. Each step has its own correctness implication (revoking too aggressively kills active sessions; revoking too laxly leaves a leaked token valid). Defer with ORC-238a..d plan in blockers.md.
 - status: PENDING
 
 ### ORC-239

@@ -340,3 +340,23 @@ Per-component plan ORC-231a..d:
 - **231c**: logger hook + redaction-aware metadata stripping.
 - **231d**: ops doc + opt-out.
 
+
+## ORC-238 (deferred at iter 156): runtime token rotation
+
+### What was attempted
+
+Surveyed `apps/server/src/wsServer.ts:1965-1978`. The auth token is read once from `ORCHESTRATE_AUTH_TOKEN` at startup and held in a closure variable. There is no persisted version, no revocation API, no signal handler that bumps the version. A leaked token is valid until the process restarts.
+
+### Why a single-iteration fix is risky
+
+Four steps with cross-cutting consequences:
+
+1. **Persistence**: new `auth_tokens` table (`version INTEGER PRIMARY KEY, token_hash TEXT NOT NULL, issued_at TEXT NOT NULL, revoked_at TEXT, comment TEXT`). Migration plus a `seedActiveToken` step that runs once per server boot.
+2. **Per-request check**: every WS auth path consults the current row. Caching strategy: read once on connection establishment, refresh on a SIGUSR1 or every N seconds (decide latency vs revoke speed tradeoff).
+3. **Admin path**: CLI `bun run orchestrate-rotate-token` that inserts a new row + revokes the prior; OR a SIGUSR1 handler that re-reads ORCHESTRATE_AUTH_TOKEN and inserts a new version.
+4. **Graceful eviction**: in-flight connections holding the revoked token. Decide: hard kill, grace period, or keep-existing.
+
+### What would unblock it
+
+ORC-238a (persistence + migration + admin CLI), ORC-238b (per-request check + cache), ORC-238c (eviction policy + tests), ORC-238d (docs).
+
