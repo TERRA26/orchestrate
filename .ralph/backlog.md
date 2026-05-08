@@ -2005,7 +2005,6 @@ Schema per entry:
 - status: DONE
 - fixed_iter: 143
 - fix_note: Resolved by sibling fixes ORC-201 (formatBrowserObservationForPrompt wraps networkErrors in <untrusted_browser field="networkErrors">) and ORC-208 (the shared promptFraming module is the canonical wrap helper). Current implementation only captures requestfailed events (url/method/failure strings), NOT response bodies. If a future change adds response-body capture (per the bug's hypothetical), the same `wrapUntrustedContent({ kind: "browser", metadata: { url } })` pattern applies; today the bug as filed is moot for the deployed surface.
-- status: PENDING
 
 ### ORC-211
 
@@ -2045,7 +2044,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 144
 - deferred_reason: Explicit shutdown ordering touches wsServer.ts scope/finalizer composition (subscriptions scope, HTTP listen scope, SqlClient layer, persistence Layer.scoped lifecycle), the integration with Bun's signal handlers, and an end-to-end smoke test that boots and shuts down the server. Single-iteration scope risks shipping a half-wired ordering where one component drains correctly but another races. Plan recorded as ORC-214a..d in blockers.md.
-- status: PENDING
 
 ### ORC-215
 
@@ -2057,7 +2055,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 145
 - deferred_reason: Three-component change: (1) new `orchestration.streamError` push channel in @orchestrate/contracts/ws.ts with schema for { lastSequence, errorClass, message, retryAfterMs }; (2) wsServer.ts wiring of Stream.tapError that publishes the frame to the affected client only; (3) client-side handler in apps/web that uses lastSequence to resume via replayEvents from the known checkpoint. Each is mechanical but the contract bump fans out to type changes across multiple consumers; cramming into one iteration risks shipping a frame that the client ignores.
-- status: PENDING
 
 ### ORC-216
 
@@ -2087,7 +2084,6 @@ Schema per entry:
 - proposed_fix: Make inner boundaries truly local (they catch and SHOULD NOT propagate further). Decide a single error-reporting layer (probably the inner ones). The outer boundary catches only what the inner ones did not, and should never surface inline-rendering details.
 - status: DONE
 - fixed_iter: 146
-- status: PENDING
 
 ### ORC-219
 
@@ -2108,7 +2104,6 @@ Schema per entry:
 - proposed_fix: On WS close, fail all pending requests for that connection with a clear "connection_closed" error so the client (or MCP) can react immediately. Don't rely on per-request timeouts to detect this.
 - status: DONE
 - fixed_iter: 147
-- status: PENDING
 
 ### ORC-221
 
@@ -2129,7 +2124,6 @@ Schema per entry:
 - proposed_fix: Detect defects via Cause.isDie. On defect, log at error level with full stack and metadata; fail-fast or escalate. Defects should never silently continue.
 - status: DONE
 - fixed_iter: 148
-- status: PENDING
 
 ### ORC-223
 
@@ -2140,7 +2134,6 @@ Schema per entry:
 - proposed_fix: On reap failure, fail startup with a clear error. Or stash the failure for retry on a periodic background job, but never silently continue with known-stale state.
 - status: DONE
 - fixed_iter: 149
-- status: PENDING
 
 ### ORC-224
 
@@ -2152,7 +2145,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 150
 - deferred_reason: Audit log requires (1) a new persistence table with append-only semantics + retention policy, (2) a service interface AuditLog that command dispatch and auth flows inject as a dependency, (3) classification of which orchestration commands count as audit-worthy (project.delete, thread.archive, secret access, etc.), (4) a separate file/SQL sink + log rotation policy, (5) ops procedure for retrieval. Single-iteration scope risks shipping a half-wired sink. Multi-iteration plan tracked as ORC-224a..d in blockers.md.
-- status: PENDING
 
 ### ORC-225
 
@@ -2190,7 +2182,6 @@ Schema per entry:
 - proposed_fix: Add a redactValue(key, value) hook in the logger. Redact known PII fields (prompt, filePath, projectTitle) by default. Provide an opt-in raw mode for local debugging.
 - status: DONE
 - fixed_iter: 151
-- status: PENDING
 
 ### ORC-229
 
@@ -2202,7 +2193,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 152
 - deferred_reason: Cross-boundary traceId propagation needs (1) WS envelope schema bump for `traceId?: string` on inbound and outbound frames in @orchestrate/contracts/ws.ts, (2) Codex JSON-RPC envelope addition + reception, (3) MCP server passing through, (4) web client generating + propagating, (5) reception/extraction at every Effect boundary. ORC-062 already established the in-process trace context; cross-process propagation is its own multi-iteration build. Plan recorded as ORC-229a..d in blockers.md.
-- status: PENDING
 
 ### ORC-230
 
