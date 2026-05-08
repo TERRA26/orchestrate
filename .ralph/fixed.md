@@ -2190,3 +2190,49 @@ All 7 would fail before the change (verified by moving the files aside and re-ru
 - Add a CodeQL workflow for TypeScript SAST (`github/codeql-action/init` + `analyze`); doesn't catch transitive CVEs but does catch source-level patterns.
 - Wire the audit step into release.yml's `release_smoke` job too so a fresh production build can't ship with a known critical advisory.
 - Promote both gates (audit + dependabot) to required status checks in branch protection.
+
+## ORC-100 [iter 91] No coverage-floor regression net for the 53-branch decider
+
+**Root cause**: `apps/server/src/orchestration/decider.ts` has 53 command-case branches. The existing test files (`decider.orchestrator.test.ts`, `decider.projectScripts.test.ts`) covered ~32 of them; the remainder had no test mention at all. There was no automated signal when a new command branch landed without a test, so the untested set could grow silently.
+
+**Audit findings** (after broadening the scan to all `apps/server/src/**/*.test.ts`): 24 command branches lack a real test today. The audit also revealed 3 commands the original backlog listed as untested (`thread.activity.append`, `orchestrator.worker.promote`, `orchestrator.worker.demote`) ARE actually tested elsewhere via wsServer / persistence test files.
+
+**Change summary**:
+- New `apps/server/src/orchestration/decider.commandCoverage.test.ts`: meta-test that
+  - Extracts every `case "command.type":` from `decider.ts` (regex over the source).
+  - Walks every `*.test.ts` in `apps/server/src` and extracts `type: "command.type"` literals.
+  - Asserts every command branch is either tested OR explicitly listed in `KNOWN_UNTESTED`.
+  - Maintains the inverse invariants: KNOWN_UNTESTED entries must reference real branches; KNOWN_UNTESTED entries must NOT also be tested (move from list to tested when the test lands).
+  - Soft cap of 25 entries on KNOWN_UNTESTED so the untested backlog cannot grow indefinitely without an explicit deliberate decision.
+
+The KNOWN_UNTESTED list documents 24 specific commands with a one-line rationale per entry, serving as a tracked follow-up backlog.
+
+**Files touched**:
+- apps/server/src/orchestration/decider.commandCoverage.test.ts (NEW)
+
+**Tests added**: 5 cases in the new file:
+1. Decider has the expected number of branches (sentinel >= 50).
+2. Every branch is either tested or listed in KNOWN_UNTESTED.
+3. KNOWN_UNTESTED entries reference real branches (catches typos / stale entries after a rename).
+4. KNOWN_UNTESTED entries are not also in the tested set (forces removal once a test lands).
+5. KNOWN_UNTESTED soft cap of 25 entries (forces deliberate growth).
+
+The first run of the meta-test surfaced 17 thread.* commands the original audit had missed (because it only scanned the orchestration/ dir's test files); broadening the scan to apps/server/src/**/*.test.ts found those covered via wsServer / persistence / integration tests for 10 of them. The remaining 7 are documented in KNOWN_UNTESTED.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/decider.commandCoverage.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 5 passed (5)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Regex extraction of `case "X":` and `type: "X"` is brittle to formatting. Both patterns are tolerant of whitespace via `\s+`. Comment-based references like `// type: "x.y"` would falsely register as tested; mitigation: pattern matches only valid identifier-quoted strings, false-positive risk is low.
+- Decider switch over a non-string discriminant (e.g., schema-tagged objects) would not be caught by the case extractor. Acceptable: every current decider branch uses string discriminants.
+- The KNOWN_UNTESTED soft cap (25) is empirical. A future refactor that adds many new commands at once could trip the cap; the failure message guides the maintainer to either add tests or raise the cap deliberately.
+- Cross-test-file aliasing: a test that mentions `type: "x.y"` inside a comment string still counts as covered. Conservative; favors false-positives (assume covered) over false-negatives (force redundant tests).
+- Build-time enforcement: the test runs as part of the regular `bun run test`, so PR CI catches drift the same as any other regression.
+
+**Follow-ups**:
+- Add real tests for the 24 KNOWN_UNTESTED entries; each removal of a list entry shrinks the soft-cap headroom and proves the meta-test's value.
+- Once KNOWN_UNTESTED.length <= 5, lower the soft cap to that count + buffer to keep pressure on.
+- Co-locate per-case fixtures in `decider.fixtures.ts` once 5+ cases share setup boilerplate; the proposed_fix mentioned this and it remains a good follow-up.
+- Mirror the meta-test against `projector.ts` event-handling cases to guard projector coverage similarly.

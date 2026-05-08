@@ -953,7 +953,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts (~1718 LOC, ~53 case branches)
 - evidence: 32/53 command cases tested, 21 not. Untested: orchestrator.run.fail, orchestrator.task.block/cancel/fail, orchestrator.worker.promote/demote/pause/resume/terminate, orchestrator.message.send, orchestrator.decision.record, orchestrator.evidence.capture, project.delete, thread.activity.append, etc.
 - proposed_fix: Add a parametric test that walks every command type with a representative valid + invalid payload, asserting the produced events. Update on any new command added. Co-locate per-case fixtures in decider.fixtures.ts.
-- status: PENDING
+- status: DONE
+- fixed_iter: 91
 
 ### ORC-101
 
