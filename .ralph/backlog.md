@@ -1160,7 +1160,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestratorRuntime.ts:346-368 (terminateWorker)
 - evidence: Terminating a worker fails the worker's active task but does not cascade to tasks that depend on it. Dependent tasks stay pending forever; the orchestrator's spawn loop never tries them again.
 - proposed_fix: When a worker terminates, walk the dependency graph rooted at its task and mark all dependents as failed (or unblock them with a "dependency failed" reason). Emit a single event per dependent.
-- status: PENDING
+- status: DONE
+- fixed_iter: 100
 
 ### ORC-123
 

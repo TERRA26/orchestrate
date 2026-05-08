@@ -125,3 +125,56 @@ export const toDependencyTasks = (
     taskId: t.taskId,
     ...(t.dependsOn !== undefined ? { dependsOn: t.dependsOn } : {}),
   }));
+
+/**
+ * Forward closure: return every task in `tasks` that transitively
+ * depends on `rootTaskId` (directly via `dependsOn` or through any
+ * chain). Useful when a task fails or its worker terminates and we
+ * need to surface every downstream task so the runtime can block or
+ * fail them deterministically. [ORC-122]
+ *
+ * Excludes `rootTaskId` itself from the returned set. Output order is
+ * BFS-by-distance so callers can render the closest dependents first.
+ *
+ * Cyclic graphs are handled by a visited set (cycles cannot exist
+ * after ORC-118's create-time guard, but the helper is robust against
+ * legacy data).
+ */
+export const findDependentTasks = (input: {
+  readonly rootTaskId: OrchestratorTaskId;
+  readonly tasks: ReadonlyArray<DependencyTask>;
+}): ReadonlyArray<OrchestratorTaskId> => {
+  // Build reverse adjacency: parent -> [children that depend on parent].
+  const reverse = new Map<string, OrchestratorTaskId[]>();
+  for (const task of input.tasks) {
+    for (const dep of task.dependsOn ?? []) {
+      const key = dep as unknown as string;
+      const existing = reverse.get(key);
+      if (existing) {
+        existing.push(task.taskId);
+      } else {
+        reverse.set(key, [task.taskId]);
+      }
+    }
+  }
+
+  // Seed visited with the root so a cycle that loops back to it does not
+  // re-add the root to the dependents list.
+  const visited = new Set<string>([input.rootTaskId as unknown as string]);
+  const out: OrchestratorTaskId[] = [];
+  const queue: string[] = [input.rootTaskId as unknown as string];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const dependents = reverse.get(current) ?? [];
+    for (const child of dependents) {
+      const key = child as unknown as string;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      out.push(child);
+      queue.push(key);
+    }
+  }
+
+  return out;
+};

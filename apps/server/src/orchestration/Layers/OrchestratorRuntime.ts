@@ -27,6 +27,7 @@ import { Effect, Layer } from "effect";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ModelRegistryService } from "../Services/ModelRegistry.ts";
 import { OrchestratorRunsRepository } from "../../persistence/Services/OrchestratorRuns.ts";
+import { findDependentTasks, toDependencyTasks } from "../taskDependencyGraph.ts";
 import {
   OrchestratorRuntimeService,
   type OrchestratorRuntimeShape,
@@ -356,6 +357,40 @@ const makeOrchestratorRuntime = Effect.gen(function* () {
           reason: `Worker ${workerId} terminated: ${reason}`,
           createdAt: now(),
         });
+
+        // ORC-122: cascade the block to every task that transitively
+        // depends on the terminated worker's active task. Without this,
+        // dependent tasks stay pending forever and the orchestrator's
+        // spawn loop never retries them. Only block tasks currently in
+        // a runnable / waiting state; already-terminal tasks
+        // (accepted, cancelled, failed) are left alone.
+        const allTasks = toDependencyTasks(readModel.orchestratorTasks ?? []);
+        const dependents = findDependentTasks({
+          rootTaskId: worker.activeTaskId,
+          tasks: allTasks,
+        });
+        const tasksByIdLookup = new Map(
+          (readModel.orchestratorTasks ?? []).map((t) => [t.taskId as unknown as string, t]),
+        );
+        const cascadeBlockable = new Set([
+          "pending",
+          "assigned",
+          "running",
+          "submitted",
+          "needs-rework",
+        ]);
+        for (const dependentId of dependents) {
+          const dependent = tasksByIdLookup.get(dependentId as unknown as string);
+          if (!dependent) continue;
+          if (!cascadeBlockable.has(dependent.status)) continue;
+          yield* engine.dispatch({
+            type: "orchestrator.task.block",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            taskId: dependent.taskId,
+            reason: `Dependency '${worker.activeTaskId}' was blocked by worker termination (worker ${workerId}: ${reason}).`,
+            createdAt: now(),
+          });
+        }
       }
 
       yield* engine.dispatch({

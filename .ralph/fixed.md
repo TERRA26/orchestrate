@@ -2648,3 +2648,87 @@ The first cycle test would fail before the change (the decider would happily emi
   single source for ordering.
 - Truncate cycle paths in error messages once we hit production volumes
   where 50+ task graphs are common.
+
+## ORC-122 [iter 100] terminateWorker did not cascade to dependent tasks
+
+**Root cause**: `apps/server/src/orchestration/Layers/OrchestratorRuntime.ts:terminateWorker` blocked the worker's active task but never touched downstream tasks that depended on it. A run with `task-A -> task-B` (B depends on A) would, on terminating A's worker:
+- block task-A (correct).
+- terminate worker (correct).
+- leave task-B in `pending` forever, even though its dependency just became unsatisfiable.
+
+The orchestrator's spawn loop saw task-B's dependsOn array still pointing at the now-blocked task-A and skipped it on every poll. The run silently stalled.
+
+**Change summary**:
+- New `findDependentTasks({ rootTaskId, tasks })` helper in
+  `apps/server/src/orchestration/taskDependencyGraph.ts`: builds the
+  reverse adjacency map (parent -> children that depend on parent) and
+  BFS-walks the forward closure. Excludes the root from the output.
+  Robust against legacy cyclic data via a visited set seeded with the
+  root id.
+- `apps/server/src/orchestration/Layers/OrchestratorRuntime.ts`:
+  `terminateWorker` now calls `findDependentTasks` after blocking the
+  worker's active task, then dispatches `orchestrator.task.block` for
+  every dependent in a runnable / waiting state (pending, assigned,
+  running, submitted, needs-rework). Already-terminal tasks (accepted,
+  cancelled, failed, blocked) are left alone. Each blocked dependent
+  gets a clear reason string referencing the upstream block.
+
+**Files touched**:
+- apps/server/src/orchestration/taskDependencyGraph.ts (new helper)
+- apps/server/src/orchestration/taskDependencyGraph.test.ts (7 new tests)
+- apps/server/src/orchestration/Layers/OrchestratorRuntime.ts
+
+**Tests added**: 7 cases in `taskDependencyGraph.test.ts`:
+1. Empty list when no task depends on the root.
+2. Direct dependent returned.
+3. Transitive chain (root -> a -> b -> c).
+4. Diamond dedup (a, b, c counted once).
+5. Root excluded from its own dependent list.
+6. Robust against legacy cyclic data (no infinite loop, root excluded
+   even when a cycle would re-add it).
+7. Empty when root not present in tasks.
+
+The first 5 test the canonical happy path; #6 was the bug that
+required seeding `visited` with the root.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/taskDependencyGraph.test.ts src/orchestration/decider.orchestrator.test.ts` (Node 24) -> Test Files 2 passed (2) | Tests 36 passed (36)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The cascade dispatches one `task.block` per dependent. In a worst
+  case (50 transitively dependent tasks) this fires 50 commands; each
+  is small and dispatched serially via `engine.dispatch` so there's
+  no event-store thundering-herd risk.
+- The `cascadeBlockable` set excludes already-terminal statuses so a
+  task that was already accepted before the worker terminated is not
+  walked back to blocked. (Though semantically that case shouldn't
+  happen because accepted tasks have submitted work.)
+- Self-dependency: ORC-118's create-time guard rejects this so the
+  cascade can't loop indefinitely. Even if legacy data has a cycle,
+  the `visited` seed prevents re-traversal.
+- The cascade reads the read model snapshot at the start of
+  terminateWorker. If a concurrent dispatch alters the dependency
+  graph while we're cascading, we may miss newly-added dependents.
+  Acceptable: the orchestrator's poll loop will catch them on the
+  next tick.
+- The block reason includes the upstream task id and the
+  termination reason, giving operators a clear chain to trace when
+  reading the activity log.
+
+**Follow-ups**:
+- Consider dispatching `task.fail` (terminal) instead of
+  `task.block` (reversible) when the operator's intent is "this run
+  is over, mark everything done." The current choice favors
+  reversibility; a separate "fail-cascade" mode could be added.
+- Apply the same cascade pattern to task.fail and task.cancel: if a
+  task explicitly fails or is cancelled, dependents should be
+  blocked or failed as well.
+- Once `orchestrator.dependency.set` lands (currently in
+  KNOWN_UNTESTED), revisit the cascade: dynamic edges added after
+  worker termination won't have triggered a cascade. Either re-walk
+  on every dependency.set or dispatch a refresh tick.
+- Add an integration test that exercises terminateWorker over a
+  real OrchestrationEngine + projector + repository stack to verify
+  the cascade events are persisted correctly.

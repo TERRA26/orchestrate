@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   type DependencyTask,
   detectDependencyCycle,
+  findDependentTasks,
 } from "./taskDependencyGraph.ts";
 
 const id = (s: string) => s as unknown as OrchestratorTaskId;
@@ -156,5 +157,77 @@ describe("detectDependencyCycle (ORC-118)", () => {
       newDependsOn: [id("e"), id("d")],
     });
     expect(cycle).toBeNull();
+  });
+});
+
+describe("findDependentTasks (ORC-122)", () => {
+  it("returns an empty list when no task depends on the root", () => {
+    const tasks: DependencyTask[] = [
+      { taskId: id("a"), dependsOn: [] },
+      { taskId: id("b"), dependsOn: [] },
+    ];
+    expect(findDependentTasks({ rootTaskId: id("a"), tasks })).toEqual([]);
+  });
+
+  it("returns the direct dependent of the root", () => {
+    const tasks: DependencyTask[] = [
+      { taskId: id("root"), dependsOn: [] },
+      { taskId: id("child"), dependsOn: [id("root")] },
+    ];
+    expect(findDependentTasks({ rootTaskId: id("root"), tasks })).toEqual([id("child")]);
+  });
+
+  it("walks the transitive dependent chain", () => {
+    const tasks: DependencyTask[] = [
+      { taskId: id("root"), dependsOn: [] },
+      { taskId: id("a"), dependsOn: [id("root")] },
+      { taskId: id("b"), dependsOn: [id("a")] },
+      { taskId: id("c"), dependsOn: [id("b")] },
+    ];
+    const dependents = findDependentTasks({ rootTaskId: id("root"), tasks });
+    expect(dependents).toEqual([id("a"), id("b"), id("c")]);
+  });
+
+  it("includes diamond dependents only once", () => {
+    const tasks: DependencyTask[] = [
+      { taskId: id("root"), dependsOn: [] },
+      { taskId: id("a"), dependsOn: [id("root")] },
+      { taskId: id("b"), dependsOn: [id("root")] },
+      { taskId: id("c"), dependsOn: [id("a"), id("b")] },
+    ];
+    const dependents = findDependentTasks({ rootTaskId: id("root"), tasks });
+    // a and b come first (BFS distance 1); c is distance 2 and dedup'd.
+    expect(dependents.includes(id("a"))).toBe(true);
+    expect(dependents.includes(id("b"))).toBe(true);
+    expect(dependents.includes(id("c"))).toBe(true);
+    expect(dependents.length).toBe(3);
+  });
+
+  it("does not include the root in its own dependent list", () => {
+    const tasks: DependencyTask[] = [
+      { taskId: id("root"), dependsOn: [] },
+      { taskId: id("child"), dependsOn: [id("root")] },
+    ];
+    const dependents = findDependentTasks({ rootTaskId: id("root"), tasks });
+    expect(dependents.includes(id("root"))).toBe(false);
+  });
+
+  it("is robust to legacy cyclic data without infinite-looping", () => {
+    const tasks: DependencyTask[] = [
+      { taskId: id("a"), dependsOn: [id("b")] },
+      { taskId: id("b"), dependsOn: [id("a")] }, // legacy cycle
+    ];
+    const dependents = findDependentTasks({ rootTaskId: id("a"), tasks });
+    // a's dependents are {b}; b's dependents are {a} but a is already
+    // visited as the root and is excluded from the output.
+    expect(dependents).toEqual([id("b")]);
+  });
+
+  it("returns empty when the root task is not present in the task list", () => {
+    const tasks: DependencyTask[] = [
+      { taskId: id("a"), dependsOn: [id("b")] },
+      { taskId: id("b"), dependsOn: [] },
+    ];
+    expect(findDependentTasks({ rootTaskId: id("nonexistent"), tasks })).toEqual([]);
   });
 });
