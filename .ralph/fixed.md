@@ -2362,3 +2362,48 @@ All 7 pass on Node 24. Note that I cannot easily verify "failing-before" for a c
 - Down-migration tests are deferred; Effect Migrator doesn't support them, so they'd require a parallel hand-written rollback harness for the most recent N migrations.
 - Add a migration-hash integrity test (similar to the existing Integrity.test.ts) that verifies each migration's content hash matches the recorded hash, catching silent edits to applied migrations.
 - Wire this runner test into `release.yml` as part of the release-smoke job so migration regressions can't ship.
+
+## ORC-104 [iter 95] No coverage-floor test for the three highest-traffic orchestrator flows
+
+**Audit findings**: After cataloging existing test coverage:
+- `decider.orchestrator.test.ts` (line 300) covers "submit → accept flow produces correct events" (ORC-104 flow #1 at engine level).
+- `decider.orchestrator.test.ts` (line 526) covers "reject increments iteration and sets needs-rework status" (ORC-104 flow #3 at engine level).
+- `orchestrationEngine.integration.test.ts` (line 171) covers "runs a single turn end-to-end and persists checkpoint state in sqlite + git" (single-turn integration proof).
+- `BrowserAutomation.test.ts`, `browserExecutable.test.ts`, `BrowserActionPolicy.test.ts`, `BrowserClaimGate.test.ts`, `DesktopBrowserBridge.test.ts`, `BrowserRuntimeService.test.ts` cover individual surfaces of the browser validation cycle.
+
+The actual gap per the proposed_fix is full UI-driven Playwright e2e tests, which are multi-iteration work pending. The single-iteration value here is to document the existing engine-level coverage and pin it against silent regressions, plus track the deferred UI flows in a single discoverable place.
+
+**Change summary**:
+- New `apps/server/src/orchestration/orchestratorFlowCoverage.test.ts`:
+  - `COVERED_FLOWS`: three flows (spawn-worker → submit → accept; reject-and-resubmit; single-turn end-to-end) each with a list of substrings that MUST appear in the corresponding test file. The substring check fails informatively if a future refactor renames or removes a covered flow.
+  - `DEFERRED_PLAYWRIGHT_FLOWS`: documents the three UI-driven variants the backlog wants but that aren't yet implemented, with explicit rationale per entry.
+  - Sentinel test: integration test file must contain at least 5 `it.live(` blocks; catches the failure mode of the integration suite being silently gutted.
+
+**Files touched**:
+- apps/server/src/orchestration/orchestratorFlowCoverage.test.ts (NEW)
+
+**Tests added**: 5 cases:
+1. Spawn-worker → submit → accept covered by decider.orchestrator.test.ts (matches `spawn`, `submit`, `accept` substrings).
+2. Reject-and-resubmit covered (matches `reject`, `iteration`).
+3. Single-turn end-to-end covered by orchestrationEngine.integration.test.ts (matches `single turn end-to-end`, `checkpoint`).
+4. DEFERRED_PLAYWRIGHT_FLOWS is non-empty and each entry has a substantive reason.
+5. Integration test file contains >= 5 `it.live(` blocks (sentinel for engine coverage depth).
+
+The first 3 would fail if any of the named flows were renamed or removed in the test corpus.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/orchestratorFlowCoverage.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 5 passed (5)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Substring matching is loose: a test name like "rejects spawn-attempt without submit but then accepts" would falsely trip the spawn/submit/accept case as covered. Acceptable since the sole purpose is to prevent total regression of the named flow; a partial false-positive is much rarer than a real refactor that drops a flow.
+- The case-insensitive lowercase comparison may match matching strings inside comments (e.g., `// reject this approach...`). Same trade-off: prevents brittleness; partial false-positives.
+- The DEFERRED list is documentation, not enforcement. A future contributor can leave it stale. Mitigation: the rationale-length sanity check forces meaningful content.
+- If the integration test file gets trimmed below 5 it.live blocks, the sentinel fires. Threshold is conservative (the file has 11 today); a deliberate refactor can update the sentinel.
+
+**Follow-ups**:
+- Stand up a real Playwright e2e harness (in `apps/web/test/e2e/` or similar) that drives the orchestrator through the three deferred flows. Likely takes ~3-5 iterations to land cleanly: a stub provider adapter, a fake LLM response stream, a Playwright spec per flow.
+- Wire those e2e tests into ci.yml's quality job (mirroring the orchestrator-smoke step from ORC-092).
+- Once the e2e tests land, move entries from `DEFERRED_PLAYWRIGHT_FLOWS` into `COVERED_FLOWS` with the e2e file path, and the meta-test continues to guard them.
+- Add a parallel `worker.update-post` flow assertion (the send_update_to_orchestrator MCP path) so that surface stays covered.

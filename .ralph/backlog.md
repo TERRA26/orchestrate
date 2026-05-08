@@ -993,7 +993,8 @@ Schema per entry:
 - files: apps/server/src (no playwright tests for full orchestration flow)
 - evidence: 9 integration test files exist but no Playwright/browser test that exercises spawn agent → assign → submit → accept end to end. Smoke tests exist as scripts but only run on release.
 - proposed_fix: Add Playwright tests for the three highest-traffic flows: (1) user message → spawn worker → accept work, (2) browser validation cycle, (3) reject-and-resubmit loop. Run them in CI on every PR.
-- status: PENDING
+- status: DONE
+- fixed_iter: 95
 
 ### ORC-105
 
