@@ -26,6 +26,11 @@ import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget, rewriteMarkdownFileUriHref } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
 
+// ORC-218: inner boundary is truly local. React stops propagation at
+// the nearest boundary that returns state from getDerivedStateFromError,
+// so the outer OrchestratorErrorBoundary does NOT see errors caught
+// here. componentDidCatch is added so the swallowed error is at least
+// surfaced to console.error for debugging instead of disappearing.
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
   { hasError: boolean }
@@ -37,6 +42,11 @@ class CodeHighlightErrorBoundary extends React.Component<
 
   static getDerivedStateFromError() {
     return { hasError: true };
+  }
+
+  override componentDidCatch(error: Error, info: React.ErrorInfo): void {
+    // eslint-disable-next-line no-console
+    console.error("[CodeHighlightErrorBoundary] caught", error, info.componentStack);
   }
 
   override render() {

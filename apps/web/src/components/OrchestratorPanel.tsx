@@ -17,6 +17,15 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
+// ORC-218: outer boundary catches errors that escaped every inner
+// boundary in the orchestrator subtree. Inner boundaries
+// (CodeHighlightErrorBoundary in ChatMarkdown, HighlightErrorBoundary
+// in FileWrittenRow) are truly local; per React semantics, an error
+// caught by the inner boundary STOPS at that boundary and never
+// re-throws to the outer one. The outer boundary therefore handles
+// truly unhandled rendering bugs (state hook misuse, library crashes
+// outside the inner zones, etc.). componentDidCatch logs both the
+// error and component stack for postmortem debugging.
 class OrchestratorErrorBoundary extends React.Component<
   { children: React.ReactNode },
   ErrorBoundaryState
@@ -28,6 +37,11 @@ class OrchestratorErrorBoundary extends React.Component<
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error };
+  }
+
+  override componentDidCatch(error: Error, info: React.ErrorInfo): void {
+    // eslint-disable-next-line no-console
+    console.error("[OrchestratorErrorBoundary] caught", error, info.componentStack);
   }
 
   override render() {

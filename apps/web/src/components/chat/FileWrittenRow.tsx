@@ -145,6 +145,10 @@ function getFileHighlighterPromise(language: string): Promise<DiffsHighlighter> 
   return promise;
 }
 
+// ORC-218: inner boundary is truly local. The outer
+// OrchestratorErrorBoundary does NOT see errors caught here.
+// componentDidCatch surfaces the swallowed error to console.error
+// so it is debuggable instead of disappearing.
 class HighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
   { hasError: boolean }
@@ -155,6 +159,10 @@ class HighlightErrorBoundary extends React.Component<
   }
   static getDerivedStateFromError() {
     return { hasError: true };
+  }
+  override componentDidCatch(error: Error, info: React.ErrorInfo): void {
+    // eslint-disable-next-line no-console
+    console.error("[HighlightErrorBoundary] caught", error, info.componentStack);
   }
   override render() {
     return this.state.hasError ? this.props.fallback : this.props.children;

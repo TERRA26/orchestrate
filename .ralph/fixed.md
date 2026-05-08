@@ -4608,3 +4608,55 @@ mention of the prefix convention. Verified failing-before by stashing
     (`@orchestrate/shared/promptFraming`).
   - Add a redaction policy: opt-in body capture only for explicit
     `evidenceRequired` requests, not by default.
+
+## ORC-218 (iter 146): clarify boundary contract + add componentDidCatch logging
+
+- root cause: The bug filing claimed inner+outer error boundaries
+  could "render twice or not at all". Investigation against React
+  semantics confirmed this is incorrect: the nearest boundary that
+  returns state from `getDerivedStateFromError` STOPS the error;
+  the outer boundary never observes it. The actual gap was that
+  none of the three boundaries (OrchestratorErrorBoundary,
+  CodeHighlightErrorBoundary, HighlightErrorBoundary) implemented
+  `componentDidCatch`, so swallowed errors disappeared without any
+  console trace.
+- change summary:
+  - Added `componentDidCatch(error, info)` to all three boundaries.
+    Each logs to `console.error` with a tag prefix
+    (`[CodeHighlightErrorBoundary]`, `[HighlightErrorBoundary]`,
+    `[OrchestratorErrorBoundary]`) plus the React component stack.
+  - Added comments above each class clarifying the React contract:
+    inner boundaries are truly local; the outer boundary only
+    catches what escaped every inner boundary.
+- files touched:
+  - apps/web/src/components/OrchestratorPanel.tsx
+  - apps/web/src/components/ChatMarkdown.tsx
+  - apps/web/src/components/chat/FileWrittenRow.tsx
+  - apps/web/src/components/errorBoundary.test.tsx (new)
+- tests added: 4 jsdom component tests in
+  `errorBoundary.test.tsx` that pin the React boundary contract
+  using two minimal local boundary classes:
+  1. inner boundary catches its subtree's error and shows its
+     fallback while the outer boundary fallback does NOT render
+  2. outer boundary catches errors raised OUTSIDE the inner
+     subtree (the inner does NOT trigger)
+  3. inner boundary stops propagation: its componentDidCatch
+     fires exactly once and the outer boundary's
+     componentDidCatch does NOT fire (no double handling)
+  4. neither boundary triggers when no child throws
+- evidence of green run:
+  ```
+  bun run test src/components/errorBoundary.test.tsx
+   Test Files  1 passed (1)
+        Tests  4 passed (4)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Replace the `console.error` calls with the Posthog /
+    error-reporting hook the rest of the codebase uses (look for
+    `notifyClientError` or similar) so error traces aggregate in
+    production.
+  - Decide a single error-reporting layer (probably the inner
+    ones for highlighter failures, the outer for unexpected
+    state-hook bugs).

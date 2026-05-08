@@ -2085,6 +2085,8 @@ Schema per entry:
 - files: apps/web/src/components/OrchestratorPanel.tsx:20-50 vs apps/web/src/components/ChatMarkdown.tsx (CodeHighlightErrorBoundary), FileWrittenRow.tsx (HighlightErrorBoundary)
 - evidence: There is one outer error boundary (OrchestratorPanel) plus two inner boundaries (Shiki/file-viewer). When the inner ones catch and recover, the outer one already reset state. When the outer catches first, the inner boundaries never get to render their fallbacks. Errors can render twice or not at all.
 - proposed_fix: Make inner boundaries truly local (they catch and SHOULD NOT propagate further). Decide a single error-reporting layer (probably the inner ones). The outer boundary catches only what the inner ones did not, and should never surface inline-rendering details.
+- status: DONE
+- fixed_iter: 146
 - status: PENDING
 
 ### ORC-219
