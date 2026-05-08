@@ -5421,3 +5421,58 @@ mention of the prefix convention. Verified failing-before by stashing
   - The composer draft store keys per-thread state by ThreadId; a
     settings entry now lives under "settings". Audit whether that
     bleed-through is intended (it predates this fix).
+
+## ORC-261: brand-preserving worker-task join helper
+
+- root cause: WorkerCanvas.tsx built an intermediate Map<string,
+  OrchestratorTask> and stripped the OrchestratorTaskId brand via
+  `task.taskId as unknown as string` / `worker.activeTaskId as
+  unknown as string | undefined` casts. Once a value lost its brand,
+  any other string of the same shape (notably an
+  OrchestratorWorkerId) could index the Map by accident; the
+  compiler offered no protection.
+- change summary:
+  - Extracted the join logic into a pure helper
+    `apps/web/src/components/orchestrator/taskByWorkerId.ts`. The
+    helper signature is `taskByWorkerId(workers, tasks?):
+    Map<OrchestratorWorkerId, OrchestratorTask>` and the
+    intermediate task-id map is typed
+    `Map<OrchestratorTaskId, OrchestratorTask>`. The brands are
+    preserved end-to-end; the casts are removed.
+  - WorkerCanvas now calls `useMemo(() => taskByWorkerId(workers,
+    tasks), [...])` and exposes the result as `taskByWorker`. The
+    panel-render call site (`task={taskByWorker.get(...)}`) is
+    updated.
+- files touched:
+  - apps/web/src/components/orchestrator/taskByWorkerId.ts (new)
+  - apps/web/src/components/orchestrator/taskByWorkerId.test.ts (new)
+  - apps/web/src/components/orchestrator/WorkerCanvas.tsx
+- tests added:
+  - "links a worker to its active task": pins the join behavior.
+  - "returns an empty map when tasks is undefined": guards the
+    early-exit branch.
+  - "returns an empty map when tasks is empty": same as above for
+    the empty-array path.
+  - "skips workers with no activeTaskId": confirms idle workers do
+    not appear in the result.
+  - "skips workers whose activeTaskId points to an unknown task":
+    confirms orphan references are dropped, not crashed on.
+  - "links multiple workers to their distinct tasks": exercises the
+    many-to-many path.
+- evidence of green run:
+  ```
+  bun run vitest run src/components/orchestrator/
+   Test Files  6 passed (6)
+        Tests  22 passed (22)
+  bun run typecheck   # apps/web clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Audit the rest of the orchestrator UI for similar
+    `as unknown as string` patterns. ORC-262 already flags the
+    Lucide/Tabler adapter; a sweep of `grep -nE "as unknown as
+    string" apps/web/src` is the right next step.
+  - The helper currently rebuilds the intermediate Map on every
+    invocation. If N grows it could be moved to a useMemo that keys
+    on `tasks` only, separately from the worker pass; today N is
+    small (single-digit) so this is premature.

@@ -8,6 +8,7 @@ import type {
 import { cn } from "~/lib/utils";
 import { WorkerPanel, WorkerChip } from "./WorkerPanel";
 import { usePanelStateStore } from "./panelStateStore";
+import { taskByWorkerId } from "./taskByWorkerId";
 
 // ---------------------------------------------------------------------------
 // Grid class helper
@@ -36,21 +37,10 @@ export function WorkerCanvas({ workers, tasks }: WorkerCanvasProps) {
   const focus = usePanelStateStore((s) => s.focus);
   const promote = usePanelStateStore((s) => s.promote);
 
-  const taskByWorkerId = useMemo(() => {
-    if (!tasks || tasks.length === 0) return new Map<OrchestratorWorkerId, OrchestratorTask>();
-    const byId = new Map<string, OrchestratorTask>();
-    for (const task of tasks) {
-      byId.set(task.taskId as unknown as string, task);
-    }
-    const result = new Map<OrchestratorWorkerId, OrchestratorTask>();
-    for (const worker of workers) {
-      const taskId = worker.activeTaskId as unknown as string | undefined;
-      if (!taskId) continue;
-      const task = byId.get(taskId);
-      if (task) result.set(worker.workerId, task);
-    }
-    return result;
-  }, [tasks, workers]);
+  // ORC-261: brand-preserving join via the shared helper. Direct use
+  // of branded ids in the Map keys removes the previous
+  // `as unknown as string` casts and prevents id-namespace cross-talk.
+  const taskByWorker = useMemo(() => taskByWorkerId(workers, tasks), [tasks, workers]);
 
   const focusedWorkerId = focusedPanelId as OrchestratorWorkerId | null;
   const promotedWorkerId = promotedPanelId as OrchestratorWorkerId | null;
@@ -95,7 +85,7 @@ export function WorkerCanvas({ workers, tasks }: WorkerCanvasProps) {
           <WorkerPanel
             key={worker.workerId}
             worker={worker}
-            task={taskByWorkerId.get(worker.workerId)}
+            task={taskByWorker.get(worker.workerId)}
             isFocused={focusedWorkerId === worker.workerId}
             isPromoted={promotedWorkerId === worker.workerId}
             onClick={() => handleFocus(worker.workerId)}

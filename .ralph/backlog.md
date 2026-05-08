@@ -2499,7 +2499,7 @@ Schema per entry:
 - files: apps/web/src/components/orchestrator/WorkerCanvas.tsx:43,47
 - evidence: `task.taskId as unknown as string` and `worker.activeTaskId as unknown as string | undefined` strip branded OrchestratorTaskId / OrchestratorWorkerId types when keying a Map. If task and worker ID spaces ever collide, lookups silently mismatch.
 - proposed_fix: Type the Map as `Map<OrchestratorTaskId, Task>` and keep the brands. If string-key access is required for serialization, convert at the boundary with a single typed helper.
-- status: PENDING
+- status: DONE
 
 ### ORC-262
 
