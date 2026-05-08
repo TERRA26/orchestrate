@@ -1039,7 +1039,8 @@ Schema per entry:
 - files: apps/web/src/components/chat/WorkEntryRow.tsx (status indicators)
 - evidence: Long-running work (worker spawn, browser validation, checkpoint) shows only a pulsing "running" dot. No elapsed time, no sub-step breakdown. A 5-minute browser validation looks identical to a stuck process; users have no way to tell whether to wait or abort.
 - proposed_fix: Show a live elapsed timer next to the running dot (already done for some surfaces per memory). For multi-step work like browser validation, expose a list of completed/in-progress/pending steps in the work card.
-- status: PENDING
+- status: DONE
+- fixed_iter: 96
 
 ### ORC-110
 

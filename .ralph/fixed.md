@@ -2407,3 +2407,45 @@ The first 3 would fail if any of the named flows were renamed or removed in the 
 - Wire those e2e tests into ci.yml's quality job (mirroring the orchestrator-smoke step from ORC-092).
 - Once the e2e tests land, move entries from `DEFERRED_PLAYWRIGHT_FLOWS` into `COVERED_FLOWS` with the e2e file path, and the meta-test continues to guard them.
 - Add a parallel `worker.update-post` flow assertion (the send_update_to_orchestrator MCP path) so that surface stays covered.
+
+## ORC-109 [iter 96] Long-running work entries showed no elapsed time
+
+**Root cause**: `apps/web/src/components/chat/WorkEntryRow.tsx` rendered worker spawn, browser session open/act/close, review-agent-work, and wait-agent rows with only a pulsing "running" dot. A 5-minute browser validation looked identical to a stuck process; users had no signal whether to wait or abort. The `WorkingTimer` primitive already existed in `components/ui/WorkingTimer.tsx` (its own setInterval, leaf component) but wasn't wired into the work-row surfaces.
+
+**Change summary**:
+- `apps/web/src/components/chat/WorkEntryRow.tsx`:
+  - Imported `WorkingTimer` from `~/components/ui/WorkingTimer`.
+  - `OrchSpawnCard` now accepts an optional `startedAt` prop; when `isLoading` and `startedAt` is present, renders `<WorkingTimer startedAt={startedAt} label="" />` next to the "running" status pill so users see the elapsed time.
+  - `OrchThinkRow` (used for wait-agent, review-agent-work, browser tool calls) gained the same `startedAt` prop and conditional `<WorkingTimer>` rendering.
+  - Wired `workEntry.createdAt` through to all four call sites: orchestrate_spawn_agent, orchestrate_wait_agent, orchestrate_wait_all, orchestrate_review_agent_work, browser tool calls (open_browser_preview, browser_open_session, browser_act, browser_close_session), and the generic orchestration tool fallback.
+
+**Files touched**:
+- apps/web/src/components/chat/WorkEntryRow.tsx
+- apps/web/src/components/chat/WorkEntryRow.elapsed.test.tsx (NEW)
+
+**Tests added**: 4 jsdom render cases in `WorkEntryRow.elapsed.test.tsx`:
+1. Spawn-agent entry with `tone="thinking"` and a known createdAt 12s in the past renders a working-timer element with text containing "12s".
+2. Same entry with `tone="tool"` (completed) renders no `[data-working-timer]` element.
+3. Review-agent-work entry with createdAt 90s in the past renders "1m 30s".
+4. Spawn entry with empty createdAt renders no working-timer.
+
+The tests use `vi.useFakeTimers()` + `vi.setSystemTime()` so the elapsed value is deterministic; `cleanup()` + `vi.useRealTimers()` in `afterEach` keeps tests isolated. The first 3 cases would fail before the change (no timer rendered).
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/components/chat/WorkEntryRow.elapsed.test.tsx` (Node 24) -> Test Files 1 passed (1) | Tests 4 passed (4)
+- `bun run test src/components/chat/WorkEntryRow.test.tsx` -> Test Files 1 passed (1) | Tests 16 passed (16) (no regression)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The WorkingTimer's setInterval ticks every 1s; for a 5-minute spawn it adds ~300 setState calls per surface. Since WorkingTimer is a leaf component each tick only re-renders itself, not the parent transcript. Pattern documented in WorkingTimer's own JSDoc.
+- `data-working-timer` attribute on the timer span lets tests find it without depending on Lucide SVG internals; also discoverable in production for screen-reader scripts that want to pull elapsed time.
+- Empty `createdAt`: my call sites use the spread guard `...(workEntry.createdAt ? { startedAt: workEntry.createdAt } : {})` so a missing timestamp gracefully omits the prop; WorkingTimer also returns null for non-finite parsed values.
+- `OrchAcceptCard` was NOT extended: by the time accept fires the work is essentially instantaneous (event-driven, sub-second), so a timer would just briefly flash. Keeping the simpler "…" loading glyph is intentional.
+- Multi-step breakdown (the second half of the proposed_fix): out of scope for this iteration. The browser validation cycle has multiple discrete events that already render as separate work rows with their own elapsed timers; a unified card showing them as a stepper is a follow-up.
+
+**Follow-ups**:
+- Add a multi-step "validation cycle" card that groups the open_browser_preview → screenshot → ARIA snapshot → close sequence into one progress UI with completed/in-progress/pending step indicators.
+- When `tone === "error"`, optionally render the final elapsed time as the duration label so users can see how long the failed work ran.
+- Apply the same WorkingTimer pattern to OrchInstrumentBlock for long-running bash commands (currently only shows a static `duration` prop if pre-computed).
+- Consider a "stale alert" threshold: when a work entry has been running for >5 minutes, render a soft warning indicator next to the timer prompting the user to investigate.

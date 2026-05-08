@@ -17,6 +17,7 @@ import {
   stripOrchestrationToolPrefix,
 } from "~/browserWorkLog";
 import { BrowserScreenshotImage } from "~/components/BrowserScreenshotImage";
+import { WorkingTimer } from "~/components/ui/WorkingTimer";
 import { cn } from "~/lib/utils";
 import { ensureNativeApi } from "~/nativeApi";
 import { browserRuntimeKindLabel, phaseForToolEvent } from "~/orchestratorPresentation";
@@ -859,6 +860,7 @@ function OrchSpawnCard({
   title,
   threadId,
   isLoading,
+  startedAt,
   onOpenWorker,
 }: {
   toolDisplay: string;
@@ -866,6 +868,7 @@ function OrchSpawnCard({
   title: string;
   threadId?: string;
   isLoading: boolean;
+  startedAt?: string;
   onOpenWorker?: () => void;
 }) {
   const statusLabel = isLoading ? "running" : "done";
@@ -885,6 +888,10 @@ function OrchSpawnCard({
           />
           {statusLabel}
         </span>
+        {/* ORC-109: live elapsed counter so a long-running spawn doesn't look stuck. */}
+        {isLoading && startedAt ? (
+          <WorkingTimer startedAt={startedAt} label="" className="ml-1" />
+        ) : null}
       </div>
       <div className="orch-spawn-body">
         <div className="orch-spawn-worker-id">
@@ -942,10 +949,13 @@ function OrchThinkRow({
   label,
   isLoading,
   detail,
+  startedAt,
 }: {
   label: string;
   isLoading: boolean;
   detail?: string;
+  /** ORC-109: ISO timestamp; when present and isLoading, render a live elapsed counter. */
+  startedAt?: string;
 }) {
   return (
     <div className={cn("orch-think-row", isLoading ? "orch-think-live" : "")}>
@@ -970,6 +980,9 @@ function OrchThinkRow({
       )}
       <span>{label}</span>
       {detail ? <span className="orch-think-dur">{detail}</span> : null}
+      {isLoading && startedAt ? (
+        <WorkingTimer startedAt={startedAt} label="" className="orch-think-dur" />
+      ) : null}
     </div>
   );
 }
@@ -1129,6 +1142,7 @@ export const WorkEntryRow = memo(function WorkEntryRow({
           title={taskTitle}
           isLoading={isLoading}
           {...(workEntry.threadId ? { threadId: workEntry.threadId } : {})}
+          {...(workEntry.createdAt ? { startedAt: workEntry.createdAt } : {})}
           {...(onOpenWorkerPanel ? { onOpenWorker: handleOpenWorker } : {})}
         />,
       );
@@ -1161,13 +1175,20 @@ export const WorkEntryRow = memo(function WorkEntryRow({
     }
     if (baseTool === "orchestrate_wait_agent" || baseTool === "orchestrate_wait_all") {
       const label = isLoading ? `Waiting on ${workerBadge ?? "agent"}` : "Agent ready";
-      return wrap(<OrchThinkRow label={label} isLoading={isLoading} />);
+      return wrap(
+        <OrchThinkRow
+          label={label}
+          isLoading={isLoading}
+          {...(workEntry.createdAt ? { startedAt: workEntry.createdAt } : {})}
+        />,
+      );
     }
     if (baseTool === "orchestrate_review_agent_work") {
       return wrap(
         <OrchThinkRow
           label={isLoading ? "Reviewing agent work" : "Review complete"}
           isLoading={isLoading}
+          {...(workEntry.createdAt ? { startedAt: workEntry.createdAt } : {})}
         />,
       );
     }
@@ -1181,7 +1202,11 @@ export const WorkEntryRow = memo(function WorkEntryRow({
       const runtimeTruthLabel = browserRuntimeTruthLabel(workEntry);
       return wrap(
         <div>
-          <OrchThinkRow label={browserLabel} isLoading={isLoading} />
+          <OrchThinkRow
+            label={browserLabel}
+            isLoading={isLoading}
+            {...(workEntry.createdAt ? { startedAt: workEntry.createdAt } : {})}
+          />
           {runtimeTruthLabel ? (
             <div className="mt-1 text-xs text-muted-foreground/70">{runtimeTruthLabel}</div>
           ) : null}
@@ -1191,7 +1216,11 @@ export const WorkEntryRow = memo(function WorkEntryRow({
     }
     return wrap(
       <div>
-        <OrchThinkRow label={semanticToolDisplay} isLoading={isLoading} />
+        <OrchThinkRow
+          label={semanticToolDisplay}
+          isLoading={isLoading}
+          {...(workEntry.createdAt ? { startedAt: workEntry.createdAt } : {})}
+        />
         {rawToolDetails(baseTool)}
       </div>,
     );
