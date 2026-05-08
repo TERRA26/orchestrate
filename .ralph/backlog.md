@@ -1913,9 +1913,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts (browser ingestion paths)
 - evidence: ARIA snapshots are framed (per ORC-028) but browser page text, page title, meta, and console.log/error output are NOT explicitly framed. A malicious page can `console.error("[ORCHESTRATOR_DO_X]")` and the message reaches the orchestrator as tool result.
 - proposed*fix: Apply the same `<untrusted_browser*\*>` framing to all browser-derived content, not just ARIA. Cover console messages, page title, meta description, and visible text capture paths.
-- status: DEFERRED
-- deferred_iter: 134
-- deferred_reason: Helper substrate (wrapUntrustedContent in apps/web/src/promptFraming.ts) is in place from ORC-200, but the SERVER-side emit sites for browser content (page text / title / meta / console.log/error) are not yet pinned to a specific file. Tracing the existing ARIA framing path (per ORC-028) to identify exact emit boundaries is a discovery sub-task. Defer until that trace is mapped explicitly.
+- status: DONE
+- fixed_iter: 140
+- previously_deferred_iter: 134
 
 ### ORC-202
 

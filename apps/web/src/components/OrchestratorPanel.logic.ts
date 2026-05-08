@@ -1126,7 +1126,7 @@ export function selectBrowserValidationCandidate(
 const PROMPT_MAX_TARGETS = 20;
 const PROMPT_MAX_ARIA_SNAPSHOT_CHARS = 8_000;
 
-function formatBrowserObservationForPrompt(observation: BrowserObservation): string {
+export function formatBrowserObservationForPrompt(observation: BrowserObservation): string {
   const shownTargets = observation.targets.slice(0, PROMPT_MAX_TARGETS);
   const remainingCount = observation.targets.length - shownTargets.length;
   const targets =
@@ -1147,9 +1147,19 @@ function formatBrowserObservationForPrompt(observation: BrowserObservation): str
           .join("\n") + (remainingCount > 0 ? `\n(${remainingCount} more targets not shown)` : "")
       : "No visible interactive targets were detected.";
 
-  const sections = [
+  // ORC-201: every field from `observation` below is page-derived and
+  // therefore worker- or website-controlled. Wrap each in its kind-specific
+  // <untrusted_*> tag so the orchestrator's system prompt can be told to
+  // treat the body as data, not authority. Neutralizer also defangs
+  // `## REPORT`, `[ORCHESTRATOR_*]`, `<orchestrator_*>` patterns inside.
+  const safeTitle = wrapUntrustedContent({
+    kind: "browser",
+    content: observation.title || "Untitled page",
+    metadata: { field: "title" },
+  });
+  const sections: string[] = [
     `URL: ${observation.url}`,
-    `Title: ${observation.title || "Untitled page"}`,
+    `Title:\n${safeTitle}`,
     `Ready state: ${observation.readyState}`,
   ];
 
@@ -1163,10 +1173,17 @@ function formatBrowserObservationForPrompt(observation: BrowserObservation): str
     const m = observation.pageMetrics;
     sections.push(
       `Page metrics: viewport=${m.viewportWidth}x${m.viewportHeight} scrollHeight=${m.scrollHeight}px scrollTop=${m.scrollTop}px | elements=${m.totalInteractiveElements} images=${m.totalImages} links=${m.totalLinks} inputs=${m.totalInputs}`,
-      m.headings.length > 0
-        ? `Headings: ${m.headings.map((h, i) => `${i + 1}. ${h}`).join(" | ")}`
-        : "",
     );
+    if (m.headings.length > 0) {
+      const headingsBody = m.headings.map((h, i) => `${i + 1}. ${h}`).join(" | ");
+      sections.push(
+        `Headings:\n${wrapUntrustedContent({
+          kind: "browser",
+          content: headingsBody,
+          metadata: { field: "headings", count: m.headings.length },
+        })}`,
+      );
+    }
   }
 
   if (observation.ariaSnapshot) {
@@ -1174,31 +1191,53 @@ function formatBrowserObservationForPrompt(observation: BrowserObservation): str
       observation.ariaSnapshot,
       PROMPT_MAX_ARIA_SNAPSHOT_CHARS,
     );
-    sections.push(`ARIA snapshot:\n${cappedSnapshot}`);
+    sections.push(
+      `ARIA snapshot:\n${wrapUntrustedContent({
+        kind: "browser",
+        content: cappedSnapshot,
+        metadata: { field: "ariaSnapshot" },
+      })}`,
+    );
   }
 
   sections.push(`Interactive targets (${observation.targets.length} total):\n${targets}`);
 
   const consoleErrors = observation.consoleErrors;
   if (consoleErrors && consoleErrors.length > 0) {
+    const consoleBody = consoleErrors
+      .map((entry) => `- [${entry.level}] ${entry.text}`)
+      .join("\n");
     sections.push(
-      `Console errors/warnings (${consoleErrors.length}):\n${consoleErrors
-        .map((entry) => `- [${entry.level}] ${entry.text}`)
-        .join("\n")}`,
+      `Console errors/warnings (${consoleErrors.length}):\n${wrapUntrustedContent({
+        kind: "console",
+        content: consoleBody,
+        metadata: { count: consoleErrors.length },
+      })}`,
     );
   }
 
   const networkErrors = observation.networkErrors;
   if (networkErrors && networkErrors.length > 0) {
+    const networkBody = networkErrors
+      .map((entry) => `- ${entry.method} ${entry.url}: ${entry.failure}`)
+      .join("\n");
     sections.push(
-      `Network errors (${networkErrors.length}):\n${networkErrors
-        .map((entry) => `- ${entry.method} ${entry.url}: ${entry.failure}`)
-        .join("\n")}`,
+      `Network errors (${networkErrors.length}):\n${wrapUntrustedContent({
+        kind: "browser",
+        content: networkBody,
+        metadata: { field: "networkErrors", count: networkErrors.length },
+      })}`,
     );
   }
 
   if (observation.evaluateResult) {
-    sections.push(`Evaluate result:\n${observation.evaluateResult}`);
+    sections.push(
+      `Evaluate result:\n${wrapUntrustedContent({
+        kind: "browser",
+        content: observation.evaluateResult,
+        metadata: { field: "evaluateResult" },
+      })}`,
+    );
   }
 
   return sections.filter((s) => s.length > 0).join("\n\n");
