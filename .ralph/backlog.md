@@ -2002,6 +2002,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts (browser network capture)
 - evidence: Browser network response bodies are captured and surface into orchestrator context. A malicious API endpoint can include orchestration-style markers in its response; truncation at 1MB does not prevent the first 1MB from carrying injection.
 - proposed_fix: Wrap network captures in `<browser_network_response url="...">...</browser_network_response>`. Optionally redact response bodies that the orchestrator does not need (e.g., always include status + headers, only include body when the worker explicitly requests it).
+- status: DONE
+- fixed_iter: 143
+- fix_note: Resolved by sibling fixes ORC-201 (formatBrowserObservationForPrompt wraps networkErrors in <untrusted_browser field="networkErrors">) and ORC-208 (the shared promptFraming module is the canonical wrap helper). Current implementation only captures requestfailed events (url/method/failure strings), NOT response bodies. If a future change adds response-body capture (per the bug's hypothetical), the same `wrapUntrustedContent({ kind: "browser", metadata: { url } })` pattern applies; today the bug as filed is moot for the deployed surface.
 - status: PENDING
 
 ### ORC-211

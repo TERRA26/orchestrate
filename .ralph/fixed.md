@@ -4569,3 +4569,42 @@ mention of the prefix convention. Verified failing-before by stashing
     reactors (ProviderCommandReactor, OrchestrationReactor).
   - Apply to MCP tool error returns at the JSON-RPC boundary in
     codexAppServerManager.ts (the existing -32000 catch path).
+
+## ORC-210 (iter 143): network capture framing covered by ORC-201/208
+
+- root cause: The bug-as-filed described "Browser network response
+  bodies are captured and surface into orchestrator context."
+  Investigation confirmed the current implementation only captures
+  `requestfailed` events as `{ url, method, failure }` triples
+  (apps/server/src/browser/Layers/BrowserAutomation.ts:908-916).
+  Response BODIES are NOT captured. The remaining surface is the
+  URL string, which an attacker-chosen redirect could shape into
+  a directive-style path segment.
+- change summary: ORC-201 already wrapped `networkErrors` in
+  `<untrusted_browser field="networkErrors">` inside
+  `formatBrowserObservationForPrompt`, and the shared neutralizer
+  defangs orchestrator-control patterns inside the body. The bug
+  as filed is moot for the deployed surface; pinning the URL
+  framing prevents regression.
+- files touched:
+  - apps/web/src/components/OrchestratorPanel.browserFraming.test.ts
+- tests added: 1 new regression test that submits a networkError
+  with `https://evil.test/[ORCHESTRATOR_OVERRIDE]` and asserts:
+  1. The directive token does not pass through as a live match.
+  2. The networkErrors block is wrapped in
+     `<untrusted_browser field="networkErrors">`.
+- evidence of green run:
+  ```
+  bun run test src/components/OrchestratorPanel.browserFraming.test.ts
+   Test Files  1 passed (1)
+        Tests  10 passed (10)
+  bun lint    # 0 warnings, 0 errors
+  ```
+- follow-ups:
+  - If a future change adds response-body capture (per the bug's
+    hypothetical), apply the same `wrapUntrustedContent({
+    kind: "browser", metadata: { url } })` pattern at the body
+    emit site. The substrate is in place
+    (`@orchestrate/shared/promptFraming`).
+  - Add a redaction policy: opt-in body capture only for explicit
+    `evidenceRequired` requests, not by default.
