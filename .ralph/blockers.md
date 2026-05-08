@@ -417,3 +417,25 @@ Each touchpoint has its own failure mode (forgotten command, default-fallthrough
 
 ORC-245a (migration + projection bump), ORC-245b (caller-identity propagation), ORC-245c (decider asserts on project.delete + per-command audit), ORC-245d (UI gating + tests).
 
+
+## ORC-254: Pin Electron to stable LTS via catalog (deferred)
+
+### Context
+
+apps/desktop/package.json currently pins `electron: 40.6.0` directly. The proposed fix has three parts:
+
+1. Pin to a stable LTS Electron major.
+2. Verify prebuilt binaries exist for darwin-arm64, darwin-x64, linux-x64, win32.
+3. Move the version into the root catalog so all desktop tooling shares one source of truth.
+
+### Attempted approaches and why each failed
+
+1. **Catalog-only restructure (no version change)**: would centralize the pin without affecting behavior. Rejected as a sufficient close-out because the test surface is tautological (the assertion would just re-read package.json) and it does not address the bleeding-edge concern that motivated the issue.
+2. **Bump to a known-good major while keeping behavior identical**: blocked. Selecting "the right" version requires live electronjs.org/releases data plus the CVE feed, neither of which the loop has confirmed network access to. Choosing a number from training-data memory risks pinning to a since-yanked release.
+3. **Verify prebuilts via a CI matrix dry-run**: blocked. The loop runs in a single environment; we cannot exercise darwin-x64 + linux-x64 + win32 build paths from here.
+
+### What would unblock it
+
+ORC-254a: live look at https://releases.electronjs.org/ to identify the latest stable on each supported branch and cross-check the CVE database for 40.6.0.
+ORC-254b: a one-shot manual `bun install` + `bun run build:desktop` on each supported platform (CI matrix or three local machines) to confirm prebuilt resolution.
+ORC-254c: catalog migration (`electron`, `electron-builder`, `electron-updater` -> `catalog:` references in apps/desktop/package.json plus the resolved versions in the root `catalog` block). Mechanical once the version is chosen.

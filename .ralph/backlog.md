@@ -2432,7 +2432,9 @@ Schema per entry:
 - files: apps/desktop/package.json (electron 40.6.0)
 - evidence: Electron 40 is bleeding-edge. Prebuilt binaries for darwin-arm64 / darwin-x64 / linux-x64 / win32 may not exist; on a fresh install the build will attempt to compile from source and fail without a complete C++ toolchain.
 - proposed_fix: Pin to a stable LTS Electron major (e.g., 32.x or current LTS). Verify prebuilts exist. Pin via catalog so all desktop tooling shares the version.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 168
+- deferred_reason: The "pin to stable LTS" half requires (a) live network research to confirm the current Electron stable channel and CVE status of 40.6.0 vs. candidates, and (b) actual desktop-build integration testing, both of which are outside the loop's deterministic test surface. The "pin via catalog" half is a structural change with no runtime contract to test against (the test would tautologically read package.json). Plan recorded as ORC-254a..c in blockers.md.
 
 ### ORC-255
 
