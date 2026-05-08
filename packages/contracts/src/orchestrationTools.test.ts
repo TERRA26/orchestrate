@@ -3,6 +3,7 @@ import { Effect, Schema, Result } from "effect";
 
 import {
   GetAgentStatusOutput,
+  GetBackgroundResultsOutput,
   SendUpdateToOrchestratorInput,
   SpawnAgentInput,
 } from "./orchestrationTools";
@@ -264,5 +265,116 @@ describe("GetAgentStatusOutput shape (ORC-130)", () => {
       latestUpdate: { wrong: "shape" },
     });
     expect(Result.isFailure(result)).toBe(true);
+  });
+});
+
+/**
+ * GetBackgroundResultsOutput uses `optional` (not `NullOr`) for
+ * fields that are "ready later" — completedAt and summary are not
+ * known until the background worker completes. ORC-280 picked this
+ * convention to match the sibling SendUpdateToOrchestratorInput,
+ * which is also optional-on-not-yet semantics.
+ *
+ * The contrast: an explicit `null` would mean "we know the value
+ * and it is absent" (e.g., a record that completed with no notes).
+ * That is NOT the semantic here. So decoding must reject null but
+ * accept an omitted field.
+ *
+ * @see ORC-280
+ */
+describe("GetBackgroundResultsOutput shape (ORC-280)", () => {
+  function decodeBg(input: unknown) {
+    return Effect.runSync(
+      Schema.decodeUnknownEffect(GetBackgroundResultsOutput)(input).pipe(Effect.result),
+    );
+  }
+
+  it("decodes a populated result with summary and completedAt", () => {
+    const result = decodeBg({
+      results: [
+        {
+          agentId: "agent-1",
+          taskId: "task-1",
+          status: "running",
+          summary: "Auth refactor in progress",
+          completedAt: "2026-05-08T07:00:00.000Z",
+        },
+      ],
+    });
+    expect(Result.isSuccess(result)).toBe(true);
+  });
+
+  it("decodes a result with summary omitted (not-yet-ready)", () => {
+    const result = decodeBg({
+      results: [
+        {
+          agentId: "agent-1",
+          taskId: "task-1",
+          status: "running",
+          completedAt: "2026-05-08T07:00:00.000Z",
+        },
+      ],
+    });
+    expect(Result.isSuccess(result)).toBe(true);
+  });
+
+  it("decodes a result with completedAt omitted (not-yet-completed)", () => {
+    const result = decodeBg({
+      results: [
+        {
+          agentId: "agent-1",
+          taskId: "task-1",
+          status: "running",
+          summary: "Working",
+        },
+      ],
+    });
+    expect(Result.isSuccess(result)).toBe(true);
+  });
+
+  it("decodes a result with both summary and completedAt omitted", () => {
+    const result = decodeBg({
+      results: [
+        {
+          agentId: "agent-1",
+          taskId: "task-1",
+          status: "running",
+        },
+      ],
+    });
+    expect(Result.isSuccess(result)).toBe(true);
+  });
+
+  it("rejects an explicit null for summary (forced ORC-280 convention)", () => {
+    const result = decodeBg({
+      results: [
+        {
+          agentId: "agent-1",
+          taskId: "task-1",
+          status: "running",
+          summary: null,
+        },
+      ],
+    });
+    expect(Result.isFailure(result)).toBe(true);
+  });
+
+  it("rejects an explicit null for completedAt (forced ORC-280 convention)", () => {
+    const result = decodeBg({
+      results: [
+        {
+          agentId: "agent-1",
+          taskId: "task-1",
+          status: "running",
+          completedAt: null,
+        },
+      ],
+    });
+    expect(Result.isFailure(result)).toBe(true);
+  });
+
+  it("decodes an empty results array", () => {
+    const result = decodeBg({ results: [] });
+    expect(Result.isSuccess(result)).toBe(true);
   });
 });

@@ -5636,3 +5636,54 @@ mention of the prefix convention. Verified failing-before by stashing
     can distinguish "running -> terminated" recoveries from
     "stuck -> terminated" recoveries. Today the previous status is
     only in the structured log line, not the event store.
+
+## ORC-280: GetBackgroundResultsOutput uses optional, not NullOr
+
+- root cause: `GetBackgroundResultsOutput` declared
+  `summary: Schema.NullOr(Schema.String)` and
+  `completedAt: Schema.NullOr(Schema.String)`. NullOr requires the
+  key to be present and only allows the value to be `null`. The
+  sibling `SendUpdateToOrchestratorInput` used `Schema.optional` for
+  the same "ready later" semantic. Consumers had to guard for both
+  `=== null` AND `=== undefined` depending on which contract they
+  spoke to. A null in one shape meant "not ready yet"; a null in
+  another shape meant "explicitly absent". The boundary contract
+  was inconsistent.
+- change summary:
+  - Switched both fields in `GetBackgroundResultsOutput` from
+    `Schema.NullOr(Schema.String)` to `Schema.optional(Schema.String)`.
+    Documented the convention inline: "ready later" semantics MUST
+    omit the field, never send explicit null. Explicit null is
+    reserved for "we know the value and it is absent".
+  - Added a `describe("GetBackgroundResultsOutput shape (ORC-280)",
+    ...)` block to the contracts test suite covering the four
+    accept paths (populated / summary-omitted / completedAt-omitted
+    / both-omitted) and the two reject paths (explicit null for
+    each field). The reject tests would have FAILED before this
+    change because NullOr accepts null; they PASS after.
+- files touched:
+  - packages/contracts/src/orchestrationTools.ts
+  - packages/contracts/src/orchestrationTools.test.ts
+- tests added: 7 (orchestrationTools.test grew from 18 to 25 tests).
+- evidence of green run:
+  ```
+  bun run vitest run src/orchestrationTools.test.ts
+   Test Files  1 passed (1)
+        Tests  25 passed (25)
+  bun run typecheck   # contracts/server/web all clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - The handler that produces this output is not yet implemented
+    (orchestratorSystemPrompt.ts mentions the tool name but
+    ClaudeAdapter.ts only registers a description). Whoever wires
+    the handler must respect the new convention: omit
+    summary/completedAt while in-progress instead of sending null.
+  - ORC-278 (P2) covers the broader audit: replace bare String
+    with IsoDateTime everywhere a timestamp is meant. completedAt
+    in this contract still uses Schema.String for consistency
+    with the rest of the file; the IsoDateTime upgrade should
+    happen in one batch via ORC-278.
+  - Consider documenting the optional-vs-NullOr convention in a
+    contracts README or CONTRIBUTING file so future schema authors
+    pick the right one without re-deriving the rationale.

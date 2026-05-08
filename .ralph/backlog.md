@@ -2672,7 +2672,7 @@ Schema per entry:
 - files: packages/contracts/src/orchestrationTools.ts:254-264 (GetBackgroundResultsOutput)
 - evidence: GetBackgroundResultsOutput uses Schema.NullOr for summary and completedAt (must be present, may be null), while sibling SendUpdateToOrchestratorInput uses Schema.optional. Consumers cannot tell whether a missing summary means "not yet" (null) or "absent" (optional); the boundary contract is inconsistent.
 - proposed_fix: Pick one convention per "may be missing" semantic. For "ready later" prefer optional + JS-side guard; for "explicit absence" prefer null. Document the choice in CONTRIBUTING and run a contract test that ensures consistency.
-- status: PENDING
+- status: DONE
 
 ### ORC-281
 

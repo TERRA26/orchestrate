@@ -330,14 +330,23 @@ export const GetBackgroundResultsInput = Schema.Struct({
   runId: Schema.optional(RunId),
   agentIds: Schema.optional(Schema.Array(AgentId)),
 });
+// ORC-280: `summary` and `completedAt` use `optional` (not `NullOr`).
+// Convention: a field that is "ready later" (the worker has not
+// reached that stage) MUST be omitted, never sent as an explicit
+// `null`. This matches SendUpdateToOrchestratorInput's optional-on
+// not-yet semantics so consumers can use a single `if (value)`
+// guard rather than checking both `=== null` and `=== undefined`.
+// An explicit `null` would mean "we know the value and it is
+// absent" (e.g., a record that completed with no notes); that is
+// not the semantic here, so the schema rejects null at decode time.
 export const GetBackgroundResultsOutput = Schema.Struct({
   results: Schema.Array(
     Schema.Struct({
       agentId: AgentId,
       taskId: TaskId,
       status: AgentStatusLiteral,
-      summary: Schema.NullOr(Schema.String),
-      completedAt: Schema.NullOr(Schema.String),
+      summary: Schema.optional(Schema.String),
+      completedAt: Schema.optional(Schema.String),
     }),
   ),
 });
