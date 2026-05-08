@@ -711,7 +711,8 @@ Schema per entry:
 - files: apps/web/src/components/ui/input.tsx:30-40,(form error sites in Settings + Composer)
 - evidence: Input.tsx uses CSS `has-aria-invalid` selector to style errors but the `aria-invalid` attribute is never set on the input element. Error messages are rendered as separate paragraphs without aria-describedby linking them to the input. Screen reader users cannot tell a field is invalid or why.
 - proposed_fix: Update Input + form wrappers to set aria-invalid="true" when the field has an error and aria-describedby pointing to the error message id. Add a regression test using axe-core in the form test files.
-- status: PENDING
+- status: DONE
+- fixed_iter: 83
 
 ### ORC-075
 

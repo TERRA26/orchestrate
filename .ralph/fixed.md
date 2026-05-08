@@ -1867,3 +1867,43 @@ All 6 would fail before the change because the hook did not exist.
 - Consider porting the expanded-image dialog to `@base-ui/react/dialog` for full WAI-ARIA Tab-cycling focus trap (the current hook only restores focus, it does not constrain Tab to dialog-internal elements).
 - Audit other custom dialogs for the same pattern (composer attachment confirm, terminal expand modal, etc.) and apply the hook.
 - If the prev/next buttons should be reachable via ArrowLeft/ArrowRight, add those keydown handlers in the hook or inside the dialog itself.
+
+## ORC-074 [iter 83] Input had aria-invalid CSS hook but no callers ever set it
+
+**Root cause**: `apps/web/src/components/ui/input.tsx` styled errored fields via `has-aria-invalid:*` CSS selectors, but no caller in the codebase actually set the `aria-invalid` attribute on errored inputs. Worse, the corresponding error message paragraphs were rendered as plain `<p>` elements with no `id`, no `role="alert"`, and no `aria-describedby` link from the input. Screen-reader users got no signal that a field was invalid OR why.
+
+**Change summary**:
+- New `apps/web/src/hooks/useFormFieldA11y.ts`: tiny hook that returns the right `inputProps` (`id`, `aria-invalid`, `aria-describedby` when error present) and `errorProps` (`id`, `role="alert"`, `aria-live="polite"`) bundles for any field. Also exposes `hasError` for callers that need a single source of truth. Uses `React.useId()` to derive a stable id when none is supplied.
+- `apps/web/src/components/settings/SettingsPanels.tsx`: wired the canonical example — the per-provider "Add custom model" input now sets `aria-invalid={Boolean(customModelError)}`, conditionally adds `aria-describedby` pointing at the error paragraph, and the error paragraph itself now has matching `id`, `role="alert"`, and `aria-live="polite"`. Inline rather than via the hook because the field is rendered inside a `.map()` and the hook can't be called per-iteration.
+
+**Files touched**:
+- apps/web/src/hooks/useFormFieldA11y.ts (NEW)
+- apps/web/src/hooks/useFormFieldA11y.test.tsx (NEW)
+- apps/web/src/components/settings/SettingsPanels.tsx
+
+**Tests added**: 6 jsdom render tests in `useFormFieldA11y.test.tsx`:
+1. No error: `aria-invalid="false"` and no `aria-describedby` set.
+2. With error: `aria-invalid="true"` and `aria-describedby` matches the error element's id.
+3. Error paragraph carries `role="alert"` and `aria-live="polite"` for AT priority.
+4. When no id is supplied, the hook derives a stable id via `useId()` and the error id is `${id}-error`.
+5. Empty string errors are treated as the valid (no-error) state.
+6. `hasError` boolean is true only for non-empty strings (not `null`, `undefined`, or `""`).
+
+All 6 would fail before the change because the hook did not exist.
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/hooks/useFormFieldA11y.test.tsx` (Node 24) -> Test Files 1 passed (1) | Tests 6 passed (6)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- exactOptionalPropertyTypes: the hook input accepts `id?: string` and `error?: string | null | undefined`. The test harness needed conditional spreads to satisfy `exactOptionalPropertyTypes: true`; documented in test source.
+- Error string vs object: the hook accepts `string | null | undefined`. Errors that are `Error` instances or other shapes need to be stringified by the caller. Acceptable since form validation libraries (e.g., react-hook-form) typically yield string messages.
+- Multiple errors per field: the hook handles a single message id. If a field needs to point to multiple description elements, the caller can pass `aria-describedby="id-1 id-2 ..."` themselves; the hook only contributes the error id when present.
+- ID collision with React.useId(): React 18+ ids are stable per render tree and never collide. Safe.
+- `role="alert"` is fairly aggressive; for fields that update on every keystroke this could be noisy. Mitigated by the SettingsPanels caller clearing the error on every change. Future callers should reset error state on input rather than aggregating.
+
+**Follow-ups**:
+- Apply the same pattern to remaining form sites: composer attachment errors, login form fields, custom model error in other providers, terminal cwd input. Audit via `grep -rn 'text-destructive' apps/web/src` for candidates.
+- Consider a `<FormField>` component that wraps `<Input>` + label + error and uses the hook internally so callers get the wiring for free.
+- Add an axe-core regression test once the helper is widely adopted.

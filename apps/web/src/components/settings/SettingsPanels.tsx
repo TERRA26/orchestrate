@@ -1303,6 +1303,12 @@ export function GeneralSettingsPanel() {
                       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                         <Input
                           id={`custom-model-${providerCard.provider}`}
+                          aria-invalid={Boolean(customModelError)}
+                          {...(customModelError
+                            ? {
+                                "aria-describedby": `custom-model-${providerCard.provider}-error`,
+                              }
+                            : {})}
                           value={customModelInput}
                           onChange={(event) => {
                             const value = event.target.value;
@@ -1340,7 +1346,14 @@ export function GeneralSettingsPanel() {
                       </div>
 
                       {customModelError ? (
-                        <p className="mt-2 text-xs text-destructive">{customModelError}</p>
+                        <p
+                          id={`custom-model-${providerCard.provider}-error`}
+                          role="alert"
+                          aria-live="polite"
+                          className="mt-2 text-xs text-destructive"
+                        >
+                          {customModelError}
+                        </p>
                       ) : null}
                     </div>
                   </div>
