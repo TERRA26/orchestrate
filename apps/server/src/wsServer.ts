@@ -63,6 +63,7 @@ import {
 } from "./connectionAuth.ts";
 import { buildTraceContext, withTraceContext } from "./observability/traceContext.ts";
 import { ignoreCauseDefectAware } from "./observability/defectAwareIgnore.ts";
+import { reapOrphanWorkers } from "./orchestration/orphanReap.ts";
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
@@ -1096,26 +1097,62 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   // rows terminated so the UI and orchestrator don't see stale "running" agents.
   yield* Effect.gen(function* () {
     const engineReadModel = yield* orchestrationEngine.getReadModel();
-    const orphans = (engineReadModel.orchestratorWorkers ?? []).filter(
-      (w: { status: string }) => w.status !== "terminated",
-    );
-    for (const worker of orphans as Array<{
-      workerId: string;
-      threadId: string;
-      status: string;
-    }>) {
-      yield* orchestrationEngine
-        .dispatch({
+    const orphans = (engineReadModel.orchestratorWorkers ?? [])
+      .filter((w: { status: string }) => w.status !== "terminated")
+      .map((w: { workerId: string; threadId: string; status: string }) => ({
+        workerId: w.workerId,
+        threadId: w.threadId,
+        priorStatus: w.status,
+      }));
+    // ORC-223: previously every dispatch failure was silently swallowed
+    // by `.pipe(Effect.catch(() => Effect.void))`, so a locked DB or
+    // schema mismatch left every orphan permanently "running" with no
+    // operator signal. Delegate to `reapOrphanWorkers`, log each
+    // per-worker failure at warn, and surface a high-visibility error
+    // when every dispatch failed (likely systemic).
+    const summary = yield* reapOrphanWorkers({
+      orphans,
+      dispatchTerminate: (worker) =>
+        orchestrationEngine.dispatch({
           type: "orchestrator.worker.terminate",
           commandId: CommandId.makeUnsafe(crypto.randomUUID()),
           workerId: worker.workerId as any,
-          reason: `Reclaimed on server restart (was ${worker.status})`,
+          reason: `Reclaimed on server restart (was ${worker.priorStatus})`,
           createdAt: new Date().toISOString(),
-        })
-        .pipe(Effect.catch(() => Effect.void));
+        }),
+      onFailure: (failure) =>
+        Effect.logWarning("orchestration.orphan-reap: dispatch failed").pipe(
+          Effect.annotateLogs({
+            workerId: failure.workerId,
+            threadId: failure.threadId,
+            priorStatus: failure.priorStatus,
+            reason: failure.reason,
+          }),
+        ),
+    });
+    if (summary.orphanCount > 0) {
+      yield* Effect.log(
+        `Orphan reap on startup: ${summary.reclaimed}/${summary.orphanCount} reclaimed`,
+      ).pipe(
+        Effect.annotateLogs({
+          orphanCount: summary.orphanCount,
+          reclaimed: summary.reclaimed,
+          failed: summary.failures.length,
+        }),
+      );
     }
-    if (orphans.length > 0) {
-      yield* Effect.log(`Reclaimed ${orphans.length} orphaned worker(s) on startup`);
+    if (summary.failures.length > 0 && summary.failures.length === summary.orphanCount) {
+      // Every dispatch failed. Almost certainly a systemic issue
+      // (locked DB, schema mismatch, projection failure). Loud signal
+      // so the operator does not miss it amid normal startup logs.
+      yield* Effect.logError(
+        "orchestration.orphan-reap: ALL orphan-reap dispatches failed; orphaned workers remain non-terminal in the read model",
+      ).pipe(
+        Effect.annotateLogs({
+          orphanCount: summary.orphanCount,
+          firstReason: summary.failures[0]?.reason,
+        }),
+      );
     }
   }).pipe(Effect.catch(() => Effect.void));
 

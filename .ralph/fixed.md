@@ -4763,3 +4763,55 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider an oxlint rule that flags raw
     `Effect.ignoreCause({ log: true })` and recommends the
     helper.
+
+## ORC-223 (iter 149): structured logging for orphan-reap dispatch failures
+
+- root cause: The startup orphan-reap loop in `wsServer.ts:1097-1119`
+  used `.pipe(Effect.catch(() => Effect.void))` to swallow per-worker
+  dispatch failures. If the DB was locked, a migration was pending,
+  or the projection had drifted, every dispatch failed and the
+  orphans remained "running" forever with NO operator signal beyond
+  a single "Reclaimed N orphaned worker(s)" log line that
+  masqueraded as success even when N=0 reclaim attempts succeeded.
+- change summary:
+  - Extracted the loop into
+    `apps/server/src/orchestration/orphanReap.ts` exporting
+    `reapOrphanWorkers({ orphans, dispatchTerminate, onFailure })`.
+    The helper iterates orphans, awaits the dispatch, and on
+    failure captures structured per-worker metadata
+    (`workerId`, `threadId`, `priorStatus`, `reason`) without
+    rethrowing. Returns `{ orphanCount, reclaimed, failures }`.
+  - Refactored the wsServer.ts startup site to delegate to the
+    helper. The new flow:
+    1. Maps engine workers into the `OrphanWorker` shape.
+    2. Calls `reapOrphanWorkers` with an `onFailure` hook that
+       logs at warn with structured annotations.
+    3. After the loop, logs a summary at info level
+       (`reclaimed/orphanCount`).
+    4. If `failures.length === orphanCount` (every dispatch
+       failed), logs at ERROR level with a "loud" message and
+       the first failure's reason for triage.
+- files touched:
+  - apps/server/src/orchestration/orphanReap.ts (new)
+  - apps/server/src/orchestration/orphanReap.test.ts (new)
+  - apps/server/src/wsServer.ts
+- tests added: 6 unit tests covering: all-success path,
+  partial-failure path with continuation, all-fail path,
+  zero-orphans no-op (does not invoke dispatch), onFailure
+  per-worker metadata propagation, non-Error thrown failure
+  classified correctly.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/orphanReap.test.ts
+   Test Files  1 passed (1)
+        Tests  6 passed (6)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 errors on changed files
+  ```
+- follow-ups:
+  - Add a periodic background job (every 60s) that re-runs the
+    reap with the same helper so a transient startup failure
+    self-heals without operator intervention.
+  - Promote the all-failed branch to abort startup behind a
+    `--strict-orphan-reap` CLI flag for production environments
+    that want fail-fast behavior.

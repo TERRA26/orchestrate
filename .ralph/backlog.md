@@ -2138,6 +2138,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:981-1008 (orphan-worker reaper Effect.catch)
 - evidence: Startup reaping of orphaned workers uses `.pipe(Effect.catch(() => Effect.void))`. If reaping fails (e.g. DB locked, schema mismatch), the catch swallows the failure and orphans remain "running" forever.
 - proposed_fix: On reap failure, fail startup with a clear error. Or stash the failure for retry on a periodic background job, but never silently continue with known-stale state.
+- status: DONE
+- fixed_iter: 149
 - status: PENDING
 
 ### ORC-224
