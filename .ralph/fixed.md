@@ -3668,3 +3668,45 @@ mention of the prefix convention. Verified failing-before by stashing
   - Add a router-level integration test that drives the actual
     TanStack route resolver with an unknown URL and asserts the
     notFoundComponent path is taken.
+
+## ORC-177 (iter 119): visible loading shell while threads hydrate
+
+- root cause: `_chat.$threadId.tsx` returned `null` while the WS
+  snapshot populated the threads store. The hydration window was
+  visually identical to a blank/broken page, and a user clicking a
+  thread before hydration completed saw no signal that anything was
+  loading.
+- change summary:
+  - Added `apps/web/src/components/ChatThreadLoadingShell.tsx`
+    that renders a skeleton-driven loading state with role=status,
+    aria-busy, aria-live, and a "Loading thread..." label. The
+    threadId is rendered inside an sr-only span so debugging stale
+    links is possible from the UI.
+  - Replaced `if (!threadsHydrated) return null` in the route with
+    `return <ChatThreadLoadingShell threadId={threadId} />`. The
+    rest of the hydration / not-found / split-view branches are
+    unchanged.
+- files touched:
+  - apps/web/src/components/ChatThreadLoadingShell.tsx (new)
+  - apps/web/src/components/ChatThreadLoadingShell.test.tsx (new)
+  - apps/web/src/routes/_chat.$threadId.tsx
+- tests added: 5 component tests under jsdom verifying:
+  role=status / aria-busy / aria-live, "Loading thread..." label,
+  threadId in sr-only message, multiple Skeleton placeholders by
+  data-slot=skeleton, and a stable test-id for route-level tests.
+- evidence of green run:
+  ```
+  bun run test src/components/ChatThreadLoadingShell.test.tsx
+   Test Files  1 passed (1)
+        Tests  5 passed (5)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 errors on changed files (2 pre-existing
+                        warnings in the route file, untouched)
+  ```
+- follow-ups:
+  - Add a route-level test (real router context) that drives the
+    `threadsHydrated=false` branch and asserts the loading shell
+    is rendered, so the wiring (not just the shell) is pinned.
+  - Consider also rendering the shell briefly when `threadExists`
+    is false but the snapshot is mid-flight, instead of immediately
+    redirecting home.

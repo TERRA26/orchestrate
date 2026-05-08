@@ -77,6 +77,7 @@ import { cn } from "~/lib/utils";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 import { onBrowserOpenRequested } from "../wsNativeApi";
 import { readNativeApi } from "../nativeApi";
+import { ChatThreadLoadingShell } from "../components/ChatThreadLoadingShell";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
@@ -1608,7 +1609,7 @@ function ChatThreadRouteView() {
   }, [navigate, routeThreadExists, search, splitView, threadId, threadsHydrated]);
 
   if (!threadsHydrated) {
-    return null;
+    return <ChatThreadLoadingShell threadId={threadId} />;
   }
 
   if (splitView && search.splitViewId) {

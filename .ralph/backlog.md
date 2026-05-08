@@ -1675,7 +1675,8 @@ Schema per entry:
 - files: apps/web/src/routes/\_chat.$threadId.tsx:1-77
 - evidence: Route mounts and ChatView reads from the store before the WS snapshot has populated `threads`. If the user clicks a thread that exists server-side but is not yet in the local store, the view renders with stale or empty data.
 - proposed_fix: Either gate the render on a hydration flag, or render a minimal "loading thread..." state until the thread appears in the store.
-- status: PENDING
+- status: DONE
+- fixed_iter: 119
 
 ### ORC-178
 
