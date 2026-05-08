@@ -1318,11 +1318,47 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         runId: command.runId,
       });
-      yield* requireOrchestratorTask({
+      const targetTask = yield* requireOrchestratorTask({
         readModel,
         command,
         taskId: command.taskId,
       });
+
+      // ORC-126: dependsOn must be satisfied before spawning a worker
+      // for the target task. Without this, the orchestrator can spawn
+      // a worker for task B before task A (a prerequisite) is
+      // accepted, breaking the documented decomposition contract.
+      // Surface the unsatisfied prerequisite so the orchestrator can
+      // wait or fix.
+      const dependsOn = targetTask.dependsOn ?? [];
+      if (dependsOn.length > 0) {
+        const tasksById = new Map(
+          (readModel.orchestratorTasks ?? []).map((t) => [t.taskId as unknown as string, t]),
+        );
+        const unsatisfied: Array<{ taskId: string; status: string }> = [];
+        for (const depId of dependsOn) {
+          const dep = tasksById.get(depId as unknown as string);
+          if (!dep) {
+            unsatisfied.push({ taskId: depId as unknown as string, status: "missing" });
+            continue;
+          }
+          if (dep.status !== "accepted") {
+            unsatisfied.push({
+              taskId: dep.taskId as unknown as string,
+              status: dep.status,
+            });
+          }
+        }
+        if (unsatisfied.length > 0) {
+          const formatted = unsatisfied
+            .map((u) => `${u.taskId}=${u.status}`)
+            .join(", ");
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Cannot spawn worker for task '${command.taskId}': prerequisite tasks not satisfied (must be accepted): ${formatted}.`,
+          });
+        }
+      }
 
       // Budget enforcement: reject if maxTotalWorkers would be exceeded
       const existingWorkerCount = (readModel.orchestratorWorkers ?? []).filter(

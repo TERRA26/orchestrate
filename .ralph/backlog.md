@@ -1198,7 +1198,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts:1294-1315 (spawn) and task.dependsOn
 - evidence: spawn does not check the spawn target's `dependsOn` list. The orchestrator can spawn a worker for task B before its prerequisite task A is accepted, breaking the documented decomposition contract.
 - proposed_fix: When handling spawn, verify all entries in the target task's dependsOn are in status "accepted" or "completed". Reject spawn otherwise. Surface "dependencies not satisfied" so the orchestrator can wait or fix.
-- status: PENDING
+- status: DONE
+- fixed_iter: 102
 
 ### ORC-127
 

@@ -2816,3 +2816,89 @@ projection bug ever wrote them.
 - When `orchestrator.task.dependency.set` lands (currently in
   KNOWN_UNTESTED), evaluate whether dependency edges should also
   count toward an effective depth metric.
+
+## ORC-126 [iter 102] worker.spawn ignored dependsOn satisfaction
+
+**Root cause**: `apps/server/src/orchestration/decider.ts`'s
+`orchestrator.worker.spawn` case looked up the target task but never
+inspected its `dependsOn` list. The orchestrator could spawn a worker
+for task B even though task A (a prerequisite) was still pending,
+running, submitted, blocked, or in needs-rework. This broke the
+documented decomposition contract: dependents are only meant to start
+after their prerequisites are accepted, but nothing in the decider
+enforced that. The downstream consequence: workers starting too early
+saw stale or partial outputs from incomplete prerequisites and
+produced incorrect work.
+
+**Change summary**:
+- `apps/server/src/orchestration/decider.ts`: `worker.spawn` now
+  reads the target task's `dependsOn` array. For each prerequisite
+  task id, it looks up the task's current status. If any
+  prerequisite is missing from the read model OR has a status other
+  than `accepted`, the spawn is rejected with
+  `OrchestrationCommandInvariantError`. The error detail lists every
+  unsatisfied prerequisite as `taskId=status` so an operator can see
+  the exact gate.
+
+**Files touched**:
+- apps/server/src/orchestration/decider.ts
+- apps/server/src/orchestration/decider.orchestrator.test.ts (3 new tests)
+
+**Tests added**: 3 cases under a new `worker.spawn dependency gate
+(ORC-126)` describe block:
+
+1. Spawning B (which depends on A) is rejected when A is still
+   `pending`. The error mentions "prerequisite", the prerequisite
+   task id, and the offending status.
+2. Spawning B is rejected after A goes through assign -> spawn ->
+   submit -> reject (status = `needs-rework`). Error includes the
+   task id and `needs-rework`.
+3. Spawning B succeeds after A is accepted (status = `accepted`).
+   The decider produces an `orchestrator.worker.spawned` event.
+
+The first 2 tests would fail before this commit (the spawn would
+have produced a spawned event with no rejection); they pin the new
+contract. The 3rd test confirms the happy path stays unblocked.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/decider.orchestrator.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 21 passed (21)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Status set chosen: only `accepted` qualifies as satisfied. The
+  schema has no `completed` status; the contracts' final-success
+  state is `accepted`. Other potential terminal states (`cancelled`,
+  `failed`, `blocked`) explicitly do not satisfy the dependency —
+  spawning a dependent on top of a failed prerequisite would just
+  reproduce the same failure.
+- Missing prerequisite handling: if a dependsOn entry references a
+  task id that no longer exists in the read model (rare; possible
+  after a future task.delete operation), the dependency is treated
+  as `missing` and the spawn is rejected. Better to fail loud than
+  to silently allow a spawn against a phantom dependency.
+- Existing budget checks: maxTotalWorkers and maxDepth (ORC-124)
+  still run AFTER the dependency check. Order is: existence,
+  dependency satisfaction, total-workers budget, depth budget. The
+  most-specific failure surface fires first.
+- Performance: O(D) where D is the number of dependencies, with a
+  one-time O(N) Map build over all tasks. For typical orchestrator
+  graphs (tens of tasks) this is microseconds.
+- The error format uses comma-separated `taskId=status` pairs. For
+  a graph with many unsatisfied dependencies (5+), the message could
+  get long; truncating to first N with a "+ X more" suffix would be
+  friendlier. Tracked as a follow-up.
+
+**Follow-ups**:
+- Apply the same gate to `orchestrator.task.assign`: assigning a
+  task whose prerequisites are unsatisfied is also wrong, even
+  before a worker spawns.
+- Once ORC-118's `task.dependency.set` handler lands, the
+  satisfaction check needs to handle dynamic edges added after
+  task.create. Today the check uses `task.dependsOn` directly which
+  only reflects creation-time edges.
+- Add an "auto-spawn on prerequisite acceptance" reactor that tries
+  the spawn for blocked dependents when their prerequisites flip
+  to accepted. Without this, the orchestrator must poll.
+- Truncate long error detail strings once we hit graphs with many
+  unsatisfied prerequisites in a single message.

@@ -594,6 +594,215 @@ describe("orchestrator decider — task lifecycle", () => {
 // Worker lifecycle
 // ---------------------------------------------------------------------------
 
+describe("orchestrator decider — worker.spawn dependency gate (ORC-126)", () => {
+  const taskAId = "task-a" as OrchestratorTaskId;
+  const taskBId = "task-b" as OrchestratorTaskId;
+  const workerForBId = "worker-b" as OrchestratorWorkerId;
+
+  it("rejects worker.spawn for a task whose dependency is still pending", async () => {
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-a-prereq"),
+        taskId: taskAId,
+        runId,
+        title: "Task A (prerequisite)",
+        objective: "Must finish before B",
+        acceptanceCriteria: ["a"],
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-b-dependent"),
+        taskId: taskBId,
+        runId,
+        title: "Task B (depends on A)",
+        objective: "Cannot start until A is accepted",
+        acceptanceCriteria: ["b"],
+        dependsOn: [taskAId],
+        createdAt: later,
+      },
+    ]);
+
+    const detail = await decideFailure(model, {
+      type: "orchestrator.worker.spawn",
+      commandId: cmd("cmd-spawn-b-too-early"),
+      workerId: workerForBId,
+      runId,
+      taskId: taskBId,
+      threadId: ThreadId.makeUnsafe("thread-b"),
+      spawnBudget,
+      workspace,
+      createdAt: evenLater,
+    });
+
+    expect(detail).toContain("prerequisite");
+    expect(detail).toContain(taskAId);
+    expect(detail).toContain("pending");
+  });
+
+  it("rejects worker.spawn when the prerequisite is rejected (status needs-rework)", async () => {
+    // Build state: assign(A) -> spawn(A) -> submit(A) -> reject(A).
+    // After reject, A's status is "needs-rework", not "accepted".
+    const workerForAId = "worker-a" as OrchestratorWorkerId;
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-a-rework"),
+        taskId: taskAId,
+        runId,
+        title: "Task A",
+        objective: "First",
+        acceptanceCriteria: ["a"],
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-b-rework"),
+        taskId: taskBId,
+        runId,
+        title: "Task B",
+        objective: "Second",
+        acceptanceCriteria: ["b"],
+        dependsOn: [taskAId],
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.assign",
+        commandId: cmd("cmd-assign-a"),
+        taskId: taskAId,
+        assigneeKind: "worker",
+        assigneeId: workerForAId as unknown as string,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.worker.spawn",
+        commandId: cmd("cmd-spawn-a"),
+        workerId: workerForAId,
+        runId,
+        taskId: taskAId,
+        threadId: ThreadId.makeUnsafe("thread-a"),
+        spawnBudget,
+        workspace,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.submit",
+        commandId: cmd("cmd-submit-a"),
+        taskId: taskAId,
+        workerId: workerForAId,
+        summary: "First pass attempt",
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.reject",
+        commandId: cmd("cmd-reject-a"),
+        taskId: taskAId,
+        instruction: "Try again",
+        createdAt: now,
+      },
+    ]);
+
+    const detail = await decideFailure(model, {
+      type: "orchestrator.worker.spawn",
+      commandId: cmd("cmd-spawn-b-needs-rework"),
+      workerId: workerForBId,
+      runId,
+      taskId: taskBId,
+      threadId: ThreadId.makeUnsafe("thread-b"),
+      spawnBudget,
+      workspace,
+      createdAt: now,
+    });
+
+    expect(detail).toContain("prerequisite");
+    expect(detail).toContain(taskAId);
+    expect(detail).toContain("needs-rework");
+  });
+
+  it("accepts worker.spawn when the prerequisite was accepted", async () => {
+    const workerForAId = "worker-a-ok" as OrchestratorWorkerId;
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-a-ok"),
+        taskId: taskAId,
+        runId,
+        title: "Task A",
+        objective: "First",
+        acceptanceCriteria: ["a"],
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.create",
+        commandId: cmd("cmd-task-b-ok"),
+        taskId: taskBId,
+        runId,
+        title: "Task B",
+        objective: "Second",
+        acceptanceCriteria: ["b"],
+        dependsOn: [taskAId],
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.assign",
+        commandId: cmd("cmd-assign-a-ok"),
+        taskId: taskAId,
+        assigneeKind: "worker",
+        assigneeId: workerForAId as unknown as string,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.worker.spawn",
+        commandId: cmd("cmd-spawn-a-ok"),
+        workerId: workerForAId,
+        runId,
+        taskId: taskAId,
+        threadId: ThreadId.makeUnsafe("thread-a-ok"),
+        spawnBudget,
+        workspace,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.submit",
+        commandId: cmd("cmd-submit-a-ok"),
+        taskId: taskAId,
+        workerId: workerForAId,
+        summary: "Done",
+        filesWritten: ["src/a.ts"],
+        testsRun: [],
+        hasChanges: true,
+        createdAt: now,
+      },
+      {
+        type: "orchestrator.task.accept",
+        commandId: cmd("cmd-accept-a"),
+        taskId: taskAId,
+        summary: "ok",
+        createdAt: now,
+      },
+    ]);
+
+    const events = await decide(model, {
+      type: "orchestrator.worker.spawn",
+      commandId: cmd("cmd-spawn-b-ok"),
+      workerId: workerForBId,
+      runId,
+      taskId: taskBId,
+      threadId: ThreadId.makeUnsafe("thread-b-ok"),
+      spawnBudget,
+      workspace,
+      createdAt: now,
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe("orchestrator.worker.spawned");
+  });
+});
+
 describe("orchestrator decider — task dependency cycles (ORC-118)", () => {
   it("rejects task.create that would form a self-dependency", async () => {
     const model = await applyCommands(modelWithProject(), [createRunCommand]);
