@@ -4514,3 +4514,58 @@ mention of the prefix convention. Verified failing-before by stashing
   - Update docs/ORCHESTRATOR.md to mention the
     `<untrusted_tool_output>` tag as a data-only frame around
     worker self-reported text in `get_agent_status` results.
+
+## ORC-204 (iter 142; previously deferred at iter 134): sanitize+wrap tool error messages
+
+- root cause: Error messages from shell tools (git, sql, runtime
+  failures) were echoed verbatim into `appendCaptureFailureActivity`
+  details inside CheckpointReactor (and similar emit sites). Those
+  details then become activity events that surface in the
+  orchestrator's review prompt. A maliciously-crafted file path or
+  a tool that emits ANSI escape sequences could plant directive
+  text or terminal control codes in the orchestrator's reasoning
+  context.
+- previous deferral context: ORC-204 was deferred at iter 134
+  pending the substrate move of `wrapUntrustedContent` to a shared
+  package. ORC-208 (iter 139) completed that promotion.
+- change summary:
+  - Extended `@orchestrate/shared/promptFraming` with two new
+    helpers:
+    1. `stripAnsiAndControlChars(text)`: removes CSI/OSC/charset
+       ANSI sequences, all C0 control chars (except `\n`, `\t`,
+       `\r`), all C1 control chars, soft hyphen, and BOM.
+       Preserves Unicode letters, emoji, common whitespace.
+    2. `wrapToolError({ text, tool?, cause? })`: convenience
+       wrapper that sanitizes via the helper and wraps in
+       `<untrusted_tool_output role="error" tool="..." cause="...">`.
+  - Wired `wrapToolError` into the CheckpointReactor's
+    diff-summary failure path (line 248-255). The activity detail
+    now carries the wrapped envelope; ANSI is stripped and any
+    smuggled directive is neutralized inside.
+  - Added eslint-disable for the deliberate control-char regex.
+- files touched:
+  - packages/shared/src/promptFraming.ts
+  - packages/shared/src/promptFraming.test.ts
+  - apps/server/src/orchestration/Layers/CheckpointReactor.ts
+- tests added: 14 new unit tests under
+  `stripAnsiAndControlChars` and `wrapToolError`. Cover: CSI color
+  codes, CSI cursor, OSC title sequences, common-whitespace
+  preservation, C0 control stripping, C1 control stripping, DEL
+  stripping, soft-hyphen + BOM stripping, empty-input pass-through,
+  Unicode preservation (café, emoji); plus wrap with full metadata,
+  wrap without metadata, neutralization-after-strip, and Unicode
+  path in wrapped error.
+- evidence of green run:
+  ```
+  bun run test (packages/shared promptFraming)
+   Test Files  1 passed (1)
+        Tests  29 passed (29)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Wire `wrapToolError` at the remaining error-echo emit sites in
+    CheckpointReactor (lines 256-263, 688-712, 727+) and other
+    reactors (ProviderCommandReactor, OrchestrationReactor).
+  - Apply to MCP tool error returns at the JSON-RPC boundary in
+    codexAppServerManager.ts (the existing -32000 catch path).

@@ -10,6 +10,7 @@ import {
 } from "@orchestrate/contracts";
 import { Cause, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "@orchestrate/shared/DrainableWorker";
+import { wrapToolError } from "@orchestrate/shared/promptFraming";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -246,10 +247,20 @@ const make = Effect.gen(function* () {
           })),
         ),
         Effect.tapError((error) =>
+          // ORC-204: error messages from git/sql/runtime can carry ANSI
+          // escape codes or directive-shaped tokens. Sanitize and wrap
+          // before persisting; the activity reaches the orchestrator's
+          // review prompt as data, not authority.
           appendCaptureFailureActivity({
             threadId: input.threadId,
             turnId: input.turnId,
-            detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
+            detail:
+              "Checkpoint captured, but turn diff summary is unavailable.\n" +
+              wrapToolError({
+                text: error.message,
+                tool: "checkpoint.diff-summary",
+                cause: "diff-derive-failed",
+              }),
             createdAt: input.createdAt,
           }),
         ),

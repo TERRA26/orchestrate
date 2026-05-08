@@ -89,3 +89,54 @@ export function wrapUntrustedContent(input: WrapUntrustedContentInput): string {
   const safeContent = neutralizeOrchestratorDirectives(input.content);
   return "<" + tag + attrs + ">\n" + safeContent + "\n</" + tag + ">";
 }
+
+/**
+ * ORC-204: strip ANSI escape sequences and most control characters so
+ * an error message from a shell tool (git, npm, eslint, etc.) cannot
+ * smuggle terminal escape codes or directive-control characters into
+ * the orchestrator's reasoning context.
+ *
+ * Preserves common whitespace (`\n`, `\t`, `\r`); removes everything
+ * else in the C0/C1 control ranges plus the soft-hyphen and BOM.
+ */
+export function stripAnsiAndControlChars(text: string): string {
+  // ANSI CSI / OSC / VT100 sequences. Covers the common subset:
+  //   ESC [ <params> <cmd>      (CSI)
+  //   ESC ] <params> ST/BEL     (OSC)
+  //   ESC ( | ) | * | + <set>   (charset)
+  //   ESC <single-letter>       (other escapes)
+  // eslint-disable-next-line no-control-regex
+  const ANSI = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()*+][A-Za-z0-9]|[@-Z\\-_])/g;
+  let out = text.replace(ANSI, "");
+  // Drop all C0 control chars except \n \t \r and all C1 control chars.
+  // eslint-disable-next-line no-control-regex
+  out = out.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+  // Drop soft hyphen and BOM which can break tokenization in some
+  // model tokenizers.
+  out = out.replace(/[­﻿]/g, "");
+  return out;
+}
+
+/**
+ * ORC-204: convenience wrapper that combines `stripAnsiAndControlChars`
+ * with `wrapUntrustedContent({ kind: "tool-output" })`. Use this at
+ * any boundary where shell-tool error text is echoed back to the
+ * orchestrator (e.g. CheckpointReactor activity details, MCP tool
+ * error returns).
+ */
+export function wrapToolError(input: {
+  readonly text: string;
+  readonly tool?: string;
+  readonly cause?: string;
+}): string {
+  const sanitized = stripAnsiAndControlChars(input.text);
+  return wrapUntrustedContent({
+    kind: "tool-output",
+    content: sanitized,
+    metadata: {
+      role: "error",
+      ...(input.tool ? { tool: input.tool } : {}),
+      ...(input.cause ? { cause: input.cause } : {}),
+    },
+  });
+}

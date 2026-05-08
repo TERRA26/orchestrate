@@ -1944,9 +1944,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/CheckpointReactor.ts,OrchestrationToolRouter.ts (error message handling)
 - evidence: Tool failure messages echo back to the orchestrator unframed. A `git status` against a repo with maliciously-named files (`'; rm -rf /; #file.txt`) can produce error text that contains injection.
 - proposed_fix: Wrap error text in `<tool_error tool="..." cause="...">...</tool_error>`. Strip ANSI escape codes and control characters in error messages before persistence.
-- status: DEFERRED
-- deferred_iter: 134
-- deferred_reason: Same provider-adapter trace problem as ORC-202. The error-message echo path passes through Effect tagged errors AND the persistence layer (CheckpointReactor) before reaching the orchestrator. Adding a sanitize+wrap shim requires identifying every error-emit site to avoid double-wrapping or missed paths.
+- status: DONE
+- fixed_iter: 142
+- previously_deferred_iter: 134
 
 ### ORC-205
 
