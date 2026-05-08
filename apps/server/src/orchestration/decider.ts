@@ -1501,11 +1501,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "orchestrator.worker.resume": {
-      yield* requireOrchestratorWorkerStatus({
+      // ORC-117: defense-in-depth. The expectedStatus check below already
+      // rejects non-paused workers, but a stale orchestrator producing a
+      // resume command for a terminated worker would move the worker back
+      // to running with no provider session. Use the central transition
+      // graph (terminated -> running is forbidden) so the rejection is
+      // pinned in one place.
+      const worker = yield* requireOrchestratorWorkerStatus({
         readModel,
         command,
         workerId: command.workerId,
         expectedStatus: "paused",
+      });
+      yield* requireLegalWorkerTransition({
+        command,
+        workerId: command.workerId,
+        from: worker.status,
+        to: "running",
       });
       return {
         ...withEventBase({

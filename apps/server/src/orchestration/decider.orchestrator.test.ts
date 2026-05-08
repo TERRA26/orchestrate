@@ -594,6 +594,47 @@ describe("orchestrator decider — task lifecycle", () => {
 // Worker lifecycle
 // ---------------------------------------------------------------------------
 
+describe("orchestrator decider — worker resume invariants (ORC-117)", () => {
+  it("rejects resume when the worker has been terminated", async () => {
+    const model = await applyCommands(modelWithProject(), [
+      createRunCommand,
+      createTaskCommand,
+      {
+        type: "orchestrator.worker.spawn",
+        commandId: cmd("cmd-worker-spawn"),
+        workerId,
+        runId,
+        taskId,
+        threadId,
+        spawnBudget,
+        workspace,
+        createdAt: later,
+      },
+      {
+        type: "orchestrator.worker.terminate",
+        commandId: cmd("cmd-worker-terminate"),
+        workerId,
+        reason: "test cleanup",
+        createdAt: evenLater,
+      },
+    ]);
+
+    const detail = await decideFailure(model, {
+      type: "orchestrator.worker.resume",
+      commandId: cmd("cmd-worker-resume-after-terminate"),
+      workerId,
+      reason: "stale orchestrator retry",
+      createdAt: evenLater,
+    });
+
+    // Either guard (expectedStatus=paused or the transition graph) rejects
+    // the command. Both messages reference the worker's current status so
+    // operators can see why the resume was denied.
+    expect(detail).toContain(workerId);
+    expect(detail.toLowerCase()).toContain("terminated");
+  });
+});
+
 describe("orchestrator decider — worker lifecycle", () => {
   it("spawns a worker with modelBinding → produces orchestrator.worker.spawned with correct provider", async () => {
     const model = await applyCommands(modelWithProject(), [createRunCommand, createTaskCommand]);

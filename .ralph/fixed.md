@@ -2495,3 +2495,78 @@ The pre-existing 21 decider.orchestrator.test.ts tests + the worker-coverage ass
 - When `orchestrator.worker.update-post` lands a real status-mutation path (not just metadata), wire it to the helper.
 - Add a graph visualizer test that emits a Mermaid diagram of WORKER_LEGAL_TRANSITIONS to keep the doc + code aligned.
 - Promote the same pattern to task transitions (`orchestrator.task.*` cases) where ORC-100 KNOWN_UNTESTED entries have been waiting on a similar treatment.
+
+## ORC-117 [iter 98] worker.resume defense-in-depth via central transition graph
+
+**Audit findings**: Re-reading the decider, the existing
+`requireOrchestratorWorkerStatus({ expectedStatus: "paused" })` guard
+already rejects a `terminated` worker (the message reads "must be in
+status [paused] but is 'terminated'"). The original ORC-117 concern was
+partially misdiagnosed — the rejection IS already in place. The
+remaining gap is that the rejection lives only in the `worker.resume`
+case body; if a future refactor expanded the expectedStatus list to
+include other statuses (or the case grew a new "fast resume" branch),
+the safety would silently disappear.
+
+**Change summary**:
+- `apps/server/src/orchestration/decider.ts`: `worker.resume` now adds
+  a parallel call to `requireLegalWorkerTransition({ from: worker.status,
+  to: "running" })` after the expectedStatus check. The transition
+  graph (added in ORC-116) treats `terminated -> running` as illegal
+  with no outgoing edges from terminated, so even if the
+  expectedStatus list ever loosened, the transition guard still
+  rejects. Two checks now agree on the same invariant from different
+  angles.
+
+**Files touched**:
+- apps/server/src/orchestration/decider.ts
+- apps/server/src/orchestration/decider.orchestrator.test.ts (1 new test)
+
+**Tests added**: 1 case in `decider.orchestrator.test.ts` under a new
+`worker resume invariants (ORC-117)` describe block: spawn a worker,
+terminate it, then attempt resume; assert the failure message contains
+both the workerId and "terminated". This pins the rejection contract
+regardless of which guard fires first.
+
+The test passes both before and after this change (the existing
+expectedStatus check already rejected the case). It is not strictly
+failing-first; instead, it locks the invariant in place so a future
+refactor that loosens expectedStatus would still fail this test via
+the transition guard.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/decider.orchestrator.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 15 passed (15)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The "failing-first" rule is honored in spirit but not in literal
+  letter: the existing expectedStatus check already rejected; my
+  change adds defense-in-depth. The test exists to lock the invariant
+  rather than catch a regression introduced by this commit.
+- Order of guards: requireOrchestratorWorkerStatus runs first, fails
+  fast on non-paused workers. requireLegalWorkerTransition runs only
+  if the worker IS paused. paused -> running is legal, so the
+  transition guard is essentially a no-op for the happy path.
+  Combined cost: one extra map lookup and one Set.has when resuming
+  a paused worker.
+- The "failed" status mentioned in the original ORC-117 proposed_fix
+  does not exist in `OrchestratorWorkerStatus` (it is one of
+  idle/running/paused/submitted/stuck/terminated). No code change
+  needed for that; the proposed_fix author may have been thinking of
+  a planned status that was never added.
+- Future expansion: if "failed" or similar non-recoverable statuses
+  do get added, only the WORKER_LEGAL_TRANSITIONS map needs an
+  update; the wiring in worker.resume already calls the transition
+  guard so any new terminal-state rejection lands automatically.
+
+**Follow-ups**:
+- Apply the same belt-and-suspenders pattern to worker.pause: today
+  it has expectedStatus=["running","idle"] but no transition graph
+  call. The graph permits running->paused and idle->paused so the
+  intent already lines up; one line of code prevents future drift.
+- Promote the same pattern to `orchestrator.task.*` cases that have
+  inline expectedStatus checks (task.cancel, task.fail, task.block).
+- Add a property test that fuzzes worker status values and asserts
+  every legal transition pair appears in the graph — guards against
+  silent edits to the WORKER_LEGAL_TRANSITIONS map.

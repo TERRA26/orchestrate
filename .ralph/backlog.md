@@ -1113,7 +1113,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts:1493-1514 (orchestrator.worker.resume)
 - evidence: resume only checks expectedStatus="paused" but does not block the case where the worker is already terminated. A stale orchestrator that previously paused, then terminated, then attempts to resume can move the worker back to running with no provider session.
 - proposed_fix: Add a status check that disallows resume when worker.status === "terminated" or "failed"; emit a structured error.
-- status: PENDING
+- status: DONE
+- fixed_iter: 98
 
 ### ORC-118
 
