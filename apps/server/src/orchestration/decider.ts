@@ -164,6 +164,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      // ORC-183: defense-in-depth on parentThreadId. The command body
+      // could carry an arbitrary parentThreadId from an upstream MCP
+      // tool. Reject creates that name a non-existent parent or a
+      // parent in a different project. Self-parenting is also illegal
+      // since a thread cannot exist before its own create event.
+      if (command.parentThreadId !== undefined && command.parentThreadId !== null) {
+        if (command.parentThreadId === command.threadId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Thread '${command.threadId}' cannot be its own parent.`,
+          });
+        }
+        const parent = readModel.threads.find((t) => t.id === command.parentThreadId);
+        if (!parent) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `parentThreadId '${command.parentThreadId}' does not match any known thread.`,
+          });
+        }
+        if (parent.projectId !== command.projectId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `parentThreadId '${command.parentThreadId}' belongs to project '${parent.projectId}'; cannot link from project '${command.projectId}'.`,
+          });
+        }
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",

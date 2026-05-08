@@ -978,3 +978,127 @@ describe("orchestrator decider — worker lifecycle", () => {
     expect(payload.modelBinding.selectedBy).toBe("root-policy");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ORC-183: parentThreadId integrity on thread.create
+// ---------------------------------------------------------------------------
+
+describe("orchestrator decider — thread.create parentThreadId integrity (ORC-183)", () => {
+  function makeThreadCreate(
+    overrides: Partial<Extract<OrchestrationCommand, { type: "thread.create" }>>,
+  ): OrchestrationCommand {
+    return {
+      type: "thread.create",
+      commandId: cmd("cmd-thread-create-orc183"),
+      threadId: ThreadId.makeUnsafe("thread-orc183"),
+      projectId,
+      title: "ORC-183",
+      modelSelection: { provider: "codex", model: "gpt-5-codex" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+      ...overrides,
+    } as OrchestrationCommand;
+  }
+
+  it("accepts a null parentThreadId (top-level thread)", async () => {
+    const model = modelWithProject();
+    const events = await decide(model, makeThreadCreate({ parentThreadId: null }));
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("thread.created");
+    expect((events[0]!.payload as { parentThreadId: unknown }).parentThreadId).toBeNull();
+  });
+
+  it("rejects a self-parented thread", async () => {
+    const model = modelWithProject();
+    const detail = await decideFailure(
+      model,
+      makeThreadCreate({
+        threadId: ThreadId.makeUnsafe("thread-self"),
+        parentThreadId: ThreadId.makeUnsafe("thread-self"),
+      }),
+    );
+    expect(detail).toContain("cannot be its own parent");
+  });
+
+  it("rejects a parentThreadId that does not match any known thread", async () => {
+    const model = modelWithProject();
+    const detail = await decideFailure(
+      model,
+      makeThreadCreate({
+        parentThreadId: ThreadId.makeUnsafe("thread-ghost"),
+      }),
+    );
+    expect(detail).toContain("does not match any known thread");
+  });
+
+  it("rejects a parentThreadId belonging to a different project", async () => {
+    const otherProjectId = ProjectId.makeUnsafe("project-other");
+    const baseModel = modelWithProject();
+    const otherProjectModel: OrchestrationReadModel = {
+      ...baseModel,
+      projects: [
+        ...baseModel.projects,
+        {
+          id: otherProjectId,
+          title: "Other",
+          workspaceRoot: "/tmp/other",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        },
+      ],
+    };
+
+    // Create a parent thread in the OTHER project.
+    const parentInOtherProject = makeThreadCreate({
+      commandId: cmd("cmd-parent-other-project"),
+      threadId: ThreadId.makeUnsafe("thread-parent-other"),
+      projectId: otherProjectId,
+      parentThreadId: null,
+    });
+    const modelWithCrossProjectParent = await applyCommands(otherProjectModel, [
+      parentInOtherProject,
+    ]);
+
+    // Now try to create a thread in the original project that points at
+    // the parent in the OTHER project.
+    const detail = await decideFailure(
+      modelWithCrossProjectParent,
+      makeThreadCreate({
+        commandId: cmd("cmd-cross-project-link"),
+        threadId: ThreadId.makeUnsafe("thread-spoof"),
+        parentThreadId: ThreadId.makeUnsafe("thread-parent-other"),
+      }),
+    );
+    expect(detail).toContain("belongs to project");
+    expect(detail).toContain("project-other");
+  });
+
+  it("accepts a valid same-project parentThreadId", async () => {
+    const baseModel = modelWithProject();
+    const parent = makeThreadCreate({
+      commandId: cmd("cmd-parent"),
+      threadId: ThreadId.makeUnsafe("thread-parent"),
+      parentThreadId: null,
+    });
+    const modelWithParent = await applyCommands(baseModel, [parent]);
+    const events = await decide(
+      modelWithParent,
+      makeThreadCreate({
+        commandId: cmd("cmd-child"),
+        threadId: ThreadId.makeUnsafe("thread-child"),
+        parentThreadId: ThreadId.makeUnsafe("thread-parent"),
+      }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("thread.created");
+    expect((events[0]!.payload as { parentThreadId: unknown }).parentThreadId).toBe(
+      "thread-parent",
+    );
+  });
+});

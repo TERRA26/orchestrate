@@ -1733,7 +1733,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:661 (parentThreadId assignment)
 - evidence: parentThreadId is assigned from input without verifying that the calling thread's id matches. A malicious or buggy MCP tool could declare itself a child of an arbitrary parent.
 - proposed_fix: At dispatch time, assert input.parentThreadId === callingThread.id. Reject mismatches with a clear error.
-- status: PENDING
+- status: DONE
+- fixed_iter: 122
 
 ### ORC-184
 

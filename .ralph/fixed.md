@@ -3764,3 +3764,55 @@ mention of the prefix convention. Verified failing-before by stashing
   - Document the dedup contract in
     docs/architecture/orchestration-engine.md so future contributors
     understand it is a load-bearing invariant, not a coincidence.
+
+## ORC-183 (iter 122): defense-in-depth on parentThreadId in thread.create
+
+- root cause: `decider.ts` thread.create case copied
+  `command.parentThreadId` directly into the emitted event with no
+  validation. A malicious or buggy MCP tool could submit a
+  `thread.create` command pointing at any thread id, including a
+  thread in another project (cross-project link), a non-existent
+  thread (dangling parent), or even itself. The
+  OrchestrationToolRouter's spawn path validates `threadId` matches
+  the calling thread, but the decider was a separate trust boundary
+  that accepted whatever the command body said.
+- change summary: in `apps/server/src/orchestration/decider.ts`
+  thread.create case, after the existing `requireThreadAbsent`
+  check, validate the optional `parentThreadId`:
+  1. If parentThreadId === threadId, reject with
+     `OrchestrationCommandInvariantError("cannot be its own parent")`.
+  2. If parentThreadId references a non-existent thread, reject
+     with "does not match any known thread".
+  3. If the parent's projectId differs from the create command's
+     projectId, reject with a project-mismatch detail.
+  Null / undefined parentThreadId still produces a top-level thread
+  as before.
+- files touched:
+  - apps/server/src/orchestration/decider.ts
+  - apps/server/src/orchestration/decider.orchestrator.test.ts
+- tests added: 5 cases under a new describe block
+  "thread.create parentThreadId integrity (ORC-183)":
+  - accepts null parentThreadId (top-level)
+  - rejects self-parent
+  - rejects non-existent parent
+  - rejects cross-project parent
+  - accepts valid same-project parent
+- evidence of green run:
+  ```
+  bun run test src/orchestration/decider.orchestrator.test.ts
+   Test Files  1 passed (1)
+        Tests  26 passed (26)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+  Failing-before VERIFIED by stashing the decider change and
+  re-running: 3/5 new tests failed (the two happy-path tests
+  still passed since they only exercise the accept side, which
+  was unchanged).
+- follow-ups:
+  - Apply similar parent integrity checks to
+    `thread.handoff.create` and `thread.fork.create`, which both
+    accept caller-supplied parent linkage.
+  - Add a server-side audit log entry when a parent-link
+    rejection fires, since this is the kind of request that
+    indicates either a bug in the caller or an active probe.
