@@ -395,3 +395,25 @@ Each option is a build-system project of its own, with regressions visible only 
 
 Track as ORC-253a (decide bundling strategy), ORC-253b (implement chosen strategy, drop dep, verify desktop smoke + npm publish path).
 
+
+## ORC-245 (deferred at iter 164): multi-user owner_user_id
+
+### What was attempted
+
+Surveyed `apps/server/src/orchestration/decider.ts` project.delete + project lifecycle commands. Confirmed there is no `owner_user_id` column on the projects table and no caller-identity field on the existing project commands. The current single-user assumption ("default" caller for everything) is hard-coded throughout the dispatch path.
+
+### Why a single-iteration fix is risky
+
+Four touchpoints with cross-cutting consequences:
+
+1. **Migration**: `projects.owner_user_id TEXT NOT NULL DEFAULT 'default'`. The default keeps existing data working; new projects inherit the caller's identity once it is propagated.
+2. **Caller identity propagation**: WS auth path attaches a userId to the connection state; every command dispatch needs to pick it up. Currently the connection is just authenticated/not; no per-user identity is recorded.
+3. **Decider assertion**: project.delete must assert `command.callerUserId === project.owner_user_id`. The same audit applies to every destructive project-level command (project.update title, project.archive, project.scripts.update, project.scripts.delete, etc.).
+4. **Projection bump**: `OrchestrationReadModel.projects[]` exposes `owner_user_id` so the UI can show project ownership and decide whether to render the delete button.
+
+Each touchpoint has its own failure mode (forgotten command, default-fallthrough, projection drift). Doing all four in one iteration without an audit pass risks shipping a check that fails open on at least one command.
+
+### What would unblock it
+
+ORC-245a (migration + projection bump), ORC-245b (caller-identity propagation), ORC-245c (decider asserts on project.delete + per-command audit), ORC-245d (UI gating + tests).
+

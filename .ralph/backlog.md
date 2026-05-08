@@ -2344,6 +2344,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts:128-147 (project.delete)
 - evidence: project.delete checks the project exists but does not check the caller's identity. Any token holder can delete any project. Single-user today; multi-user-ready: no.
 - proposed_fix: Add an owner_user_id to projects (default = "default"). decider asserts the calling user matches owner before allowing delete. Same pattern for other destructive project-level commands.
+- status: DEFERRED
+- deferred_iter: 164
+- deferred_reason: Multi-user readiness needs (1) `projects.owner_user_id TEXT NOT NULL DEFAULT 'default'` migration, (2) propagation of caller identity from WS auth into the decider via command field, (3) decider assertion + error type for project.delete (and audit of every other destructive project-level command: project.update, project.archive, etc.), (4) projection schema bump to expose owner in read model. Each step has cross-cutting rollout concerns. Single-iteration scope risks shipping a half-wired check that fails open for some commands. Plan recorded as ORC-245a..d in blockers.md.
 - status: PENDING
 
 ### ORC-246
