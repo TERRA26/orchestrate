@@ -1840,7 +1840,9 @@ Schema per entry:
 - files: apps/server/src/persistence/NodeSqliteClient.ts:193-206 (no transaction wrapper)
 - evidence: Multi-step flows (append event + update projection + checkpoint) execute as separate statements. Crashes between steps leave partial state. ORC-024 covered the projection-vs-event divergence; this finding is about the broader pattern across all aggregate writes.
 - proposed_fix: Audit each multi-statement write path. Wrap each in a single `sql.withTransaction` block. Add a CI rule (custom lint) that flags multi-statement writes outside a transaction.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 128
+- deferred_reason: Two-part scope: (1) repo-wide audit of every aggregate-write path to confirm transaction coverage, (2) a custom lint/AST rule that flags multi-statement writes outside a `sql.withTransaction` block. The audit is hours of work and the lint rule needs an oxlint/eslint custom plugin spike. Defer until a focused 2-step plan can be scoped.
 
 ### ORC-195
 

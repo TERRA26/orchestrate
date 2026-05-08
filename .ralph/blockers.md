@@ -113,3 +113,24 @@ A staged plan, similar to ORC-179:
 
 Track as ORC-184a..d.
 
+
+## ORC-194 (deferred at iter 128): transaction-coverage audit + lint rule
+
+### What was attempted
+
+Confirmed that the orchestration engine's processEnvelope flow IS wrapped in `sql.withTransaction` (apps/server/src/orchestration/Layers/OrchestrationEngine.ts:150-194). That covers the highest-risk multi-step path (append event + project + upsert receipt). However the bug calls for a repo-wide audit, not just one path.
+
+### Why a single-iteration fix is risky
+
+Two-part scope:
+
+1. **Audit every aggregate-write path**: identify and verify transaction wrapping in OrchestrationEventStore, OrchestrationCommandReceiptRepository, ProjectionPipeline, CheckpointReactor, ProviderCommandReactor, terminal log writer, browser session ledger, telemetry batches. Some are single-statement (safe by default); others compose 2+ statements that must be atomic. Hours of read-and-trace.
+2. **Custom lint rule**: oxlint does not currently support custom rules; we'd need to spike either an eslint custom plugin (requiring eslint config infra not currently in the repo) or a TS-AST script invoked by CI. Either is a meaningful build-system change.
+
+### What would unblock it
+
+A focused two-step plan:
+
+- **Step A**: produce a written audit (`docs/architecture/transaction-coverage.md`) listing every aggregate-write path with its transaction status. Mark gaps with line numbers. Fix the gaps inline as they are found. One iteration per fix.
+- **Step B**: spike the lint rule infrastructure separately. Decide between oxlint-custom-rule (if/when supported), eslint, or a TS-AST script. Land the rule in a follow-up iteration once Step A's gaps are closed.
+
