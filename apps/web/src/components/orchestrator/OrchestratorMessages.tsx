@@ -703,6 +703,13 @@ function OrchestratorMessagesInner({
         <div
           ref={scrollRef}
           className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain py-2"
+          // ORC-076: streaming surface; politely announce new worker output
+          // as it arrives. aria-busy flips off when the agent is idle.
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-busy={isBusy}
+          aria-label="Orchestrator transcript"
         >
           {hasContent ? (
             <>
@@ -736,6 +743,12 @@ function OrchestratorMessagesInner({
       <div
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-2.5 py-2.5 @[380px]/pane:px-4 @[380px]/pane:py-3.5 @[520px]/pane:px-5 @[520px]/pane:py-4"
+        // ORC-076: streaming surface; same a11y wiring as control-room mode.
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-busy={isBusy}
+        aria-label="Orchestrator transcript"
       >
         <div className="mx-auto w-full max-w-3xl">
           {requirementsChecklist.length > 0 ? (

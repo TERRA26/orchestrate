@@ -1948,3 +1948,40 @@ The first test would fail before the change (3 offenders at lines 432, 1291, 146
 - Audit `text-muted-foreground` and `--info-foreground` opacity-mixed sites (line 481 currently uses 55% on `text-decoration-color`, fine for decorative underlines).
 - Add a Playwright + axe-core CI step on the chat, sidebar, and settings pages so dynamic combinations get checked.
 - Document the decorative pseudo-element pattern in the design-system docs so contributors know when it's OK to drop below 65%.
+
+## ORC-076 [iter 85] Streaming surfaces missing aria-live
+
+**Root cause**: `apps/web/src/components/chat/MessagesTimeline.tsx` and `apps/web/src/components/orchestrator/OrchestratorMessages.tsx` rendered streaming assistant messages and worker output into plain `<div>` containers. Only `DiffPanelShell` and `ConnectionStatusBanner` had `aria-live` regions in the codebase. Screen-reader users got no real-time announcement when new content arrived during a turn.
+
+**Change summary**:
+- `apps/web/src/components/chat/MessagesTimeline.tsx`: the timeline root `<div ref={timelineRootRef}>` now carries `role="log"`, `aria-live="polite"`, `aria-relevant="additions text"`, `aria-busy={activeTurnInProgress}`, and `aria-label="Conversation messages"`.
+- `apps/web/src/components/orchestrator/OrchestratorMessages.tsx`: both the control-room mode and default mode scroll containers got matching `role="log" / aria-live="polite" / aria-relevant="additions text" / aria-busy={isBusy} / aria-label="Orchestrator transcript"` annotations.
+
+**Files touched**:
+- apps/web/src/components/chat/MessagesTimeline.tsx
+- apps/web/src/components/orchestrator/OrchestratorMessages.tsx
+- apps/web/src/components/chat/MessagesTimeline.test.tsx (2 new cases)
+
+**Tests added**: 2 cases in the existing MessagesTimeline test:
+1. "marks the timeline root as a polite live region for streaming output [ORC-076]" - asserts the rendered root carries `role="log"`, `aria-live="polite"`, `aria-relevant="additions text"`, `aria-busy="true"` (when `activeTurnInProgress=true`), and the descriptive aria-label.
+2. "flips aria-busy off when no active turn is in progress [ORC-076]" - asserts `aria-busy="false"` when nothing is streaming so AT can stop watching.
+
+Both would fail before the change (the root had no a11y attributes).
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/components/chat/MessagesTimeline.test.tsx` (Node 24) -> Test Files 1 passed (1) | Tests 7 passed (7)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- aria-live="polite" announces the entire updated subtree by default; with `aria-relevant="additions text"` the AT is told to watch only new nodes and text node modifications, avoiding re-reads on every keystroke or class change.
+- aria-busy semantics: while busy, AT halts intermediate announcements so the user is not interrupted mid-word during streaming. When busy flips off, AT speaks the final state.
+- role="log" is appropriate for a chronological list of messages. role="region" with aria-live would also work but adds a navigable landmark some users may find noisy.
+- Multi-pane (split view): each OrchestratorMessages instance is a separate log region. AT will treat each as independent which is the correct behavior.
+- Existing aria-live regions (DiffPanelShell, ConnectionStatusBanner): unchanged; they have their own scope.
+- Performance: aria-live attributes have no measurable JS cost; AT-driven DOM walking only fires on real subtree mutations.
+
+**Follow-ups**:
+- Real-device test with VoiceOver (macOS), NVDA (Windows), and TalkBack (Android web) to confirm announcement cadence is acceptable. The current attributes are conservative; if announcements become noisy a future change could narrow `aria-relevant` further or add a user-toggle.
+- Apply the same pattern to the worker-pane streaming containers (e.g., `apps/web/src/components/orchestrator/WorkerPane.tsx`) once that surface lands a similar streaming UI.
+- Consider an `aria-describedby` link from the dialog/section heading to the log so AT users entering the chat hear "Conversation messages" in addition to the visible label.

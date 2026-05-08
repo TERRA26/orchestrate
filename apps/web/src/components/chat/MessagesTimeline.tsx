@@ -674,6 +674,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ref={timelineRootRef}
       data-timeline-root="true"
       className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
+      // ORC-076: streaming surface; tell screen readers to announce new
+      // assistant text politely as it arrives. aria-busy flips off when
+      // the active turn finishes so AT can stop watching.
+      role="log"
+      aria-live="polite"
+      aria-relevant="additions text"
+      aria-busy={activeTurnInProgress}
+      aria-label="Conversation messages"
     >
       {virtualizedRowCount > 0 && (
         <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>

@@ -731,7 +731,8 @@ Schema per entry:
 - files: apps/web/src/components/chat/MessagesTimeline.tsx,apps/web/src/components/orchestrator/OrchestratorMessages.tsx (worker streaming surfaces)
 - evidence: When workers stream text into the timeline, the rendering region has no `aria-live` attribute. Only DiffPanelShell and ConnectionStatusBanner use aria-live. Screen reader users get no real-time announcement of new content arriving.
 - proposed_fix: Wrap the streaming-message wrapper in `aria-live="polite"` and set `aria-busy="true"` while streaming, removing it on completion. Test with VoiceOver / NVDA on a streamed turn.
-- status: PENDING
+- status: DONE
+- fixed_iter: 85
 
 ### ORC-077
 
