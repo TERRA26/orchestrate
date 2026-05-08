@@ -4865,3 +4865,52 @@ mention of the prefix convention. Verified failing-before by stashing
     redactor.
   - Add an oxlint rule that flags string-template logging of
     likely-PII values.
+
+## ORC-230 (iter 154): rotating file sink for the server logger
+
+- root cause: Provider logs already used the shared
+  `RotatingFileSink` (10MB x 10), but `apps/server/src/logger.ts`
+  wrote only to stdout/stderr. If an operator redirected stdout to
+  a file, no rotation kicked in and the file grew until disk
+  filled.
+- change summary:
+  - Imported `RotatingFileSink` from
+    `@orchestrate/shared/logging` into the server logger.
+  - Added a memoized `getFileSink()` that reads
+    `ORCHESTRATE_LOG_FILE` (path), `ORCHESTRATE_LOG_MAX_BYTES`
+    (default 10MB), and `ORCHESTRATE_LOG_MAX_FILES` (default 10).
+    When the env var is unset the sink is null and the logger
+    behaves exactly as before. Failures during construction
+    (unwritable path) fall through to a null sink so the logger
+    never crashes the server.
+  - Updated `write()` to append a stripped (no ANSI codes) copy
+    of every log line to the sink in addition to the existing
+    console output. Console keeps colors for TTY debugging; file
+    is grep-friendly plain text.
+  - Exported `__resetLogFileSinkForTests()` so test fixtures can
+    swap the env var cleanly between cases.
+- files touched:
+  - apps/server/src/logger.ts
+  - apps/server/src/logger.test.ts
+- tests added: 6 new unit tests covering: no-sink default,
+  per-line write to the file, ANSI strip from file output,
+  rotation when bytes-cap is hit (creates `.1` rotation), graceful
+  fallback for unwritable paths, default values when env vars are
+  invalid. Plus the existing 11 redaction tests stay green; total
+  17 passed in the file.
+- evidence of green run:
+  ```
+  bun run test src/logger.test.ts
+   Test Files  1 passed (1)
+        Tests  17 passed (17)
+  bun run typecheck   # clean
+  bun lint            # 0 errors (1 style warning unrelated)
+  ```
+- follow-ups:
+  - Promote `ORCHESTRATE_LOG_FILE`, `ORCHESTRATE_LOG_MAX_BYTES`,
+    `ORCHESTRATE_LOG_MAX_FILES` into a documented config block in
+    docs/operations.md (or similar) so operators discover the
+    flags without grep.
+  - Consider a JSON-line format toggle (e.g.
+    `ORCHESTRATE_LOG_FORMAT=ndjson`) so log shippers can parse
+    structured events without ad-hoc regex.

@@ -1,5 +1,7 @@
 import util from "node:util";
 
+import { RotatingFileSink } from "@orchestrate/shared/logging";
+
 type LogLevel = "info" | "warn" | "error" | "event";
 
 type LogContext = Record<string, unknown>;
@@ -147,12 +149,74 @@ function formatContext(context: LogContext | undefined) {
     .join(" ");
 }
 
+// ORC-230: optional rotating file sink. The provider has its own
+// rotating logger but the structured server logger wrote to stdout
+// only. If an operator redirects stdout to a file, no rotation kicks
+// in and disk fills. Configure via:
+//   ORCHESTRATE_LOG_FILE: absolute path. Enables the sink.
+//   ORCHESTRATE_LOG_MAX_BYTES: rotation size (default 10MB).
+//   ORCHESTRATE_LOG_MAX_FILES: kept rotations (default 10).
+let fileSinkSingleton: RotatingFileSink | null = null;
+let fileSinkInitialized = false;
+
+function getFileSink(): RotatingFileSink | null {
+  if (fileSinkInitialized) return fileSinkSingleton;
+  fileSinkInitialized = true;
+  const filePath = process.env.ORCHESTRATE_LOG_FILE;
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    return null;
+  }
+  const maxBytes = parseIntOr(process.env.ORCHESTRATE_LOG_MAX_BYTES, 10 * 1024 * 1024);
+  const maxFiles = parseIntOr(process.env.ORCHESTRATE_LOG_MAX_FILES, 10);
+  try {
+    fileSinkSingleton = new RotatingFileSink({
+      filePath,
+      maxBytes,
+      maxFiles,
+    });
+  } catch {
+    fileSinkSingleton = null;
+  }
+  return fileSinkSingleton;
+}
+
+function parseIntOr(raw: string | undefined, fallback: number): number {
+  if (typeof raw !== "string" || raw.length === 0) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+/**
+ * Reset the cached file sink. Tests use this to swap envs cleanly
+ * between cases. Production code should not call this.
+ *
+ * @see ORC-230
+ */
+export function __resetLogFileSinkForTests(): void {
+  fileSinkSingleton = null;
+  fileSinkInitialized = false;
+}
+
 function write(level: LogLevel, scope: string, message: string, context?: LogContext) {
   const colorEnabled = useColors();
   const ts = colorize(timeStamp(), ANSI.dim, colorEnabled);
   const levelLabel = colorize(LEVEL_LABEL[level], LEVEL_COLOR[level], colorEnabled);
   const contextText = formatContext(context);
   const line = `${ts} ${levelLabel} [${scope}] ${message}${contextText ? ` ${contextText}` : ""}`;
+
+  // ORC-230: append a non-colored copy to the rotating file sink when
+  // configured. The console output keeps its ANSI colors for TTY
+  // debugging; the file sink writes one line per log entry without
+  // escape codes so the file is grep-friendly.
+  const sink = getFileSink();
+  if (sink) {
+    const plainTs = timeStamp();
+    const plainLevel = LEVEL_LABEL[level];
+    const plainLine =
+      `${plainTs} ${plainLevel} [${scope}] ${message}${contextText ? ` ${stripAnsi(contextText)}` : ""}\n`;
+    sink.write(plainLine);
+  }
 
   if (level === "warn") {
     console.warn(line);
@@ -163,6 +227,12 @@ function write(level: LogLevel, scope: string, message: string, context?: LogCon
     return;
   }
   console.log(line);
+}
+
+// eslint-disable-next-line no-control-regex
+const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_PATTERN, "");
 }
 
 export function createLogger(scope: string) {

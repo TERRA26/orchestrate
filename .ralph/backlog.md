@@ -2201,6 +2201,8 @@ Schema per entry:
 - files: apps/server/src/logger.ts (server logger sinks),apps/server/src/provider/Layers/EventNdjsonLogger.ts
 - evidence: Provider logs use a 10MB-x-10 rotating sink, but the server logger writes to stdout only. If the operator redirects stdout to a file, there is no rotation; disk can fill.
 - proposed_fix: Provide a built-in rotating file sink for the server logger when configured. Default to stdout; log target configurable. Document disk-use expectations.
+- status: DONE
+- fixed_iter: 154
 - status: PENDING
 
 ### ORC-231
