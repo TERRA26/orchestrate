@@ -597,7 +597,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1130,762; apps/server/src/orchestration/Layers/OrchestrationEngine.ts (dispatch path)
 - evidence: WS dispatchCommand has no traceId/requestId threaded into the dispatch chain. The downstream push to the client (wsServer.ts:596) logs sequence + recipients but cannot be correlated back to the originating request. Operators cannot answer "why did request X never produce a push?".
 - proposed_fix: Add a `traceId` field to the WsRequest envelope (or compute one server-side). Thread it through Effect's request context (Effect.locally / FiberRef). Include it in every push log line and in the activity log writes.
-- status: PENDING
+- status: DONE
+- fixed_iter: 76
 
 ### ORC-063
 

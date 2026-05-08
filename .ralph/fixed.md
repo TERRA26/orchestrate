@@ -1601,3 +1601,45 @@ The first test would fail before the change because both startSession calls exec
 - Apply the same coalescing pattern to `forkThread` for symmetry.
 - Consider extracting the coalesce-by-key helper into `apps/server/src/utils/coalesce.ts` so future managers can reuse the pattern.
 - Add a test that uses real spawn-mocking (vi.mock("node:child_process")) to verify no second spawn occurs in the success path; the current test asserts at the version-check stage only.
+
+## ORC-062 [iter 76] WS request dispatch had no per-request trace context
+
+**Root cause**: `apps/server/src/wsServer.ts` decoded each WebSocket request, called `routeRequest(...)`, and emitted log lines from across the routing/dispatch chain (engine dispatch, push enqueue, response send, error handling). None of those logs carried a stable identifier tying them back to the originating request. Operators investigating "why did request X never produce a push?" had no correlation key. The push log line at wsServer.ts:596 records sequence + recipient count but not the request that triggered it.
+
+**Change summary**:
+- New `apps/server/src/observability/traceContext.ts`: pure helper module exposing
+  - `TraceContext = { requestId, method, traceId }`
+  - `buildTraceContext({ requestId, method })` mints a fresh `traceId` from `${requestId}.${randomUUID().slice(0, 8)}` so retries with the same `requestId` still disambiguate.
+  - `withTraceContext(trace, effect)` wraps an Effect so every downstream `Effect.logInfo`/`logWarning`/`logError` annotation includes the three fields.
+- `apps/server/src/wsServer.ts`: in `handleMessage`, after the request is decoded and the per-message auth check passes, build a TraceContext from `request.success.id` + `request.success.body._tag` and wrap the entire `routeRequest` + response-send pipeline in `withTraceContext`. All Effect logs emitted along the routing chain (including the failure-recovery `logError` at the catchCause) now inherit the annotations via the FiberRef-based `Effect.annotateLogs` mechanism.
+
+**Files touched**:
+- apps/server/src/observability/traceContext.ts (NEW)
+- apps/server/src/observability/traceContext.test.ts (NEW)
+- apps/server/src/wsServer.ts
+
+**Tests added**: 6 cases pinning the trace helpers:
+1-3. `buildTraceContext` returns supplied requestId/method verbatim, mints a traceId of shape `${requestId}.[0-9a-f]{8}`, and produces unique traceIds across calls.
+4. `withTraceContext` annotates a downstream `Effect.logInfo` with traceId/requestId/method, asserted via a `Logger.layer` capturing fiber-ref `CurrentLogAnnotations`.
+5. Annotations propagate through nested `Effect.gen` blocks (verifies inheritance across child fibers).
+6. Annotations do not leak outside the wrapped effect (an `Effect.logInfo` outside the wrap has none of the three keys).
+
+All 6 would fail before the change because the helper module did not exist.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability/traceContext.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 6 passed (6)
+- `cd apps/server && bun run test src/wsServer` -> Test Files 5 passed (5) | Tests 61 passed (61)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Forked fibers: `Effect.annotateLogs` flows through child fibers automatically (via FiberRef), so `Effect.fork` calls inside routeRequest still inherit. Verified by test #5.
+- Push log emitted from worker: `pushBus.send()` runs in a forked, scope-bound worker that is not a child of the request fiber, so it does NOT inherit annotations. The push log thus still has only `sequence/recipients`. The request-side log lines (engine dispatch, response send, error envelopes) DO get annotated, which closes the "request enqueued push" correlation gap from the request side. A future change can carry the traceId along with the push job itself if cross-fiber correlation is needed.
+- Test isolation: the capture logger uses `Logger.layer([logger], { mergeWithExisting: false })` and reads `CurrentLogAnnotations` via the fiber ref; no cross-test leakage.
+- requestId reuse: clients can reuse the same id on a retried request. The traceId's random suffix disambiguates; documented in the JSDoc and pinned by test #3.
+
+**Follow-ups**:
+- Thread the traceId into `pushBus.publishAll`/`publishClient` calls so the worker-side log can include it. Could be either an explicit param or by reading from a fresh FiberRef.
+- Wire `withTraceContext` around `Effect.fork` for engine reactors so async work picks up the trace via the Cause chain.
+- Add a `traceId` field to the structured push log line emitted in wsServer.ts:596 once the prior follow-up lands.
+- Surface traceId in the activity log writes (`apps/server/src/persistence/.../activityLog.ts`) so operators can pivot from a UI complaint to the underlying trace.

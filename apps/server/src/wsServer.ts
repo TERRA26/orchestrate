@@ -61,6 +61,7 @@ import {
   isMessageAllowed,
   markConnectionAuthenticated,
 } from "./connectionAuth.ts";
+import { buildTraceContext, withTraceContext } from "./observability/traceContext.ts";
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
@@ -2092,36 +2093,51 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       });
     }
 
-    const result = yield* Effect.exit(routeRequest(ws, request.success));
-    if (Exit.isFailure(result)) {
-      return yield* sendWsResponse({
-        id: request.success.id,
-        error: { message: Cause.pretty(result.cause) },
-      });
-    }
+    // ORC-062: mint a per-arrival trace context so every downstream log
+    // line emitted while routing this request carries traceId/requestId/
+    // method annotations. Operators can then grep for a single traceId to
+    // reconstruct the full chain (request received -> command dispatched
+    // -> push enqueued -> response sent / failed).
+    const trace = buildTraceContext({
+      requestId: request.success.id,
+      method: request.success.body._tag,
+    });
 
-    // ORC-031: if sending the success response fails (e.g. the WS
-    // connection went bad mid-write), best-effort send an error
-    // envelope with the original request id so the client sees a frame
-    // and can either retry or surface the failure. Without this, a
-    // failed send leaves the caller waiting until timeout.
-    return yield* sendWsResponse({
-      id: request.success.id,
-      result: result.value,
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logError("ws.sendWsResponse failed", {
-            requestId: request.success.id,
-            cause: Cause.pretty(cause),
+    return yield* withTraceContext(
+      trace,
+      Effect.gen(function* () {
+        const result = yield* Effect.exit(routeRequest(ws, request.success));
+        if (Exit.isFailure(result)) {
+          return yield* sendWsResponse({
+            id: request.success.id,
+            error: { message: Cause.pretty(result.cause) },
           });
-          yield* sendBestEffortErrorEnvelope(
-            ws,
-            request.success.id,
-            "Internal server error while sending the response.",
-          );
-        }),
-      ),
+        }
+
+        // ORC-031: if sending the success response fails (e.g. the WS
+        // connection went bad mid-write), best-effort send an error
+        // envelope with the original request id so the client sees a frame
+        // and can either retry or surface the failure. Without this, a
+        // failed send leaves the caller waiting until timeout.
+        return yield* sendWsResponse({
+          id: request.success.id,
+          result: result.value,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              yield* Effect.logError("ws.sendWsResponse failed", {
+                requestId: request.success.id,
+                cause: Cause.pretty(cause),
+              });
+              yield* sendBestEffortErrorEnvelope(
+                ws,
+                request.success.id,
+                "Internal server error while sending the response.",
+              );
+            }),
+          ),
+        );
+      }),
     );
   });
 
