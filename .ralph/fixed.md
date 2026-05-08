@@ -1907,3 +1907,44 @@ All 6 would fail before the change because the hook did not exist.
 - Apply the same pattern to remaining form sites: composer attachment errors, login form fields, custom model error in other providers, terminal cwd input. Audit via `grep -rn 'text-destructive' apps/web/src` for candidates.
 - Consider a `<FormField>` component that wraps `<Input>` + label + error and uses the hook internally so callers get the wiring for free.
 - Add an axe-core regression test once the helper is widely adopted.
+
+## ORC-075 [iter 84] Sub-AA contrast on opacity-mixed text in index.css
+
+**Root cause**: `apps/web/src/index.css` set the text color of several primary-content classes via `color-mix(in srgb, var(--foreground) <N>%, transparent)` with low N (45%, 60%) that fell below WCAG AA 4.5:1 against neutral backgrounds (especially in dark mode). Affected sites:
+- Sidebar timestamps (line 1291): 45% foreground.
+- `.orch-thread-origin-chip` text (line 1469): 60% foreground over a 6%-tinted background.
+- `.chat-markdown h5, h6` (line 432): 90% of muted-foreground (which is itself already 90% of neutral-500), so the alpha compounded to a value too far from the background.
+
+**Change summary**:
+- `apps/web/src/index.css`:
+  - Sidebar timestamp color: 45% -> 65%.
+  - `orch-thread-origin-chip` text color: 60% -> 70%.
+  - h5/h6 in chat-markdown: from `color-mix(... muted-foreground 90%, transparent)` to `var(--muted-foreground)` directly (drops the redundant alpha).
+
+**Files touched**:
+- apps/web/src/index.css
+- apps/web/src/index.css.contrast.test.ts (NEW)
+
+**Tests added**: 2 cases in `index.css.contrast.test.ts`:
+1. Scans the file for `color: color-mix(in srgb, var(--foreground|--muted-foreground) <N>%, transparent)` and asserts N >= 65 unless the surrounding selector targets a decorative pseudo-element (`::before`, `::after`, `::marker`, `::placeholder`, `::-webkit-scrollbar`, `::file-selector-button`). Fails informatively with file/line/percentage and a 160-char selector context per offender.
+2. Sanity-checks that the decorative `::before` chevron at 40% is still present and still classified as decorative (documents the exempt set).
+
+The first test would fail before the change (3 offenders at lines 432, 1291, 1469); passes after. Verified by stashing the CSS change and re-running the test.
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/index.css.contrast.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 2 passed (2)
+- Stash-pop verification: with the CSS reverted, the same test reports 1 failure listing the 3 offenders.
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The 65% threshold is empirical (visual contrast on a typical neutral-500 background plus AA target). For very light backgrounds in light mode, even 65% may push toward the AA boundary; future work should use a real contrast calculator with actual computed background colors. Documented as a follow-up.
+- The decorative-pseudo allowlist might miss edge cases (e.g., a low-percentage `color:` directly on the `::selection` pseudo). Added `-webkit-scrollbar` and `file-selector-button` to the exempt set since those are framework-level and rarely user-targeted; future false positives are easy to add.
+- Compounded alpha (h5/h6 used `90%` of an already-low-alpha token): replaced with direct token reference. This may slightly increase the heading's visual weight; reviewed visually as acceptable.
+- The contrast test's selector context-walking is bounded at 60 lines back so a malformed CSS file can't loop forever.
+
+**Follow-ups**:
+- Compute exact contrast ratios with a tool (axe-core or color-contrast-checker) per representative page; the 65% threshold is a rule-of-thumb floor, not a guarantee.
+- Audit `text-muted-foreground` and `--info-foreground` opacity-mixed sites (line 481 currently uses 55% on `text-decoration-color`, fine for decorative underlines).
+- Add a Playwright + axe-core CI step on the chat, sidebar, and settings pages so dynamic combinations get checked.
+- Document the decorative pseudo-element pattern in the design-system docs so contributors know when it's OK to drop below 65%.

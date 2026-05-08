@@ -721,7 +721,8 @@ Schema per entry:
 - files: apps/web/src/index.css:101,139,348,432,462,1291
 - evidence: Heavy use of `color-mix(in srgb, var(--foreground) 45%|55%, transparent)` for body/timestamp/heading text. At 45-55% opacity over the background, contrast falls below WCAG AA 4.5:1 in dark mode. Sidebar timestamps and h5/h6 in chat are particularly affected.
 - proposed_fix: Audit all opacity-mixed text. Bump primary content to >=65% (or a defined high-contrast token). Reserve <50% for truly decorative/secondary glyphs. Add a contrast-check CI step using a tool like axe-core or pa11y on representative pages.
-- status: PENDING
+- status: DONE
+- fixed_iter: 84
 
 ### ORC-076
 

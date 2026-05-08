@@ -429,7 +429,11 @@ label:has(> select#reasoning-effort) select {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: color-mix(in srgb, var(--muted-foreground) 90%, transparent);
+  /* ORC-075: muted-foreground itself is already 90% neutral-500; an extra
+     90% transparent on top compounded the loss of contrast in dark mode.
+     Use the token directly so headings still hit AA against neutral
+     backgrounds. */
+  color: var(--muted-foreground);
 }
 
 .chat-markdown ul {
@@ -1288,7 +1292,8 @@ diffs-container {
   font-family: var(--font-mono-family);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, var(--foreground) 45%, transparent);
+  /* ORC-075: 45% foreground falls below WCAG AA 4.5:1 in dark mode. */
+  color: color-mix(in srgb, var(--foreground) 65%, transparent);
 }
 /* Brand name in sidebar header */
 [data-slot="sidebar"] [data-sidebar-brand] {
@@ -1466,7 +1471,8 @@ diffs-container {
   font-size: 9px;
   letter-spacing: 0.06em;
   background: color-mix(in srgb, var(--foreground) 6%, transparent);
-  color: color-mix(in srgb, var(--foreground) 60%, transparent);
+  /* ORC-075: 60% trips AA on the chip's tinted background; 70% holds. */
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
 }
 .orch-thread-origin-chip[data-origin="disposable"] {
   border: 1px dashed color-mix(in srgb, var(--foreground) 22%, transparent);
