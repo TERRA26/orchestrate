@@ -45,7 +45,9 @@ const KNOWN_UNTESTED: ReadonlyArray<{ readonly type: string; readonly reason: st
   { type: "orchestrator.task.cancel", reason: "follow-up: same shape as task.fail; add together" },
   { type: "orchestrator.task.fail", reason: "follow-up: same shape as task.cancel; add together" },
   { type: "orchestrator.worker.pause", reason: "follow-up: pause/resume pair, test both at once" },
-  { type: "orchestrator.worker.resume", reason: "follow-up: paired with pause" },
+  // orchestrator.worker.resume now has a test in decider.orchestrator.test.ts
+  // (the "rejects resume after terminate" case) so it is no longer in
+  // KNOWN_UNTESTED. Removed in iter 191.
   { type: "orchestrator.worker.update-post", reason: "follow-up: send_update_to_orchestrator MCP path" },
   { type: "orchestrator.message.send", reason: "follow-up: orchestrator-to-worker message" },
   { type: "orchestrator.message.broadcast", reason: "follow-up: orchestrator-to-all-workers fanout" },

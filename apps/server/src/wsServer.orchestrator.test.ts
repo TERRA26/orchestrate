@@ -582,7 +582,11 @@ describe("Orchestrator Journey Smoke Tests", () => {
       threadId,
       spawnBudget: {
         maxDepth: 1,
-        maxChildren: 0,
+        // ORC-136: SpawnBudget schema rejects 0; smallest legal
+        // value is 1. The journey test never actually spawns a
+        // child so the budget upper-bound is unused, but the
+        // schema decode must succeed.
+        maxChildren: 1,
         maxConcurrentWriters: 1,
         maxTotalWorkers: 1,
         allowedTools: ["edit"],

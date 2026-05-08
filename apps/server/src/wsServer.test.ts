@@ -2292,7 +2292,12 @@ describe("WebSocket Server", () => {
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
-    await expect(connectWs(port)).rejects.toThrow("WebSocket connection failed");
+    // Pass attempts=1 so connectWs does not retry the rejection 5x.
+    // Without this, each unauthorized attempt counts against the
+    // ORC-239 per-IP rate limiter (default threshold = 5), and the
+    // subsequent authorized connection below would be blocked by
+    // the cooldown.
+    await expect(connectWs(port, undefined, 1)).rejects.toThrow("WebSocket connection failed");
 
     const [authorizedWs] = await connectAndAwaitWelcome(port, "secret-token");
     connections.push(authorizedWs);
