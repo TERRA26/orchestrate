@@ -57,6 +57,12 @@ jobs:
       - name: Test
         run: bun run test
 
+      # ORC-092: orchestrator-level integration smoke. Catches breakage in the
+      # decider/projector/reactor pipeline that the unit suite alone misses.
+      # Mirrored as a longer end-to-end variant in release.yml's release_smoke.
+      - name: Orchestrator smoke
+        run: bun run test:orchestrator-smoke
+
       - name: Install browser test runtime
         run: |
           cd apps/web

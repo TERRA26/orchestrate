@@ -2111,3 +2111,39 @@ The semver-admits helper handles the actual range forms used today and rejects p
 - Consider a CI step that runs `bun pm ls --depth=2 react` and diffs against a stored snapshot to surface peer-dep changes at install time, before tests run.
 - The TanStack Router constraint `^1.160.2` in package.json is older than the installed `1.167.x`; a future cleanup PR should bump to `^1.190` or current (a minor version float is harmless for now since bun resolves to the latest within range).
 - Audit @lexical/lexical (the unscoped package) for its peer deps — currently has no `react` peer (it's a non-React core). Documented but not yet asserted.
+
+## ORC-092 [iter 89] Orchestrator smoke missing from PR-time CI
+
+**Root cause**: `.github/workflows/ci.yml`'s `quality` job ran `fmt`, `lint`, `typecheck`, `test`, `Browser test`, and `Build desktop pipeline`. The orchestrator-level integration smoke (`test:orchestrator-smoke`, which runs `apps/server/src/reviewer/ReviewerLoop.integration.test.ts`) was defined as a package script but never invoked on PRs. The longer end-to-end smoke (`release_smoke` job) ran only against release branches. Result: a regression in the decider/projector/reactor pipeline could land on `main` without the integration suite ever exercising the breakage at PR time.
+
+**Change summary**:
+- `.github/workflows/ci.yml`: added an `Orchestrator smoke` step in the `quality` job between `Test` and `Install browser test runtime`. The step runs `bun run test:orchestrator-smoke`, which forwards into `apps/server` and executes the ReviewerLoop integration test. The release-branch `release_smoke` job (running `node scripts/release-smoke.ts`) is unchanged so the full e2e variant still gates releases.
+
+**Files touched**:
+- .github/workflows/ci.yml
+- apps/server/src/observability/ciOrchestratorSmoke.test.ts (NEW)
+
+**Tests added**: 4 cases pinning the workflow:
+1. ci.yml has an `Orchestrator smoke` step.
+2. The step runs `bun run test:orchestrator-smoke` (matches via inline regex on the step block).
+3. The step lives in the `quality` job and is positioned after `Test` and before `Browser test`.
+4. The `test:orchestrator-smoke` script exists in the repo-root `package.json`.
+
+The first 3 would fail before the change (no such step in ci.yml). The 4th would have passed both before and after since the script was already defined; it guards against script removal.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability/ciOrchestratorSmoke.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 4 passed (4)
+- Stash-pop verification: with the YAML change reverted, 3 of the 4 tests fail as expected.
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The YAML position check uses substring index comparisons rather than YAML parsing. A reformat that moves the step or renames it will trip the test, prompting a deliberate update. Acceptable: enforces a stable layout.
+- The smoke script `test:orchestrator-smoke` is currently a single integration test (`ReviewerLoop.integration.test.ts`). If that test gets renamed or moved, the smoke command keeps working through the package.json script indirection; the test only checks the script's existence.
+- Runtime cost: the orchestrator smoke runs in-process under vitest (no real LLM calls). Adds ~10-30s to PR CI on the blacksmith runner; acceptable given the regression-catching value.
+- The release_smoke job is left alone. It runs longer end-to-end paths (release-smoke.ts) that aren't suitable for every PR. Two-tier smoke coverage is intentional.
+- A future ORC-### could add `test:orchestrator-journey` (the wsServer.orchestrator.test.ts variant) as a third tier between unit and integration. Tracked as follow-up.
+
+**Follow-ups**:
+- Promote the orchestrator-smoke step to a required status check in branch protection rules so PRs cannot merge with it red.
+- Add a parallel `Orchestrator journey` step calling `test:orchestrator-journey` once that test stabilizes.
+- Mirror the smoke into release.yml's `release_smoke` (currently runs `release-smoke.ts` only) so a regression that slips through PR CI still trips before publish.

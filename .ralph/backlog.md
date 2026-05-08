@@ -879,7 +879,8 @@ Schema per entry:
 - files: .github/workflows/ci.yml (orchestrator smoke not in main job)
 - evidence: `test:orchestrator-smoke` and `test:scenarios:reviewer-loop` exist as scripts but the main CI quality job runs only fmt/lint/typecheck/test/browser/desktop-build. Orchestrator-level smokes run only via release.yml.
 - proposed_fix: Add an "Orchestrator smoke" step to the CI quality job that runs on every PR. Mirror it as a required check. Keep release.yml's variant as the longer end-to-end smoke.
-- status: PENDING
+- status: DONE
+- fixed_iter: 89
 
 ### ORC-093
 
