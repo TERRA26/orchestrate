@@ -3470,3 +3470,58 @@ mention of the prefix convention. Verified failing-before by stashing
   - Capture intermediate redirect chain in the observation so the
     orchestrator can see e.g. a 301 -> 200 chain ended at a login
     page, which is its own failure mode for unauthenticated runs.
+
+## ORC-153 (iter 115): live coordinate re-evaluation for clickTargetOrAt
+
+- root cause: Target bounding boxes were captured at observation time
+  and stashed in the descriptor. By the time `clickTargetOrAt` ran
+  its fallback path (`page.mouse.click(action.x, action.y)`), the
+  page may have scrolled, transformed, or partially navigated; the
+  stale (x, y) often missed. Plus the action type contract did not
+  document that the coordinates were observation-time, not action-time.
+- change summary:
+  - Added `apps/server/src/browser/clickCoordinates.ts` exporting
+    `liveCenterForSelector(evaluator, selector)` and the
+    `LIVE_CENTER_SCRIPT` snippet that runs in the page context. The
+    snippet returns the rect center in CSS pixels relative to the
+    current viewport, or null for missing / zero-size / fully-outside-
+    viewport elements. The helper is parameterized over a
+    `LiveCenterEvaluator` interface for unit testing.
+  - Wired `liveCenterForSelector` into the `clickTargetOrAt`
+    fallback path in `BrowserAutomation.ts`. The path now: locator
+    click -> on failure, re-evaluate descriptor.selector live ->
+    use the live center if it returns a value, else fall back to
+    the stored (x, y). Pure additive change; existing semantics
+    remain when the descriptor selector is stale or invalid.
+  - Documented the coordinate-space contract in both
+    `BrowserClickAtAction` and `BrowserClickTargetOrAtAction`
+    schemas in `@orchestrate/contracts/browser.ts`.
+- files touched:
+  - apps/server/src/browser/clickCoordinates.ts (new)
+  - apps/server/src/browser/clickCoordinates.test.ts (new)
+  - apps/server/src/browser/Layers/BrowserAutomation.ts
+  - packages/contracts/src/browser.ts
+- tests added: 12 unit tests. 6 cover `liveCenterForSelector`
+  (resolves to coords, null on missing, empty selector, throwing
+  evaluator, non-numeric coords, Infinity/NaN). 6 cover the
+  `LIVE_CENTER_SCRIPT` itself with a fake DOM (full center,
+  zero-size rejection, missing element, fully off-viewport
+  rejection in both directions, and partial-overlap acceptance).
+- evidence of green run:
+  ```
+  bun run test src/browser/clickCoordinates.test.ts
+   Test Files  1 passed (1)
+        Tests  12 passed (12)
+  bun run typecheck (apps/server, packages/contracts)  # clean
+  packages/contracts test suite: 163 passed (13 files)
+  ```
+  Failing-before: the new tests cannot exist without the new
+  module (import would fail).
+- follow-ups:
+  - Apply the same live-center re-evaluation to the `click` and
+    `clickTarget` paths so locator-based clicks also benefit when
+    the descriptor selector points at a now-scrolled element.
+  - Add a test layer that exercises BrowserAutomation with a
+    Playwright-stub Page so the wiring itself (descriptor lookup +
+    evaluator construction) is covered by integration-style tests
+    instead of relying on production traffic.

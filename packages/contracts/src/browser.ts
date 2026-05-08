@@ -426,12 +426,31 @@ const BrowserClickAction = Schema.Struct({
   targetId: BrowserTargetId,
 });
 
+/**
+ * Click at raw viewport coordinates.
+ *
+ * Coordinate-space contract (ORC-153):
+ * `(x, y)` are CSS pixels relative to the viewport top-left at the
+ * time the observation was captured. The page may have scrolled,
+ * transformed, or navigated since; expect drift. Prefer `click` (by
+ * targetId) or `clickTarget` (by selector) when a stable target is
+ * available. Use `clickAt` only when no target descriptor exists.
+ */
 const BrowserClickAtAction = Schema.Struct({
   kind: Schema.Literal("clickAt"),
   x: NonNegativeInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_WIDTH)),
   y: NonNegativeInt.check(Schema.isLessThanOrEqualTo(BROWSER_MAX_VIEWPORT_HEIGHT)),
 });
 
+/**
+ * Click by target id, falling back to raw coordinates.
+ *
+ * Coordinate-space contract (ORC-153):
+ * The runtime first attempts a locator-based click via `targetId`.
+ * On failure, it re-evaluates the descriptor's selector to compute a
+ * live viewport-relative center; only if that re-evaluation also
+ * fails does it fall back to the supplied `(x, y)`.
+ */
 const BrowserClickTargetOrAtAction = Schema.Struct({
   kind: Schema.Literal("clickTargetOrAt"),
   targetId: BrowserTargetId,

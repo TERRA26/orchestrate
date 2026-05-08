@@ -1455,7 +1455,8 @@ Schema per entry:
 - files: apps/server/src/browser/Layers/BrowserAutomation.ts:534-537,891,907 (clickAt)
 - evidence: Target bounding boxes are rounded to non-negative integers, but clickAt feeds (x, y) directly to page.mouse.click which expects CSS pixels relative to the viewport top-left. Pages with scroll offset, transform/zoom, or iframe boundaries will mis-target.
 - proposed_fix: Always convert the target rect into a viewport-relative center via `page.evaluate(elem => elem.getBoundingClientRect())` immediately before the click, accounting for the current scroll. Document the coordinate space contract on the action types.
-- status: PENDING
+- status: DONE
+- fixed_iter: 115
 
 ### ORC-154
 

@@ -26,6 +26,10 @@ import {
   isMissingPlaywrightBrowserExecutableError,
   resolveFallbackChromiumExecutablePath,
 } from "../browserExecutable.ts";
+import {
+  liveCenterForSelector,
+  type LiveCenterEvaluator,
+} from "../clickCoordinates.ts";
 import { settle } from "../waitForSettled.ts";
 
 const DEFAULT_VIEWPORT = { width: 1_440, height: 900 } as const;
@@ -1006,8 +1010,20 @@ const makeBrowserAutomation = () =>
                       locator.click({ timeout: ACTION_TIMEOUT_MS }),
                     );
                   } catch {
+                    const evaluator: LiveCenterEvaluator = {
+                      evaluate: (snippet, selector) =>
+                        session.page.evaluate(snippet, selector),
+                    };
+                    const liveCenter = await liveCenterForSelector(
+                      evaluator,
+                      descriptor.selector,
+                    );
+                    const fallback = liveCenter ?? {
+                      x: input.action.x,
+                      y: input.action.y,
+                    };
                     try {
-                      await session.page.mouse.click(input.action.x, input.action.y);
+                      await session.page.mouse.click(fallback.x, fallback.y);
                     } catch {
                       // The preview should keep returning fresh observations even if
                       // an individual user click races with navigation or stale DOM.
