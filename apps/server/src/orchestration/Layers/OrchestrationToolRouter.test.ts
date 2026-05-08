@@ -1164,6 +1164,167 @@ describe("OrchestrationToolRouter", () => {
     expect(turnStart.message.text).toContain("</inter_agent_message>");
   });
 
+  // ORC-243: the source worker for an inter-agent send must be derived
+  // from the calling thread, not from a generic "any non-terminated
+  // worker" lookup. The previous behavior could attribute every send
+  // to whichever worker happened to sort first in the read model,
+  // letting a buggy or malicious thread spoof a peer.
+  it("orchestrate_send_to_agent attributes fromWorkerId to the calling thread's worker (ORC-243)", async () => {
+    const commands: OrchestrationCommand[] = [];
+    const senderWorkerId = "worker-sender";
+    const senderThreadId = ThreadId.makeUnsafe("thread-sender");
+    const targetWorkerId = "worker-target-243";
+    const targetThreadId = ThreadId.makeUnsafe("thread-target-243");
+    const otherWorkerId = "worker-other-243";
+    const otherThreadId = ThreadId.makeUnsafe("thread-other-243");
+    const readModel = makeReadModel({
+      threads: [
+        makeThread(),
+        { ...makeThread(), id: senderThreadId, title: "Sender" },
+        { ...makeThread(), id: targetThreadId, title: "Target" },
+        { ...makeThread(), id: otherThreadId, title: "Other" },
+      ],
+      orchestratorWorkers: [
+        // The "other" worker is intentionally listed FIRST. The pre-fix
+        // implementation would have attributed the message to it.
+        {
+          workerId: otherWorkerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: otherThreadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+        {
+          workerId: senderWorkerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: senderThreadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+        {
+          workerId: targetWorkerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: targetThreadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, commands)));
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        yield* router.executeTool({
+          toolName: "orchestrate_send_to_agent",
+          threadId: senderThreadId,
+          runId: null,
+          toolInput: {
+            targetAgentId: targetWorkerId,
+            message: "ping",
+          },
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    const messageSend = commands.find((c) => c.type === "orchestrator.message.send") as any;
+    expect(messageSend).toBeDefined();
+    expect(messageSend.fromWorkerId).toBe(senderWorkerId);
+    // Crucially NOT the "other" worker (which sorted first in the
+    // read model and would have been the previous mis-attribution).
+    expect(messageSend.fromWorkerId).not.toBe(otherWorkerId);
+
+    // The framing in the inter-agent text also names the correct sender.
+    const turnStart = commands.find((c) => c.type === "thread.turn.start") as any;
+    expect(turnStart.message.text).toContain('from_agent_id="' + senderWorkerId + '"');
+    expect(turnStart.message.text).not.toContain('from_agent_id="' + otherWorkerId + '"');
+  });
+
+  // ORC-243: when the calling thread is the orchestrator (no worker
+  // record), the source falls through to the literal "orchestrator"
+  // sentinel.
+  it("orchestrate_send_to_agent falls through to 'orchestrator' when calling thread has no worker record (ORC-243)", async () => {
+    const commands: OrchestrationCommand[] = [];
+    const targetWorkerId = "worker-target-243-orchestrator";
+    const targetThreadId = ThreadId.makeUnsafe("thread-target-243-orch");
+    const readModel = makeReadModel({
+      threads: [
+        makeThread(),
+        { ...makeThread(), id: targetThreadId, title: "Target" },
+      ],
+      orchestratorWorkers: [
+        {
+          workerId: targetWorkerId as unknown as OrchestratorWorkerId,
+          runId: "run-1" as OrchestratorRunId,
+          threadId: targetThreadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, commands)));
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        yield* router.executeTool({
+          toolName: "orchestrate_send_to_agent",
+          threadId: THREAD_ID,
+          runId: null,
+          toolInput: {
+            targetAgentId: targetWorkerId,
+            message: "kickoff",
+          },
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    const messageSend = commands.find((c) => c.type === "orchestrator.message.send") as any;
+    expect(messageSend.fromWorkerId).toBe("orchestrator");
+  });
+
   it("orchestrate_get_agent_diff returns aggregated file stats for worker's latest checkpoint (Gap B)", async () => {
     const workerId = "worker-with-diff";
     const threadId = ThreadId.makeUnsafe("thread-with-diff");

@@ -1044,6 +1044,7 @@ function frameInterAgentMessage(fromAgentId: string, content: string): string {
 function handleSendToAgent(
   dispatch: OrchestrationEngineService["Type"]["dispatch"],
   readModel: OrchestrationReadModel,
+  callingThreadId: string,
   input: unknown,
 ): Effect.Effect<unknown, Error> {
   return Effect.gen(function* () {
@@ -1071,8 +1072,19 @@ function handleSendToAgent(
       };
     }
 
-    const fromWorker = readModel.orchestratorWorkers.find((w) => w.status !== "terminated");
-    const fromWorkerId = fromWorker?.workerId ?? ("orchestrator" as any);
+    // ORC-243: derive the source worker from the calling thread, NOT from
+    // a "find any non-terminated worker" lookup. The previous behavior
+    // attributed every send_to_agent call to whichever worker happened to
+    // sort first in the read model. A buggy or malicious worker could send
+    // messages attributed to a peer; the receiving worker would parse them
+    // through `<inter_agent_message from_agent_id="...">` framing and
+    // potentially trust them. By keying on the actual calling thread we
+    // get the cryptographic-equivalent guarantee that the WS connection
+    // upstream already authenticated.
+    const callingWorker = (readModel.orchestratorWorkers ?? []).find(
+      (w) => (w.threadId as unknown as string) === callingThreadId,
+    );
+    const fromWorkerId = callingWorker?.workerId ?? ("orchestrator" as any);
 
     // 1) Record the message on the orchestrator message bus (projector writes
     //    it to orchestratorMessages[] for audit + replay).
@@ -1646,7 +1658,12 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
         case "orchestrate_demote_to_background":
           return yield* handleDemoteToBackground(engine.dispatch, toolInput);
         case "orchestrate_send_to_agent":
-          return yield* handleSendToAgent(engine.dispatch, readModel, toolInput);
+          return yield* handleSendToAgent(
+            engine.dispatch,
+            readModel,
+            input.threadId,
+            toolInput,
+          );
         case "orchestrate_send_update_to_orchestrator":
           return yield* handleSendUpdateToOrchestrator(
             engine.dispatch,

@@ -5106,3 +5106,61 @@ mention of the prefix convention. Verified failing-before by stashing
     so distributed attempts also trip the gate.
   - Promote thresholds to env vars
     (`ORCHESTRATE_AUTH_FAIL_THRESHOLD`, etc.) for ops tuning.
+
+## ORC-243 (iter 163): derive sender from calling thread, not arbitrary worker
+
+- root cause: `handleSendToAgent` in
+  `apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:1074`
+  used `readModel.orchestratorWorkers.find((w) => w.status !== "terminated")`
+  to resolve the source worker for an inter-agent send. That picked
+  whichever worker happened to sort first in the read model, NOT
+  the worker that actually called the tool. A buggy or malicious
+  worker could spoof a peer; the receiving worker would parse the
+  message through `<inter_agent_message from_agent_id="...">`
+  framing and potentially trust it.
+- change summary:
+  - Threaded `callingThreadId` (already known at the dispatch
+    boundary in `executeTool`) into `handleSendToAgent`.
+  - Replaced the "any non-terminated worker" lookup with
+    `find((w) => w.threadId === callingThreadId)`. The WS upgrade
+    handler already authenticates the connection (ORC-042 +
+    ORC-239) and the orchestrator engine attests the calling
+    thread, so binding the sender to that thread inherits the
+    cryptographic guarantee.
+  - When the calling thread has no worker record (top-level
+    orchestrator path), the source falls through to the literal
+    `"orchestrator"` sentinel, preserving existing behavior for
+    that case.
+  - Updated the call site in `executeTool`'s switch to pass
+    `input.threadId` to the handler.
+- files touched:
+  - apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts
+  - apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts
+- tests added: 2 new regression tests:
+  - "attributes fromWorkerId to the calling thread's worker
+    (ORC-243)" sets up THREE workers in the read model with
+    "other" listed first; calls send_to_agent from "sender"
+    thread and asserts both the message.send and the
+    inter-agent framing name "sender", NOT "other".
+  - "falls through to 'orchestrator' when calling thread has no
+    worker record" pins the orchestrator-thread sentinel path.
+  Failing-before VERIFIED: stashing the source change ran the
+  new tests and 2/2 failed (the older "Gap A" + "ORC-025" tests
+  still passed since they used a single-worker fixture where the
+  bug didn't manifest).
+- evidence of green run:
+  ```
+  bun run test src/orchestration/Layers/OrchestrationToolRouter.test.ts
+   Test Files  1 passed (1)
+        Tests  24 passed (24)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Apply the same calling-thread derivation pattern to
+    `orchestrator.message.send` consumers anywhere they exist
+    (currently only this router uses it).
+  - Add an assertion in the decider that
+    `command.fromWorkerId` actually corresponds to the
+    `command.aggregateId` thread when the originating boundary
+    can be ascertained, as a belt-and-suspenders defense.

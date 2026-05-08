@@ -2325,7 +2325,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:976-977 (handleSendToAgent)
 - evidence: handleSendToAgent infers the source worker from the calling threadId via the read model. There is no cryptographic proof that the calling thread IS the worker it claims. A malicious or buggy thread could send messages attributed to a different worker.
 - proposed_fix: Maintain a server-side mapping of MCP-session -> threadId at session start (already implicit). On every call, assert the calling session matches the read-model lookup. Refuse mismatch.
-- status: PENDING
+- status: DONE
+- fixed_iter: 163
 
 ### ORC-244
 
