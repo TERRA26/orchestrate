@@ -590,3 +590,49 @@ max_concurrent_writers: 4
 ```
 
 These defaults balance throughput with resource safety. Adjust via `orchestrate_set_spawn_budget` when justified (e.g., a large decomposed task with many independent modules). Always report to the user if budget is exhausted before all tasks complete.
+
+## Mid-execution Amendments
+
+The user often realizes mid-flight that a task should change. They may **insert** a new task ("also rebuild the email template"), **remove** a planned task ("forget the migration; we'll do that later"), or **modify** an in-flight task's scope. There is no `orchestrate_amend_plan` tool today; you compose existing primitives instead. The decision matrix:
+
+### When a hot amendment is SAFE (no cancel + re-plan needed)
+
+An amendment can be applied without disturbing in-flight work when ALL of these hold:
+
+- The amendment is purely **additive**: insert a new task whose dependsOnChain references only completed or accepted tasks.
+- OR the amendment touches a task that is not yet assigned to a worker (status is `pending` and no spawn has fired); the in-flight worker hasn't started this task.
+- OR the amendment removes a task whose worker is `idle` and whose downstream dependents are also `pending` (no in-flight work was based on its writeScope).
+
+In these cases:
+
+1. Confirm the amendment back to the user in plain language so they can correct a misread before any worker is touched ("Adding a new task X that depends on Y; existing tasks A and B are unaffected; OK to proceed?").
+2. For inserts: call `orchestrate_create_task` with the new task fields and the dependsOnChain that links it into the existing graph.
+3. For removes: call `orchestrate_cancel_task` on the unassigned task. Workers in `idle` status do not need to be touched.
+
+### When an amendment requires a CANCEL + re-plan
+
+If any of these hold, the amendment is incompatible with in-flight work and you MUST cancel the running task before applying:
+
+- The in-flight worker has already started writing inside the writeScope of a removed task (a partial-rollback would corrupt the workspace; the safer path is to terminate, revert, and re-plan).
+- The amendment redefines a write scope that overlaps an in-flight worker's writeScope (concurrent writers on the same paths violate ORC-200's exclusion guarantee).
+- The amendment changes the contract of a task that downstream tasks depend on (e.g., changes the API surface a sibling task is implementing against).
+
+In these cases the order of operations is:
+
+1. Acknowledge the amendment to the user; surface the cost ("I'll cancel the in-flight worker on task A and re-plan from scratch; A's branch will be discarded.") and wait for explicit confirmation before destroying state.
+2. Block the affected task and its dependents using the cascade-block flow (see Coordination Patterns above; the runtime cascade-blocks dependents automatically when you call `orchestrate_terminate_worker`).
+3. Call `orchestrate_terminate_worker` on the in-flight worker. The runtime emits the block events and dependents enter `blocked` state.
+4. Call `orchestrate_send_to_agent` to any sibling worker whose plans referenced the now-removed contract, so they pause until the new plan lands.
+5. Re-decompose with the amended scope. Spawn fresh workers per the new dependsOnChain.
+
+### Dependency-graph implications of a hot insert
+
+A new task inserted mid-flight rewrites part of the dependsOnChain. Always:
+
+- Compute the closure of dependents that will be re-blocked. The runtime handles cascade-blocking but you should know which workers will pause so you can communicate it to the user.
+- Avoid creating a cycle: if the new task lists an existing in-flight task as a dependency AND the existing task's continuation requires the new task's output, the result is a deadlock. Surface that and ask the user to choose an order.
+- If the insert depends on a task that has not yet started, the runtime will start the dependency first, then the new task; the user does not need to reorder.
+
+### Communication
+
+Echo the user's amendment back in your own words before any worker is touched. The orchestrator is the single point of truth for the plan; if the user said "drop X" but you read "drop Y", a one-line echo lets them correct it before code is destroyed. After applying, summarize what changed (created, cancelled, blocked) so they have an audit trail without reading the event log.

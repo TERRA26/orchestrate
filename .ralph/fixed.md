@@ -5812,3 +5812,74 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider exposing per-frame size in the metadata so a
     downstream review can decide which iframe is worth
     inspecting in detail when the cap is hit.
+
+## ORC-282: Mid-execution Amendments playbook in ORCHESTRATOR.md
+
+- root cause: ORCHESTRATOR.md said nothing about how the orchestrator
+  should react when the user adds, removes, or modifies a task while
+  earlier tasks are already running. Orchestrators either waited for
+  the in-flight task to finish (slow) or terminated and re-planned
+  unnecessarily (wasteful, lost work).
+- change summary:
+  - Added a new top-level "Mid-execution Amendments" section to
+    ORCHESTRATOR.md immediately after the Budget Defaults section.
+  - The section defines the three amendment scenarios (insert,
+    remove, modify) and a decision matrix for "safe to apply
+    in-place" vs "requires cancel + re-plan", with the criteria
+    spelled out (purely additive, target task not yet assigned,
+    no in-flight writer in the affected writeScope, etc.).
+  - Documents the order of operations for the cancel + re-plan
+    path: confirm with user, block dependents (the runtime
+    cascades automatically when terminate_worker fires), call
+    `orchestrate_terminate_worker`, send_to_agent for siblings
+    that referenced the removed contract, re-decompose, spawn.
+  - Documents the dependency-graph implications of a hot insert
+    (cycle avoidance, dependsOnChain rewriting, runtime starts
+    dependencies first).
+  - Documents the communication contract: echo the user's
+    amendment back in plain language before any worker is touched,
+    so a misread is corrected before code is destroyed.
+  - The deliberate non-introduction: ORC-282 explicitly does NOT
+    add a new `orchestrate_amend_plan` tool. Instead it documents
+    how to compose the existing primitives (create_task,
+    cancel_task, terminate_worker, send_to_agent) so a present-day
+    orchestrator has an actionable playbook with no schema bump.
+- files touched:
+  - docs/ORCHESTRATOR.md
+  - apps/server/src/orchestration/orchestratorAmendmentDoc.test.ts (new)
+- tests added:
+  - "contains a top-level Mid-execution Amendments section":
+    pins the heading.
+  - "names the three amendment scenarios": insert, remove,
+    modify must all appear.
+  - "describes when an amendment is SAFE without re-planning":
+    explicit safe-criteria language.
+  - "describes when an amendment requires a CANCEL + re-plan":
+    explicit unsafe-criteria language.
+  - "describes the dependency-graph implications of a hot insert":
+    must reference dependsOnChain.
+  - "commits the orchestrator to surface the user's amendment
+    intent before acting": echo / confirm / surface language.
+  - "mentions the orchestrator-side tool surface": at least one
+    of orchestrate_(cancel|terminate|spawn|send_to_agent|
+    create_task) is documented.
+  - "documents the order of operations": cascade-block language.
+- evidence of green run:
+  ```
+  bun run vitest run src/orchestration/orchestratorAmendmentDoc.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - The "optional" tool surface (`orchestrate_amend_plan`) from
+    the proposed_fix is intentionally not introduced. If usage
+    data later shows the compose-primitives playbook is too
+    verbose for orchestrators, the tool can be added in a
+    follow-up.
+  - Consider adding a short test scenario in the orchestrator
+    smoke test that exercises an insert + cancel + re-plan
+    sequence end-to-end. Today the section is documented but no
+    integration test confirms the runtime supports the documented
+    flow without rough edges.

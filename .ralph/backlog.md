@@ -2690,7 +2690,7 @@ Schema per entry:
 - files: docs/ORCHESTRATOR.md (entire decomposition section)
 - evidence: There is no documented mid-execution amendment flow. If the user says "actually, also add Z" while a task is running, the orchestrator either has to wait for the in-flight task to finish (slow) or terminate and re-plan (wasteful). No `orchestrate_amend_plan` tool exists.
 - proposed_fix: Document the amendment playbook: when amendments are safe (before a subtask starts), how to insert/remove tasks, fallback if incompatible. Optionally introduce an explicit `orchestrate_amend_plan(addition?, removal?)` tool.
-- status: PENDING
+- status: DONE
 
 ### ORC-283
 
