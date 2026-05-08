@@ -607,7 +607,8 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:799-813,1381,839; apps/server/src/provider/Layers/ClaudeAdapter.ts:1381
 - evidence: Logging is split across console.log, console.error, Effect.logInfo, and the custom logger.ts. logger.ts is used in ONE place (push log at wsServer.ts:596). Everywhere else is bare console.log with no structured fields.
 - proposed_fix: Standardize on a single structured logger (extend logger.ts to support all levels). Replace console.log with logger.info, console.error with logger.error. Add a scope/subsystem field. Ban bare console.\* outside of dev tooling via lint rule.
-- status: PENDING
+- status: DONE
+- fixed_iter: 77
 
 ### ORC-064
 

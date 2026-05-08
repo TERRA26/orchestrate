@@ -1378,7 +1378,13 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         if (toolRouter._tag === "Some") {
           const router = toolRouter.value;
           manager.setToolCallHandler(async ({ threadId, toolName, toolInput }) => {
-            console.log(`[CodexAdapter] Tool call intercepted: ${toolName} for thread ${threadId}`);
+            await Effect.runPromiseWith(adapterServices)(
+              Effect.logInfo("codex tool call intercepted", {
+                scope: "codex.adapter",
+                toolName,
+                threadId,
+              }),
+            );
             if (!router.isOrchestrationTool(toolName)) {
               throw new Error(`Unknown orchestration tool: ${toolName}`);
             }

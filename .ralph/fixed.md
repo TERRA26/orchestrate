@@ -1643,3 +1643,47 @@ All 6 would fail before the change because the helper module did not exist.
 - Wire `withTraceContext` around `Effect.fork` for engine reactors so async work picks up the trace via the Cause chain.
 - Add a `traceId` field to the structured push log line emitted in wsServer.ts:596 once the prior follow-up lands.
 - Surface traceId in the activity log writes (`apps/server/src/persistence/.../activityLog.ts`) so operators can pivot from a UI complaint to the underlying trace.
+
+## ORC-063 [iter 77] Replace bare console.log with structured logging in apps/server
+
+**Root cause**: Logging in `apps/server/src` was split across `console.log`, `Effect.logInfo`, and the structured `createLogger()` helper. The structured logger was used in exactly one place (the push log in wsServer.ts), while 8 production callsites used `console.log` with no scope, level, or structured fields. This made grep-by-subsystem operationally painful and meant operators could not filter or route logs through the standard Effect logger pipeline (which feeds the trace context added in ORC-062).
+
+**Change summary**:
+- `apps/server/src/codexAppServerManager.ts`:
+  - 5 `console.log` calls in startSession's post-initialize sequence replaced with `await Effect.logInfo("...", { scope: "codex.manager", ... }).pipe(this.runPromise)`. Failure paths use `Effect.logWarning` and serialize the error via `error instanceof Error ? error.message : String(error)` to avoid leaking circular references.
+  - The 1 sync `console.log` in `handleServerRequest` replaced with `void this.runPromise(Effect.logInfo(...))` (fire-and-forget; the method's signature stays sync).
+- `apps/server/src/provider/Layers/CodexAdapter.ts`:
+  - 1 `console.log` inside the `setToolCallHandler` async callback replaced with `await Effect.runPromiseWith(adapterServices)(Effect.logInfo("codex tool call intercepted", { scope: "codex.adapter", toolName, threadId }))`.
+- `apps/server/src/provider/Layers/ClaudeAdapter.ts`:
+  - 1 `console.log` inside an `Effect.gen` block replaced with `yield* Effect.logInfo("claude adapter orchestrator detection", { scope: "claude.adapter", threadType, toolRouter, isOrchestrator })`.
+
+All 8 callsites now flow through the Effect logger, picking up the per-request trace annotations introduced in ORC-062 when invoked inside a request fiber.
+
+**Files touched**:
+- apps/server/src/codexAppServerManager.ts
+- apps/server/src/provider/Layers/CodexAdapter.ts
+- apps/server/src/provider/Layers/ClaudeAdapter.ts
+- apps/server/src/observability/noBareConsole.test.ts (NEW)
+
+**Tests added**: 1 stand-in lint test in `noBareConsole.test.ts` that walks `apps/server/src/**/*.{ts,tsx}` excluding test files and `logger.ts`, regex-scans each line for `console.<level>(`, ignores comment lines, and asserts the offender list is empty. The test reports each offender with file path, line number, and source text in its failure message so a regression diff is actionable.
+
+The test would fail before the change because there were 8 offenders. It passes after.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/observability/noBareConsole.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 1 passed (1)
+- `bun run test src/codexAppServerManager.test.ts src/provider/Layers` -> Test Files 8 passed (8) | Tests 191 passed | 1 skipped
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- Future regression: a contributor adding `console.log` in apps/server/src would fail the new test in CI. Test catches `log|info|warn|error|debug|trace` so all common variants are covered.
+- Multi-line console calls: the regex matches the function-name line; multi-line args still trigger because the opening `console.<level>(` is on the first line.
+- Comment-only references: lines starting with `//` or `*` are skipped, so prose like `// console.log was here historically` survives.
+- Test files and the logger module: skipped via filename patterns and the explicit allowlist set, so the structured logger's own `console.warn`/`console.error`/`console.log` (the actual sink) does not trip the rule.
+- handleServerRequest is sync; using `void this.runPromise(...)` for the log is fire-and-forget. If the log fails (extremely unlikely for Effect.logInfo), the failure is swallowed. Acceptable since this is not on the hot critical path.
+- The replaced calls in startSession may now serialize larger objects (the full `modelListResponse`/`accountReadResponse`); Effect.logInfo's structured backend handles this via the same util.inspect-equivalent.
+
+**Follow-ups**:
+- Wire `eslint/no-console` into the oxlint config (when oxlint adds per-file-pattern overrides) to catch additions at lint time, not test time.
+- Audit `apps/web/src` for the same pattern (16 occurrences) as a separate ticket.
+- Once ORC-062's trace context flows into more reactor fibers, the converted log lines automatically gain traceId correlation; verify after wiring follow-ups.
