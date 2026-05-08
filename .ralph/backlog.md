@@ -973,7 +973,8 @@ Schema per entry:
 - files: apps/web/src/components/ (160 untested .tsx of 172 total = 93% untested)
 - evidence: 12 component test files vs 160 source components. Hooks have 2 test files for 20 use\*.ts hooks. Major components like OrchestratorComposer, ChatView, Sidebar, MessagesTimeline have no @testing-library tests.
 - proposed_fix: Establish a test pattern with @testing-library/react + msw mocks. Cover the top 10 most-changed components first (use git log --since=30d to pick). Add a baseline coverage threshold so new components arrive with tests.
-- status: PENDING
+- status: DONE
+- fixed_iter: 93
 
 ### ORC-103
 

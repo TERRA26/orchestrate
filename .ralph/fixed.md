@@ -2275,3 +2275,41 @@ The first run of the meta-test surfaced 17 thread.* commands the original audit 
 - Add unit tests for `Layers/ProviderDiscoveryService.ts` (172 lines, untested).
 - Refactor the duplicated `runProbe + retry-on-timeout` pattern across Claude and Codex providers into a shared helper once a third probe surface appears.
 - Consider exporting the probe constants so a single test can pin both providers' values, avoiding the regex source-scan.
+
+## ORC-102 [iter 93] Establish a test pattern for web components and add a real test
+
+**Audit findings**: 147 component .tsx files in apps/web/src/components, 13 test files (~9% by file count). Hooks: 20 source files, 3 test files (2 of those added by earlier Ralph Loop iterations: useFormFieldA11y from ORC-074, useFocusTrapAndRestore from ORC-073).
+
+**Why this iteration's slice is small**: covering 147 components is multi-week work. The proposed_fix asks for "top 10 most-changed components first" plus "baseline coverage threshold." The single-iteration value here is to establish the test pattern with one canonical example so future iterations can mechanically apply it.
+
+**Change summary**:
+- New `apps/web/src/components/chat/MessageCopyButton.test.tsx`: full @testing-library/react jsdom test suite for the smallest-but-real component in the chat tree. Uses the established `// @vitest-environment jsdom` directive, real `cleanup()` afterEach, mocks `navigator.clipboard.writeText` directly (no module-level vi.mock), exercises 5 distinct paths:
+  1. Renders with a copy title and the icon SVG.
+  2. Click invokes `clipboard.writeText` with the text prop.
+  3. Empty text short-circuits the hook (writeText not called).
+  4. Successful copy flips the icon to the success state via the `text-success` utility class.
+  5. Vitest fake-timers prove the 2-second timeout returns the icon to the default state.
+
+**Files touched**:
+- apps/web/src/components/chat/MessageCopyButton.test.tsx (NEW)
+
+**Tests added**: 5 cases, all passing on Node 24. Pattern documented inline as the template for future component tests.
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/components/chat/MessageCopyButton.test.tsx` (Node 24) -> Test Files 1 passed (1) | Tests 5 passed (5)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- `toBeInTheDocument` matcher: not in scope (jest-dom is installed but not auto-imported in apps/web's vitest config). Falling back to `not.toBeNull()` keeps assertions portable; future setupFiles work could enable jest-dom matchers globally.
+- `navigator.clipboard.writeText`: Object.defineProperty with `configurable: true` keeps each test's mock isolated; `afterEach(cleanup)` resets the React tree.
+- Fake timers: `vi.useFakeTimers()` then `vi.advanceTimersByTime` covers the timeout-driven UI without flakiness. `vi.useRealTimers()` in afterEach prevents leaking into adjacent tests.
+- Lucide icon detection: identifying CheckIcon vs CopyIcon by the success-color CSS class avoids brittle SVG-internal selectors.
+- Bigger surfaces (OrchestratorComposer, ChatView, Sidebar, MessagesTimeline): out of scope for this iteration. The pattern here is the unblocking artifact.
+
+**Follow-ups**:
+- Add tests for the next 9 most-changed components per the proposed_fix's "top 10" guidance: a quick `git log --since=30d --name-only -- apps/web/src/components | sort | uniq -c | sort -rn` is the picking heuristic.
+- Wire `@testing-library/jest-dom` matchers globally via a setupFile so future tests can use `toBeInTheDocument` and friends without the local fallback.
+- Add a coverage-threshold gate in vitest config (`test.coverage.thresholds.lines >= 30%` to start, ratchet up over time).
+- Once 5+ components share render fixtures, extract a `renderWithProviders` helper covering `QueryClient`, `Router`, theme, and toast contexts — without it every component test will reinvent the wrapper.
+- Consider banning new `*.tsx` components without a sibling `*.test.tsx` via a stand-in test similar to the decider command-coverage pattern; keeps the component coverage strictly non-decreasing.
