@@ -1821,7 +1821,8 @@ Schema per entry:
 - files: apps/server/src (no backup/export mechanism)
 - evidence: There is no command, endpoint, or script to export the SQLite DB or build a portable snapshot. A corruption requires reconstructing from scratch; users cannot move installs.
 - proposed_fix: Add a `bun run export-snapshot` script that VACUUMs INTO a tempfile, gzips, and copies. Document a restore procedure. Trigger an export periodically from a maintenance task.
-- status: PENDING
+- status: DONE
+- fixed_iter: 127
 
 ### ORC-193
 

@@ -3964,3 +3964,56 @@ mention of the prefix convention. Verified failing-before by stashing
     auth-bearing files).
   - Consider running the validator under a sigchild-based audit
     so a swap between the lstat and stat is also caught (TOCTOU).
+
+## ORC-192 (iter 127): SQLite snapshot exporter (bun run export-snapshot)
+
+- root cause: There was no first-class command, endpoint, or script
+  to export the orchestrate state DB or build a portable snapshot.
+  Corruption recovery required reconstructing from scratch; users
+  could not move installs between machines without manually copying
+  the WAL/shm sidecars and risking torn writes.
+- change summary:
+  - Added `scripts/export-snapshot.ts` exporting
+    `exportSqliteSnapshot({ dbPath, outputPath })`. The function
+    opens the source DB read-only, runs `VACUUM INTO ?1` against a
+    fresh temp file (atomic, defragmented, no WAL/shm sidecar),
+    gzips the result with level-9 compression, and writes it to the
+    output path (mode 0o600). Cleanup removes the temp directory on
+    both success and failure.
+  - Exported `parseCliArgs(argv)` for testability; defaults
+    `--db <state-dir>/state.sqlite` and
+    `--output <state-dir>/orchestrate-snapshot-<timestamp>.db.gz`.
+    Uses `node:sqlite` (Node 24+ built-in) so the script runs from
+    vitest workers as well as bun runtime.
+  - Documented the restore procedure in the script header:
+    `gunzip -c <output>.db.gz > restored.sqlite` then point
+    `ORCHESTRATE_DATA_DIR` at the restored file.
+  - Added `"export-snapshot": "bun run scripts/export-snapshot.ts"`
+    to root `package.json`.
+- files touched:
+  - scripts/export-snapshot.ts (new)
+  - scripts/export-snapshot.test.ts (new)
+  - package.json
+- tests added: 9 unit tests covering: gzip magic-byte signature,
+  data round-trip via gunzip + sqlite open + query, output-dir
+  creation, source DB integrity preserved after export,
+  missing-source rejection, and CLI flag parsing
+  (defaults, --db, --output, unknown-flag pass-through).
+- evidence of green run:
+  ```
+  bunx vitest run scripts/export-snapshot.test.ts
+   Test Files  1 passed (1)
+        Tests  9 passed (9)
+  bun run typecheck   # 10 packages, all green
+  bun lint scripts/export-snapshot.ts scripts/export-snapshot.test.ts
+  Found 0 warnings and 0 errors.
+  ```
+- follow-ups:
+  - Schedule a periodic export from a maintenance task (e.g.
+    daily) so snapshots accumulate even when users do not run the
+    CLI manually.
+  - Add a companion `import-snapshot` script that decompresses,
+    runs schema-version compatibility checks, and atomically
+    swaps the active DB.
+  - Document the snapshot directory in the desktop UI's
+    "Settings -> Data" panel so users can find it without grep.

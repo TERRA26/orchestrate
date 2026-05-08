@@ -43,6 +43,7 @@
     "test:scenarios": "bun run test:scenarios:reviewer-loop",
     "test:scenarios:legacy-manual": "bun scripts/scenario-runner.ts",
     "test:scenarios:reviewer-loop": "cd apps/server && bun run test src/reviewer/ReviewerLoop.integration.test.ts",
+    "export-snapshot": "bun run scripts/export-snapshot.ts",
     "test:contracts": "cd packages/contracts && bun run test",
     "test:decider": "cd apps/server && vitest run src/orchestration/decider.orchestrator.test.ts",
     "test:projector": "cd apps/server && vitest run src/orchestration/projector.orchestrator.test.ts",
