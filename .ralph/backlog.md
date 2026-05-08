@@ -2214,7 +2214,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 155
 - deferred_reason: External error sink integration is a 4-step build: (1) abstract ErrorSink service interface, (2) Sentry-compatible adapter (DSN config, sampling, fingerprinting), (3) hook into the existing logger.error path so all error-level logs forward, (4) ops doc covering DSN secrecy, rate limits, retention. Single-iteration scope risks shipping a flag with no consumer or a forward path that double-counts errors. Plan recorded as ORC-231a..d in blockers.md.
-- status: PENDING
 
 ### ORC-232
 
@@ -2280,7 +2279,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 156
 - deferred_reason: Runtime token rotation needs (1) `auth_tokens` SQLite table with version + revoked_at columns + migration, (2) auth check on every inbound WS request that compares against the current row, (3) admin CLI/SIGUSR1 signal to bump the version, (4) graceful handling of in-flight connections when revoked. Each step has its own correctness implication (revoking too aggressively kills active sessions; revoking too laxly leaves a leaked token valid). Defer with ORC-238a..d plan in blockers.md.
-- status: PENDING
 
 ### ORC-239
 
@@ -2319,7 +2317,6 @@ Schema per entry:
 - proposed_fix: At executeTool entry, verify the called tool name is in the worker's effective allowedTools set. Reject with `tool_not_allowed` and log. Document the empty-list semantic (`[]` = none, undefined = all? pick one).
 - status: DONE
 - fixed_iter: 160
-- status: PENDING
 
 ### ORC-243
 
@@ -2375,7 +2372,6 @@ Schema per entry:
 - proposed_fix: In the active route component (or a dedicated hook), update document.title on thread/project change. Pattern: `${threadTitle} -- ${projectName} -- Orchestrate`.
 - status: DONE
 - fixed_iter: 157
-- status: PENDING
 
 ### ORC-249
 
@@ -2404,7 +2400,6 @@ Schema per entry:
 - proposed_fix: Wrap the worker-status label in `<span role="status" aria-live="polite" aria-atomic="true">`. Trigger an announcement only on actual state change, not on every re-render.
 - status: DONE
 - fixed_iter: 158
-- status: PENDING
 
 ### ORC-252
 
@@ -2425,7 +2420,6 @@ Schema per entry:
 - status: DEFERRED
 - deferred_iter: 159
 - deferred_reason: Audit found the @orchestrate/web devDep IS load-bearing, not a leftover. `apps/server/scripts/cli.ts:143-152` bundles `apps/web/dist` into `apps/server/dist/client` at build time, and `turbo.json` has `build.dependsOn: ["^build"]` which uses the package.json deps to derive build order. NO server-side imports of @orchestrate/web exist (verified via grep). Removing the workspace dep would break the bundle ordering and ship a server with no web client. The architectural concern (server should not depend on frontend) is real but resolving it requires a separate "extract web bundle into a shared dist artifact" lift, not a simple package.json scrub. Plan recorded in blockers.md.
-- status: PENDING
 
 ### ORC-254
 
