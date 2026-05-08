@@ -68,7 +68,13 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
     // DB. Two concurrent `bun dev` processes against the same SQLite
     // file produce subtly broken WAL frame chains; the explicit
     // refusal makes the failure mode observable instead of silent.
-    const lock = yield* Effect.try(() => acquireDatabaseLockOrThrow(dbPath));
+    // Effect 4.0-beta requires the `{ try, catch }` options object;
+    // the legacy single-arg form throws "options.catch is not a
+    // function" inside the Effect runtime.
+    const lock = yield* Effect.try({
+      try: () => acquireDatabaseLockOrThrow(dbPath),
+      catch: (cause) => cause,
+    });
     yield* Effect.addFinalizer(() => Effect.sync(lock.release));
 
     return Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: dbPath }));
