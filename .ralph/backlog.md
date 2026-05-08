@@ -2149,6 +2149,9 @@ Schema per entry:
 - files: apps/server/src (no audit-log channel)
 - evidence: User-action audit events (project delete, settings change, auth attempts) blend into operational logs with no separation. Incident response cannot answer "who did what when" reliably.
 - proposed_fix: Add an audit-log layer that writes `{actor, action, resource, timestamp, result}` to a separate sink. Persist; never delete. Hook into command dispatch and WS auth flows.
+- status: DEFERRED
+- deferred_iter: 150
+- deferred_reason: Audit log requires (1) a new persistence table with append-only semantics + retention policy, (2) a service interface AuditLog that command dispatch and auth flows inject as a dependency, (3) classification of which orchestration commands count as audit-worthy (project.delete, thread.archive, secret access, etc.), (4) a separate file/SQL sink + log rotation policy, (5) ops procedure for retrieval. Single-iteration scope risks shipping a half-wired sink. Multi-iteration plan tracked as ORC-224a..d in blockers.md.
 - status: PENDING
 
 ### ORC-225

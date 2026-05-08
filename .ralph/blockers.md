@@ -259,3 +259,31 @@ Per-component plan ORC-215a..c:
 - **215b**: server publish on Stream.tapError. Test with a fault-injected stream that exits with an error and asserts the frame is published.
 - **215c**: client handler that calls replayEvents on the frame. Integration test with a stubbed transport that delivers the frame.
 
+
+## ORC-224 (deferred at iter 150): audit log layer
+
+### What was attempted
+
+Surveyed `apps/server/src/`. Confirmed there is no dedicated audit-log facility; user-action events blend into the same operational log stream that contains debug/warn/error noise.
+
+### Why a single-iteration fix is risky
+
+Audit log infrastructure has 5 components:
+
+1. **Persistence**: new `audit_events` table with `(id, actor, action, resource_kind, resource_id, occurred_at, result, metadata_json)`. Append-only with no UPDATE/DELETE; needs a migration plus a retention policy decision (90 days? indefinite?).
+2. **Service interface**: `AuditLog` service with `record({ actor, action, resource, result, metadata })` that command dispatch and auth flows inject. Effect-style Layer plus a Live impl that writes through the persistence repository.
+3. **Classification**: enumerate which commands are audit-worthy. Candidates: `project.delete`, `thread.archive`, `thread.unarchive`, `worker.terminate`, `settings.write`, all auth attempts (success and failure), all `orchestrator.run.create`. Each needs an entry in a table that maps command type to audit shape.
+4. **Sink**: optional second sink for shipping audit events to a SIEM later (file with rotation, or a structured stdout stream the operator can pipe).
+5. **Retrieval ops**: a `bun run audit-export --since <date>` script that reads the table and emits NDJSON.
+
+Each component has its own correctness invariant; doing all five in one iteration risks shipping a half-wired sink or a classifier that misses critical commands.
+
+### What would unblock it
+
+Per-component plan ORC-224a..d:
+
+- **224a**: persistence migration + repository (append-only).
+- **224b**: AuditLog service interface + Live impl + tests.
+- **224c**: classify and wire one round of audit-worthy commands (project.delete, worker.terminate, auth attempts) with integration tests.
+- **224d**: retrieval script + retention policy doc + SIEM export adapter.
+
