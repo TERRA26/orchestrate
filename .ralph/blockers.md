@@ -207,3 +207,30 @@ A 5-step plan tracked as ORC-155a..e:
 - **155d**: per-session "list pages" surface (or include pages in the observation envelope) so the orchestrator can name a popup.
 - **155e**: optional auto-switch heuristic + tests + docs.
 
+
+## ORC-214 (deferred at iter 144): explicit shutdown ordering
+
+### What was attempted
+
+Read `apps/server/src/wsServer.ts:1095-1105`. Confirmed the existing finalizer composition uses `Effect.addFinalizer` calls inside a top-level scope; subscriptions, HTTP listener, and SqlClient layer all live under that scope but with no explicit ordering. The scope finalizers run in LIFO order, which is a partial mitigation, but it does not enforce: (1) stop accepting new connections first, (2) drain in-flight WS responses with a bounded timeout, (3) close subscription streams, (4) close DB.
+
+### Why a single-iteration fix is risky
+
+The proper fix needs:
+
+1. **Lift the HTTP listener finalizer** out of the catchall scope so it can be triggered first ("stop accepting") via a SIGTERM handler, returning the listener fiber's stop signal as a Deferred.
+2. **Track in-flight WS responses** with a counter or a Set of pending Deferreds, then drain them with a timeout (e.g. 5 seconds) before unwinding the scope.
+3. **Sequence the subscription stream closures** explicitly via `Scope.close` on the subscriptionsScope before letting the parent scope unwind to the SqlClient layer.
+4. **End-to-end smoke test** that boots the server, sends a request, signals SIGTERM, and confirms the response completes before close.
+
+That's a 4-step build plus one integration test that exercises real signals. Each step has shutdown-correctness implications (server hangs forever, client gets unmatched responses). Doing all of it in one iteration risks shipping a regression that only surfaces on production exit.
+
+### What would unblock it
+
+A staged plan tracked as ORC-214a..d:
+
+- **214a**: introduce a "stop accepting" Deferred that the HTTP server resolves on SIGTERM. The listener stops `accept()`-ing new connections. Test: send a request after SIGTERM and confirm it gets a 503.
+- **214b**: track in-flight WS responses in a Set<Deferred>. On shutdown, await every Deferred with a 5-second timeout. Test: in-flight request completes before close; timeout exceeds drains stragglers with a log.
+- **214c**: lift subscriptionsScope out and close it explicitly between WS drain and SqlClient teardown. Test: subscription stream emits "shutting-down" and stops accepting publishes.
+- **214d**: end-to-end smoke test: boot, request, SIGTERM, assert response then exit cleanly within budget.
+

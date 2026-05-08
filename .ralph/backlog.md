@@ -2042,6 +2042,9 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1095-1105 (finalizer ordering at shutdown)
 - evidence: Finalizers (subscriptions, HTTP server, DB) are added to the scope sequentially but no explicit ordering guarantee on shutdown. Subscriptions can close before HTTP, dropping in-flight responses; HTTP can close before WS, leaving sockets in TIME_WAIT.
 - proposed_fix: Compose shutdown explicitly: stop accepting new connections -> drain in-flight WS responses (with timeout) -> close subscription streams -> close DB. Document the order. Add a smoke test that exercises shutdown.
+- status: DEFERRED
+- deferred_iter: 144
+- deferred_reason: Explicit shutdown ordering touches wsServer.ts scope/finalizer composition (subscriptions scope, HTTP listen scope, SqlClient layer, persistence Layer.scoped lifecycle), the integration with Bun's signal handlers, and an end-to-end smoke test that boots and shuts down the server. Single-iteration scope risks shipping a half-wired ordering where one component drains correctly but another races. Plan recorded as ORC-214a..d in blockers.md.
 - status: PENDING
 
 ### ORC-215
