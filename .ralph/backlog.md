@@ -2776,3 +2776,21 @@ Schema per entry:
 - evidence: 100vh on iOS Safari excludes the URL bar from the calculation, causing layout thrash when the bar hides on scroll. Modern replacement is 100dvh.
 - proposed_fix: Replace 100vh with 100dvh, with a `@supports (height: 100dvh)` fallback to 100vh for older browsers. Audit all programmatic height assignments.
 - status: PENDING
+
+### ORC-292
+
+- severity: P1
+- area: persistence and migrations
+- files: apps/server/src/persistence/Layers/Sqlite.ts:71 (Effect.try legacy single-arg form)
+- evidence: `Effect.try(() => acquireDatabaseLockOrThrow(dbPath))` used the legacy single-arg form. Effect 4.0-beta only accepts `{ try, catch }` options form; the legacy call surfaces as `TypeError: options.catch is not a function` deep inside the Effect runtime, breaking every recovery test that exercises the sqliteLayer.
+- proposed_fix: Replace with `Effect.try({ try: () => acquireDatabaseLockOrThrow(dbPath), catch: (cause) => cause })`. Recovery test now fails on the Node-version environmental issue (`No such built-in module: node:sqlite`, requires Node 22+) instead of the misleading Effect runtime error.
+- status: DONE
+
+### ORC-293
+
+- severity: P1
+- area: test coverage
+- files: apps/server/src/orchestration/decider.commandCoverage.test.ts:48 (stale KNOWN_UNTESTED entry),apps/server/src/wsServer.orchestrator.test.ts:585 (maxChildren: 0 violates ORC-136 schema bound),apps/server/src/wsServer.test.ts:2295 (auth-token rejection test exhausts ORC-239 limiter via 5 retries)
+- evidence: Three pre-existing test failures surfaced when running the full turbo test pipeline as part of the iter-187 completion-criteria verification. Each was independent of any production-code change but blocked criterion 5.
+- proposed_fix: (1) Remove `orchestrator.worker.resume` from KNOWN_UNTESTED (the test exists in decider.orchestrator.test.ts). (2) Bump worker-spawn `maxChildren: 0` to 1 in journey tests (SpawnBudget schema requires >=1 since ORC-136). (3) Pass `attempts: 1` to `connectWs` in the auth-rejection test so the 5 retries do not exhaust the per-IP rate limiter (ORC-239) before the subsequent authorized connection runs.
+- status: DONE

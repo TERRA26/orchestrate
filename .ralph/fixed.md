@@ -6128,3 +6128,93 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider promoting `runId` to a load-bearing brand-checked
     parameter on every cross-run-eligible handler so the type
     system catches the next leak at compile time.
+
+## ORC-292: Effect.try options-form fix in Sqlite layer
+
+- root cause: `apps/server/src/persistence/Layers/Sqlite.ts:71`
+  used the legacy single-arg form `Effect.try(() =>
+  acquireDatabaseLockOrThrow(dbPath))`. Effect 4.0-beta's `try_`
+  primitive only supports the options-object form `{ try, catch }`.
+  When the runtime tried to access `options.catch` on a function
+  (the lambda), it threw `TypeError: options.catch is not a
+  function` from deep inside the Effect runtime. Every test that
+  exercised the sqliteLayer (including the orchestrator recovery
+  suite) hit this crash before reaching its first assertion.
+- change summary:
+  - Replaced `Effect.try(() => fn())` with
+    `Effect.try({ try: () => fn(), catch: (cause) => cause })`.
+    Inline comment notes the Effect 4.0-beta requirement and
+    points at the misleading "options.catch is not a function"
+    failure mode for future maintainers.
+- files touched:
+  - apps/server/src/persistence/Layers/Sqlite.ts
+- tests added:
+  - The fix is verified by the existing
+    `apps/server/src/orchestration/recovery.test.ts` suite, which
+    exercises the sqliteLayer end-to-end. After the fix, recovery
+    runs to completion under Node 22+ (requires the built-in
+    `node:sqlite` module).
+- evidence of green run:
+  ```
+  PATH=/.../v24.14.1/bin:$PATH bun run vitest run src/orchestration/recovery.test.ts
+   Test Files  1 passed (1)
+        Tests  3 passed (3)
+  ```
+- follow-ups:
+  - The recovery suite still cannot run under Node 20 (the
+    `node:sqlite` built-in module requires Node 22+, which the
+    package.json engines field already requires). This is
+    environmental, not a code regression.
+
+## ORC-293: unblock turbo test pipeline (3 unrelated test infra fixes)
+
+- root cause: Three pre-existing test failures surfaced when the
+  iter-187 completion-criteria verification ran the full turbo
+  test pipeline. Each was independent of any production-code
+  change but blocked criterion 5 from being met.
+- change summary:
+  1. `decider.commandCoverage.test.ts`: removed
+     `{ type: "orchestrator.worker.resume", reason: "follow-up:
+     paired with pause" }` from KNOWN_UNTESTED. The command now
+     has a real test in decider.orchestrator.test.ts (the
+     "rejects resume after terminate" case), so the meta-test's
+     "tested AND known-untested" overlap guard correctly flagged
+     the stale entry.
+  2. `wsServer.orchestrator.test.ts` (Journey 1, Journey 2): the
+     spawned worker's spawnBudget passed `maxChildren: 0`. The
+     SpawnBudget schema (ORC-136) requires
+     `isGreaterThanOrEqualTo(1)`. Bumped to `maxChildren: 1` and
+     left an inline comment pointing at the schema bound.
+  3. `wsServer.test.ts` ("rejects websocket connections without a
+     valid auth token"): `connectWs` retries 5 times by default
+     and each unauthorized attempt counts against the ORC-239
+     per-IP rate limiter (default threshold 5). The retry chain
+     put the test IP in cooldown by the time the subsequent
+     authorized connection ran. Passing `attempts: 1` for the
+     rejection-expected call avoids exhausting the limiter.
+- files touched:
+  - apps/server/src/orchestration/decider.commandCoverage.test.ts
+  - apps/server/src/wsServer.orchestrator.test.ts
+  - apps/server/src/wsServer.test.ts
+- tests added:
+  - No new tests; each fix corrects an existing test that was
+    failing because of an unrelated production-code or test-
+    infra change. The pre-existing tests now pass.
+- evidence of green run:
+  ```
+  bun run vitest run src/orchestration/decider.commandCoverage.test.ts
+   Tests  5 passed (5)
+  bun run vitest run src/wsServer.orchestrator.test.ts
+   Tests  2 passed (2)
+  bun run vitest run src/wsServer.test.ts -t "rejects websocket connections..."
+   Tests  1 passed (1)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Consider adding a per-test reset hook for the
+    `authAttemptLimiter` so future tests do not have to know the
+    threshold.
+  - Audit other test files for similar `maxChildren: 0` budgets
+    that pre-date ORC-136. The bound has been in place for
+    ~3 months; any test that has been quiet is probably fine.
