@@ -2316,6 +2316,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts:69,1516+ (executeTool)
 - evidence: Spawn budget includes `allowedTools` but executeTool does not check it. A worker spawned with a restricted tool list can still call any tool. Capability is theatre.
 - proposed_fix: At executeTool entry, verify the called tool name is in the worker's effective allowedTools set. Reject with `tool_not_allowed` and log. Document the empty-list semantic (`[]` = none, undefined = all? pick one).
+- status: DONE
+- fixed_iter: 160
 - status: PENDING
 
 ### ORC-243

@@ -39,6 +39,7 @@ import {
 } from "../../persistence/Services/BrowserOrchestrationEvidence.ts";
 import { wrapUntrustedContent } from "@orchestrate/shared/promptFraming";
 
+import { checkToolAllowed } from "../allowedToolsGuard.ts";
 import {
   detectObjectiveInjection,
   objectiveContainsFabricatedReport,
@@ -1548,6 +1549,27 @@ const makeOrchestrationToolRouter = Effect.gen(function* () {
       }
 
       const readModel = yield* engine.getReadModel();
+
+      // ORC-242: enforce the calling worker's allowedTools whitelist.
+      // If the calling thread maps to a worker with a non-empty
+      // allowedTools, reject any tool not in the list. Top-level
+      // orchestrator threads have no worker record and pass through.
+      const callerWorker = (readModel.orchestratorWorkers ?? []).find(
+        (w: { threadId: string }) => (w.threadId as unknown as string) === input.threadId,
+      ) as
+        | undefined
+        | { spawnBudget?: { allowedTools?: ReadonlyArray<string> } };
+      const allowed = checkToolAllowed({
+        toolName,
+        workerAllowedTools: callerWorker?.spawnBudget?.allowedTools,
+      });
+      if (!allowed.ok) {
+        return {
+          error: allowed.reason,
+          code: allowed.code,
+          allowedTools: allowed.allowedTools,
+        };
+      }
 
       // --- UI actions that can be expressed through existing domain commands ---
       switch (toolName) {

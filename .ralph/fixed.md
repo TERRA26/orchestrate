@@ -5002,3 +5002,56 @@ mention of the prefix convention. Verified failing-before by stashing
     pattern; they likely also need role=status.
   - Consider a higher-level `<StatusBadge>` primitive so future
     additions inherit the aria-live behavior automatically.
+
+## ORC-242 (iter 160): enforce allowedTools whitelist at executeTool entry
+
+- root cause: `OrchestrationToolRouter.executeTool` checked
+  `ORCHESTRATION_TOOL_NAMES.has(toolName)` but never consulted the
+  calling worker's `spawnBudget.allowedTools` whitelist. A worker
+  spawned with a restricted tool list could still call any
+  orchestration tool. Capability was theatre.
+- change summary:
+  - Added `apps/server/src/orchestration/allowedToolsGuard.ts`
+    exporting pure `checkToolAllowed({ toolName,
+    workerAllowedTools })`. Returns
+    `{ ok: true } | { ok: false, code: "tool_not_allowed",
+    toolName, allowedTools, reason }`.
+  - Documented the empty-list semantic: `undefined` and `[]`
+    both mean "unrestricted" (top-level orchestrator default).
+    A non-empty array is a strict whitelist; any non-listed
+    tool is rejected.
+  - Wired into `executeTool` immediately after the
+    `ORCHESTRATION_TOOL_NAMES` check. Looks up the calling
+    worker by `input.threadId` in
+    `readModel.orchestratorWorkers`; if found and its
+    `spawnBudget.allowedTools` is populated, runs the guard. On
+    rejection the response is
+    `{ error, code: "tool_not_allowed", allowedTools }` matching
+    the existing error-shape convention.
+- files touched:
+  - apps/server/src/orchestration/allowedToolsGuard.ts (new)
+  - apps/server/src/orchestration/allowedToolsGuard.test.ts (new)
+  - apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts
+- tests added: 7 unit tests for the pure guard covering
+  undefined permissive, empty-array permissive, non-empty
+  whitelist hit, non-empty whitelist miss with rejection
+  payload, case-sensitivity, comma-separated reason, frozen
+  ReadonlyArray. Existing OrchestrationToolRouter suite
+  (22 tests) stays green.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/allowedToolsGuard.test.ts
+   Test Files  1 passed (1)
+        Tests  7 passed (7)
+  bun run test src/orchestration/Layers/OrchestrationToolRouter.test.ts
+        Tests  22 passed (22)
+  bun run typecheck   # clean
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Add an integration test that spawns a worker with a 1-element
+    whitelist and confirms tool calls outside the list are
+    rejected end-to-end through the WS dispatch path.
+  - Document the empty-list convention in
+    `docs/ORCHESTRATOR.md` so the orchestrator's prompt teaches
+    the right intuition when configuring spawnBudget.
