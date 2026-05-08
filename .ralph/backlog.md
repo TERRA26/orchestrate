@@ -2127,6 +2127,8 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:1104 (Cause.ignoreCause general usage)
 - evidence: Effect "defects" (Cause.isDie - true programmer bugs, e.g. null deref in a scoped handler) are absorbed by ignoreCause and treated as recoverable. The actual stack/cause is logged at warn level and execution continues.
 - proposed_fix: Detect defects via Cause.isDie. On defect, log at error level with full stack and metadata; fail-fast or escalate. Defects should never silently continue.
+- status: DONE
+- fixed_iter: 148
 - status: PENDING
 
 ### ORC-223

@@ -62,6 +62,7 @@ import {
   markConnectionAuthenticated,
 } from "./connectionAuth.ts";
 import { buildTraceContext, withTraceContext } from "./observability/traceContext.ts";
+import { ignoreCauseDefectAware } from "./observability/defectAwareIgnore.ts";
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
@@ -1212,7 +1213,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* readiness.markHttpListening;
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
+    // ORC-222: closeWebSocketServer's defects (Cause.Die) are now logged
+    // at error level with a tag, separate from typed failures which log
+    // at warn. Same swallow semantics as ignoreCause but loud about
+    // programmer bugs.
+    Effect.all([
+      closeAllClients,
+      closeWebSocketServer.pipe(
+        ignoreCauseDefectAware({ tag: "wsServer.closeWebSocketServer" }),
+      ),
+    ]),
   );
 
   const browserPreviewThreadBySocket = new WeakMap<WebSocket, ThreadId>();

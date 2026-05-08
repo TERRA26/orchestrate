@@ -4715,3 +4715,51 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider switching to `addEventListener` over `onfoo` setters
     so the linter's `prefer-add-event-listener` warnings clear
     out and so multiple consumers can co-register handlers.
+
+## ORC-222 (iter 148): defect-aware cause logging
+
+- root cause: `Effect.ignoreCause({ log: true })` collapses Die
+  (programmer bug), Fail (typed failure), and Interrupt into the
+  same warn-level log line. A real null deref inside a scoped
+  handler then looks like any other transient failure to the
+  operator. The codebase has 10+ usage sites; the warning was
+  uniformly at WARN with no defect distinction.
+- change summary:
+  - Added `apps/server/src/observability/defectAwareIgnore.ts`
+    exporting `ignoreCauseDefectAware({ tag, metadata })`. The
+    helper inspects the cause:
+    - `Cause.hasDies(cause)` -> log Error with `defect: true`
+      annotation + full `Cause.pretty` string + tag.
+    - `Cause.hasInterruptsOnly(cause)` -> log Debug (rarely
+      useful at higher levels).
+    - Otherwise (typed Fail) -> log Warning with `defect: false`.
+  - Wired the helper into the wsServer.ts shutdown finalizer site
+    (`closeWebSocketServer`) as the demonstration migration. The
+    other ~10 sites can adopt incrementally as follow-ups.
+- files touched:
+  - apps/server/src/observability/defectAwareIgnore.ts (new)
+  - apps/server/src/observability/defectAwareIgnore.test.ts (new)
+  - apps/server/src/wsServer.ts
+- tests added: 8 unit tests using a captured-logger pattern via
+  `Logger.layer([...], { mergeWithExisting: false })` plus
+  `CurrentLogAnnotations` from `effect/References`. Cover: Die
+  -> Error level + defect=true; Fail -> Warning + defect=false;
+  metadata propagation; Cause.pretty in annotations; void return
+  on success and on die; no double-fire on a single Die; thrown
+  non-Error string classified as Die.
+- evidence of green run:
+  ```
+  bun run test src/observability/defectAwareIgnore.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 errors on changed files
+  ```
+- follow-ups:
+  - Migrate the remaining `Effect.ignoreCause({ log: true })`
+    sites (serverSettings.ts, keybindings.ts,
+    makeManagedServerProvider.ts, pushBus.ts, GitCore.ts) to the
+    new helper one site per iteration; each gets its own tag.
+  - Consider an oxlint rule that flags raw
+    `Effect.ignoreCause({ log: true })` and recommends the
+    helper.
