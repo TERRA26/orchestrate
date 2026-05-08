@@ -26,11 +26,13 @@ import {
   isMissingPlaywrightBrowserExecutableError,
   resolveFallbackChromiumExecutablePath,
 } from "../browserExecutable.ts";
+import { settle } from "../waitForSettled.ts";
 
 const DEFAULT_VIEWPORT = { width: 1_440, height: 900 } as const;
 const POST_ACTION_DELAY_MS = 350;
 const NETWORK_IDLE_TIMEOUT_MS = 1_500;
 const DOM_CONTENT_LOADED_TIMEOUT_MS = 8_000;
+const READY_HINT_TIMEOUT_MS = 5_000;
 const ACTION_TIMEOUT_MS = 15_000;
 const MAX_CONSOLE_BUFFER = 50;
 const MAX_NETWORK_ERROR_BUFFER = 50;
@@ -238,14 +240,36 @@ async function findAttachedPage(input: {
   throw new Error(`CDP target not found for Electron WebContents targetId ${input.cdpTargetId}.`);
 }
 
-function waitForSettled(page: Page): Promise<void> {
-  return page
-    .waitForLoadState("domcontentloaded", { timeout: DOM_CONTENT_LOADED_TIMEOUT_MS })
-    .catch(() => undefined)
-    .then(() => page.waitForLoadState("networkidle", { timeout: NETWORK_IDLE_TIMEOUT_MS }))
-    .catch(() => undefined)
-    .then(() => page.waitForTimeout(POST_ACTION_DELAY_MS))
-    .then(() => undefined);
+function waitForSettled(
+  page: Page,
+  options?: { readonly readyHint?: string },
+): Promise<void> {
+  return settle(
+    {
+      domLoaded: async () => {
+        await page.waitForLoadState("domcontentloaded", {
+          timeout: DOM_CONTENT_LOADED_TIMEOUT_MS,
+        });
+      },
+      selectorReady: async (selector: string) => {
+        await page.waitForSelector(selector, {
+          timeout: READY_HINT_TIMEOUT_MS,
+          state: "attached",
+        });
+      },
+      networkIdle: async () => {
+        await page.waitForLoadState("networkidle", {
+          timeout: NETWORK_IDLE_TIMEOUT_MS,
+        });
+      },
+      delay: async (ms: number) => {
+        await page.waitForTimeout(ms);
+      },
+    },
+    options?.readyHint
+      ? { readyHint: options.readyHint, postActionDelayMs: POST_ACTION_DELAY_MS }
+      : { postActionDelayMs: POST_ACTION_DELAY_MS },
+  );
 }
 
 async function captureScreenshotDataUrl(

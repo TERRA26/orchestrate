@@ -3363,3 +3363,54 @@ mention of the prefix convention. Verified failing-before by stashing
     in production: ambiguous requests that should trigger the
     Clarifying Questions loop, mixed Direct-control + decompose
     requests, and explicit-bypass requests.
+
+## ORC-150 (iter 113): readyHint settle helper for browser captures
+
+- root cause: `waitForSettled` chained `domcontentloaded ->
+  networkidle(1.5s) -> wait(350ms)`. On pages with persistent
+  WebSocket or polling connections, networkidle never resolves; the
+  chain falls through to the 350ms wait and captures whatever
+  state happened to be there. Mid-animation captures were common.
+- change summary:
+  - Extracted the chain into a pure `settle()` helper in a new
+    `apps/server/src/browser/waitForSettled.ts` module. The helper
+    is parameterized over a `SettleOps` interface so it is fully
+    unit-testable without a real Playwright Page.
+  - Added an optional `readyHint` (CSS selector). When provided,
+    the helper waits for the selector with a 5s timeout, and on
+    success skips networkIdle entirely. On selector timeout it
+    falls back to the original networkIdle path. Empty-string
+    hints behave the same as no hint.
+  - Refactored `BrowserAutomation.ts` to delegate to `settle()`
+    with Page-bound ops. Public `waitForSettled` now accepts an
+    optional `{ readyHint }` argument; existing call sites pass no
+    options and behave identically to the previous chain.
+- files touched:
+  - apps/server/src/browser/waitForSettled.ts (new)
+  - apps/server/src/browser/waitForSettled.test.ts (new)
+  - apps/server/src/browser/Layers/BrowserAutomation.ts
+- tests added: 6 unit tests covering: no-hint chain, resolving
+  hint skips networkIdle, rejecting hint falls back, custom
+  postActionDelayMs, all-ops-fail best-effort path, empty-string
+  hint treated as no hint.
+- evidence of green run:
+  ```
+  bun run typecheck    # clean
+  bun run test src/browser/waitForSettled.test.ts
+   Test Files  1 passed (1)
+        Tests  6 passed (6)
+  bun lint .../waitForSettled.ts .../BrowserAutomation.ts
+  Found 0 warnings and 0 errors.
+  ```
+  Failing-before: the new tests cannot exist without the new
+  module (import would fail). The behavior change itself is
+  evident from the new "with resolving readyHint skips networkIdle"
+  test which would have no equivalent in the prior code path.
+- follow-ups:
+  - Plumb `readyHint` through the BrowserActInput / BrowserOpenSession
+    contract schemas in `@orchestrate/contracts` so callers can
+    actually supply it from the orchestrator. Currently the helper
+    accepts the option but no production caller passes one.
+  - Consider a `readyHint` allowlist policy so untrusted task
+    inputs cannot supply expensive `:has-text` selectors that block
+    on every navigation.

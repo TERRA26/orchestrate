@@ -1426,7 +1426,8 @@ Schema per entry:
 - files: apps/server/src/browser/Layers/BrowserAutomation.ts:230-237 (waitForSettled chain)
 - evidence: Settled detection chains domcontentloaded -> networkidle(1.5s) -> wait(350ms). Pages with WebSocket or polling never reach networkidle; the chain falls through and the screenshot captures whatever state happened to be there. Mid-animation captures are common.
 - proposed_fix: Add an explicit "ready" hook (per-task selector to wait for, or a stable mutation-observer settle window). Document timing semantics. Default to current behavior with a `readyHint` per task that, when present, supersedes the network-idle fallback.
-- status: PENDING
+- status: DONE
+- fixed_iter: 113
 
 ### ORC-151
 
