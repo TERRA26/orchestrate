@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { Effect } from "effect";
+import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { migrationEntries, runMigrations } from "./Migrations.ts";
@@ -130,4 +131,60 @@ layer("migration runner (ORC-103)", (it) => {
       previous = id;
     }
   });
+
+  // ORC-197: a failing migration must NOT leave the database in a
+  // partially-migrated state. Effect's Migrator wraps each migration
+  // body in its own transaction; if any statement fails, the rollback
+  // discards every change AND the tracking-table row is never written.
+  // The next startup either retries the same migration cleanly or
+  // surfaces the failure for operator recovery.
+  it.effect("a failing synthetic migration leaves the DB at the prior version (ORC-197)", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      // Snapshot the state of effect_sql_migrations BEFORE we attempt
+      // the failing migration.
+      const beforeRows = yield* sql<CountRow>`
+        SELECT COUNT(*) AS count FROM effect_sql_migrations
+      `;
+      const beforeCount = beforeRows[0]?.count;
+      assert.ok(typeof beforeCount === "number");
+
+      const failingMigration = Effect.gen(function* () {
+        const innerSql = yield* SqlClient.SqlClient;
+        // Step 1: create a table that should be rolled back if step 2 fails.
+        yield* innerSql`
+          CREATE TABLE orc_197_canary (id INTEGER PRIMARY KEY, body TEXT)
+        `;
+        // Step 2: deliberately invalid SQL forces a transaction abort.
+        // Cast to never to short-circuit the type checker; at runtime
+        // SQLite raises a syntax error.
+        yield* innerSql`SELECT * FROM does_not_exist_orc_197`;
+      });
+
+      const failingLoader = Migrator.fromRecord({
+        "9999_OrcOneNineSevenFailingCanary": failingMigration,
+      });
+
+      const baseRunner = Migrator.make({});
+      const exit = yield* baseRunner({ loader: failingLoader }).pipe(Effect.exit);
+      assert.equal(
+        exit._tag,
+        "Failure",
+        "expected failing migration to surface as Failure",
+      );
+
+      // The canary table must NOT exist (transaction rolled back).
+      const canaryRows = yield* sql<TableRow>`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='orc_197_canary'
+      `;
+      assert.equal(canaryRows.length, 0);
+
+      // The migration tracking row must NOT have been written.
+      const afterRows = yield* sql<CountRow>`
+        SELECT COUNT(*) AS count FROM effect_sql_migrations
+      `;
+      assert.equal(afterRows[0]?.count, beforeCount);
+    }),
+  );
 });

@@ -151,6 +151,22 @@ export interface RunMigrationsOptions {
  *
  * Returns array of [id, name] tuples for migrations that were run.
  *
+ * Atomicity invariant (ORC-197):
+ * Each individual migration body runs inside its own transaction.
+ * If any statement in a migration fails, the transaction rolls back
+ * AND the tracking row in `effect_sql_migrations` is never written.
+ * The next startup re-runs the same migration cleanly. There is no
+ * partially-applied state to recover from inside SQLite itself.
+ *
+ * Operator recovery for a persistently-failing migration:
+ * 1. The bare SQL error is wrapped in `MigrationFailureError` with a
+ *    recovery-oriented message.
+ * 2. Restore from the most recent snapshot
+ *    (`bun run export-snapshot`, ORC-192) into the data directory.
+ * 3. Pin the schema with the failing migration excluded by passing
+ *    `runMigrations({ toMigrationInclusive: <last good id> })`
+ *    while you investigate.
+ *
  * @returns Effect containing array of executed migrations
  */
 export const runMigrations = ({ toMigrationInclusive }: RunMigrationsOptions = {}) =>

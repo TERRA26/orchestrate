@@ -4070,3 +4070,49 @@ mention of the prefix convention. Verified failing-before by stashing
     consider a CLI flag `--force-take-lock` for the case where
     the operator has manually verified no other process is
     running.
+
+## ORC-197 (iter 130): pin migration atomicity contract + document recovery
+
+- root cause: `apps/server/src/persistence/Migrations.ts` runs each
+  migration via Effect's Migrator framework, which already wraps
+  each body in its own transaction. The ORC-216 comment confirmed
+  this. But there was NO test pinning the contract ("a failure
+  rolls back AND the tracking row is not written"), and the
+  operator-facing recovery path was not documented in the source.
+  A future Migrator upgrade or a refactor to a different runner
+  could silently regress atomicity.
+- change summary:
+  - Added a regression test in `Migrations.runner.test.ts` titled
+    "a failing synthetic migration leaves the DB at the prior
+    version (ORC-197)". It builds a `Migrator.fromRecord` with a
+    deliberately-broken migration (CREATE TABLE then SELECT FROM
+    nonexistent), runs the Migrator under `Effect.exit`, and
+    asserts:
+    1. The exit is a Failure (the migration error surfaced).
+    2. The canary table created in step 1 of the migration does
+       NOT exist after rollback.
+    3. The tracking row count in `effect_sql_migrations` is
+       unchanged from before the attempt.
+  - Documented the atomicity invariant and the operator-recovery
+    procedure in the JSDoc on `runMigrations`. The recovery flow
+    references ORC-192's `bun run export-snapshot` for the
+    backup-restore path.
+- files touched:
+  - apps/server/src/persistence/Migrations.runner.test.ts
+  - apps/server/src/persistence/Migrations.ts
+- tests added: 1 regression test (8 total in the file). The new
+  test exercises three load-bearing assertions in one body.
+- evidence of green run:
+  ```
+  bun run test src/persistence/Migrations.runner.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Add a property-based test that runs N random valid migrations
+    interleaved with one synthetic failing migration and asserts
+    the prefix completes.
+  - Surface a `--migrate-up-to <id>` CLI flag so operators can
+    bisect a stuck migration without code changes.

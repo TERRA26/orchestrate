@@ -1870,7 +1870,8 @@ Schema per entry:
 - files: apps/server/src/persistence/Migrations.ts:120-127
 - evidence: Migrations are run by numeric ID; the migration-tracking table records applied versions. A migration that crashes mid-run leaves the schema partially modified; the next startup believes the migration is in progress and may skip or rerun depending on the runner. There is no documented recovery path.
 - proposed_fix: Wrap each migration body in a transaction (where SQLite supports DDL transactions; some pragmas don't). Document a recovery: drop the half-applied table or backup, restore, retry.
-- status: PENDING
+- status: DONE
+- fixed_iter: 130
 
 ### ORC-198
 
