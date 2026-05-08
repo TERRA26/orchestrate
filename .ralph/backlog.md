@@ -2356,7 +2356,8 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:1842-1884 (handleStdoutLine)
 - evidence: Each JSON-RPC frame from Codex is parsed synchronously via JSON.parse on the event loop. A 10MB response (screenshot, artifact) blocks the loop for hundreds of ms; subsequent RPCs queue. Under burst load this compounds into observable orchestrator stalls.
 - proposed_fix: Move JSON.parse for frames over a threshold to a worker thread. Or stream the JSON via a SAX-style parser. At minimum, cap frame size and reject larger ones with a structured error to the orchestrator.
-- status: PENDING
+- status: DONE
+- fixed_iter: 165
 
 ### ORC-247
 

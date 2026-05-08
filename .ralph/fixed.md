@@ -5164,3 +5164,50 @@ mention of the prefix convention. Verified failing-before by stashing
     `command.fromWorkerId` actually corresponds to the
     `command.aggregateId` thread when the originating boundary
     can be ascertained, as a belt-and-suspenders defense.
+
+## ORC-246 (iter 165): cap Codex JSON-RPC frame size before JSON.parse
+
+- root cause: `handleStdoutLine` in
+  `apps/server/src/codexAppServerManager.ts:2123` ran `JSON.parse`
+  synchronously on every line from the Codex stdout pipe with no
+  size cap. A runaway response (binary blob, base64-encoded
+  screenshot leak, malicious feedback loop) could block the event
+  loop for hundreds of milliseconds parsing a multi-megabyte
+  string; subsequent RPCs queued and the orchestrator stalled.
+- change summary:
+  - Added `DEFAULT_CODEX_MAX_FRAME_BYTES = 16 * 1024 * 1024` (16MB)
+    and `readMaxFrameBytes()` exported from
+    `codexAppServerManager.ts`. The reader respects
+    `ORCHESTRATE_CODEX_MAX_FRAME_BYTES` env var per-call (so test
+    fixtures can flip the cap without re-importing) and falls
+    back to the default for non-numeric / sub-1024 / empty
+    values.
+  - Added a guard at the top of `handleStdoutLine` that:
+    1. Reads the cap.
+    2. If `line.length > cap`, logs at warn with `frameBytes` +
+       `maxBytes` annotations, emits a `protocol/frameTooLarge`
+       error event to the client, and returns BEFORE invoking
+       JSON.parse.
+- files touched:
+  - apps/server/src/codexAppServerManager.ts
+  - apps/server/src/codexFrameSizeCap.test.ts (new)
+- tests added: 7 unit tests covering: default 16MB constant,
+  parsed env value when valid, sub-1024 floor sanity,
+  non-numeric fallback, empty-string fallback, custom 64MB cap,
+  lowest legal cap (1024).
+- evidence of green run:
+  ```
+  bun run test src/codexFrameSizeCap.test.ts
+   Test Files  1 passed (1)
+        Tests  7 passed (7)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - The deeper proposed fix (move JSON.parse for over-threshold
+    frames to a worker thread) remains a follow-up. The cap
+    addresses the immediate event-loop-stall blast radius; a
+    worker-thread parser would let oversized but legitimate
+    frames still flow through with no main-thread cost.
+  - Add a metric counter for dropped frames so an operator can
+    detect when the cap is being hit.

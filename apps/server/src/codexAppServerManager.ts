@@ -235,6 +235,24 @@ const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "p
 
 const ORCHESTRATOR_PID_SIDECAR_DIR = path.join(os.tmpdir(), "orchestrate-codex-pid-map");
 
+// ORC-246: cap on a single Codex JSON-RPC frame size. 16MB default
+// matches typical orchestrator artifact ceilings without being so
+// tight that legitimate screenshots / large diffs get dropped.
+// Override with ORCHESTRATE_CODEX_MAX_FRAME_BYTES (env vars are read
+// per-call so tests can flip the cap without re-importing).
+export const DEFAULT_CODEX_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+export function readMaxFrameBytes(): number {
+  const raw = process.env.ORCHESTRATE_CODEX_MAX_FRAME_BYTES;
+  if (typeof raw !== "string" || raw.length === 0) {
+    return DEFAULT_CODEX_MAX_FRAME_BYTES;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1024) {
+    return DEFAULT_CODEX_MAX_FRAME_BYTES;
+  }
+  return parsed;
+}
+
 // ORC-185: sidecar files map codex pids to orchestrator thread ids.
 // They live in the shared os.tmpdir so any local user can list them.
 // Restrict the directory to 0o700 and the files to 0o600 so the
@@ -2121,6 +2139,31 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private handleStdoutLine(context: CodexSessionContext, line: string): void {
+    // ORC-246: cap frame size before JSON.parse so a runaway response
+    // (binary blob, base64-encoded screenshot leak, malicious feedback)
+    // cannot block the event loop with a multi-second JSON.parse on a
+    // 100MB string. Default 16MB matches typical orchestrator artifact
+    // ceilings; override with ORCHESTRATE_CODEX_MAX_FRAME_BYTES.
+    const maxBytes = readMaxFrameBytes();
+    if (line.length > maxBytes) {
+      void this.runPromise(
+        Effect.logWarning("codex stdout: frame exceeds size cap, dropping", {
+          scope: "codex.protocol",
+          action: "frame-size-cap",
+          threadId: context.session.threadId,
+          frameBytes: line.length,
+          maxBytes,
+        }),
+      );
+      this.emitErrorEvent(
+        context,
+        "protocol/frameTooLarge",
+        "Codex stdout frame exceeded the " +
+          String(maxBytes) +
+          "-byte size cap and was dropped to protect event-loop latency.",
+      );
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
