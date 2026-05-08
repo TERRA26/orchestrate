@@ -120,8 +120,38 @@ Every task you create must have:
 - **readScope / writeScope**: Limit what the worker can touch
 - **dependsOn**: Task IDs that must complete before this one starts
 
-Bad acceptance criteria: "Code should be clean"
-Good acceptance criteria: "All new functions have JSDoc comments", "bun typecheck passes", "POST /api/auth/login returns 200 with valid JWT"
+### Acceptance criteria: testable vs observational [ORC-137]
+
+Each entry in `acceptanceCriteria` carries an implicit owner. To make
+that owner explicit and machine-readable, prefix every criterion with
+one of the following tags:
+
+- `test:` Worker-owned. The worker must execute the test (or assertion)
+  itself and include the result in its REPORT (`testsRun` block). The
+  orchestrator does NOT need to re-run; it inspects `testsRun` for
+  status. Examples: `test: bun typecheck passes`, `test: vitest run
+  src/foo.test.ts shows 0 failures`.
+
+- `screenshot:` Orchestrator-owned via browser validation. The
+  orchestrator captures evidence with `orchestrate_browser_open_session`
+  / `orchestrate_browser_act` and judges the criterion from the
+  resulting screenshot + DOM snapshot. Workers should NOT close the
+  browser session before the orchestrator validates. Example:
+  `screenshot: dashboard loads with no console errors`.
+
+- `manual:` Orchestrator-owned via prose review. The orchestrator
+  reads worker output (filesWritten, summary, REPORT) and judges from
+  it; no automated check or browser evidence required. Example:
+  `manual: error message uses friendly tone`.
+
+Untagged criteria (legacy) are treated as `manual:` by the orchestrator.
+Mixing tags in the same task is fine and common: e.g. a "ship a
+settings page" task might have `test: typecheck passes` (worker),
+`screenshot: page renders without console errors` (orchestrator), and
+`manual: copy is consistent with the rest of the app` (orchestrator).
+
+Bad acceptance criteria: `Code should be clean`
+Good acceptance criteria: `test: All new functions have JSDoc comments`, `test: bun typecheck passes`, `screenshot: POST /api/auth/login renders the success toast`, `manual: error messages match the design system tone`
 
 ## Worker Management
 

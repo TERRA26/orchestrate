@@ -3075,3 +3075,81 @@ The first 3 tests are green-path regression coverage; the remaining 6 would all 
 - Consider deriving the bounds from `SPAWN_BUDGET_BOUNDS` exported constant so docs / runtime / tests share a single source of truth.
 - Property-test (fast-check) random budgets against the bounds for fuzz coverage.
 - Document the bounds in the orchestrator's system prompt so the model knows the safe ranges when constructing budgets.
+
+## ORC-137 [iter 107] Acceptance criteria had no owner-tagging convention
+
+**Root cause**: `OrchestratorTask.acceptanceCriteria` was a `string[]` with no machine-readable contract about whether each entry was a worker-runnable test, an orchestrator-driven browser observation, or a prose review item. Workers and the orchestrator both interpreted entries loosely. Operators couldn't quickly tell who owned a given criterion or how it would be validated.
+
+**Change summary**:
+- `docs/ORCHESTRATOR.md`: extended the "Task Design" section with a new
+  "Acceptance criteria: testable vs observational" subsection. Defines
+  three explicit prefix tags:
+  - `test:` worker-owned (worker runs the test, surfaces result in
+    REPORT.testsRun).
+  - `screenshot:` orchestrator-owned via browser validation
+    (orchestrator captures evidence with
+    `orchestrate_browser_open_session` / `orchestrate_browser_act`).
+  - `manual:` orchestrator-owned via prose review (read worker output,
+    no automation).
+
+  Documented the back-compat handling for legacy untagged criteria
+  (treat as `manual:`). Updated the "Bad / Good acceptance criteria"
+  examples to show all three tags concretely.
+
+**Files touched**:
+- docs/ORCHESTRATOR.md
+- apps/server/src/orchestration/orchestratorAcceptanceCriteriaConvention.test.ts (NEW)
+
+**Tests added**: 6 cases pinning the doc convention:
+1. Documents the testable-vs-observational dichotomy header.
+2. `test:` tag: worker ownership + REPORT.testsRun mention.
+3. `screenshot:` tag: orchestrator + browser tool by name.
+4. `manual:` tag: orchestrator-owned + prose review.
+5. The "Good acceptance criteria" example block contains one of each
+   tag.
+6. Documents how untagged legacy criteria are treated.
+
+The 6 tests would all fail before the change because the doc had no
+mention of the prefix convention. Verified failing-before by stashing
+`docs/ORCHESTRATOR.md` and re-running: 6/6 fail. After restore: 6/6 pass.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/orchestratorAcceptanceCriteriaConvention.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 6 passed (6)
+- Stash-pop verification: 6/6 fail when doc reverted, 6/6 pass when restored.
+- `bun typecheck` (apps/server, packages/contracts) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The convention is documentation-only at this iteration; no schema or
+  decoder change. Workers and the orchestrator already read the
+  acceptance-criteria strings verbatim, so they pick up the tags via
+  natural-language reading. A future iteration can add a contract-level
+  validator that rejects untagged entries in fresh tasks while still
+  decoding legacy ones.
+- The `screenshot:` and `manual:` tags both encode "orchestrator-owned"
+  but distinguish HOW the orchestrator validates (browser vs prose).
+  The orchestrator can use the tag to decide whether to spawn a
+  browser session up-front or just read the worker's REPORT.
+- Untagged criteria fall through as `manual:` to preserve back-compat.
+  This means existing runs are not retroactively gated; only new
+  tasks using the convention get the explicit ownership.
+- The example block shows all three tags so the orchestrator's prompt
+  has concrete in-context examples; without these, the LLM might
+  interpret the rule too narrowly.
+- Tag spelling is a substring contract (`test:` not `Test:` or
+  `TEST:`); future tooling can scan for `^(test|screenshot|manual):`
+  with confidence.
+
+**Follow-ups**:
+- Add a contract-level lint that rejects `acceptanceCriteria` entries
+  without a recognized prefix in newly-created tasks (legacy decode
+  path stays loose).
+- Surface the criteria type in the UI's task-detail view: render
+  `test:` entries with a checkmark when the matching `testsRun` entry
+  is present, `screenshot:` with a thumbnail, `manual:` with the
+  orchestrator's review text.
+- Wire the orchestrator's review flow to enforce the contract: a task
+  with one `screenshot:` criterion should not be accepted unless the
+  orchestrator has captured a browser session for it.
+- Update the worker's system prompt to reinforce that `test:` items
+  must appear in REPORT.testsRun.

@@ -1303,7 +1303,8 @@ Schema per entry:
 - files: docs/ORCHESTRATOR.md:107-112 (acceptance criteria),packages/contracts/src/orchestration.ts (acceptanceCriteria field)
 - evidence: acceptanceCriteria is a string[] with no contract about whether each entry is testable code (e.g. "bun run test passes") or observational prose ("dashboard loads without console errors"). Workers and orchestrator both interpret loosely.
 - proposed_fix: Update ORCHESTRATOR.md to spell out the dichotomy: testable criteria the worker must verify itself; observational criteria the orchestrator validates with explicit evidence references. Add a small machine-readable hint (prefix `test:`, `screenshot:`, `manual:`) so each criterion's owner is explicit.
-- status: PENDING
+- status: DONE
+- fixed_iter: 107
 
 ### ORC-138
 
