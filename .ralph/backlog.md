@@ -1910,7 +1910,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts (browser ingestion paths)
 - evidence: ARIA snapshots are framed (per ORC-028) but browser page text, page title, meta, and console.log/error output are NOT explicitly framed. A malicious page can `console.error("[ORCHESTRATOR_DO_X]")` and the message reaches the orchestrator as tool result.
 - proposed*fix: Apply the same `<untrusted_browser*\*>` framing to all browser-derived content, not just ARIA. Cover console messages, page title, meta description, and visible text capture paths.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 134
+- deferred_reason: Helper substrate (wrapUntrustedContent in apps/web/src/promptFraming.ts) is in place from ORC-200, but the SERVER-side emit sites for browser content (page text / title / meta / console.log/error) are not yet pinned to a specific file. Tracing the existing ARIA framing path (per ORC-028) to identify exact emit boundaries is a discovery sub-task. Defer until that trace is mapped explicitly.
 
 ### ORC-202
 
@@ -1919,7 +1921,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts (tool result output)
 - evidence: Tool RETURN values land in the orchestrator's prompt as tool results without framing. If an MCP server (compromised or malicious) returns `output: "[ORCHESTRATOR_OVERRIDE: ...]"`, the orchestrator processes it as authoritative tool output.
 - proposed_fix: Wrap every tool result in `<tool_output tool="..." status="...">...</tool_output>`. Document in the orchestrator system prompt that tool output is data, not instructions.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 134
+- deferred_reason: Same emit-site discovery problem as ORC-201. Tool RETURN value handling is split between the Codex adapter and the Claude adapter, both of which feed the orchestrator's reasoning context. The wrapUntrustedContent helper is ready to be applied; identifying the right shim layer (provider adapter vs router) requires a focused trace of one round-trip.
 
 ### ORC-203
 
@@ -1937,7 +1941,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/CheckpointReactor.ts,OrchestrationToolRouter.ts (error message handling)
 - evidence: Tool failure messages echo back to the orchestrator unframed. A `git status` against a repo with maliciously-named files (`'; rm -rf /; #file.txt`) can produce error text that contains injection.
 - proposed_fix: Wrap error text in `<tool_error tool="..." cause="...">...</tool_error>`. Strip ANSI escape codes and control characters in error messages before persistence.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 134
+- deferred_reason: Same provider-adapter trace problem as ORC-202. The error-message echo path passes through Effect tagged errors AND the persistence layer (CheckpointReactor) before reaching the orchestrator. Adding a sanitize+wrap shim requires identifying every error-emit site to avoid double-wrapping or missed paths.
 
 ### ORC-205
 

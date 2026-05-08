@@ -155,3 +155,26 @@ Each FK is roughly an iteration of work. Bundling all 10 risks shipping migratio
 
 Per-FK breakdown into ORC-199a..j (one per relationship). Land them as a sequence of small migrations, each with its own test. Suggested order: leaf-most aggregates first (evidence_artifact_content -> evidence_artifact -> ...) so cascade behavior accumulates predictably.
 
+
+## ORC-201 / ORC-202 / ORC-204 (deferred at iter 134): server-side prompt-injection framing
+
+### Shared root cause
+
+Three sibling deferrals: ORC-201 (browser-derived content not in `<untrusted_browser_*>`), ORC-202 (MCP tool RETURN values not wrapped), ORC-204 (tool error messages not wrapped + ANSI not stripped). All share a common substrate need:
+
+- A `wrapUntrustedContent` helper exists in `apps/web/src/promptFraming.ts` (ORC-200) covering file content. The helper supports kinds `file`, `browser`, `tool-output`, `console` and neutralizes `## REPORT`, `[ORCHESTRATOR_*]`, and `<orchestrator_*>` patterns inside the body.
+- The helper needs to be promoted to `packages/shared/src/promptFraming.ts` so server-side code can use it without crossing app boundaries.
+- Each of the three issues then needs the right server-side emit site identified and wired.
+
+### Why a single-iteration fix is risky for each
+
+The emit boundaries are spread across the provider adapters (Codex, Claude), the orchestration tool router, the checkpoint reactor, and the WS server's push pipeline. A naive wrap-everything-on-output approach risks double-wrapping (when one path already includes ARIA framing per ORC-028) or missed paths. Without an explicit trace of one round-trip per kind, the chance of regressions across 6+ files is high.
+
+### What would unblock each
+
+1. **Move `wrapUntrustedContent` to `@orchestrate/shared/promptFraming`** so server and web both consume it. Keep `apps/web/src/promptFraming.ts` as a thin re-export for back-compat.
+2. **Trace one ARIA emit** end-to-end: from `BrowserAutomation` capture -> `OrchestrationToolRouter` -> provider adapter -> orchestrator system prompt slot. Document the exact wrap site.
+3. **Per issue**, apply the helper at the identified boundary plus a regression test (mirror the ORC-200 test shape: assert the wrapped tag appears AND a planted directive is neutralized).
+
+Track as ORC-201a (move helper), ORC-201b (trace), ORC-201c..(impl per issue).
+
