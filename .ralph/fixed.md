@@ -5993,3 +5993,77 @@ mention of the prefix convention. Verified failing-before by stashing
     `bun run vitest --repeat 50` in CI on a slow runner; if any
     flakes surface, the underlying lock has a real bug worth
     fixing.
+
+## ORC-268: shared SpawnBudget fixture (seed for the test-fixtures pattern)
+
+- root cause: 197 test files across the repo re-defined common
+  fixtures (spawnBudget, workspace, REPORT block) inline. A schema
+  change to SpawnBudget required updating each fixture; if any
+  file's copy went stale, that file's tests passed against a
+  half-truth while peers caught the drift. There was no shared
+  test-fixtures location.
+- change summary:
+  - Created `apps/server/src/orchestration/__fixtures__/spawnBudget.ts`
+    exporting `DEFAULT_SPAWN_BUDGET_FIXTURE: SpawnBudget`. The
+    canonical default that matches the recovery.test and
+    decider.orchestrator.test inline copies (which were
+    byte-for-byte identical).
+  - The `__fixtures__/` directory is the seed for future shared
+    fixtures. The project-snapshot, REPORT-block, and worker
+    builder fixtures should land here next; tests with bespoke
+    needs (e.g. projector.orchestrator.test, which uses lower
+    budget numbers to exercise budget-exhaustion paths) keep
+    their inline copies.
+  - Migrated `recovery.test.ts` and `decider.orchestrator.test.ts`
+    to import from the shared module. The two were exact
+    duplicates so the migration is a strict consolidation.
+  - Did NOT migrate `projector.orchestrator.test.ts` because its
+    spawnBudget intentionally uses lower numbers (4/2/8 vs
+    5/3/10) for budget-edge tests. Forcing it onto the shared
+    fixture would silently weaken those tests.
+- files touched:
+  - apps/server/src/orchestration/__fixtures__/spawnBudget.ts (new)
+  - apps/server/src/orchestration/__fixtures__/spawnBudget.test.ts (new)
+  - apps/server/src/orchestration/recovery.test.ts
+  - apps/server/src/orchestration/decider.orchestrator.test.ts
+- tests added:
+  - "decodes successfully against the SpawnBudget schema": pins
+    that the fixture stays in sync with the SpawnBudget contract
+    via Schema.decodeUnknownEffect. Future schema changes that
+    add a required field surface here as a single failure
+    instead of as silent stale copies in each test.
+  - "uses sane defaults that allow normal orchestration paths":
+    guards against a future regression that drops one of the
+    counts to a value that would fail-closed on every spawn
+    (e.g., maxChildren: 0).
+  - "includes the standard read/write/bash tool set": pins the
+    allowed-tools default so a future shrink of the toolset has
+    to update this constant explicitly.
+  - "scopes writes to a non-empty path pattern set": guards
+    against a future regression that drops the writeScope to
+    `[]`, which would block every worker write.
+- evidence of green run:
+  ```
+  bun run vitest run src/orchestration/__fixtures__/
+   Test Files  1 passed (1)
+        Tests  4 passed (4)
+  bun run vitest run src/orchestration/decider.orchestrator.test.ts
+   Test Files  1 passed (1)
+        Tests  26 passed (26)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - Migrate the next layer of duplicated fixtures: workspace
+    shape, sample REPORT block, ProjectId/RunId/TaskId helpers.
+    Each can be one focused commit alongside its shape's contract
+    test.
+  - The recovery.test.ts pre-existing failure
+    ("options.catch is not a function") is unrelated to ORC-268
+    and predates this change. It looks like an Effect 4.0-beta
+    API mismatch in the test body. Track as a separate issue.
+  - Consider eventually publishing a `@orchestrate/shared/test-fixtures`
+    subpath export so fixtures can be shared across packages
+    (web tests today have their own makeThread/makeProject
+    duplication; that needs its own seed file once the duplication
+    pattern is more uniform).

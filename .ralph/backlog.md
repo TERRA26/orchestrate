@@ -2564,7 +2564,7 @@ Schema per entry:
 - files: 197 test files across the repo (no shared test-utils package)
 - evidence: Common fixtures (spawnBudget, workspace, sample REPORT block) are re-defined in many test files. There is no `@orchestrate/shared/test-fixtures` or similar. Mutating a fixture in one place leaves stale copies elsewhere; the contract test for one schema can pass while another file's stale fixture lies.
 - proposed_fix: Extract common fixtures into a shared module with subpath exports (e.g. `@orchestrate/shared/test-fixtures/orchestration`). Migrate the most-shared 5-10 fixtures first; leave per-test bespoke fixtures alone.
-- status: PENDING
+- status: DONE
 
 ### ORC-269
 

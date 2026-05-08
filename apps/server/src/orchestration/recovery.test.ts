@@ -18,17 +18,14 @@ import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import { OrchestrationEngineLive } from "./Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./Layers/ProjectionPipeline.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
+import { DEFAULT_SPAWN_BUDGET_FIXTURE } from "./__fixtures__/spawnBudget.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 
-const spawnBudget = {
-  maxDepth: 2,
-  maxChildren: 5,
-  maxConcurrentWriters: 3,
-  maxTotalWorkers: 10,
-  allowedTools: ["read", "write", "bash"],
-  writeScope: ["src/**"],
-};
+// ORC-268: shared budget so a future SpawnBudget schema change
+// surfaces as a single typecheck failure rather than as silent
+// stale copies across tests.
+const spawnBudget = DEFAULT_SPAWN_BUDGET_FIXTURE;
 
 function now() {
   return new Date().toISOString();

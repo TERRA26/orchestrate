@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
+import { DEFAULT_SPAWN_BUDGET_FIXTURE } from "./__fixtures__/spawnBudget.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,14 +33,10 @@ const taskId = "task-1" as OrchestratorTaskId;
 const workerId = "worker-1" as OrchestratorWorkerId;
 const threadId = ThreadId.makeUnsafe("thread-1");
 
-const spawnBudget: SpawnBudget = {
-  maxDepth: 2,
-  maxChildren: 5,
-  maxConcurrentWriters: 3,
-  maxTotalWorkers: 10,
-  allowedTools: ["read", "write", "bash"],
-  writeScope: ["src/**"],
-};
+// ORC-268: shared budget so a future SpawnBudget schema change
+// surfaces as a single typecheck failure rather than as silent
+// stale copies across tests.
+const spawnBudget: SpawnBudget = DEFAULT_SPAWN_BUDGET_FIXTURE;
 
 const workspace: OrchestratorWorkspace = {
   mode: "local",
