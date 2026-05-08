@@ -2068,3 +2068,46 @@ The first two would fail before the change (root was `^24.13.1`); verified by st
 - Wire the dev-runner / start script to select the right Node binary when the host has multiple nvm-managed Node versions, so contributors with old default Node don't have to manually `nvm use 24` before bun.
 - Add a contributing.md note pointing at the canonical engines value and explaining how to bump it monorepo-wide via a single PR.
 - When Node 22 hits LTS sunset, drop the 22 clause and bump the floor; the test will guide the migration.
+
+## ORC-083 [iter 88] No regression net for React 19 peer-dep drift
+
+**Root cause**: apps/web pinned `react@^19` and `react-dom@^19` but had no automated check that downstream React-tied libraries (TanStack Router, Lexical, Radix, Base UI) actually advertised React 19 in their peerDependencies. Bun's permissive resolver silently installs incompatible peers; any future dep bump that pulled in a React-18-only fork would surface only as a runtime mismatch.
+
+**Audit findings**: actual installed peer ranges (post-resolution) all admit React 19:
+- `@base-ui/react`: `^17 || ^18 || ^19`
+- `@lexical/react`: `>=17.x`
+- `@tanstack/react-query`: `^18 || ^19`
+- `@tanstack/react-router`: `>=18.0.0 || >=19.0.0`
+- `@tanstack/react-virtual`: `^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0`
+- `@tanstack/react-pacer`: `>=16.8`
+
+So the current state is healthy. The risk is *future drift* on dep bumps.
+
+**Change summary**:
+- New `apps/web/src/reactPeerDeps.test.ts`: regression test that walks every React-tied direct dependency and asserts its installed `peerDependencies.react` admits React 19 via either an explicit `\b19\b` mention or an unbounded `>=N` (with N <= 19). Resolves package paths through the workspace's `node_modules/<name>/package.json` first, falls back to bun's `.bun` cache layout.
+
+**Files touched**:
+- apps/web/src/reactPeerDeps.test.ts (NEW)
+
+**Tests added**: 7 cases:
+1-6. One per React-tied dep (`@base-ui/react`, `@lexical/react`, `@tanstack/react-query`, `@tanstack/react-router`, `@tanstack/react-virtual`, `@tanstack/react-pacer`) asserting React 19 is admitted in the installed peer range.
+7. Sanity-check that apps/web's `package.json` itself pins react / react-dom at ^19.
+
+The semver-admits helper handles the actual range forms used today and rejects pure `^18` / `>=20` ranges, so a future dep that drops React 19 support would trip the test.
+
+**Green-run evidence**:
+- `cd apps/web && bun run test src/reactPeerDeps.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 7 passed (7)
+- `bun typecheck` (apps/web) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- node_modules layout: bun has both a flat-symlink layout (`node_modules/<scope>/<pkg>`) and a content-addressable cache layout (`node_modules/.bun/<slug>/node_modules/<pkg>`). The test resolves the workspace-level path first (matches what Vite imports at runtime), and only falls back to the cache when the symlink is absent. Either layout works.
+- Skip path: when neither node_modules tree exists (test runs before `bun install`), the suite skips with `it.skip` so a fresh checkout doesn't fail.
+- The admit-19 heuristic uses regex matching not real semver evaluation. Forms not covered today (e.g., `^19.x.y` with extra qualifiers) would still match the `\b19\b` rule. False negatives are unlikely; false positives (admitting a range that says "anything 19+ is broken" but happens to mention 19) are also unlikely in practice.
+- A NEW React-tied dep added to package.json that's not in `REACT_TIED_DEPS` would be silently un-checked. Mitigation: future contributors should append new entries; the test is documentation enough.
+
+**Follow-ups**:
+- When a React 20 stable lands, expand the admit logic and add a `REACT_MAJOR` constant.
+- Consider a CI step that runs `bun pm ls --depth=2 react` and diffs against a stored snapshot to surface peer-dep changes at install time, before tests run.
+- The TanStack Router constraint `^1.160.2` in package.json is older than the installed `1.167.x`; a future cleanup PR should bump to `^1.190` or current (a minor version float is harmless for now since bun resolves to the latest within range).
+- Audit @lexical/lexical (the unscoped package) for its peer deps — currently has no `react` peer (it's a non-React core). Documented but not yet asserted.

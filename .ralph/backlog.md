@@ -797,7 +797,8 @@ Schema per entry:
 - files: apps/web/package.json (react ^19.0.0, @tanstack/react-router ^1.160.2, others)
 - evidence: React 19 stable shipped late 2024. Several React-tied libs in the web app were pinned at versions that predate React 19 stable (TanStack Router, Lexical, Radix). PeerDependencies warnings may surface but are easy to miss in bun's permissive resolver.
 - proposed_fix: Run `bun pm ls --depth=2 react` and confirm every dep declares React 19 in its peerDependencies, OR opt out of strict-peer-deps. Bump TanStack Router to ^1.190 if available. Bump Lexical and Radix to React 19-compatible majors where possible.
-- status: PENDING
+- status: DONE
+- fixed_iter: 88
 
 ### ORC-084
 
