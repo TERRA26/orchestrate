@@ -1272,6 +1272,88 @@ describe("OrchestrationToolRouter", () => {
     expect(turnStart.message.text).not.toContain('from_agent_id="' + otherWorkerId + '"');
   });
 
+  // ORC-277: cross-run isolation. Worker in run-A must NOT be able
+  // to send_to_agent against a worker in run-B. The previous lookup
+  // resolved targetAgentId across the entire read model, so two
+  // orchestrators on the same server could leak messages between
+  // each other's workers (the receiving worker would parse the
+  // message through inter_agent_message framing and potentially act
+  // on it).
+  it("orchestrate_send_to_agent rejects targets in a different orchestrator run (ORC-277)", async () => {
+    const commands: OrchestrationCommand[] = [];
+    const senderWorkerId = "worker-sender-277";
+    const senderThreadId = ThreadId.makeUnsafe("thread-sender-277");
+    const targetWorkerId = "worker-target-277";
+    const targetThreadId = ThreadId.makeUnsafe("thread-target-277");
+    const readModel = makeReadModel({
+      threads: [
+        makeThread(),
+        { ...makeThread(), id: senderThreadId, title: "Sender" },
+        { ...makeThread(), id: targetThreadId, title: "Target" },
+      ],
+      orchestratorWorkers: [
+        // Sender is in run-A.
+        {
+          workerId: senderWorkerId as unknown as OrchestratorWorkerId,
+          runId: "run-A" as OrchestratorRunId,
+          threadId: senderThreadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+        // Target is in run-B (different orchestrator).
+        {
+          workerId: targetWorkerId as unknown as OrchestratorWorkerId,
+          runId: "run-B" as OrchestratorRunId,
+          threadId: targetThreadId,
+          status: "running",
+          visibility: "foreground",
+          spawnBudget: {
+            maxDepth: 2,
+            maxChildren: 5,
+            maxConcurrentWriters: 3,
+            maxTotalWorkers: 10,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: "/tmp", terminalIds: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        } as any,
+      ],
+    });
+    const layer = OrchestrationToolRouterLive.pipe(Layer.provide(makeEngine(readModel, commands)));
+    const result = (await Effect.runPromise(
+      Effect.gen(function* () {
+        const router = yield* OrchestrationToolRouterService;
+        return yield* router.executeTool({
+          toolName: "orchestrate_send_to_agent",
+          threadId: senderThreadId,
+          runId: null,
+          toolInput: {
+            targetAgentId: targetWorkerId,
+            message: "leak",
+          },
+        });
+      }).pipe(Effect.provide(layer)),
+    )) as { error?: string };
+    expect(result.error).toBeDefined();
+    expect(result.error).toMatch(/different.*run|cross.*run|isolation/i);
+    // No commands dispatched — the rejection must happen at the
+    // boundary before any audit log entry is written.
+    expect(commands).toHaveLength(0);
+  });
+
   // ORC-243: when the calling thread is the orchestrator (no worker
   // record), the source falls through to the literal "orchestrator"
   // sentinel.

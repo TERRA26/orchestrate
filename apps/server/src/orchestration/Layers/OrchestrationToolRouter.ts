@@ -1086,6 +1086,25 @@ function handleSendToAgent(
     );
     const fromWorkerId = callingWorker?.workerId ?? ("orchestrator" as any);
 
+    // ORC-277: cross-run isolation. If the calling worker is in a
+    // different orchestrator run than the target, refuse the send.
+    // Two orchestrators sharing a server must not be able to leak
+    // messages between each other's workers; the receiving worker
+    // would parse the message via inter_agent_message framing and
+    // could act on it without realizing it came from outside its
+    // run. The orchestrator-as-sender (no callingWorker record)
+    // bypasses this check because it does not belong to a worker
+    // run by definition.
+    if (
+      callingWorker !== undefined &&
+      (targetWorker.runId as unknown as string) !==
+        (callingWorker.runId as unknown as string)
+    ) {
+      return {
+        error: `Cross-run send_to_agent rejected: target ${decoded.targetAgentId} is in a different orchestrator run.`,
+      };
+    }
+
     // 1) Record the message on the orchestrator message bus (projector writes
     //    it to orchestratorMessages[] for audit + replay).
     yield* dispatch({

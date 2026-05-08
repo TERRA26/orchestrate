@@ -2647,7 +2647,7 @@ Schema per entry:
 - files: apps/server/src/orchestration (singleton read model + event engine per process)
 - evidence: There is no orchestrator-scope filter on task dependencies, worker hierarchy, or inter-worker messaging. Two simultaneously running orchestrators on the same server would see each other's workers/tasks. Single-tenant today; multi-tenant-ready: no.
 - proposed_fix: Add `orchestratorId` (or rely on projectId) as a filter dimension throughout the read model. Reject cross-orchestrator references in dispatch. Add a multi-orchestrator integration test that exercises isolation.
-- status: PENDING
+- status: DONE
 
 ### ORC-278
 

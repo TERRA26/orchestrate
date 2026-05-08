@@ -6067,3 +6067,64 @@ mention of the prefix convention. Verified failing-before by stashing
     (web tests today have their own makeThread/makeProject
     duplication; that needs its own seed file once the duplication
     pattern is more uniform).
+
+## ORC-277: cross-run isolation guard on send_to_agent
+
+- root cause: `handleSendToAgent` resolved `targetAgentId` across
+  the entire `orchestratorWorkers` array with no runId scope. If
+  two orchestrators happened to run concurrently on the same
+  server, a worker in run-A could send_to_agent against
+  targetAgentId belonging to run-B; the receiving worker would
+  parse the message via `<inter_agent_message
+  from_agent_id="...">` framing and could act on it without
+  realizing it came from outside its run. The read model is
+  partitioned by runId for accessors (`getWorkers(runId)`,
+  `getTaskTree(runId)`) but the send_to_agent boundary check was
+  missing.
+- change summary:
+  - In `handleSendToAgent`, after the existing ORC-243
+    `callingWorker` lookup, added a runId equality check against
+    `targetWorker.runId`. If they differ AND the calling worker
+    is identified (i.e., the caller is a worker, not the
+    orchestrator-as-sender sentinel), the request is rejected
+    with `Cross-run send_to_agent rejected: target ${id} is in a
+    different orchestrator run.`
+  - The orchestrator-as-sender path (no `callingWorker` record)
+    is intentionally allowed: the orchestrator does not belong
+    to a run by definition and is the legitimate cross-run
+    coordinator.
+  - The rejection happens BEFORE any dispatch so no audit log
+    entry is written for a leaked message.
+- files touched:
+  - apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts
+  - apps/server/src/orchestration/Layers/OrchestrationToolRouter.test.ts
+- tests added:
+  - "orchestrate_send_to_agent rejects targets in a different
+    orchestrator run (ORC-277)": sets up two workers in run-A
+    and run-B, calls send_to_agent from run-A to run-B's worker,
+    asserts the result carries an error matching
+    /different.*run|cross.*run|isolation/i AND that no
+    commands were dispatched.
+- evidence of green run:
+  ```
+  bun run vitest run src/orchestration/Layers/OrchestrationToolRouter.test.ts
+   Test Files  1 passed (1)
+        Tests  25 passed (25)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - The other read-model accessors (getActiveRuns, getEvidence,
+    inter-worker dispatch) need their own audit. ORC-275's
+    resumeActiveRuns already filters by runId; getEvidence keys
+    on taskId (UUID-unique). The remaining surfaces should be
+    enumerated and pinned.
+  - A multi-orchestrator integration test that runs two real
+    OrchestrationEngine instances and exercises every cross-run
+    boundary remains the gold standard. The unit test added
+    here covers the highest-risk pathway (worker-to-worker
+    messaging); a future iteration can add the broader
+    integration coverage.
+  - Consider promoting `runId` to a load-bearing brand-checked
+    parameter on every cross-run-eligible handler so the type
+    system catches the next leak at compile time.
