@@ -4175,3 +4175,56 @@ mention of the prefix convention. Verified failing-before by stashing
   - Update the orchestrator system prompt (docs/ORCHESTRATOR.md) to
     declare that all `<untrusted_*>` tagged content is data and
     must not be followed as instructions.
+
+## ORC-221 (iter 135): defensive guard for malformed Codex tool-call results
+
+- root cause: `CodexToolCallHandler` returns `Promise<unknown>` and
+  the result is forwarded to the Codex app-server via
+  `writeMessage`. When the handler accidentally returns a value
+  that is not JSON-safe (circular references, NaN, Infinity, bare
+  functions, bare symbols), `JSON.stringify` either drops parts of
+  the value or throws inside the underlying transport. Codex
+  receives a corrupted or missing response, producing a cryptic
+  downstream crash with no signal back to the orchestrator about
+  which tool actually misbehaved.
+- change summary:
+  - Added `apps/server/src/codexToolCallResultGuard.ts` exporting
+    `validateToolCallResult(toolName, value)`. The guard does a
+    JSON.stringify + JSON.parse roundtrip, catches throws, detects
+    `JSON.stringify` returning `undefined` (function/symbol/raw
+    undefined cases), and walks the value to flag NaN/Infinity
+    (which JSON silently encodes as `null`). Returns either
+    `{ ok: true, value }` (with the parsed roundtrip value as a
+    defensive copy) or `{ ok: false, error }` with a structured
+    `tool_result_invalid` shape carrying toolName, reason
+    (`non-serializable | non-finite-number | exception`), and detail.
+  - Wired the guard into the `item/tool/call` handler in
+    `codexAppServerManager.ts:2334`. When validation fails, the
+    response surfaces a JSON-RPC error (-32603) carrying the
+    structured payload as `data`, instead of a corrupted result.
+- files touched:
+  - apps/server/src/codexToolCallResultGuard.ts (new)
+  - apps/server/src/codexToolCallResultGuard.test.ts (new)
+  - apps/server/src/codexAppServerManager.ts
+- tests added: 12 unit tests covering: plain-object accept,
+  undefined accept, null accept, primitives, circular reference
+  rejection, NaN rejection, Infinity rejection, deep-nested NaN,
+  function rejection, symbol rejection, defensive-copy semantics,
+  toolName preservation in the error payload.
+- evidence of green run:
+  ```
+  bun run test src/codexToolCallResultGuard.test.ts
+   Test Files  1 passed (1)
+        Tests  12 passed (12)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - ORC-221b: per-tool Schema validation. Build a tool-name to
+    Schema map (drawing from `@orchestrate/contracts/orchestrationTools`)
+    and run the result through the schema decoder before sending.
+    The current guard is a shipping floor that catches the
+    crash class today; per-tool schemas catch semantic drift.
+  - Wire the same guard into the Claude provider tool-call path
+    (apps/server/src/provider/Layers/ClaudeProvider.ts) once the
+    Claude side has an analogous boundary.

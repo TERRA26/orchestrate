@@ -2099,7 +2099,8 @@ Schema per entry:
 - files: apps/server/src/codexAppServerManager.ts:637-642 (CodexToolCallHandler returns Promise<unknown>)
 - evidence: Tool call results from the provider are returned as `unknown` and used downstream without Schema validation. A malformed provider response crashes downstream code with a cryptic error rather than a structured "invalid tool result" failure.
 - proposed_fix: Decode each tool result through the corresponding Schema. On decode failure, return a structured ToolResultError; surface it to the orchestrator as `tool_result_invalid`.
-- status: PENDING
+- status: DONE
+- fixed_iter: 135
 
 ### ORC-222
 

@@ -39,6 +39,7 @@ import {
   ProviderInteractionMode,
 } from "@orchestrate/contracts";
 import { LruMap } from "@orchestrate/shared/LruMap";
+import { validateToolCallResult } from "./codexToolCallResultGuard.ts";
 import { normalizeModelSlug } from "@orchestrate/shared/model";
 import { Effect, ServiceMap } from "effect";
 
@@ -2343,9 +2344,32 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           jsonRpcId: request.id,
         })
           .then((result) => {
+            // ORC-221: defensive serialize check. A malformed handler
+            // result (circular refs, NaN/Infinity, functions, symbols)
+            // would corrupt or crash the JSON-RPC response. Surface
+            // a structured tool_result_invalid instead.
+            const guard = validateToolCallResult(toolName, result);
+            if (!guard.ok) {
+              this.writeMessage(context, {
+                id: request.id,
+                error: {
+                  code: -32603,
+                  message:
+                    "Tool '" +
+                    toolName +
+                    "' returned an invalid result: " +
+                    guard.error.reason +
+                    " (" +
+                    guard.error.detail +
+                    ")",
+                  data: guard.error,
+                },
+              });
+              return;
+            }
             this.writeMessage(context, {
               id: request.id,
-              result: result ?? { ok: true },
+              result: guard.value ?? { ok: true },
             });
           })
           .catch((error) => {
