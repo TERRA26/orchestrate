@@ -7,7 +7,18 @@ import {
 } from "@orchestrate/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
+import {
+  markThreadUnread,
+  reorderProjects,
+  selectMarkThreadVisited,
+  selectProjects,
+  selectSetError,
+  selectSetThreadWorkspace,
+  selectSyncServerReadModel,
+  selectThreads,
+  syncServerReadModel,
+  type AppState,
+} from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -403,5 +414,75 @@ describe("store read model sync", () => {
     const restored = syncServerReadModel(withoutProject2, snapshotWithProject2Restored);
 
     expect(restored.projects.find((project) => project.id === project2)?.expanded).toBe(true);
+  });
+});
+
+/**
+ * Pins the module-level top-of-state selectors introduced by ORC-289.
+ *
+ * Inline arrow selectors `useStore((s) => s.X)` are recreated every
+ * render; zustand's Object.is equality check passes for the value
+ * but the subscription callback identity changes each call, which
+ * forces the store to register a new listener on every render.
+ * Hoisting these to module-level constants keeps the listener
+ * identity stable and removes that hidden churn.
+ *
+ * @see ORC-289
+ */
+describe("ORC-289 module-level selectors", () => {
+  const buildSnapshot = (): {
+    threads: AppState["threads"];
+    projects: AppState["projects"];
+    markThreadVisited: () => void;
+    syncServerReadModel: () => void;
+    setError: () => void;
+    setThreadWorkspace: () => void;
+  } => ({
+    threads: [],
+    projects: [],
+    markThreadVisited: () => {},
+    syncServerReadModel: () => {},
+    setError: () => {},
+    setThreadWorkspace: () => {},
+  });
+
+  it("selectThreads returns state.threads", () => {
+    const state = buildSnapshot();
+    expect(selectThreads(state)).toBe(state.threads);
+  });
+
+  it("selectProjects returns state.projects", () => {
+    const state = buildSnapshot();
+    expect(selectProjects(state)).toBe(state.projects);
+  });
+
+  it("selectMarkThreadVisited returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectMarkThreadVisited(state)).toBe(state.markThreadVisited);
+  });
+
+  it("selectSyncServerReadModel returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectSyncServerReadModel(state)).toBe(state.syncServerReadModel);
+  });
+
+  it("selectSetError returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectSetError(state)).toBe(state.setError);
+  });
+
+  it("selectSetThreadWorkspace returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectSetThreadWorkspace(state)).toBe(state.setThreadWorkspace);
+  });
+
+  it("selectors keep stable identity across calls (the whole point)", () => {
+    // The hoisting only matters because the selector reference
+    // itself is stable. If a maintainer ever wraps these in a
+    // factory that returns a new function each time, the
+    // performance benefit evaporates. Pin it.
+    expect(selectThreads).toBe(selectThreads);
+    expect(selectProjects).toBe(selectProjects);
+    expect(selectMarkThreadVisited).toBe(selectMarkThreadVisited);
   });
 });

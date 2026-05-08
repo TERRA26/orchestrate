@@ -106,7 +106,15 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { useStore } from "../store";
+import {
+  selectMarkThreadVisited,
+  selectProjects,
+  selectSetError,
+  selectSetThreadWorkspace,
+  selectSyncServerReadModel,
+  selectThreads,
+  useStore,
+} from "../store";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -498,12 +506,15 @@ export default function ChatView({
   onSplitSurface,
   onMaximizeSurface,
 }: ChatViewProps) {
-  const threads = useStore((store) => store.threads);
-  const projects = useStore((store) => store.projects);
-  const markThreadVisited = useStore((store) => store.markThreadVisited);
-  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
-  const setStoreThreadError = useStore((store) => store.setError);
-  const setStoreThreadWorkspace = useStore((store) => store.setThreadWorkspace);
+  // ORC-289: module-level selectors keep the subscription callback
+  // identity stable across renders so zustand does not register a
+  // fresh listener on every parent re-render.
+  const threads = useStore(selectThreads);
+  const projects = useStore(selectProjects);
+  const markThreadVisited = useStore(selectMarkThreadVisited);
+  const syncServerReadModel = useStore(selectSyncServerReadModel);
+  const setStoreThreadError = useStore(selectSetError);
+  const setStoreThreadWorkspace = useStore(selectSetThreadWorkspace);
   const { settings } = useAppSettings();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,

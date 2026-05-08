@@ -2753,7 +2753,7 @@ Schema per entry:
 - files: apps/web/src/components/ChatView.tsx:500-505 (and 17 inline `useStore((s) => s.X)` sites)
 - evidence: Inline arrow selectors are recreated on every render. Zustand uses Object.is to compare selector outputs; with new closures each call the comparison may pass for the value but the subscription churns. ChatView is the parent of high-traffic surfaces (composer, timeline, sidebar); unnecessary parent re-renders propagate.
 - proposed_fix: Hoist module-level selector functions (`const selectThreads = (s: AppState) => s.threads`). Use existing memoized selectors `selectThreadById`, `selectProjectById` from store.ts. Run a React DevTools profiler trace to verify the re-render storm is reduced.
-- status: PENDING
+- status: DONE
 
 ### ORC-290
 

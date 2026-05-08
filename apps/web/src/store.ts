@@ -535,6 +535,33 @@ export function selectThreadById(threadId: ThreadId | null | undefined) {
     threadId == null ? undefined : state.threads.find((t) => t.id === threadId);
 }
 
+// ── Module-level top-of-state selectors (ORC-289) ───────────────────
+//
+// Inline arrow selectors `useStore((s) => s.X)` are recreated every
+// render. zustand checks the selector OUTPUT with Object.is, but
+// the selector identity itself drives the subscription callback,
+// so a fresh closure on every render forces an internal listener
+// re-register churn. Hoisting these to module-level constants
+// keeps the listener identity stable across renders. Component
+// code uses `useStore(selectThreads)` instead of
+// `useStore((s) => s.threads)`.
+
+export const selectThreads = (state: { readonly threads: AppState["threads"] }) =>
+  state.threads;
+export const selectProjects = (state: { readonly projects: AppState["projects"] }) =>
+  state.projects;
+export const selectMarkThreadVisited = (state: {
+  readonly markThreadVisited: AppStore["markThreadVisited"];
+}) => state.markThreadVisited;
+export const selectSyncServerReadModel = (state: {
+  readonly syncServerReadModel: AppStore["syncServerReadModel"];
+}) => state.syncServerReadModel;
+export const selectSetError = (state: { readonly setError: AppStore["setError"] }) =>
+  state.setError;
+export const selectSetThreadWorkspace = (state: {
+  readonly setThreadWorkspace: AppStore["setThreadWorkspace"];
+}) => state.setThreadWorkspace;
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     persistState(useStore.getState());

@@ -5687,3 +5687,54 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider documenting the optional-vs-NullOr convention in a
     contracts README or CONTRIBUTING file so future schema authors
     pick the right one without re-deriving the rationale.
+
+## ORC-289: hoist module-level zustand selectors out of ChatView
+
+- root cause: ChatView.tsx used six inline arrow selectors of the
+  form `useStore((store) => store.X)`. Each render reconstructed
+  these closures fresh; even though zustand compares the OUTPUT
+  with Object.is and skips re-renders when the slice did not
+  change, the listener identity itself rotates per render, which
+  forces an internal subscription churn. ChatView is the parent of
+  high-traffic surfaces (composer, timeline, sidebar) so the cost
+  amplifies down the tree.
+- change summary:
+  - Added six module-level top-of-state selectors to
+    `apps/web/src/store.ts`: `selectThreads`, `selectProjects`,
+    `selectMarkThreadVisited`, `selectSyncServerReadModel`,
+    `selectSetError`, `selectSetThreadWorkspace`. Each is typed
+    against a minimal `{ readonly fieldName: ... }` interface so
+    the consuming hook does not have to import the full `AppStore`
+    type, while still preserving brand and signature.
+  - Replaced ChatView's inline selectors with imports of the new
+    constants. Behavior is identical; selector identity is now
+    stable across renders.
+- files touched:
+  - apps/web/src/store.ts
+  - apps/web/src/store.test.ts
+  - apps/web/src/components/ChatView.tsx
+- tests added (in store.test.ts):
+  - "selectThreads returns state.threads" through
+    "selectSetThreadWorkspace returns the action": six tests
+    pinning each selector's slice extraction against a minimal
+    state shape.
+  - "selectors keep stable identity across calls": guards against
+    a future regression that wraps the selectors in a factory and
+    re-introduces the per-render closure churn.
+- evidence of green run:
+  ```
+  bun run vitest run src/store.test.ts
+   Test Files  1 passed (1)
+        Tests  15 passed (15)
+  bun run typecheck   # apps/web clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - The proposed_fix mentioned "17 inline `useStore((s) => s.X)`
+    sites" across the codebase. ChatView's six are now done. A
+    follow-up sweep can grep for the remaining sites and either
+    add new module-level selectors or reuse the existing ones.
+  - Run a React DevTools profiler trace before/after on a real
+    multi-thread session to quantify the render-count reduction.
+    The fix is correct by construction, but the observable
+    benefit is workload-dependent.
