@@ -1341,7 +1341,8 @@ Schema per entry:
 - files: docs/ORCHESTRATOR.md:251 (clarifying questions)
 - evidence: The doc says "ask clarifying questions before decomposing ambiguous requests" but provides no structured tool / loop. The orchestrator either guesses or sends a free-form message; there is no `set status: needs-input + questions[]` flow before spawning.
 - proposed_fix: Document an explicit clarification loop using the existing send_update_to_orchestrator pattern adapted to the orchestrator side (or a new orchestrate_request_clarification tool). Specify a max-questions cap and a timeout policy.
-- status: PENDING
+- status: DONE
+- fixed_iter: 109
 
 ### ORC-142
 

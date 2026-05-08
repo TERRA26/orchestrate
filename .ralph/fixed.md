@@ -3195,3 +3195,42 @@ mention of the prefix convention. Verified failing-before by stashing
   - Add an integration test that walks the full
     plan-upsert -> approval -> run.create -> task.create chain end
     to end so the doc and runtime stay synchronized.
+
+## ORC-141 (iter 109): document Clarifying Questions loop in ORCHESTRATOR.md
+
+- root cause: ORCHESTRATOR.md said "ask clarifying questions before
+  decomposing ambiguous requests" with no structured loop, no
+  max-questions cap, no timeout/default-escalation policy, and no
+  question shape. Result: the orchestrator either guessed at scope or
+  fired free-form questions, both of which burn worker budget on
+  wrong interpretations.
+- change summary: added `## Clarifying Questions` section to
+  docs/ORCHESTRATOR.md between Direct control requests and Task
+  Design, covering: (1) WHEN to ask (decompose route only, real
+  ambiguity, not after a Direct control bypass, not a repeat ask),
+  (2) the structured question shape (id, prompt, options, default),
+  (3) the at-most-3-per-round / at-most-2-rounds caps, (4) the
+  needs-input status flag, (5) timeout and default-escalation
+  policy, (6) good/bad examples, and (7) a placeholder reference to
+  the future `orchestrate_request_clarification` tool.
+- files touched:
+  - docs/ORCHESTRATOR.md
+  - apps/server/src/orchestration/orchestratorClarificationDoc.test.ts (new)
+- tests added: 9 doc-pinning cases verifying the section heading,
+  When-to-ask criteria, max-3 per round cap, max-2 rounds cap,
+  needs-input status, structured question shape fields, timeout
+  policy, examples, and the future-tool reference.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/orchestratorClarificationDoc.test.ts
+   Test Files  1 passed (1)
+        Tests  9 passed (9)
+  ```
+  Failing-before verified: `git stash push -- docs/ORCHESTRATOR.md`
+  then re-running the same test produced 9/9 failures.
+- follow-ups:
+  - Implement the `orchestrate_request_clarification` MCP tool so
+    the question set becomes machine-readable and timeout
+    enforcement can be automated.
+  - Add a thread state field for `needs-input` so the UI can render
+    a clarification card distinct from a normal assistant message.
