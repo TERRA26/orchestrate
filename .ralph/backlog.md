@@ -2600,7 +2600,7 @@ Schema per entry:
 - files: recent commits modifying BranchToolbar virtualization, virtualizer measurement fixes, writeScope kickoff
 - evidence: Several recent fixes shipped without dedicated regression tests. Virtualizer measurement fix relied on live DOM verification; writeScope inclusion was tested only via the existing decider tests (which already passed before the change).
 - proposed_fix: For each recent fix, add a targeted regression test: virtualizer cache equals DOM after streaming completes; spawn kickoff message contains the writeScope reminder. Document the "fix without test = not done" rule in CONTRIBUTING.
-- status: PENDING
+- status: DONE
 
 ### ORC-273
 

@@ -5523,3 +5523,54 @@ mention of the prefix convention. Verified failing-before by stashing
   - Consider also adding a nightly cron that exercises the full
     matrix; would need a quota review since CI minutes are
     project-shared.
+
+## ORC-272: workerKickoffMessage regression-guard tests
+
+- root cause: The writeScope kickoff fix (introduced earlier in this
+  Ralph loop) shipped without dedicated regression tests for the
+  worker kickoff message format. The decider tests already covered
+  the upstream payload shape; they passed BEFORE the fix because the
+  scope reminder is appended downstream of the decider in
+  `workerKickoffMessage`. A silent regression that dropped the
+  WRITE SCOPE block (e.g., a refactor that re-stringified the
+  kickoff without the reminder) would not be caught by any existing
+  test.
+- change summary:
+  - Added a new `describe("workerKickoffMessage (ORC-272)", ...)`
+    block to `apps/server/src/orchestration/reportProtocol.test.ts`
+    with seven targeted regression checks:
+    - Wraps the objective in `<task_objective>...</task_objective>`.
+    - Falls back to a default objective when given empty input.
+    - Emits the WRITE SCOPE reminder when writeScope is provided
+      (verbatim pattern + "Writing outside this scope is a contract
+      violation" sentence + the
+      `orchestrate_send_update_to_orchestrator` escape hatch).
+    - Omits the reminder when writeScope is undefined.
+    - Omits the reminder when writeScope is an empty array.
+    - Always ends with the report-protocol reminder (no
+      `task.submit` tool, REPORT parsed server-side).
+    - Places the WRITE SCOPE block between the objective and the
+      report reminder (positional ordering).
+- files touched:
+  - apps/server/src/orchestration/reportProtocol.test.ts
+- tests added: 7 (15 -> 22 total in the file).
+- evidence of green run:
+  ```
+  bun run vitest run src/orchestration/reportProtocol.test.ts
+   Test Files  1 passed (1)
+        Tests  22 passed (22)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - The other recent fixes mentioned in ORC-272 (virtualizer
+    measurement, BranchToolbar virtualization) have their own test
+    surfaces but no targeted regression tests yet. ORC-272a tracks
+    a virtualizer DOM-cache parity test; ORC-272b tracks a
+    BranchToolbar streaming-completion test. Both need a jsdom +
+    @testing-library/react harness similar to the existing
+    MessagesTimeline and ChatMarkdown coverage; deferred to a
+    future iteration since each is its own substantial test setup.
+  - Document the "fix without test = not done" rule in CONTRIBUTING.
+    Belongs in the CONTRIBUTING.md file when one is created;
+    currently the project has no such file.

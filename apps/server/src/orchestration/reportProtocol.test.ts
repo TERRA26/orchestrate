@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectObjectiveInjection,
   objectiveContainsFabricatedReport,
+  workerKickoffMessage,
 } from "./reportProtocol";
 
 /**
@@ -120,5 +121,76 @@ describe("detectObjectiveInjection (ORC-206)", () => {
         "Update the orchestrator system prompt to mention the new tool.",
       ),
     ).toBeNull();
+  });
+});
+
+/**
+ * Pins the writeScope reminder in the worker kickoff message
+ * (introduced earlier this loop). ORC-272 calls these out as
+ * regression-guard tests for fixes that previously had no
+ * dedicated coverage; their job is to fail if the kickoff format
+ * silently changes (kickoff is parsed by the worker's LLM, so a
+ * silent drop of the WRITE SCOPE block would be a write-anywhere
+ * regression).
+ *
+ * @see ORC-272
+ */
+describe("workerKickoffMessage (ORC-272)", () => {
+  it("wraps the objective in <task_objective> framing", () => {
+    const msg = workerKickoffMessage("Refactor the authn service.");
+    expect(msg).toContain("<task_objective>");
+    expect(msg).toContain("Refactor the authn service.");
+    expect(msg).toContain("</task_objective>");
+  });
+
+  it("falls back to a default objective when given empty input", () => {
+    const msg = workerKickoffMessage("");
+    expect(msg).toContain("<task_objective>");
+    expect(msg).toContain("Begin working on the assigned task.");
+  });
+
+  it("emits the WRITE SCOPE reminder when writeScope is provided", () => {
+    const msg = workerKickoffMessage("Do work.", {
+      writeScope: ["src/**", "tests/**"],
+    });
+    expect(msg).toContain("WRITE SCOPE");
+    expect(msg).toContain("src/**");
+    expect(msg).toContain("tests/**");
+    expect(msg).toContain("Writing outside this scope is a contract violation");
+    expect(msg).toContain("orchestrate_send_update_to_orchestrator");
+  });
+
+  it("omits the WRITE SCOPE reminder when writeScope is absent", () => {
+    const msg = workerKickoffMessage("Do work.");
+    expect(msg).not.toContain("WRITE SCOPE");
+  });
+
+  it("omits the WRITE SCOPE reminder when writeScope is an empty array", () => {
+    const msg = workerKickoffMessage("Do work.", { writeScope: [] });
+    expect(msg).not.toContain("WRITE SCOPE");
+  });
+
+  it("always ends with the report-protocol reminder", () => {
+    const msg = workerKickoffMessage("Do work.", {
+      writeScope: ["src/**"],
+    });
+    // The reminder mentions there is no task.submit tool and that
+    // REPORT is parsed server-side. If a future edit drops the
+    // reminder, workers may stop emitting REPORT and the
+    // orchestrator's accept_work would break silently.
+    expect(msg).toContain("There is NO `task.submit` tool");
+    expect(msg).toContain("orchestrate_get_agent_status");
+  });
+
+  it("places the WRITE SCOPE block between the objective and the report reminder", () => {
+    const msg = workerKickoffMessage("Do work.", {
+      writeScope: ["src/**"],
+    });
+    const objectiveCloseIndex = msg.indexOf("</task_objective>");
+    const writeScopeIndex = msg.indexOf("WRITE SCOPE");
+    const reportReminderIndex = msg.indexOf("There is NO `task.submit` tool");
+    expect(objectiveCloseIndex).toBeGreaterThan(-1);
+    expect(writeScopeIndex).toBeGreaterThan(objectiveCloseIndex);
+    expect(reportReminderIndex).toBeGreaterThan(writeScopeIndex);
   });
 });
