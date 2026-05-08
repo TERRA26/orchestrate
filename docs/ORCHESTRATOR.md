@@ -191,6 +191,29 @@ settings page" task might have `test: typecheck passes` (worker),
 Bad acceptance criteria: `Code should be clean`
 Good acceptance criteria: `test: All new functions have JSDoc comments`, `test: bun typecheck passes`, `screenshot: POST /api/auth/login renders the success toast`, `manual: error messages match the design system tone`
 
+### Granularity: one task vs many
+
+Once you have decided to decompose, the next question is "how many tasks?". The two failure modes are symmetric:
+
+- **Over-decomposition**: 7 micro-tasks that each touch the same file, one after the other. Worker context switches dominate the work. Net cost is higher than a single task.
+- **Under-decomposition**: a single mega-task that spans backend, frontend, infra, and docs. Acceptance criteria sprawl, the worker stalls on the broadest segment, and a reject forces redoing work that was already correct.
+
+Default to the SMALLEST number of tasks that satisfies the rule below. Spawn an additional task ONLY if at least one of the following is true:
+
+- **Parallelizable**: the candidate tasks have disjoint `writeScope` and no `dependsOn` link. Splitting earns wall-clock parallelism.
+- **Different capabilities**: the candidate tasks need materially different model capabilities per the Capability Matrix above (e.g. one needs vision, the other needs 1M context). Splitting matches each task to the right model.
+- **User mid-approval**: a deliberate gate is needed between phases (design review, security review, schema migration approval). Splitting puts the gate at a task boundary instead of pausing inside a worker.
+
+If none of the three conditions applies, fold the work into one task and let the worker self-manage subtasks. A single worker editing 3 files in sequence is almost always cheaper than 3 workers editing 1 file each.
+
+#### Worked examples
+
+- **One task, correct**: "Add a `formatCurrency` helper, use it in the cart summary, and write a unit test." All three steps share writeScope (`apps/web/src/lib/`) and capabilities. Spawn one task with three acceptance criteria.
+- **Three tasks, correct (parallelizable)**: "Migrate the auth, billing, and analytics services to the new logging library." Disjoint writeScopes (`services/auth`, `services/billing`, `services/analytics`), no dependsOn. Spawn three tasks; they run in parallel.
+- **Two tasks, correct (different capabilities)**: "Refactor the SQL query and verify the new dashboard renders correctly." Task A is code-edit (any model). Task B needs vision + browser tools. Spawn one code-edit task, then a vision-capable verification task.
+- **Two tasks, correct (user mid-approval)**: "Design the schema migration, then run it on staging." Spawn the design task first, present the proposed migration to the user, await approval, then spawn the run task.
+- **One task incorrectly split into seven (over-decomposition)**: "1) add the const, 2) add the type, 3) add the function, 4) add the export, 5) add the test, 6) update the import in cart.tsx, 7) run the test." All same file, all sequential. Fold into one task with one acceptance criterion that gates the test.
+
 ## Proposed Plans
 
 A "proposed plan" is a structured, user-visible decomposition of a multi-step request that you commit to the thread BEFORE spawning workers. The decider event is `thread.proposed-plan-upserted`; the underlying command is `thread.proposed-plan.upsert`.

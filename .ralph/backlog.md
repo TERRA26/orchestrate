@@ -1388,7 +1388,8 @@ Schema per entry:
 - files: docs/ORCHESTRATOR.md:54,88 (decompose signals)
 - evidence: ORCHESTRATOR.md lists signals to decompose ("numbered lists", "and then") but gives no rule for "decompose into how many" or "spawn-1-large vs spawn-N-small". Orchestrators typically over-decompose tiny tasks or under-decompose mega-tasks.
 - proposed_fix: Add a heuristic: spawn separate tasks ONLY if (a) parallel-able, (b) needs different models, or (c) needs user mid-approval. Otherwise spawn one task and let the worker self-manage. Show a worked example of each.
-- status: PENDING
+- status: DONE
+- fixed_iter: 111
 
 ### ORC-147
 

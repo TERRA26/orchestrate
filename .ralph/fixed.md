@@ -3277,3 +3277,40 @@ mention of the prefix convention. Verified failing-before by stashing
     the orchestrator prompt alone.
   - Add a startup health check that warns when a configured model
     is missing a capability declared by any task in the read model.
+
+## ORC-146 (iter 111): document task-granularity heuristic in ORCHESTRATOR.md
+
+- root cause: ORCHESTRATOR.md listed signals to decompose ("numbered
+  lists", "and then", multi-deliverable) but gave no rule for "into
+  how many tasks?". Orchestrators trended toward over-decomposition
+  (7 micro-tasks all on the same file) or under-decomposition (one
+  mega-task that stalled on its broadest segment and forced a redo).
+- change summary: added `### Granularity: one task vs many`
+  subsection inside Task Design, naming both failure modes,
+  defaulting to the smallest number of tasks, and gating any extra
+  task behind one of three justifications (Parallelizable,
+  Different capabilities, User mid-approval). Added 5 worked
+  examples: one-correct, three-correct-parallel, two-correct-caps,
+  two-correct-approval-gate, and one over-decomposition
+  counter-example.
+- files touched:
+  - docs/ORCHESTRATOR.md
+  - apps/server/src/orchestration/orchestratorGranularityDoc.test.ts (new)
+- tests added: 7 doc-pinning cases. The two cross-section
+  references (Capability Matrix, writeScope/dependsOn) are scoped
+  to the new subsection via an `extractGranularitySection` helper
+  so they truly fail-before instead of passing on incidental
+  matches elsewhere in the doc.
+- evidence of green run:
+  ```
+  bun run test src/orchestration/orchestratorGranularityDoc.test.ts
+   Test Files  1 passed (1)
+        Tests  7 passed (7)
+  ```
+  Failing-before verified: stash + rerun produced 7/7 failures
+  (after I tightened the two cross-section references to scope to
+  the new subsection — the looser version had only 5/7 failing).
+- follow-ups:
+  - Add a runtime warning when a single thread spawns 5+ tasks
+    inside the same writeScope so over-decomposition surfaces in
+    the UI.
