@@ -17,6 +17,8 @@ import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { withStableCommandId } from "./lib/idempotentDispatch.ts";
+
 const ORCHESTRATOR_PID_SIDECAR_DIR = path.join(os.tmpdir(), "orchestrate-codex-pid-map");
 
 function readSidecarFor(pid: number): string | undefined {
@@ -896,96 +898,106 @@ async function executeOrchestrationTool(
     const workerThreadId = crypto.randomUUID();
     const projectId = orchestratorThread?.projectId ?? snapshot.projects?.[0]?.id ?? "";
 
-    // Create run
-    await wsRequest("orchestration.dispatchCommand", {
-      command: {
-        type: "orchestrator.run.create",
-        commandId: crypto.randomUUID(),
-        runId,
-        projectId,
-        userRequest: task,
-        goals: [task],
-        spawnBudget: {
-          maxDepth: 3,
-          maxChildren: 4,
-          maxConcurrentWriters: 4,
-          maxTotalWorkers: 12,
-          allowedTools: [],
-          writeScope: [],
+    // Create run (idempotent retry by stable commandId per ORC-171)
+    await withStableCommandId(async (commandId) =>
+      wsRequest("orchestration.dispatchCommand", {
+        command: {
+          type: "orchestrator.run.create",
+          commandId,
+          runId,
+          projectId,
+          userRequest: task,
+          goals: [task],
+          spawnBudget: {
+            maxDepth: 3,
+            maxChildren: 4,
+            maxConcurrentWriters: 4,
+            maxTotalWorkers: 12,
+            allowedTools: [],
+            writeScope: [],
+          },
+          createdAt: new Date().toISOString(),
         },
-        createdAt: new Date().toISOString(),
-      },
-    });
+      }),
+    );
 
     // Create task
-    await wsRequest("orchestration.dispatchCommand", {
-      command: {
-        type: "orchestrator.task.create",
-        commandId: crypto.randomUUID(),
-        taskId,
-        runId,
-        title: task.slice(0, 50),
-        objective: task,
-        acceptanceCriteria: [],
-        maxIterations: 3,
-        createdAt: new Date().toISOString(),
-      },
-    });
+    await withStableCommandId(async (commandId) =>
+      wsRequest("orchestration.dispatchCommand", {
+        command: {
+          type: "orchestrator.task.create",
+          commandId,
+          taskId,
+          runId,
+          title: task.slice(0, 50),
+          objective: task,
+          acceptanceCriteria: [],
+          maxIterations: 3,
+          createdAt: new Date().toISOString(),
+        },
+      }),
+    );
 
     // Create child thread
-    await wsRequest("orchestration.dispatchCommand", {
-      command: {
-        type: "thread.create",
-        commandId: crypto.randomUUID(),
-        threadId: workerThreadId,
-        projectId,
-        title: task.slice(0, 50),
-        modelSelection: { provider, model },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        threadType: "agent",
-        parentThreadId: threadId,
-        branch: null,
-        worktreePath: null,
-        createdAt: new Date().toISOString(),
-      },
-    });
+    await withStableCommandId(async (commandId) =>
+      wsRequest("orchestration.dispatchCommand", {
+        command: {
+          type: "thread.create",
+          commandId,
+          threadId: workerThreadId,
+          projectId,
+          title: task.slice(0, 50),
+          modelSelection: { provider, model },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          threadType: "agent",
+          parentThreadId: threadId,
+          branch: null,
+          worktreePath: null,
+          createdAt: new Date().toISOString(),
+        },
+      }),
+    );
 
     // Spawn worker
-    await wsRequest("orchestration.dispatchCommand", {
-      command: {
-        type: "orchestrator.worker.spawn",
-        commandId: crypto.randomUUID(),
-        workerId,
-        runId,
-        taskId,
-        threadId: workerThreadId,
-        spawnBudget: {
-          maxDepth: 3,
-          maxChildren: 4,
-          maxConcurrentWriters: 4,
-          maxTotalWorkers: 12,
-          allowedTools: [],
-          writeScope: [],
+    await withStableCommandId(async (commandId) =>
+      wsRequest("orchestration.dispatchCommand", {
+        command: {
+          type: "orchestrator.worker.spawn",
+          commandId,
+          workerId,
+          runId,
+          taskId,
+          threadId: workerThreadId,
+          spawnBudget: {
+            maxDepth: 3,
+            maxChildren: 4,
+            maxConcurrentWriters: 4,
+            maxTotalWorkers: 12,
+            allowedTools: [],
+            writeScope: [],
+          },
+          workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
+          createdAt: new Date().toISOString(),
         },
-        workspace: { mode: "local", cwd: process.cwd(), terminalIds: [] },
-        createdAt: new Date().toISOString(),
-      },
-    });
+      }),
+    );
 
     // Start first turn
-    await wsRequest("orchestration.dispatchCommand", {
-      command: {
-        type: "thread.turn.start",
-        commandId: crypto.randomUUID(),
-        threadId: workerThreadId,
-        message: { messageId: crypto.randomUUID(), role: "user", text: task, attachments: [] },
-        modelSelection: { provider, model },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        createdAt: new Date().toISOString(),
-      },
-    });
+    await withStableCommandId(async (commandId) =>
+      wsRequest("orchestration.dispatchCommand", {
+        command: {
+          type: "thread.turn.start",
+          commandId,
+          threadId: workerThreadId,
+          message: { messageId: crypto.randomUUID(), role: "user", text: task, attachments: [] },
+          modelSelection: { provider, model },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: new Date().toISOString(),
+        },
+      }),
+    );
 
     return JSON.stringify({
       agentId: workerId,

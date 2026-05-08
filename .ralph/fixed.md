@@ -3574,3 +3574,55 @@ mention of the prefix convention. Verified failing-before by stashing
     empty panel.
   - Apply the same parse-error shape to other client-side route
     parsers (sidebar id, project id, etc).
+
+## ORC-171 (iter 117): stable-commandId retry helper for MCP dispatches
+
+- root cause: scripts/orchestrate-mcp-server.ts dispatched commands
+  via `wsRequest` and generated `commandId: crypto.randomUUID()`
+  inline at every call site. On WS reconnect, in-flight requests
+  were dropped; a caller-level retry would generate a NEW commandId
+  and the server would process the retried command as a fresh
+  dispatch (creating duplicate runs / tasks / workers / turns).
+  Server-side dedup via `OrchestrationCommandReceiptRepository`
+  already existed but was useless because the client never reused
+  the same id.
+- change summary:
+  - Added `scripts/lib/idempotentDispatch.ts` exporting
+    `withStableCommandId<T>(operation, options)`. The helper
+    generates one commandId, threads it into every retry attempt,
+    retries only on transient WS errors (timeout, ECONNRESET,
+    ECONNREFUSED, "Cannot connect", "WebSocket is not open",
+    "socket hang up"), and uses exponential backoff
+    (`baseDelayMs * 2^attempt`).
+  - Wired `withStableCommandId` into the 5 sequential dispatches
+    of the orchestrate_spawn_agent flow (run.create, task.create,
+    thread.create, worker.spawn, turn.start). Each now retries
+    with the SAME commandId and the server-side receipt
+    deduplicates a duplicate arrival.
+- files touched:
+  - scripts/lib/idempotentDispatch.ts (new)
+  - scripts/lib/idempotentDispatch.test.ts (new)
+  - scripts/orchestrate-mcp-server.ts
+- tests added: 11 unit tests covering: first-success short-circuit,
+  retry reuses SAME commandId across attempts (the bug fix),
+  non-retryable errors propagate immediately, maxAttempts
+  exhaustion rethrows, default retryable patterns (Timeout,
+  WebSocket-not-open, ECONNREFUSED), custom isRetryable predicate,
+  exponential backoff math, injected generateId for determinism,
+  default UUID format sanity.
+- evidence of green run:
+  ```
+  bunx vitest run scripts/orchestrate-mcp-server.test.ts \
+    scripts/lib/idempotentDispatch.test.ts
+   Test Files  2 passed (2)
+        Tests  30 passed (30)
+  bun run typecheck   # 10 packages, all green
+  bun lint scripts/lib/...  # 0 errors (pre-existing warnings only)
+  ```
+- follow-ups:
+  - Wire `withStableCommandId` into the remaining ~20 wsRequest
+    dispatch sites in orchestrate-mcp-server.ts (handle_*
+    functions for accept/review/merge/etc).
+  - Add a server-side test asserting that two arrivals of the same
+    `commandId` return identical results without producing
+    duplicate events.

@@ -1619,7 +1619,8 @@ Schema per entry:
 - files: scripts/orchestrate-mcp-server.ts:615-628 (wsRequest)
 - evidence: On WS reconnect, in-flight requests are dropped. A retry uses a new commandId for orchestrator commands, which means the server processes a duplicate (e.g. two task.turn.start calls produce two turns).
 - proposed_fix: Generate a stable client-side requestId that is reused on retry. Server caches recent commandIds for idempotency (configurable window, e.g. 5 minutes). Duplicate dispatches return the original result.
-- status: PENDING
+- status: DONE
+- fixed_iter: 117
 
 ### ORC-172
 
