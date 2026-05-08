@@ -3626,3 +3626,45 @@ mention of the prefix convention. Verified failing-before by stashing
   - Add a server-side test asserting that two arrivals of the same
     `commandId` return identical results without producing
     duplicate events.
+
+## ORC-175 (iter 118): not-found page for unknown URLs
+
+- root cause: TanStack Router silently rendered nothing when no
+  route matched (e.g. `/unknown` or pasted-stale URLs). Users saw a
+  blank screen with no signal that the URL was bad.
+- change summary:
+  - Added `notFoundComponent: RouteNotFoundView` to the root route
+    config in `apps/web/src/routes/__root.tsx`. The component reads
+    the unmatched pathname from `useRouterState`, navigates home or
+    back via `useRouter`, and delegates rendering to a pure shell.
+  - Extracted the JSX shell into a new
+    `apps/web/src/components/RouteNotFoundShell.tsx` so the
+    component is testable without pulling the route module's
+    side-effect imports (theme bootstrapping, native bridge,
+    queryClient init, etc).
+  - Shell renders a clear "Page not found." heading with the
+    offending pathname, "Go home" + "Go back" buttons, role=alert
+    for assistive tech.
+- files touched:
+  - apps/web/src/components/RouteNotFoundShell.tsx (new)
+  - apps/web/src/routes/__root.tsx
+  - apps/web/src/routes/__root.notFound.test.tsx (new)
+- tests added: 5 component tests under jsdom verifying: heading
+  text, pathname rendered in code element, onGoHome/onGoBack
+  handlers fire on click, and role=alert is present.
+- evidence of green run:
+  ```
+  bun run test src/routes/__root.notFound.test.tsx
+   Test Files  1 passed (1)
+        Tests  5 passed (5)
+  bun run typecheck   # 10 packages, all green
+  bun lint            # 0 warnings, 0 errors on changed files
+  ```
+- follow-ups:
+  - Add a quick "open most recent project" link inside the shell
+    that uses the projects query to surface the user's last
+    project/thread, so the not-found page is also a recovery
+    affordance.
+  - Add a router-level integration test that drives the actual
+    TanStack route resolver with an unknown URL and asserts the
+    notFoundComponent path is taken.

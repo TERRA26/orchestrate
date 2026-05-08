@@ -4,6 +4,7 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
+  useRouter,
   useRouterState,
 } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
@@ -13,6 +14,7 @@ import { Throttler } from "@tanstack/react-pacer";
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { ConnectionStatusBanner } from "../components/ConnectionStatusBanner";
+import { RouteNotFoundShell } from "../components/RouteNotFoundShell";
 import { SettingsModal } from "../components/SettingsModal";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
@@ -35,6 +37,7 @@ export const Route = createRootRouteWithContext<{
 }>()({
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
+  notFoundComponent: RouteNotFoundView,
   head: () => ({
     meta: [{ name: "title", content: APP_DISPLAY_NAME }],
   }),
@@ -107,6 +110,26 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
         </details>
       </section>
     </div>
+  );
+}
+
+/**
+ * Catch-all "Not Found" page rendered when no route matches the URL.
+ * Replaces the previous silent blank-screen behavior in TanStack Router.
+ *
+ * @see ORC-175
+ */
+function RouteNotFoundView() {
+  const router = useRouter();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  return (
+    <RouteNotFoundShell
+      pathname={pathname}
+      onGoHome={() => {
+        void router.navigate({ to: "/" });
+      }}
+      onGoBack={() => router.history.back()}
+    />
   );
 }
 

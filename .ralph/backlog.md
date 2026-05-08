@@ -1656,7 +1656,8 @@ Schema per entry:
 - files: apps/web/src/routes/ (no $catch-all)
 - evidence: TanStack Router silently renders nothing when no route matches (e.g. `/unknown`). A user pasting a stale or wrong URL sees a blank screen.
 - proposed_fix: Add a catch-all `$` route that renders a clear "Not Found" page with a link back to the user's first project/thread.
-- status: PENDING
+- status: DONE
+- fixed_iter: 118
 
 ### ORC-176
 
