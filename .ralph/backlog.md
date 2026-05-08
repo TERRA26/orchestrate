@@ -2582,7 +2582,9 @@ Schema per entry:
 - files: ~13 test files using Date.now() / new Date() directly
 - evidence: Tests rely on real Date.now() for deadline tracking and waitFor loops. CI on a slow runner produces flaky time-bounded assertions.
 - proposed_fix: Inject a clock (Effect TestClock or vi.useFakeTimers) at the boundary. Audit each Date.now() usage; either replace or document why real time is required.
-- status: PENDING
+- status: DEFERRED
+- deferred_iter: 185
+- deferred_reason: A targeted refactor needs an actual flake reproducer to justify which sites to touch and to provide the failing-then-passing test the protocol requires. The 13 sites split between (a) deterministic-timestamp seeds that don't drive logic (replacing `new Date().toISOString()` with a fixed string is a no-op test-wise), (b) wait-for-condition loops that genuinely depend on wall-clock progression (refactor needs Effect TestClock or vi.useFakeTimers + Effect runtime hooks), and (c) deadline-tracking helpers that already accept an injectable now() (just need callers updated). Without a known flake, distinguishing (a) from (b) from (c) is mechanical guesswork. Plan recorded as ORC-270a..d in blockers.md.
 
 ### ORC-271
 

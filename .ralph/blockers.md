@@ -500,3 +500,26 @@ Doing any one of these without the others ships dead code. The "test that would 
 - ORC-284b: extend BrowserAssertion union with `visual-diff` variant carrying `{ baselineRef: EvidenceArtifactId, tolerancePercent: number }`. Add contract test.
 - ORC-284c: implement runAssertion handler. Decode both PNGs, compare with chosen library, emit failure when diffRatio > tolerance.
 - ORC-284d: define a baseline-screenshot evidence-artifact protocol (typed mime, dedup-by-content-hash if duplication becomes a problem, baseline-vs-snapshot lifecycle in the read model).
+
+## ORC-270: clock injection across ~13 test files (deferred)
+
+### Context
+
+~13 tests use `Date.now()` or `new Date()` directly. The proposed_fix asks for clock injection at the boundary so CI runs are deterministic.
+
+### Why deferring
+
+The 13 sites split into three categories that each need a different remediation:
+
+1. **Deterministic-timestamp seeds** (e.g. `const now = new Date().toISOString();` to seed an empty read model). These don't drive any logic; the test passes regardless of the timestamp value. Replacing with a fixed string `"2026-01-01T00:00:00.000Z"` is a no-op test-wise and produces no failing-then-passing signal.
+2. **Wait-for-condition loops** (`while (Date.now() < deadline) ...`). These genuinely depend on wall-clock progression and need either `Effect.TestClock` (with `Clock.set`) or `vi.useFakeTimers()`. Both require pulling test bodies into Effect-aware harnesses or restructuring the runtime hooks.
+3. **Deadline-tracking helpers that already take `now()`** (e.g. `authAttemptLimiter`, `orphanedWorkersOnRecovery`). Just need callers updated. Mechanically tractable.
+
+Without an actual flake reproducer, distinguishing which sites are flaky in CI vs which sites pass deterministically is guesswork. Refactoring all 13 in one pass is high-churn for low signal: most sites are category (1) and the change is cosmetic.
+
+### What would unblock it
+
+- ORC-270a: run the suite under heavy load (CPU-pinned) 50 times in CI; capture the test names that flake. This produces a prioritized list.
+- ORC-270b: refactor the category (2) loops first (they are the ones that actually flake).
+- ORC-270c: update category (3) callers to pass an injected `now()` from the test (small mechanical PR).
+- ORC-270d: leave category (1) alone or replace with a frozen string in a final cleanup pass.
