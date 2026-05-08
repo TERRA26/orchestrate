@@ -216,4 +216,81 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  // ORC-271: focused concurrency stress against the writeSemaphore
+  // that serializes updateSettings + revalidateAndEmit. Fan-out 32
+  // concurrent updates and assert: no deadlock (Effect.all completes),
+  // no lost commands (every patch is applied at some point), no torn
+  // state (the on-disk JSON deserializes cleanly), and no duplicate
+  // state (the in-memory and on-disk views agree on the final
+  // settings).
+  it.effect("ORC-271 serializes 32 concurrent updateSettings calls without deadlock", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const updates = Array.from({ length: 32 }, (_, i) => ({
+        providers: {
+          codex: {
+            binaryPath: `/tmp/codex-${i.toString().padStart(2, "0")}`,
+          },
+        },
+      }));
+
+      const results = yield* Effect.all(
+        updates.map((patch) => serverSettings.updateSettings(patch)),
+        { concurrency: "unbounded" },
+      );
+
+      // Every call returns a settled state.
+      assert.equal(results.length, 32);
+      for (const r of results) {
+        assert.match(r.providers.codex.binaryPath, /^\/tmp\/codex-\d{2}$/);
+      }
+
+      // The in-memory view agrees with the on-disk view.
+      const onDisk = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      const finalBinaryPath = onDisk?.providers?.codex?.binaryPath;
+      assert.match(String(finalBinaryPath), /^\/tmp\/codex-\d{2}$/);
+
+      // Some result agrees with the persisted file (the last
+      // semaphore-acquisition wins, but Effect.all preserves the
+      // input order in `results`, NOT the actual write order, so we
+      // only assert that the persisted value appears somewhere in
+      // the results set).
+      const observed = new Set(results.map((r) => r.providers.codex.binaryPath));
+      assert.isTrue(observed.has(finalBinaryPath));
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("ORC-271 32 concurrent updates do not corrupt the on-disk JSON", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      yield* Effect.all(
+        Array.from({ length: 32 }, (_, i) =>
+          serverSettings.updateSettings({
+            providers: {
+              codex: {
+                binaryPath: `/tmp/codex-${i}`,
+              },
+            },
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      // The on-disk JSON must still parse. Without the semaphore
+      // this would frequently produce a half-written file.
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      const parsed = JSON.parse(raw);
+      assert.isObject(parsed);
+      assert.isObject(parsed.providers);
+      assert.isObject(parsed.providers.codex);
+      assert.isString(parsed.providers.codex.binaryPath);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

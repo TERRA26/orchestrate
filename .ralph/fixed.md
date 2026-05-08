@@ -5945,3 +5945,51 @@ mention of the prefix convention. Verified failing-before by stashing
     follow-up can render a markdown diff between adjacent
     versions (use a small diff library or unified-diff format
     via the existing diff utilities).
+
+## ORC-271: focused concurrency stress against the writeSemaphore
+
+- root cause: ORC-271 flagged the absence of any focused concurrency
+  stress tests. The proposed_fix asks for stress against three
+  primitives: (a) maxConcurrentWriters / writeSemaphore, (b) the
+  semaphore on session start, (c) dispatch ordering.
+- change summary:
+  - This iteration addresses primitive (a). `serverSettings.ts`
+    holds an `Semaphore.make(1)` around `updateSettings` and
+    `revalidateAndEmit`. Two new tests fan out 32 concurrent
+    `updateSettings` calls and assert:
+    - no deadlock (Effect.all with concurrency:"unbounded"
+      completes for all 32 promises);
+    - no lost commands (every result returns a settled
+      ServerSettings whose codex.binaryPath matches the input
+      pattern);
+    - the persisted file deserializes cleanly under contention
+      (no half-written JSON);
+    - the on-disk binaryPath was emitted by SOME caller in the
+      results set (consistency between in-memory and disk views).
+  - The two remaining stress targets (provider session start,
+    dispatch ordering) require larger test scaffolds and are
+    tracked as ORC-271a + ORC-271b in blockers.md follow-ups.
+- files touched:
+  - apps/server/src/serverSettings.test.ts
+- tests added: 2 (server settings test count grew from 6 to 8).
+- evidence of green run:
+  ```
+  bun run vitest run src/serverSettings.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run typecheck   # apps/server clean
+  bun lint            # 0 errors workspace-wide
+  ```
+- follow-ups:
+  - ORC-271a: stress test for the per-provider session-start
+    semaphore in providerManager.ts. Spawning N concurrent
+    sessions for the same provider must serialize (no duplicate
+    `codex app-server` processes).
+  - ORC-271b: dispatch-ordering stress test for OrchestrationEngine.
+    Two concurrent `dispatch(commandA)` + `dispatch(commandB)`
+    must produce a deterministic event order on replay. Needs a
+    full engine + projector setup.
+  - Consider running the new tests under
+    `bun run vitest --repeat 50` in CI on a slow runner; if any
+    flakes surface, the underlying lock has a real bug worth
+    fixing.

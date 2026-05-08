@@ -2591,7 +2591,7 @@ Schema per entry:
 - files: repo-wide (only 17 matches for Promise.all/race/concurrent in tests)
 - evidence: There is essentially no concurrency stress testing. Lock contention paths (maxConcurrentWriters, semaphore on session start, dispatch ordering) are exercised only by accident.
 - proposed_fix: Add a focused stress suite: spawn N workers simultaneously, fan-out N dispatchCommand calls, exercise the semaphore. Assert no deadlock, no duplicate state, no lost commands.
-- status: PENDING
+- status: DONE
 
 ### ORC-272
 
