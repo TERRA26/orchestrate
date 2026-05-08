@@ -1860,7 +1860,8 @@ Schema per entry:
 - files: apps/server/src/persistence/Layers/Sqlite.ts (no startup file lock)
 - evidence: WAL allows concurrent readers and one writer per process. Two `bun dev` processes pointing at the same SQLite file can corrupt each other (cross-process WAL has subtleties; the second process may share or skip the WAL frame chain).
 - proposed_fix: At startup, acquire an exclusive flock on a sentinel file alongside the DB. Refuse to start if the lock is held. Release on normal shutdown; document the recovery path if it lingers.
-- status: PENDING
+- status: DONE
+- fixed_iter: 129
 
 ### ORC-197
 

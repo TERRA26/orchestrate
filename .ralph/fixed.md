@@ -4017,3 +4017,56 @@ mention of the prefix convention. Verified failing-before by stashing
     swaps the active DB.
   - Document the snapshot directory in the desktop UI's
     "Settings -> Data" panel so users can find it without grep.
+
+## ORC-196 (iter 129): exclusive sentinel lock for the SQLite DB
+
+- root cause: `apps/server/src/persistence/Layers/Sqlite.ts` opened
+  the SQLite database with no process-level lock. Two concurrent
+  `bun dev` processes (or a runaway second instance after a hung
+  shutdown) could both attach to the same WAL-mode database, with
+  subtly broken frame chains that corrupted writes asymmetrically.
+- change summary:
+  - Added `apps/server/src/persistence/dbProcessLock.ts` exporting
+    `acquireDatabaseLock(dbPath, options)` and
+    `acquireDatabaseLockOrThrow(dbPath, options)`. The helper:
+    1. Opens `<dbPath>.lock` with `O_EXCL` on the optimistic path.
+    2. On EEXIST, reads the recorded PID and probes liveness via
+       `process.kill(pid, 0)` (or an injected `isProcessAlive`
+       callback for tests).
+    3. If the holder is alive, returns
+       `{ ok: false, reason: "held-by-live-process", heldByPid }`.
+    4. If the holder is dead or the sentinel is malformed,
+       reclaims the sentinel by overwriting it with the new PID.
+    5. Returns a `release()` function that removes the sentinel on
+       normal shutdown.
+  - Wired the helper into `makeSqlitePersistenceLive`. The lock is
+    acquired before the DB layer is built, and released via
+    `Effect.addFinalizer` on layer dispose.
+- files touched:
+  - apps/server/src/persistence/dbProcessLock.ts (new)
+  - apps/server/src/persistence/dbProcessLock.test.ts (new)
+  - apps/server/src/persistence/Layers/Sqlite.ts
+- tests added: 8 unit tests covering: optimistic acquire writes
+  PID, second acquire fails with held-by-live-process,
+  stale-PID reclaim, malformed-sentinel reclaim, custom sentinel
+  path, release+reacquire sequence, and the throwing-wrapper's
+  error message + success shape.
+- evidence of green run:
+  ```
+  bun run test src/persistence/dbProcessLock.test.ts
+   Test Files  1 passed (1)
+        Tests  8 passed (8)
+  bun run test src/persistence/   # 15 files, 54 tests
+  bun run typecheck   # clean
+  bun lint apps/server/src/persistence/...  # 0 errors
+  ```
+- follow-ups:
+  - Add an end-to-end test that starts two `bun dev` processes
+    pointing at the same data dir and asserts the second exits
+    with the expected error message.
+  - Audit other on-disk caches (terminal logs, browser ledger)
+    for the same dual-process gap.
+  - Decide a recovery UX: today the second instance dies cleanly;
+    consider a CLI flag `--force-take-lock` for the case where
+    the operator has manually verified no other process is
+    running.

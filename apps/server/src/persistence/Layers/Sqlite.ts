@@ -3,6 +3,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+import { acquireDatabaseLockOrThrow } from "../dbProcessLock.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -62,6 +63,13 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+
+    // ORC-196: acquire an exclusive sentinel lock before opening the
+    // DB. Two concurrent `bun dev` processes against the same SQLite
+    // file produce subtly broken WAL frame chains; the explicit
+    // refusal makes the failure mode observable instead of silent.
+    const lock = yield* Effect.try(() => acquireDatabaseLockOrThrow(dbPath));
+    yield* Effect.addFinalizer(() => Effect.sync(lock.release));
 
     return Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: dbPath }));
   }).pipe(Layer.unwrap);
