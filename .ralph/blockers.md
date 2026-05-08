@@ -234,3 +234,28 @@ A staged plan tracked as ORC-214a..d:
 - **214c**: lift subscriptionsScope out and close it explicitly between WS drain and SqlClient teardown. Test: subscription stream emits "shutting-down" and stops accepting publishes.
 - **214d**: end-to-end smoke test: boot, request, SIGTERM, assert response then exit cleanly within budget.
 
+
+## ORC-215 (deferred at iter 145): explicit stream.error frame on mid-flight failures
+
+### What was attempted
+
+Read `apps/server/src/wsServer.ts:967-969,1145-1152`. Confirmed `Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => pushBus.publishAll(...))` runs without an error tap. If the stream fails (defect, downstream publish error), the runForEach exits silently from the worker fork; the connected clients never receive a marker that the stream stopped, so a re-attach with the last known offset can race past the gap.
+
+### Why a single-iteration fix is risky
+
+Three components each with consumers:
+
+1. **Contract change**: add `orchestration.streamError` to `WS_CHANNELS` and `WsPushChannel` literal union in `packages/contracts/src/ws.ts`. The literal union type changes ripple into `WsPushData<C>` resolution, the encode schema, the test suite, and existing `pushBus.publishAll` callers (typecheck enforces `data: WsPushData<C>`).
+2. **Server wiring**: `Stream.tapError` on the runForEach that publishes the error frame to the affected client subset. Per ORC-179 (deferred), there is no per-client subscription map yet, so the frame goes broadcast; if the per-client filter lands later, the server publish needs to be revisited.
+3. **Client handler**: apps/web wsTransport / wsNativeApi register a `.on(orchestration.streamError)` handler that calls `replayEvents` from `lastSequence`. Without this last hop, the new frame is just a noise event the client ignores.
+
+Doing all three in one iteration risks shipping a contract change that cannot be back-compat tested without the client wiring landed at the same time.
+
+### What would unblock it
+
+Per-component plan ORC-215a..c:
+
+- **215a**: contract bump only. Add `orchestration.streamError` channel + payload schema. No producers / consumers. Test the schema decode round-trip.
+- **215b**: server publish on Stream.tapError. Test with a fault-injected stream that exits with an error and asserts the frame is published.
+- **215c**: client handler that calls replayEvents on the frame. Integration test with a stubbed transport that delivers the frame.
+

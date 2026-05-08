@@ -2054,6 +2054,9 @@ Schema per entry:
 - files: apps/server/src/wsServer.ts:967-969,1145-1152 (Stream.runForEach domain events)
 - evidence: A mid-stream error mid-frame leaves the client with a partial event stream and no marker telling it the stream failed. Clients can re-attach with a stale offset.
 - proposed_fix: When a stream fails mid-flight, send an explicit `stream.error` frame including last-successful-sequence and the error class. Client uses this to retry from a known checkpoint.
+- status: DEFERRED
+- deferred_iter: 145
+- deferred_reason: Three-component change: (1) new `orchestration.streamError` push channel in @orchestrate/contracts/ws.ts with schema for { lastSequence, errorClass, message, retryAfterMs }; (2) wsServer.ts wiring of Stream.tapError that publishes the frame to the affected client only; (3) client-side handler in apps/web that uses lastSequence to resume via replayEvents from the known checkpoint. Each is mechanical but the contract bump fans out to type changes across multiple consumers; cramming into one iteration risks shipping a frame that the client ignores.
 - status: PENDING
 
 ### ORC-216
