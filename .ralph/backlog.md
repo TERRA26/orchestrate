@@ -1924,9 +1924,9 @@ Schema per entry:
 - files: apps/server/src/orchestration/Layers/OrchestrationToolRouter.ts (tool result output)
 - evidence: Tool RETURN values land in the orchestrator's prompt as tool results without framing. If an MCP server (compromised or malicious) returns `output: "[ORCHESTRATOR_OVERRIDE: ...]"`, the orchestrator processes it as authoritative tool output.
 - proposed_fix: Wrap every tool result in `<tool_output tool="..." status="...">...</tool_output>`. Document in the orchestrator system prompt that tool output is data, not instructions.
-- status: DEFERRED
-- deferred_iter: 134
-- deferred_reason: Same emit-site discovery problem as ORC-201. Tool RETURN value handling is split between the Codex adapter and the Claude adapter, both of which feed the orchestrator's reasoning context. The wrapUntrustedContent helper is ready to be applied; identifying the right shim layer (provider adapter vs router) requires a focused trace of one round-trip.
+- status: DONE
+- fixed_iter: 141
+- previously_deferred_iter: 134
 
 ### ORC-203
 

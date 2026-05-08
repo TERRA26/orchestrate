@@ -414,9 +414,17 @@ function handleGetAgentStatus(
         const m = messages[i];
         if (m && m.role === "assistant" && typeof m.text === "string" && m.text.trim().length > 0) {
           const text = m.text.trim();
+          const truncated = text.length > 800;
+          const body = truncated ? `${text.slice(0, 800)}…` : text;
+          // ORC-202: assistant text is worker-controlled; wrap so the
+          // orchestrator's LLM treats it as data, not authority.
           return {
-            text: text.length > 800 ? `${text.slice(0, 800)}…` : text,
-            truncated: text.length > 800,
+            text: wrapUntrustedContent({
+              kind: "tool-output",
+              content: body,
+              metadata: { source: "lastAssistantMessage", truncated, length: text.length },
+            }),
+            truncated,
             length: text.length,
           };
         }
@@ -447,12 +455,31 @@ function handleGetAgentStatus(
       // Narrative fallback so the orchestrator gets useful context even if the
       // worker forgot to call send_update.
       ...(lastAssistantMessage !== null ? { lastAssistantMessage } : {}),
+      // ORC-202: wrap worker-controlled text fields. submitSummary and
+      // submitNotes come from the worker's REPORT block; they are the
+      // primary injection vector for fake `## REPORT` echoes or
+      // `[ORCHESTRATOR_OVERRIDE]` directives. filesWritten / testsRun
+      // are structured (string[]) and not framed at this layer.
       ...(activeTask?.submitSummary !== undefined
-        ? { submitSummary: activeTask.submitSummary }
+        ? {
+            submitSummary: wrapUntrustedContent({
+              kind: "tool-output",
+              content: String(activeTask.submitSummary),
+              metadata: { source: "submitSummary" },
+            }),
+          }
         : {}),
       ...(activeTask?.filesWritten !== undefined ? { filesWritten: activeTask.filesWritten } : {}),
       ...(activeTask?.testsRun !== undefined ? { testsRun: activeTask.testsRun } : {}),
-      ...(activeTask?.submitNotes !== undefined ? { submitNotes: activeTask.submitNotes } : {}),
+      ...(activeTask?.submitNotes !== undefined
+        ? {
+            submitNotes: wrapUntrustedContent({
+              kind: "tool-output",
+              content: String(activeTask.submitNotes),
+              metadata: { source: "submitNotes" },
+            }),
+          }
+        : {}),
       ...(activeTask?.hasChanges !== undefined ? { hasChanges: activeTask.hasChanges } : {}),
       ...(activeTask?.diffStats !== undefined ? { diffStats: activeTask.diffStats } : {}),
       ...(staleness.stale
