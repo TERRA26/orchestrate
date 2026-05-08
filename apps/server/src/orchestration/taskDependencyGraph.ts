@@ -1,4 +1,9 @@
-import type { OrchestratorTask, OrchestratorTaskId } from "@orchestrate/contracts";
+import type {
+  OrchestratorTask,
+  OrchestratorTaskId,
+  OrchestrationReadModel,
+  ThreadId,
+} from "@orchestrate/contracts";
 
 /**
  * Pure helpers for the orchestrator-task dependency graph.
@@ -125,6 +130,43 @@ export const toDependencyTasks = (
     taskId: t.taskId,
     ...(t.dependsOn !== undefined ? { dependsOn: t.dependsOn } : {}),
   }));
+
+/**
+ * Depth of the parent chain rooted at `threadId`. Walks
+ * `parentThreadId` until null (root) or the chain breaks (parent
+ * referenced but missing from the read model). Returns 0 for a root
+ * thread. Used by the worker.spawn budget check to enforce
+ * spawnBudget.maxDepth. [ORC-124]
+ *
+ * Cycle-resistant via a visited set; an accidental loop in the
+ * thread graph caps at threadCount + 1 iterations rather than
+ * looping forever.
+ */
+export const computeThreadDepth = (input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly threadId: ThreadId;
+}): number => {
+  const threads = new Map<string, { parentThreadId: ThreadId | null | undefined }>();
+  for (const t of input.readModel.threads) {
+    threads.set(t.id as unknown as string, {
+      parentThreadId: t.parentThreadId,
+    });
+  }
+
+  let depth = 0;
+  let current: string | undefined = input.threadId as unknown as string;
+  const visited = new Set<string>();
+  while (current !== undefined) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    const node = threads.get(current);
+    if (!node) break;
+    if (node.parentThreadId === null || node.parentThreadId === undefined) break;
+    depth += 1;
+    current = node.parentThreadId as unknown as string;
+  }
+  return depth;
+};
 
 /**
  * Forward closure: return every task in `tasks` that transitively

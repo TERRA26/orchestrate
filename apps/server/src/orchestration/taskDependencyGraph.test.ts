@@ -1,8 +1,14 @@
-import type { OrchestratorTaskId } from "@orchestrate/contracts";
+import type {
+  OrchestrationReadModel,
+  OrchestrationThread,
+  OrchestratorTaskId,
+  ThreadId,
+} from "@orchestrate/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
   type DependencyTask,
+  computeThreadDepth,
   detectDependencyCycle,
   findDependentTasks,
 } from "./taskDependencyGraph.ts";
@@ -229,5 +235,69 @@ describe("findDependentTasks (ORC-122)", () => {
       { taskId: id("b"), dependsOn: [] },
     ];
     expect(findDependentTasks({ rootTaskId: id("nonexistent"), tasks })).toEqual([]);
+  });
+});
+
+describe("computeThreadDepth (ORC-124)", () => {
+  const tid = (s: string): ThreadId => s as unknown as ThreadId;
+
+  // Build a minimal read model containing only `threads`.
+  function buildReadModel(threads: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly parentThreadId?: ThreadId | null;
+  }>): OrchestrationReadModel {
+    const partial = threads.map((t) => ({
+      id: t.id,
+      parentThreadId: t.parentThreadId ?? null,
+    }));
+    return {
+      threads: partial as unknown as ReadonlyArray<OrchestrationThread>,
+    } as unknown as OrchestrationReadModel;
+  }
+
+  it("returns 0 for a root thread with null parent", () => {
+    const model = buildReadModel([{ id: tid("root"), parentThreadId: null }]);
+    expect(computeThreadDepth({ readModel: model, threadId: tid("root") })).toBe(0);
+  });
+
+  it("returns 1 for a thread whose parent is the root", () => {
+    const model = buildReadModel([
+      { id: tid("root"), parentThreadId: null },
+      { id: tid("child"), parentThreadId: tid("root") },
+    ]);
+    expect(computeThreadDepth({ readModel: model, threadId: tid("child") })).toBe(1);
+  });
+
+  it("counts the full chain: root -> child -> grandchild -> great-grandchild", () => {
+    const model = buildReadModel([
+      { id: tid("a"), parentThreadId: null },
+      { id: tid("b"), parentThreadId: tid("a") },
+      { id: tid("c"), parentThreadId: tid("b") },
+      { id: tid("d"), parentThreadId: tid("c") },
+    ]);
+    expect(computeThreadDepth({ readModel: model, threadId: tid("d") })).toBe(3);
+  });
+
+  it("returns 0 for a thread missing from the read model", () => {
+    const model = buildReadModel([{ id: tid("a"), parentThreadId: null }]);
+    expect(computeThreadDepth({ readModel: model, threadId: tid("nonexistent") })).toBe(0);
+  });
+
+  it("does not loop forever on a thread parent cycle (legacy data robustness)", () => {
+    const model = buildReadModel([
+      { id: tid("a"), parentThreadId: tid("b") },
+      { id: tid("b"), parentThreadId: tid("a") },
+    ]);
+    const depth = computeThreadDepth({ readModel: model, threadId: tid("a") });
+    expect(depth).toBeLessThanOrEqual(2);
+  });
+
+  it("stops at the first thread whose parent is null even if missing parents would otherwise extend", () => {
+    const model = buildReadModel([
+      { id: tid("a"), parentThreadId: null },
+      { id: tid("b"), parentThreadId: tid("a") },
+      { id: tid("c"), parentThreadId: tid("b") },
+    ]);
+    expect(computeThreadDepth({ readModel: model, threadId: tid("c") })).toBe(2);
   });
 });

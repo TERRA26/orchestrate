@@ -25,7 +25,11 @@ import {
   requireThreadAbsent,
 } from "./commandInvariants.ts";
 import { requireLegalWorkerTransition } from "./workerTransitions.ts";
-import { detectDependencyCycle, toDependencyTasks } from "./taskDependencyGraph.ts";
+import {
+  computeThreadDepth,
+  detectDependencyCycle,
+  toDependencyTasks,
+} from "./taskDependencyGraph.ts";
 
 const nowIso = () => new Date().toISOString();
 const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
@@ -1328,6 +1332,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Spawn budget exceeded: run '${command.runId}' already has ${existingWorkerCount} active worker(s) (maxTotalWorkers=${activeRun.spawnBudget.maxTotalWorkers}).`,
+        });
+      }
+
+      // ORC-124: enforce maxDepth. The new worker's threadId chain
+      // (threadId -> parentThreadId -> ... -> root) must not exceed
+      // the run's spawnBudget.maxDepth. Without this, a worker that
+      // recursively spawns can exhaust resources and slow rollups
+      // in the read model.
+      const depth = computeThreadDepth({
+        readModel,
+        threadId: command.threadId,
+      });
+      if (depth >= activeRun.spawnBudget.maxDepth) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Spawn budget exceeded: thread '${command.threadId}' has depth ${depth} which is >= maxDepth=${activeRun.spawnBudget.maxDepth} for run '${command.runId}'.`,
         });
       }
 

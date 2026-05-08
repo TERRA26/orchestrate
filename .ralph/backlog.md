@@ -1179,7 +1179,8 @@ Schema per entry:
 - files: apps/server/src/orchestration/decider.ts:1294-1315 (spawn budget)
 - evidence: spawn command enforces maxTotalWorkers but NOT maxDepth. A worker that spawns children unchecked can recurse arbitrarily deep, causing resource exhaustion and slow rollups in the read model.
 - proposed_fix: Compute the depth of the spawning thread (chain parent->grandparent...) and reject the spawn if depth >= spawnBudget.maxDepth. Emit a clear error to the parent.
-- status: PENDING
+- status: DONE
+- fixed_iter: 101
 
 ### ORC-125
 

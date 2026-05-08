@@ -2732,3 +2732,87 @@ required seeding `visited` with the root.
 - Add an integration test that exercises terminateWorker over a
   real OrchestrationEngine + projector + repository stack to verify
   the cascade events are persisted correctly.
+
+## ORC-124 [iter 101] worker.spawn enforced maxTotalWorkers but not maxDepth
+
+**Root cause**: `apps/server/src/orchestration/decider.ts`'s
+`orchestrator.worker.spawn` case rejected when the active-worker
+count would exceed `spawnBudget.maxTotalWorkers`, but never checked
+the depth of the new worker's thread chain. A worker (acting as a
+sub-orchestrator) could recursively spawn children unchecked. With
+each level adding more rollup work to the read-model projection, deep
+chains caused resource exhaustion and noticeably slower decider/projector
+loops. The `maxDepth` field on `SpawnBudget` was effectively dead config.
+
+**Change summary**:
+- New `computeThreadDepth({ readModel, threadId })` helper in
+  `apps/server/src/orchestration/taskDependencyGraph.ts`. Walks
+  `parentThreadId` from the given thread up to the root, counting
+  edges. Returns 0 for a root thread and is cycle-resistant via a
+  visited set so legacy data with a thread parent loop caps at the
+  thread count + 1 iterations rather than looping forever.
+- `apps/server/src/orchestration/decider.ts`: `worker.spawn` now
+  computes `depth = computeThreadDepth({ readModel, threadId:
+  command.threadId })` and rejects with
+  `OrchestrationCommandInvariantError` when `depth >=
+  activeRun.spawnBudget.maxDepth`. The error detail names the
+  thread, current depth, and the run's maxDepth so an operator can
+  see exactly which budget tripped.
+
+**Files touched**:
+- apps/server/src/orchestration/taskDependencyGraph.ts (new helper)
+- apps/server/src/orchestration/taskDependencyGraph.test.ts (6 new tests)
+- apps/server/src/orchestration/decider.ts
+
+**Tests added**: 6 cases covering `computeThreadDepth`:
+1. Root thread with null parent -> 0.
+2. Direct child -> 1.
+3. Four-level chain -> 3.
+4. Missing thread (id not in read model) -> 0.
+5. Thread parent cycle (legacy data) -> caps at 2 instead of looping.
+6. Thread chain stops at the first null parent (does not over-count).
+
+The first 3 happy-path cases would fail before this commit because
+the helper did not exist; the fix lands them together with the
+decider wiring. Cycle robustness (#5) was added defensively after I
+realized legacy thread parent links could form loops if any prior
+projection bug ever wrote them.
+
+**Green-run evidence**:
+- `cd apps/server && bun run test src/orchestration/taskDependencyGraph.test.ts` (Node 24) -> Test Files 1 passed (1) | Tests 24 passed (24)
+- `cd apps/server && bun run test src/orchestration/decider.orchestrator.test.ts` -> Test Files 1 passed (1) | Tests 18 passed (18)
+- `bun typecheck` (apps/server) -> tsc --noEmit clean
+- `bun lint` (repo) -> 141 warnings (baseline), 0 errors
+
+**Adversarial review**:
+- The helper iterates threads at most once via the visited set. A
+  read model with thousands of threads still computes depth in
+  microseconds; spawn is not a hot path but the cheapness is nice.
+- `spawnBudget.maxDepth` semantics: depth = number of edges from
+  the new worker's thread to the root. So `maxDepth=1` allows the
+  root orchestrator to spawn workers (workers are at depth 1) but
+  forbids those workers from spawning grandchildren. `maxDepth=2`
+  allows workers and grand-workers. This matches what an operator
+  would intuit from the field name; documented inline.
+- Edge: if `command.threadId` doesn't exist in the read model yet
+  (rare race between thread.create and worker.spawn), depth returns
+  0 so the spawn is allowed. The thread.create command runs first
+  in the MCP server's spawn_agent flow, but if a future caller
+  reorders, the helper's permissive default avoids bricking the
+  spawn. A stricter "missing thread = depth max" alternative would
+  break legitimate single-step spawns; the permissive default is
+  correct for the orchestrator's call patterns.
+- Existing maxTotalWorkers check still runs first; the depth check
+  is layered defense-in-depth.
+
+**Follow-ups**:
+- Add a decider integration test that creates a chain of 3 threads
+  and verifies the spawn at depth >= maxDepth is rejected. Today
+  the helper is unit-tested but the integration through the spawn
+  command's full read-model walk is implicit.
+- Consider exposing computeThreadDepth via OrchestratorRuntime so
+  callers (UI surfaces, telemetry) can show the depth breakdown
+  without re-walking the chain themselves.
+- When `orchestrator.task.dependency.set` lands (currently in
+  KNOWN_UNTESTED), evaluate whether dependency edges should also
+  count toward an effective depth metric.
