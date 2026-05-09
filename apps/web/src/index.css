@@ -972,6 +972,22 @@ diffs-container {
     opacity: 1;
   }
 }
+@keyframes orch-dot {
+  0%,
+  20% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+}
 .orch-spawn-body {
   padding: 7px 10px 8px;
 }

@@ -121,6 +121,7 @@ function OrchestratorPanelInner({ hideHeader = false }: { hideHeader?: boolean }
             composerProviderState={engine.composerProviderState}
             onInputChange={engine.setInput}
             onSend={engine.send}
+            onStop={engine.stop}
             onModelChange={engine.handleModelChange}
             onPromptChangeFromTraits={engine.handlePromptChangeFromTraits}
           />

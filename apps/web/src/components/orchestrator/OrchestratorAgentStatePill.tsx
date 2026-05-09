@@ -9,6 +9,10 @@ export function agentStatePillLabel(status: OrchestratorStatus): string {
   return "blocked";
 }
 
+export function shouldShowOrchestratorComposerAgentState(_status: OrchestratorStatus): boolean {
+  return false;
+}
+
 export function AgentStatePill({ status }: { status: OrchestratorStatus }) {
   const label = agentStatePillLabel(status);
   // Animated dot reinforces the state at a glance: pulsing emerald when the

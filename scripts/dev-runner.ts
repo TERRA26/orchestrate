@@ -216,10 +216,9 @@ export function createDevRunnerEnv({
       delete output.ORCHESTRATE_AUTH_TOKEN;
     }
 
-    if (!isDesktopMode && noBrowser !== undefined) {
-      output.ORCHESTRATE_NO_BROWSER = noBrowser ? "1" : "0";
-    } else if (!isDesktopMode) {
-      delete output.ORCHESTRATE_NO_BROWSER;
+    if (!isDesktopMode) {
+      const resolvedNoBrowser = noBrowser ?? true;
+      output.ORCHESTRATE_NO_BROWSER = resolvedNoBrowser ? "1" : "0";
     }
 
     if (autoBootstrapProjectFromCwd !== undefined) {

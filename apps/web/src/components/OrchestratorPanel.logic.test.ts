@@ -7,6 +7,7 @@ import {
   buildRouterUserPrompt,
   buildBrowserValidationUserPrompt,
   buildRecoveredOrchestratorMessages,
+  buildThreadBackedOrchestratorMessages,
   buildDelegationInstruction,
   buildReviewUserPrompt,
   classifyReviewArtifactsReadiness,
@@ -869,6 +870,35 @@ describe("OrchestratorPanel.logic", () => {
         draftThreadId: ThreadId.makeUnsafe("__draft__"),
       }),
     ).toBe("thread-created");
+  });
+
+  it("filters runtime warnings and raw delegation prompts from thread-backed orchestrator messages", () => {
+    const thread = makeThread({
+      title: "Hey",
+      messages: [
+        makeUserMessage("user-1", "Hey", TurnId.makeUnsafe("turn-1")),
+        makeAssistantMessage("assistant-1", "Runtime warning", TurnId.makeUnsafe("turn-1")),
+        makeAssistantMessage(
+          "assistant-2",
+          [
+            "When you reply, include a detailed implementation report with these exact sections:",
+            "1. Completed work",
+            "2. Files created, edited, or deleted",
+            "3. Validation and commands run",
+          ].join("\n"),
+          TurnId.makeUnsafe("turn-1"),
+        ),
+        makeAssistantMessage(
+          "assistant-3",
+          "Hey! What would you like to work on?",
+          TurnId.makeUnsafe("turn-1"),
+        ),
+      ],
+    });
+
+    expect(buildThreadBackedOrchestratorMessages(thread).map((message) => message.content)).toEqual(
+      ["Hey", "Hey! What would you like to work on?"],
+    );
   });
 });
 

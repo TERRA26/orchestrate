@@ -829,6 +829,23 @@ function normalizeComparableText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function isThreadBackedTranscriptNoiseMessage(message: RecoveredOrchestratorMessage): boolean {
+  const normalized = normalizeComparableText(message.content).toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  if (normalized === "runtime warning" || normalized.startsWith("runtime warning ")) {
+    return true;
+  }
+  if (message.content.includes(ORCHESTRATOR_REPORT_MARKER)) {
+    return true;
+  }
+  if (ORCHESTRATOR_AGENT_REPORT_MARKERS.every((marker) => message.content.includes(marker))) {
+    return true;
+  }
+  return message.content.includes("Recovered this orchestrator timeline");
+}
+
 export function buildRecoveredOrchestratorMessages(
   thread: Thread | undefined,
 ): RecoveredOrchestratorMessage[] {
@@ -881,7 +898,7 @@ export function buildThreadBackedOrchestratorMessages(
 
   const recoveredMessages = buildRecoveredOrchestratorMessages(thread);
   if (recoveredMessages.length > 0) {
-    return recoveredMessages;
+    return recoveredMessages.filter((message) => !isThreadBackedTranscriptNoiseMessage(message));
   }
 
   return thread.messages.flatMap((message) => {
@@ -890,13 +907,12 @@ export function buildThreadBackedOrchestratorMessages(
       return [];
     }
 
-    return [
-      {
-        role: message.role === "user" ? "user" : "orchestrator",
-        content,
-        timestamp: message.createdAt,
-      } satisfies RecoveredOrchestratorMessage,
-    ];
+    const recoveredMessage = {
+      role: message.role === "user" ? "user" : "orchestrator",
+      content,
+      timestamp: message.createdAt,
+    } satisfies RecoveredOrchestratorMessage;
+    return isThreadBackedTranscriptNoiseMessage(recoveredMessage) ? [] : [recoveredMessage];
   });
 }
 
@@ -1204,9 +1220,7 @@ export function formatBrowserObservationForPrompt(observation: BrowserObservatio
 
   const consoleErrors = observation.consoleErrors;
   if (consoleErrors && consoleErrors.length > 0) {
-    const consoleBody = consoleErrors
-      .map((entry) => `- [${entry.level}] ${entry.text}`)
-      .join("\n");
+    const consoleBody = consoleErrors.map((entry) => `- [${entry.level}] ${entry.text}`).join("\n");
     sections.push(
       `Console errors/warnings (${consoleErrors.length}):\n${wrapUntrustedContent({
         kind: "console",

@@ -30,7 +30,11 @@ import BrowserPanel from "../components/BrowserPanel";
 import { ClaudeAI, OpenAI } from "../components/Icons";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import { OrchestratorPanel } from "../components/OrchestratorPanel";
-import { useOrchestratorPaneStore } from "../lib/orchestratorPaneStore";
+import {
+  shouldAutoFocusOrchestratorBrowserPane,
+  shouldRenderOrchestratorBrowserPane,
+  useOrchestratorPaneStore,
+} from "../lib/orchestratorPaneStore";
 import {
   DiffPanelHeaderSkeleton,
   DiffPanelLoadingState,
@@ -47,10 +51,7 @@ import {
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { resolveActiveSplitView, isSplitRoute } from "../splitViewRoute";
-import {
-  classifyCrossProjectNavigation,
-  filterThreadsForProject,
-} from "../splitViewProjectGuard";
+import { classifyCrossProjectNavigation, filterThreadsForProject } from "../splitViewProjectGuard";
 import {
   resolveSplitViewFocusedThreadId,
   selectSplitView,
@@ -830,12 +831,13 @@ function SplitChatSurface(props: { splitViewId: SplitViewId; routeThreadId: Thre
   // project. Cross-project navigation inside a split view used to confuse
   // both the orchestrator scope (each project has its own runs/agents)
   // and the user (a single split-view should not span project boundaries).
-  const selectableThreads = filterThreadsForProject(threads, activeSplitView.ownerProjectId)
-    .toSorted(
-      (left, right) =>
-        Date.parse(right.updatedAt ?? right.createdAt) -
-        Date.parse(left.updatedAt ?? left.createdAt),
-    );
+  const selectableThreads = filterThreadsForProject(
+    threads,
+    activeSplitView.ownerProjectId,
+  ).toSorted(
+    (left, right) =>
+      Date.parse(right.updatedAt ?? right.createdAt) - Date.parse(left.updatedAt ?? left.createdAt),
+  );
   const chooseThreadForPane = (threadId: ThreadIdType, paneOverride?: SplitViewPane) => {
     const pane = paneOverride ?? threadPickerPane;
     if (!pane) {
@@ -1205,12 +1207,17 @@ function writeStoredPaneSizes(agentCount: number, sizes: number[]): void {
   } catch {}
 }
 
-function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[] }) {
-  const agentCount = props.agentThreadIds.length;
+function OrchestratorMultiPaneSurface(props: {
+  agentThreadIds: readonly string[];
+  browserOpen: boolean;
+  onOpenBrowserPane: () => void;
+  onCloseBrowserPane: () => void;
+}) {
+  const { agentThreadIds, browserOpen, onCloseBrowserPane, onOpenBrowserPane } = props;
+  const agentCount = agentThreadIds.length;
   const collapseAgent = useOrchestratorPaneStore((state) => state.collapseAgent);
-  const collapseBrowser = useOrchestratorPaneStore((state) => state.collapseBrowser);
+  const closeBrowser = useOrchestratorPaneStore((state) => state.closeBrowser);
   const focusBrowser = useOrchestratorPaneStore((state) => state.focusBrowser);
-  const focusedBrowserThreadId = useOrchestratorPaneStore((state) => state.focusedBrowserThreadId);
   const orchestratorThreadId = useOrchestratorPaneStore((state) => state.orchestratorThreadId);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1218,9 +1225,6 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[]
     (store) => store.threads.find((t) => t.id === orchestratorThreadId)?.session?.status ?? null,
   );
   const isOrchestratorRunning = orchestratorSessionStatus === "running";
-  const browserOpen =
-    orchestratorThreadId !== null && focusedBrowserThreadId === orchestratorThreadId;
-
   const paneCount = 1 + agentCount + (browserOpen ? 1 : 0);
 
   // Flex-basis percentages for [orchestrator, ...agents, browser].
@@ -1253,6 +1257,7 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[]
         return;
       }
       focusBrowser(orchestratorThreadId);
+      onOpenBrowserPane();
       const api = readNativeApi();
       if (api) {
         void api.browser
@@ -1273,7 +1278,7 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[]
           });
       }
     });
-  }, [focusBrowser, orchestratorThreadId]);
+  }, [focusBrowser, onOpenBrowserPane, orchestratorThreadId]);
 
   const startDrag = useCallback(
     (dividerIndex: number) => (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1321,12 +1326,9 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[]
   );
 
   const closeBrowserPane = useCallback(() => {
-    if (orchestratorThreadId) {
-      const api = readNativeApi();
-      void api?.browser.hide({ threadId: orchestratorThreadId as ThreadIdType });
-      collapseBrowser(orchestratorThreadId);
-    }
-  }, [collapseBrowser, orchestratorThreadId]);
+    closeBrowser();
+    onCloseBrowserPane();
+  }, [closeBrowser, onCloseBrowserPane]);
 
   return (
     <div ref={containerRef} className="flex h-dvh min-w-0 flex-1 overflow-hidden bg-background">
@@ -1368,7 +1370,7 @@ function OrchestratorMultiPaneSurface(props: { agentThreadIds: readonly string[]
           single-pane layout doesn't expose a stranded resize handle on the right. */}
       {(agentCount > 0 || browserOpen) && <PaneDivider onPointerDown={startDrag(0)} />}
       {/* Agent panes with dividers */}
-      {props.agentThreadIds.map((agentThreadId, i) => (
+      {agentThreadIds.map((agentThreadId, i) => (
         <Fragment key={agentThreadId}>
           <AgentPane
             agentThreadId={agentThreadId}
@@ -1508,8 +1510,7 @@ function ChatThreadRouteView() {
     (store) => store.threads.find((thread) => thread.id === threadId)?.title ?? null,
   );
   const projectName = useStore((store) => {
-    const projectId =
-      store.threads.find((thread) => thread.id === threadId)?.projectId ?? null;
+    const projectId = store.threads.find((thread) => thread.id === threadId)?.projectId ?? null;
     if (!projectId) return null;
     return store.projects.find((p) => p.id === projectId)?.name ?? null;
   });
@@ -1543,6 +1544,7 @@ function ChatThreadRouteView() {
     focusedBrowserThreadId,
     setOrchestratorThread,
     focusAgent,
+    focusBrowser,
   } = useOrchestratorPaneStore();
 
   // Up to two most-recently-created agent children — used to auto-focus on
@@ -1595,10 +1597,57 @@ function ChatThreadRouteView() {
     };
   }, [threadId, showOrchestratorSurface, setOrchestratorThread, focusAgent, recentAgentThreadIds]);
 
+  useEffect(() => {
+    if (
+      shouldAutoFocusOrchestratorBrowserPane({
+        showOrchestratorSurface,
+        routeThreadId: threadId,
+        orchestratorThreadId,
+        focusedBrowserThreadId,
+      })
+    ) {
+      focusBrowser(threadId);
+    }
+  }, [
+    focusedBrowserThreadId,
+    focusBrowser,
+    orchestratorThreadId,
+    showOrchestratorSurface,
+    threadId,
+  ]);
+
   const isOrchestratorThread = orchestratorThreadId === threadId;
   const hasOrchestratorAgentPanes = isOrchestratorThread && focusedAgentThreadIds.length > 0;
-  const hasOrchestratorBrowserPane =
-    isOrchestratorThread && focusedBrowserThreadId === orchestratorThreadId;
+  const hasOrchestratorBrowserPane = shouldRenderOrchestratorBrowserPane({
+    isOrchestratorThread,
+    routePanel: search.panel,
+    focusedBrowserThreadId,
+    orchestratorThreadId,
+  });
+
+  const openOrchestratorBrowserPane = useCallback(() => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, panel: "browser" };
+      },
+    });
+  }, [navigate, threadId]);
+
+  const closeOrchestratorBrowserPane = useCallback(() => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, panel: undefined };
+      },
+    });
+  }, [navigate, threadId]);
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -1636,9 +1685,23 @@ function ChatThreadRouteView() {
 
   if (showOrchestratorSurface) {
     if (hasOrchestratorAgentPanes || hasOrchestratorBrowserPane) {
-      return <OrchestratorMultiPaneSurface agentThreadIds={focusedAgentThreadIds} />;
+      return (
+        <OrchestratorMultiPaneSurface
+          agentThreadIds={focusedAgentThreadIds}
+          browserOpen={hasOrchestratorBrowserPane}
+          onOpenBrowserPane={openOrchestratorBrowserPane}
+          onCloseBrowserPane={closeOrchestratorBrowserPane}
+        />
+      );
     }
-    return <OrchestratorMultiPaneSurface agentThreadIds={EMPTY_AGENT_IDS} />;
+    return (
+      <OrchestratorMultiPaneSurface
+        agentThreadIds={EMPTY_AGENT_IDS}
+        browserOpen={false}
+        onOpenBrowserPane={openOrchestratorBrowserPane}
+        onCloseBrowserPane={closeOrchestratorBrowserPane}
+      />
+    );
   }
 
   return <SingleChatSurface threadId={threadId} search={search} projectId={activeProjectId} />;

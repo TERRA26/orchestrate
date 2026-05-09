@@ -108,6 +108,30 @@ export function isOrchestratorStatusBusy(status: OrchestratorStatus): boolean {
   return ORCHESTRATOR_BUSY_STATUSES.has(status);
 }
 
+export function deriveEffectiveOrchestratorStatus(input: {
+  localStatus: OrchestratorStatus | undefined;
+  agentPhase: ReturnType<typeof derivePhase>;
+  hasActiveRun: boolean;
+}): OrchestratorStatus {
+  if (input.localStatus && input.localStatus !== "idle") {
+    return input.localStatus;
+  }
+  if (input.agentPhase === "running" || input.hasActiveRun) {
+    return "waiting";
+  }
+  return input.localStatus ?? "idle";
+}
+
+export function shouldClearOrchestratorStatusWithoutActiveRun(input: {
+  status: OrchestratorStatus;
+  agentPhase: ReturnType<typeof derivePhase>;
+}): boolean {
+  return (
+    (input.status === "waiting" || input.status === "reviewing") &&
+    (input.agentPhase === "ready" || input.agentPhase === "disconnected")
+  );
+}
+
 type ReviewArtifactsResult =
   | {
       status: "ready";
@@ -190,6 +214,7 @@ export interface OrchestratorEngineResult {
   composerProviderState: ComposerProviderState;
   providers: ReadonlyArray<ServerProvider>;
   send: (text: string) => Promise<void>;
+  stop: () => Promise<void>;
   setInput: (text: string) => void;
   handleModelChange: (provider: ProviderKind, model: string) => void;
   handleStartNewChat: () => Promise<void>;
@@ -464,9 +489,8 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   const lastProgressMessageByThreadRef = useRef<Partial<Record<ThreadId, string>>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
-  const status = statusByThreadId[currentThreadId] ?? "idle";
+  const localStatus = statusByThreadId[currentThreadId];
   const statusDetail = statusDetailByThreadId[currentThreadId] ?? null;
-  const isBusy = isOrchestratorStatusBusy(status);
   const canUseSelectedModel = selectedModel.length > 0;
 
   const setStatusForThread = useCallback(
@@ -562,6 +586,12 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     () => derivePhase(managedThread?.session ?? null),
     [managedThread?.session],
   );
+  const status = deriveEffectiveOrchestratorStatus({
+    localStatus,
+    agentPhase,
+    hasActiveRun: activeRun !== null,
+  });
+  const isBusy = isOrchestratorStatusBusy(status);
   const latestActivity = managedThread?.activities?.at(-1) ?? null;
 
   // Drive orchestrator status from canonical thread session phase so the
@@ -1566,7 +1596,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
   useEffect(() => {
     if (!activeRun) {
       resumeReviewKeyRef.current = null;
-      if (status === "waiting" || status === "reviewing") {
+      if (shouldClearOrchestratorStatusWithoutActiveRun({ status, agentPhase })) {
         setStatusForThread(currentThreadId, "idle");
       }
       return;
@@ -1747,6 +1777,43 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     ],
   );
 
+  const stop = useCallback(async () => {
+    const api = readNativeApi();
+    const run = activeRun;
+    const threadIdToStop = run?.threadId ?? managedThreadId ?? currentThreadId;
+
+    if (api && threadIdToStop !== ORCHESTRATOR_DRAFT_THREAD_ID) {
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.session.stop",
+          commandId: newCommandId(),
+          threadId: threadIdToStop,
+          createdAt: new Date().toISOString(),
+        })
+        .catch(() => undefined);
+    }
+
+    if (run) {
+      await finalizeServerRun(run, {
+        kind: "cancelled",
+        reason: "Stopped by user.",
+      });
+      setOrchestratorActiveRun(run.threadId, null);
+    }
+
+    setStatusForThread(currentThreadId, "idle");
+    if (threadIdToStop !== currentThreadId) {
+      setStatusForThread(threadIdToStop, "idle");
+    }
+  }, [
+    activeRun,
+    currentThreadId,
+    finalizeServerRun,
+    managedThreadId,
+    setOrchestratorActiveRun,
+    setStatusForThread,
+  ]);
+
   const setInput = useCallback(
     (text: string) => {
       setOrchestratorPrompt(currentThreadId, text);
@@ -1897,6 +1964,7 @@ export function useOrchestratorEngine(): OrchestratorEngineResult {
     composerProviderState,
     providers,
     send,
+    stop,
     setInput,
     handleModelChange,
     handleStartNewChat,

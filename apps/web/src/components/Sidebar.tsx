@@ -137,7 +137,7 @@ import {
   resolveThreadHandoffBadgeLabel,
 } from "../lib/threadHandoff";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { parseDiffRouteSearch } from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useSettingsModalStore } from "../settingsModalStore";
 import {
   resolveSplitViewFocusedThreadId,
@@ -571,7 +571,6 @@ export default function Sidebar() {
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const browserStatesByThreadId = useBrowserStateStore((state) => state.threadStatesByThreadId);
-  const focusedBrowserThreadId = useOrchestratorPaneStore((state) => state.focusedBrowserThreadId);
   const setOrchestratorThread = useOrchestratorPaneStore((state) => state.setOrchestratorThread);
   const focusBrowser = useOrchestratorPaneStore((state) => state.focusBrowser);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
@@ -1591,9 +1590,16 @@ export default function Sidebar() {
     (threadId: ThreadId) => {
       setOrchestratorThread(threadId);
       focusBrowser(threadId);
-      activateThread(threadId);
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return { ...rest, panel: "browser" };
+        },
+      });
     },
-    [activateThread, focusBrowser, setOrchestratorThread],
+    [focusBrowser, navigate, setOrchestratorThread],
   );
 
   const handleProjectContextMenu = useCallback(
@@ -1929,7 +1935,7 @@ export default function Sidebar() {
     const hasBrowserSession =
       isOrchestratorThread && browserState !== undefined && browserState.tabs.length > 0;
     const isBrowserActive =
-      hasBrowserSession && routeThreadId === thread.id && focusedBrowserThreadId === thread.id;
+      hasBrowserSession && routeThreadId === thread.id && routeSearch.panel === "browser";
     const browserTitle =
       browserActiveTab?.title && browserActiveTab.title !== "New tab"
         ? browserActiveTab.title
@@ -2199,7 +2205,7 @@ export default function Sidebar() {
                   <span
                     className={cn(
                       "inline-flex size-1 shrink-0 rounded-full",
-                      focusedBrowserThreadId === thread.id
+                      isBrowserActive
                         ? "bg-sky-400/85 shadow-[0_0_5px_rgba(56,189,248,0.55)]"
                         : "bg-muted-foreground/35",
                     )}

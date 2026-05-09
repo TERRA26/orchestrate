@@ -21,7 +21,7 @@ export type OrchestratorBlock =
 // ---------------------------------------------------------------------------
 
 interface DecisionTypeConfig {
-  label: string;
+  label: string | null;
   textColor: string;
   borderColor: string;
   bg: string;
@@ -41,7 +41,7 @@ const DECISION_TYPE_MAP: Record<string, DecisionTypeConfig> = {
     bg: "bg-transparent",
   },
   delegated: {
-    label: "Delegated",
+    label: null,
     textColor: "text-foreground/70",
     borderColor: "border-l-border/20",
     bg: "bg-transparent",
@@ -125,9 +125,11 @@ export function DecisionCard({
   return (
     <div className={cn("rounded-md border-l px-3 py-2", config.borderColor, config.bg)}>
       <div className="flex items-center gap-2">
-        <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50">
-          {config.label}
-        </span>
+        {config.label ? (
+          <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50">
+            {config.label}
+          </span>
+        ) : null}
         <span className="font-mono text-[10px] text-muted-foreground/40">
           {formatTime(decision.createdAt)}
         </span>

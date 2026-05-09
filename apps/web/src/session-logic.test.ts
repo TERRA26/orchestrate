@@ -532,9 +532,9 @@ describe("findThreadProposedPlanHistory (ORC-281)", () => {
   });
 
   it("returns empty when the thread id is null", () => {
-    expect(
-      findThreadProposedPlanHistory({ threads: [threadA, threadB], threadId: null }),
-    ).toEqual([]);
+    expect(findThreadProposedPlanHistory({ threads: [threadA, threadB], threadId: null })).toEqual(
+      [],
+    );
   });
 
   it("returns empty when the thread id does not match any thread", () => {
@@ -728,6 +728,28 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries.map((entry) => entry.id)).toEqual(["task-progress"]);
+  });
+
+  it("omits provider runtime warning entries from the user-facing work log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "runtime-warning",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "runtime.warning",
+        summary: "Runtime warning",
+        tone: "info",
+        payload: { message: "Provider retried a transient event." },
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Read file",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
   it("filters by turn id when provided", () => {

@@ -224,23 +224,6 @@ function MessageBubble({
     ? message.content.slice(DELEGATION_MARKER.length)
     : message.content;
 
-  if (isDelegation) {
-    return (
-      <div className="pb-3" data-message-role="delegation">
-        <div className="border-l-2 border-amber-500/40 bg-amber-500/[0.03] py-2 pl-3 pr-1">
-          <p className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-[0.22em] text-amber-400/70">
-            Delegated
-          </p>
-          <ChatMarkdown
-            text={displayContent}
-            cwd={undefined}
-            isStreaming={message.streaming === true}
-          />
-        </div>
-      </div>
-    );
-  }
-
   // orchestrator or agent-result — flat transcript block with orch-tag header
   const tagLabel = message.role === "agent-result" ? "AGENT" : "ORCHESTRATOR";
   return (

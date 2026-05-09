@@ -38,7 +38,10 @@ import {
 } from "~/lib/providerDiscoveryReactQuery";
 import { useTheme } from "~/hooks/useTheme";
 import type { OrchestratorStatus } from "./useOrchestratorEngine";
-import { AgentStatePill } from "./OrchestratorAgentStatePill";
+import {
+  AgentStatePill,
+  shouldShowOrchestratorComposerAgentState,
+} from "./OrchestratorAgentStatePill";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -61,6 +64,7 @@ export interface OrchestratorComposerProps {
   };
   onInputChange: (text: string) => void;
   onSend: (text: string) => Promise<void>;
+  onStop: () => Promise<void>;
   onModelChange: (provider: ProviderKind, model: string) => void;
   onPromptChangeFromTraits: (prompt: string) => void;
 }
@@ -107,6 +111,7 @@ export function OrchestratorComposer({
   composerProviderState,
   onInputChange,
   onSend,
+  onStop,
   onModelChange,
   onPromptChangeFromTraits,
 }: OrchestratorComposerProps) {
@@ -338,6 +343,7 @@ export function OrchestratorComposer({
   );
 
   const hasSendableContent = input.trim().length > 0;
+  const showAgentStatePill = shouldShowOrchestratorComposerAgentState(agentState);
 
   return (
     <div className="px-3 pb-1 pt-3">
@@ -389,8 +395,15 @@ export function OrchestratorComposer({
             {/* Bottom toolbar */}
             <div className="flex items-end justify-between gap-1.5 px-3 pb-2.5">
               <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <AgentStatePill status={agentState} />
-                <Separator orientation="vertical" className="mx-0.5 h-3 shrink-0 bg-border/40" />
+                {showAgentStatePill ? (
+                  <>
+                    <AgentStatePill status={agentState} />
+                    <Separator
+                      orientation="vertical"
+                      className="mx-0.5 h-3 shrink-0 bg-border/40"
+                    />
+                  </>
+                ) : null}
                 <ProviderModelPicker
                   compact
                   provider={selectedProvider}
@@ -428,10 +441,20 @@ export function OrchestratorComposer({
                 />
               </div>
 
-              {/* Inline shortcut hint — appears once the user has typed real
-                  content so first-time users learn the keystroke without
-                  cluttering the empty-state composer. */}
-              {hasSendableContent && !isBusy ? (
+              {isBusy ? (
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className="hidden shrink-0 items-center gap-1 pr-1 text-[10px] font-medium text-muted-foreground/75 sm:inline-flex"
+                >
+                  <span>Working</span>
+                  <span className="inline-flex w-5 justify-start" aria-hidden>
+                    <span className="animate-[orch-dot_1.1s_infinite]">.</span>
+                    <span className="animate-[orch-dot_1.1s_infinite_150ms]">.</span>
+                    <span className="animate-[orch-dot_1.1s_infinite_300ms]">.</span>
+                  </span>
+                </span>
+              ) : hasSendableContent ? (
                 <span
                   aria-hidden
                   className="hidden shrink-0 items-center gap-1 pr-1 text-[9.5px] text-muted-foreground/60 sm:inline-flex"
@@ -443,48 +466,44 @@ export function OrchestratorComposer({
                 </span>
               ) : null}
 
-              {/* Send button — distinct visual states for disabled (no input),
-                  ready-to-send (sendable content + idle), and busy (in-flight). */}
-              <button
-                type="submit"
-                className={cn(
-                  "flex size-7 shrink-0 items-center justify-center rounded-md transition-all duration-150",
-                  isBusy
-                    ? "cursor-progress bg-foreground/30 text-background"
-                    : !hasSendableContent || !canSend
+              <div className="flex shrink-0 items-center gap-1">
+                {isBusy ? (
+                  <button
+                    type="button"
+                    className="flex size-7 items-center justify-center rounded-md bg-rose-500/90 text-white shadow-[0_2px_8px_rgba(244,63,94,0.24)] transition-all duration-150 hover:scale-105 hover:bg-rose-500 active:scale-95"
+                    onClick={() => void onStop()}
+                    aria-label="Stop orchestrator"
+                    title="Stop orchestrator"
+                  >
+                    <svg
+                      width="11"
+                      height="11"
+                      viewBox="0 0 12 12"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <rect x="2.25" y="2.25" width="7.5" height="7.5" rx="1.4" />
+                    </svg>
+                  </button>
+                ) : null}
+                <button
+                  type="submit"
+                  className={cn(
+                    "flex size-7 items-center justify-center rounded-md transition-all duration-150",
+                    isBusy || !hasSendableContent || !canSend
                       ? "cursor-not-allowed bg-foreground/15 text-background/60"
                       : "bg-foreground text-background shadow-[0_2px_8px_color-mix(in_srgb,var(--foreground)_25%,transparent)] hover:scale-105 hover:bg-foreground/90 active:scale-95",
-                )}
-                disabled={!hasSendableContent || !canSend || isBusy}
-                aria-label={isBusy ? "Working — send disabled" : "Send message (⌘↵)"}
-                title={
-                  isBusy
-                    ? "Agent is working — send disabled"
-                    : !hasSendableContent
-                      ? "Type a message"
-                      : "Send message (⌘↵)"
-                }
-              >
-                {isBusy ? (
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    className="animate-spin"
-                    aria-hidden="true"
-                  >
-                    <circle
-                      cx="7"
-                      cy="7"
-                      r="5.5"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeDasharray="20 12"
-                    />
-                  </svg>
-                ) : (
+                  )}
+                  disabled={!hasSendableContent || !canSend || isBusy}
+                  aria-label={isBusy ? "Working - send disabled" : "Send message (⌘↵)"}
+                  title={
+                    isBusy
+                      ? "Orchestrator is working"
+                      : !hasSendableContent
+                        ? "Type a message"
+                        : "Send message (⌘↵)"
+                  }
+                >
                   <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                     <path
                       d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
@@ -494,8 +513,8 @@ export function OrchestratorComposer({
                       strokeLinejoin="round"
                     />
                   </svg>
-                )}
-              </button>
+                </button>
+              </div>
             </div>
           </div>
         </div>
