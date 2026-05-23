@@ -1,0 +1,165 @@
+import { ThreadId } from "@orchestrate/contracts";
+import { describe, expect, it } from "vitest";
+
+import {
+  shouldAutoDeleteTerminalThreadOnLastClose,
+  buildExpiredTerminalContextToastCopy,
+  deriveComposerSendState,
+  shouldRenderTerminalWorkspace,
+} from "./ChatView.logic";
+
+describe("deriveComposerSendState", () => {
+  it("treats expired terminal pills as non-sendable content", () => {
+    const state = deriveComposerSendState({
+      prompt: "\uFFFC",
+      imageCount: 0,
+      terminalContexts: [
+        {
+          id: "ctx-expired",
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          terminalId: "default",
+          terminalLabel: "Terminal 1",
+          lineStart: 4,
+          lineEnd: 4,
+          text: "",
+          createdAt: "2026-03-17T12:52:29.000Z",
+        },
+      ],
+    });
+
+    expect(state.trimmedPrompt).toBe("");
+    expect(state.sendableTerminalContexts).toEqual([]);
+    expect(state.expiredTerminalContextCount).toBe(1);
+    expect(state.hasSendableContent).toBe(false);
+  });
+
+  it("keeps text sendable while excluding expired terminal pills", () => {
+    const state = deriveComposerSendState({
+      prompt: `yoo \uFFFC waddup`,
+      imageCount: 0,
+      terminalContexts: [
+        {
+          id: "ctx-expired",
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          terminalId: "default",
+          terminalLabel: "Terminal 1",
+          lineStart: 4,
+          lineEnd: 4,
+          text: "",
+          createdAt: "2026-03-17T12:52:29.000Z",
+        },
+      ],
+    });
+
+    expect(state.trimmedPrompt).toBe("yoo  waddup");
+    expect(state.expiredTerminalContextCount).toBe(1);
+    expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("buildExpiredTerminalContextToastCopy", () => {
+  it("formats clear empty-state guidance", () => {
+    expect(buildExpiredTerminalContextToastCopy(1, "empty")).toEqual({
+      title: "Expired terminal context won't be sent",
+      description: "Remove it or re-add it to include terminal output.",
+    });
+  });
+
+  it("formats omission guidance for sent messages", () => {
+    expect(buildExpiredTerminalContextToastCopy(2, "omitted")).toEqual({
+      title: "Expired terminal contexts omitted from message",
+      description: "Re-add it if you want that terminal output included.",
+    });
+  });
+});
+
+describe("shouldRenderTerminalWorkspace", () => {
+  it("requires an active project to render workspace mode", () => {
+    expect(
+      shouldRenderTerminalWorkspace({
+        activeProjectExists: false,
+        presentationMode: "workspace",
+        terminalOpen: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("renders only for an open workspace terminal", () => {
+    expect(
+      shouldRenderTerminalWorkspace({
+        activeProjectExists: true,
+        presentationMode: "workspace",
+        terminalOpen: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRenderTerminalWorkspace({
+        activeProjectExists: true,
+        presentationMode: "drawer",
+        terminalOpen: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldAutoDeleteTerminalThreadOnLastClose", () => {
+  it("deletes untouched terminal-first placeholder threads when the last terminal closes", () => {
+    expect(
+      shouldAutoDeleteTerminalThreadOnLastClose({
+        isLastTerminal: true,
+        isServerThread: true,
+        terminalEntryPoint: "terminal",
+        thread: {
+          title: "New terminal",
+          messages: [],
+          latestTurn: null,
+          session: null,
+          activities: [],
+          proposedPlans: [],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps non-placeholder or already-used threads", () => {
+    expect(
+      shouldAutoDeleteTerminalThreadOnLastClose({
+        isLastTerminal: true,
+        isServerThread: true,
+        terminalEntryPoint: "terminal",
+        thread: {
+          title: "Manual rename",
+          messages: [],
+          latestTurn: null,
+          session: null,
+          activities: [],
+          proposedPlans: [],
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoDeleteTerminalThreadOnLastClose({
+        isLastTerminal: true,
+        isServerThread: true,
+        terminalEntryPoint: "terminal",
+        thread: {
+          title: "New terminal",
+          messages: [
+            {
+              id: "msg-1" as never,
+              role: "user",
+              text: "hello",
+              createdAt: "2026-04-06T12:00:00.000Z",
+              streaming: false,
+            },
+          ],
+          latestTurn: null,
+          session: null,
+          activities: [],
+          proposedPlans: [],
+        },
+      }),
+    ).toBe(false);
+  });
+});

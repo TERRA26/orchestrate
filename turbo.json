@@ -1,0 +1,38 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalEnv": [
+    "PORT",
+    "VITE_WS_URL",
+    "VITE_DEV_SERVER_URL",
+    "ELECTRON_RENDERER_PORT",
+    "ORCHESTRATE_LOG_WS_EVENTS",
+    "ORCHESTRATE_MODE",
+    "ORCHESTRATE_PORT",
+    "ORCHESTRATE_NO_BROWSER",
+    "ORCHESTRATE_HOST",
+    "ORCHESTRATE_HOME",
+    "ORCHESTRATE_AUTH_TOKEN",
+    "ORCHESTRATE_DESKTOP_WS_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "dist-electron/**"]
+    },
+    "dev": {
+      "dependsOn": ["@orchestrate/contracts#build"],
+      "cache": false,
+      "persistent": true
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": [],
+      "cache": false
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    }
+  }
+}

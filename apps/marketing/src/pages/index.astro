@@ -1,0 +1,616 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const featuredProjects = [
+  {
+    name: "Signal Console",
+    category: "Product engineering",
+    summary:
+      "A command center for high-stakes operations with dense information design, fast filtering, and clear escalation paths.",
+    impact: "Reduced triage time by 41% and cut handoff errors in half.",
+    stack: ["React", "TanStack", "Design systems"],
+  },
+  {
+    name: "Northstar Studio",
+    category: "Brand + web",
+    summary:
+      "A launch-ready marketing site with a stronger story arc, tighter typography, and conversion-focused motion.",
+    impact: "Lifted qualified inbound leads by 28% in the first quarter.",
+    stack: ["Astro", "Motion", "Content strategy"],
+  },
+  {
+    name: "Atlas Library",
+    category: "Content systems",
+    summary:
+      "A modular documentation experience built for teams that ship often and need their docs to keep pace.",
+    impact: "Enabled editors to publish 4x faster without sacrificing consistency.",
+    stack: ["CMS architecture", "Accessibility", "IA"],
+  },
+];
+
+const services = [
+  {
+    title: "Product surfaces",
+    detail:
+      "Interfaces for apps, dashboards, and internal tools that need to feel immediate and stay dependable under load.",
+  },
+  {
+    title: "Design systems",
+    detail:
+      "Reusable UI foundations, patterns, and tokens that keep teams shipping consistently as the product grows.",
+  },
+  {
+    title: "Launch sites",
+    detail:
+      "Editorial, high-conversion websites with a sharper visual language than a standard template.",
+  },
+  {
+    title: "Frontend cleanup",
+    detail:
+      "Refactors that simplify tangled code, reduce duplication, and make the next feature cheaper to build.",
+  },
+];
+
+const timeline = [
+  {
+    year: "2021",
+    title: "Independent product work",
+    detail:
+      "Shipped end-to-end interfaces for early-stage teams and translated loose ideas into real systems.",
+  },
+  {
+    year: "2023",
+    title: "Design system lead",
+    detail:
+      "Turned a scattered component library into a tighter, more legible foundation for faster releases.",
+  },
+  {
+    year: "2025",
+    title: "Portfolio and consulting",
+    detail:
+      "Focused on sharp websites, trustworthy tooling, and fast-moving teams that care about quality.",
+  },
+];
+
+const principles = [
+  "Clear hierarchy first, decoration second.",
+  "Shipping beats theorizing, but polish matters.",
+  "Every system should be readable to the next engineer.",
+  "Accessibility is part of the design, not a postscript.",
+];
+---
+
+<Layout
+  title="Your Name — Product Engineer & Web Portfolio"
+  description="A polished portfolio site for product engineering, design systems, and high-trust web experiences."
+>
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Product engineering • design systems • launch sites</p>
+      <h1>Web experiences with sharper structure and less noise.</h1>
+      <p class="lede">
+        I build portfolio-worthy products and websites that move quickly without feeling rushed.
+        The focus is always the same: clear interfaces, dependable code, and a visual language
+        that feels deliberate.
+      </p>
+
+      <div class="actions">
+        <a class="primary-action" href="#work">View selected work</a>
+        <a class="secondary-action" href="#contact">Start a project</a>
+      </div>
+
+      <dl class="stats" aria-label="Portfolio highlights">
+        <div>
+          <dt>8+</dt>
+          <dd>Years shipping web products</dd>
+        </div>
+        <div>
+          <dt>12</dt>
+          <dd>Launches and redesigns delivered</dd>
+        </div>
+        <div>
+          <dt>3</dt>
+          <dd>Core lanes: product, brand, systems</dd>
+        </div>
+      </dl>
+    </div>
+
+    <aside class="hero-panel" aria-label="Current focus">
+      <div class="panel-card panel-card--accent">
+        <span class="panel-label">Current focus</span>
+        <strong>Interfaces that feel calm, fast, and easy to maintain.</strong>
+        <p>
+          The best portfolio sites do not just look good. They remove uncertainty, make the next
+          step obvious, and leave room for the work to speak for itself.
+        </p>
+      </div>
+
+      <div class="panel-card">
+        <span class="panel-label">Tooling</span>
+        <ul class="chip-list">
+          <li>Astro</li>
+          <li>React</li>
+          <li>TanStack</li>
+          <li>Tailwind</li>
+          <li>TypeScript</li>
+        </ul>
+      </div>
+
+      <div class="panel-card">
+        <span class="panel-label">Available for</span>
+        <p>Freelance builds, consulting, and product teams that want a cleaner frontend system.</p>
+      </div>
+    </aside>
+  </section>
+
+  <section id="work" class="section">
+    <div class="section-heading">
+      <p class="eyebrow">Selected work</p>
+      <h2>Projects with a clear problem, a deliberate system, and measurable impact.</h2>
+    </div>
+
+    <div class="project-grid">
+      {featuredProjects.map((project) => (
+        <article class="project-card">
+          <p class="project-category">{project.category}</p>
+          <h3>{project.name}</h3>
+          <p class="project-summary">{project.summary}</p>
+
+          <div class="project-foot">
+            <p>{project.impact}</p>
+            <ul class="chip-list chip-list--compact" aria-label={`${project.name} stack`}>
+              {project.stack.map((item) => <li>{item}</li>)}
+            </ul>
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section id="process" class="section section--split">
+    <div class="section-heading">
+      <p class="eyebrow">Process</p>
+      <h2>A simple workflow: understand the shape of the problem, build the right system, ship it cleanly.</h2>
+    </div>
+
+    <div class="split-grid">
+      <div class="info-card">
+        <h3>How I work</h3>
+        <ol class="steps">
+          <li>
+            <strong>Discover.</strong> Find the real constraints, not just the surface request.
+          </li>
+          <li>
+            <strong>Design.</strong> Shape hierarchy, motion, and components before scaling the UI.
+          </li>
+          <li>
+            <strong>Ship.</strong> Keep the implementation crisp, accessible, and easy to extend.
+          </li>
+        </ol>
+      </div>
+
+      <div class="info-card">
+        <h3>Principles</h3>
+        <ul class="principles">
+          {principles.map((principle) => <li>{principle}</li>)}
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-heading">
+      <p class="eyebrow">Services</p>
+      <h2>Useful when the work needs taste, structure, and enough engineering rigor to stay flexible.</h2>
+    </div>
+
+    <div class="service-grid">
+      {services.map((service) => (
+        <article class="service-card">
+          <h3>{service.title}</h3>
+          <p>{service.detail}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="section section--timeline">
+    <div class="section-heading">
+      <p class="eyebrow">Timeline</p>
+      <h2>Built through a few different modes of work, all centered on shipping better interfaces.</h2>
+    </div>
+
+    <div class="timeline">
+      {timeline.map((entry) => (
+        <article class="timeline-entry">
+          <p class="timeline-year">{entry.year}</p>
+          <div>
+            <h3>{entry.title}</h3>
+            <p>{entry.detail}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section id="contact" class="contact-card">
+    <div>
+      <p class="eyebrow">Contact</p>
+      <h2>Have a website, product surface, or frontend system that needs more clarity?</h2>
+    </div>
+
+    <div class="contact-actions">
+      <a class="primary-action" href="mailto:hello@yourname.dev">hello@yourname.dev</a>
+      <a class="secondary-action" href="https://www.linkedin.com" target="_blank" rel="noreferrer">
+        LinkedIn
+      </a>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .hero,
+  .section,
+  .contact-card {
+    width: min(1120px, calc(100% - 2rem));
+    margin-top: 1.25rem;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
+    gap: 1.25rem;
+    padding: 1rem 0 0;
+  }
+
+  .hero-copy,
+  .hero-panel,
+  .project-card,
+  .info-card,
+  .service-card,
+  .contact-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.025));
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(18px);
+  }
+
+  .hero-copy {
+    border-radius: 2rem;
+    padding: clamp(1.5rem, 3vw, 3rem);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero-copy::after {
+    content: "";
+    position: absolute;
+    inset: auto -12% -32% auto;
+    width: 18rem;
+    height: 18rem;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(242, 179, 107, 0.25), transparent 70%);
+    filter: blur(4px);
+    pointer-events: none;
+  }
+
+  .hero-copy h1,
+  .section-heading h2,
+  .contact-card h2 {
+    font-family: "Space Grotesk", sans-serif;
+    letter-spacing: -0.05em;
+    line-height: 0.95;
+  }
+
+  .hero-copy h1 {
+    max-width: 12ch;
+    font-size: clamp(3.2rem, 8vw, 6.4rem);
+    margin: 0.8rem 0 1rem;
+  }
+
+  .lede,
+  .project-summary,
+  .service-card p,
+  .info-card p,
+  .timeline-entry p,
+  .panel-card p {
+    color: var(--fg-muted);
+    line-height: 1.65;
+    font-size: 1rem;
+  }
+
+  .eyebrow,
+  .panel-label,
+  .project-category {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+
+  .actions,
+  .contact-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    margin-top: 1.5rem;
+  }
+
+  .primary-action,
+  .secondary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3rem;
+    padding: 0.8rem 1.15rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition:
+      transform 0.2s ease,
+      background 0.2s ease,
+      border-color 0.2s ease,
+      color 0.2s ease;
+  }
+
+  .primary-action {
+    color: #140d06;
+    background: linear-gradient(135deg, #f7c67f, #f2b36b);
+    border-color: transparent;
+    font-weight: 700;
+  }
+
+  .secondary-action {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .primary-action:hover,
+  .secondary-action:hover {
+    transform: translateY(-1px);
+  }
+
+  .secondary-action:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+    margin-top: 2rem;
+  }
+
+  .stats div,
+  .panel-card,
+  .info-card,
+  .project-card,
+  .service-card,
+  .timeline-entry {
+    border-radius: 1.4rem;
+  }
+
+  .stats div {
+    padding: 1rem 0.95rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.025);
+  }
+
+  .stats dt {
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.05em;
+  }
+
+  .stats dd {
+    margin: 0.25rem 0 0;
+    color: var(--fg-muted);
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+
+  .hero-panel {
+    display: grid;
+    gap: 0.85rem;
+    border-radius: 2rem;
+    padding: 1rem;
+  }
+
+  .panel-card {
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .panel-card--accent {
+    background: linear-gradient(180deg, rgba(242, 179, 107, 0.16), rgba(255, 255, 255, 0.03));
+  }
+
+  .panel-card strong {
+    display: block;
+    margin: 0.4rem 0 0.6rem;
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 1.1rem;
+    line-height: 1.35;
+  }
+
+  .chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    list-style: none;
+    padding: 0;
+    margin: 0.85rem 0 0;
+  }
+
+  .chip-list li {
+    padding: 0.42rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--fg-muted);
+    font-size: 0.83rem;
+  }
+
+  .chip-list--compact li {
+    padding-inline: 0.58rem;
+  }
+
+  .section {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .section-heading {
+    display: grid;
+    gap: 0.75rem;
+    max-width: 58rem;
+    padding: 0 0.25rem;
+  }
+
+  .section-heading h2,
+  .contact-card h2 {
+    font-size: clamp(2rem, 4.2vw, 3.4rem);
+    margin: 0;
+  }
+
+  .project-grid,
+  .service-grid,
+  .split-grid {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .project-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .project-card,
+  .service-card,
+  .info-card {
+    padding: 1.25rem;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .project-card h3,
+  .service-card h3,
+  .info-card h3,
+  .timeline-entry h3 {
+    margin: 0.2rem 0 0.65rem;
+    font-family: "Space Grotesk", sans-serif;
+    letter-spacing: -0.03em;
+    font-size: 1.35rem;
+  }
+
+  .project-foot {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .project-foot p {
+    margin: 0;
+    color: var(--fg);
+    line-height: 1.5;
+  }
+
+  .section--split .split-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .steps,
+  .principles {
+    margin: 0;
+    padding-left: 1.15rem;
+    color: var(--fg-muted);
+    line-height: 1.65;
+  }
+
+  .steps li + li,
+  .principles li + li {
+    margin-top: 0.8rem;
+  }
+
+  .steps strong {
+    color: var(--fg);
+  }
+
+  .service-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .timeline {
+    display: grid;
+    gap: 0.85rem;
+  }
+
+  .timeline-entry {
+    display: grid;
+    grid-template-columns: 7rem minmax(0, 1fr);
+    gap: 1rem;
+    padding: 1.15rem 1.25rem;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .timeline-year {
+    margin: 0;
+    color: var(--accent);
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+
+  .contact-card {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    border-radius: 2rem;
+    padding: clamp(1.5rem, 3vw, 2.25rem);
+    margin-bottom: 2rem;
+    background: linear-gradient(135deg, rgba(242, 179, 107, 0.12), rgba(255, 255, 255, 0.03));
+  }
+
+  @media (max-width: 920px) {
+    .hero,
+    .project-grid,
+    .service-grid,
+    .section--split .split-grid,
+    .contact-card {
+      grid-template-columns: 1fr;
+    }
+
+    .hero {
+      padding-top: 0.5rem;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .hero,
+    .section,
+    .contact-card {
+      width: min(100% - 1rem, 1120px);
+    }
+
+    .hero-copy h1 {
+      max-width: none;
+      font-size: clamp(2.8rem, 13vw, 4.6rem);
+    }
+
+    .stats {
+      grid-template-columns: 1fr;
+    }
+
+    .timeline-entry {
+      grid-template-columns: 1fr;
+      gap: 0.35rem;
+    }
+
+    .contact-card {
+      align-items: flex-start;
+    }
+  }
+</style>

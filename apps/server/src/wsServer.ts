@@ -1,0 +1,2374 @@
+/**
+ * Server - HTTP/WebSocket server service interface.
+ *
+ * Owns startup and shutdown lifecycle of the HTTP server, static asset serving,
+ * and WebSocket request routing.
+ *
+ * @module Server
+ */
+import http from "node:http";
+import { createHash, randomUUID } from "node:crypto";
+import type { Duplex } from "node:stream";
+
+import Mime from "@effect/platform-node/Mime";
+import {
+  CommandId,
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_TERMINAL_ID,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  EvidenceArtifactId,
+  type BrowserAction,
+  type BrowserApprovalRequest,
+  type EvidenceArtifactContentResult,
+  type ClientOrchestrationCommand,
+  type OrchestrationReadModel,
+  type OrchestrationCommand,
+  ORCHESTRATION_WS_CHANNELS,
+  ORCHESTRATION_WS_METHODS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ProjectId,
+  SessionEventId,
+  ThreadId,
+  WS_CHANNELS,
+  WS_METHODS,
+  WebSocketRequest,
+  type WsResponse as WsResponseMessage,
+  WsResponse,
+  type WsPushEnvelopeBase,
+} from "@orchestrate/contracts";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Path,
+  Ref,
+  Result,
+  Schema,
+  Scope,
+  ServiceMap,
+  Option,
+  Stream,
+  Struct,
+} from "effect";
+import OS from "node:os";
+import { WebSocketServer, type WebSocket } from "ws";
+
+import {
+  isConnectionAuthenticated,
+  isMessageAllowed,
+  markConnectionAuthenticated,
+} from "./connectionAuth.ts";
+import { buildTraceContext, withTraceContext } from "./observability/traceContext.ts";
+import { makeAuthAttemptLimiter } from "./observability/authAttemptLimiter.ts";
+import { ignoreCauseDefectAware } from "./observability/defectAwareIgnore.ts";
+import { reapOrphanWorkers } from "./orchestration/orphanReap.ts";
+import { createLogger } from "./logger";
+import { GitManager } from "./git/Services/GitManager.ts";
+import { TerminalManager } from "./terminal/Services/Manager.ts";
+import { Keybindings } from "./keybindings";
+import { searchWorkspaceEntries } from "./workspaceEntries";
+import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
+import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
+import { ProviderService } from "./provider/Services/ProviderService";
+import { ProviderDiscoveryService } from "./provider/Services/ProviderDiscoveryService";
+import { ProviderHealth } from "./provider/Services/ProviderHealth";
+import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
+import { clamp } from "effect/Number";
+import { Open, resolveAvailableEditors } from "./open";
+import { ServerConfig } from "./config";
+import { GitCore } from "./git/Services/GitCore.ts";
+import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
+import {
+  ATTACHMENTS_ROUTE_PREFIX,
+  normalizeAttachmentRelativePath,
+  resolveAttachmentRelativePath,
+} from "./attachmentPaths";
+
+import {
+  createAttachmentId,
+  resolveAttachmentPath,
+  resolveAttachmentPathById,
+} from "./attachmentStore.ts";
+import { parseBase64DataUrl } from "./imageMime.ts";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { expandHomePath } from "./os-jank.ts";
+import { makeServerPushBus } from "./wsServer/pushBus.ts";
+import { makeServerReadiness } from "./wsServer/readiness.ts";
+import { decodeJsonResult, formatSchemaError } from "@orchestrate/shared/schemaJson";
+import { TerminalThreadTitleTracker } from "./terminal/terminalThreadTitleTracker";
+import { BrowserRuntimeService } from "./browserRuntime/Services/BrowserRuntimeService.ts";
+import {
+  clearDesktopBrowserBridgePendingRequests,
+  handleDesktopBrowserBridgeResponse,
+  registerDesktopBrowserBridgeClient,
+  setDesktopBrowserBridgePublisher,
+  unregisterDesktopBrowserBridgeClient,
+} from "./browserRuntime/Layers/DesktopBrowserBridge.ts";
+import { BrowserWorkflowManager } from "./browserWorkflow/Services/BrowserWorkflowManager.ts";
+import { BrowserAnnotationService } from "./browserAnnotations/Services/BrowserAnnotationService.ts";
+import { BrowserControlLeaseService } from "./browserControl/Services/BrowserControlLeaseService.ts";
+import { BrowserOrchestrationEvidenceRepository } from "./persistence/Services/BrowserOrchestrationEvidence.ts";
+import { PreviewService } from "./preview/Services/PreviewService.ts";
+import { ReviewerDecisionService } from "./reviewer/Services/ReviewerDecisionService.ts";
+
+/**
+ * ServerShape - Service API for server lifecycle control.
+ */
+export interface ServerShape {
+  /**
+   * Start HTTP and WebSocket listeners.
+   */
+  readonly start: Effect.Effect<
+    http.Server,
+    ServerLifecycleError,
+    Scope.Scope | ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
+  >;
+
+  /**
+   * Wait for process shutdown signals.
+   */
+  readonly stopSignal: Effect.Effect<void, never>;
+}
+
+/**
+ * Server - Service tag for HTTP/WebSocket lifecycle management.
+ */
+export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
+
+const isServerNotRunningError = (error: Error): boolean => {
+  const maybeCode = (error as NodeJS.ErrnoException).code;
+  return (
+    maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
+  );
+};
+
+function rejectUpgrade(
+  socket: Duplex,
+  statusCode: number,
+  message: string,
+  extraHeaders?: Record<string, string>,
+): void {
+  const reason =
+    statusCode === 401
+      ? "Unauthorized"
+      : statusCode === 429
+        ? "Too Many Requests"
+        : "Bad Request";
+  const headerLines = ["Connection: close", "Content-Type: text/plain"];
+  if (extraHeaders) {
+    for (const [name, value] of Object.entries(extraHeaders)) {
+      headerLines.push(`${name}: ${value}`);
+    }
+  }
+  headerLines.push(`Content-Length: ${Buffer.byteLength(message)}`);
+  socket.end(
+    `HTTP/1.1 ${statusCode} ${reason}\r\n` + headerLines.join("\r\n") + "\r\n\r\n" + message,
+  );
+}
+
+// ORC-033: structured logging for upgrade-time socket errors. Exported so
+// tests can drive the helper directly with a fake logger.
+export function logUpgradeSocketError(
+  logger: { debug: (payload: Record<string, unknown>, message: string) => void },
+  err: NodeJS.ErrnoException,
+  socket: { readonly remoteAddress?: string | undefined },
+): void {
+  logger.debug(
+    {
+      event: "wsserver.upgrade.socket-error",
+      code: err.code,
+      syscall: err.syscall,
+      errno: err.errno,
+      remoteAddress: socket.remoteAddress,
+    },
+    err.message ?? "ws upgrade socket error",
+  );
+}
+
+// ORC-042: extract the auth token from a WS upgrade request. Header form is
+// preferred (not logged by proxies, not in browser history, not in OS
+// process tables); query string is kept for backward compat with older
+// clients. Returns the token string if any source supplied it; null
+// otherwise.
+//
+// Order of precedence:
+// 1. Authorization: Bearer <token>     (preferred; Node ws clients)
+// 2. Sec-WebSocket-Protocol: orchestrate-auth.<token>   (browser clients)
+// 3. URL query ?token=<token>          (legacy)
+//
+// The value is returned as-is; the caller compares against the configured
+// authToken.
+export interface UpgradeRequestForAuth {
+  readonly url?: string | undefined;
+  readonly headers: Record<string, string | string[] | undefined>;
+}
+
+export function extractWsAuthTokenFromUpgrade(
+  request: UpgradeRequestForAuth,
+  defaultBaseUrl: string,
+): string | null {
+  // Header: "Authorization: Bearer <token>"
+  const authHeader = request.headers["authorization"];
+  const authValue = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+  if (typeof authValue === "string") {
+    const match = authValue.match(/^Bearer\s+(.+)$/i);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // Subprotocol: comma-separated list, look for "orchestrate-auth.<token>"
+  const protoHeader = request.headers["sec-websocket-protocol"];
+  const protoValue = Array.isArray(protoHeader) ? protoHeader.join(",") : protoHeader;
+  if (typeof protoValue === "string") {
+    for (const raw of protoValue.split(",")) {
+      const candidate = raw.trim();
+      if (candidate.startsWith("orchestrate-auth.")) {
+        return candidate.slice("orchestrate-auth.".length);
+      }
+    }
+  }
+
+  // Legacy: URL query ?token=
+  try {
+    const url = new URL(request.url ?? "/", defaultBaseUrl);
+    const queryToken = url.searchParams.get("token");
+    if (queryToken !== null) return queryToken;
+  } catch {
+    // malformed URL falls through to "no token"
+  }
+
+  return null;
+}
+
+type BootstrapSnapshotThread = OrchestrationReadModel["threads"][number];
+
+function toSortableBootstrapTimestamp(iso: string | undefined): number {
+  if (!iso) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const timestamp = Date.parse(iso);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function getLatestBootstrapUserMessageTimestamp(thread: BootstrapSnapshotThread): number {
+  let latestUserMessageTimestamp = Number.NEGATIVE_INFINITY;
+
+  for (const message of thread.messages) {
+    if (message.role !== "user") {
+      continue;
+    }
+    latestUserMessageTimestamp = Math.max(
+      latestUserMessageTimestamp,
+      toSortableBootstrapTimestamp(message.createdAt),
+    );
+  }
+
+  if (latestUserMessageTimestamp !== Number.NEGATIVE_INFINITY) {
+    return latestUserMessageTimestamp;
+  }
+
+  return toSortableBootstrapTimestamp(thread.updatedAt ?? thread.createdAt);
+}
+
+function getMostRecentBootstrapThread(
+  snapshot: OrchestrationReadModel,
+): BootstrapSnapshotThread | null {
+  const activeProjectIds = new Set(
+    snapshot.projects.filter((project) => project.deletedAt === null).map((project) => project.id),
+  );
+
+  return (
+    snapshot.threads
+      .filter((thread) => thread.deletedAt === null && activeProjectIds.has(thread.projectId))
+      .toSorted((left, right) => {
+        const rightTimestamp = getLatestBootstrapUserMessageTimestamp(right);
+        const leftTimestamp = getLatestBootstrapUserMessageTimestamp(left);
+        const byTimestamp =
+          rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
+        if (byTimestamp !== 0) {
+          return byTimestamp;
+        }
+        return right.id.localeCompare(left.id);
+      })[0] ?? null
+  );
+}
+
+function websocketRawToString(raw: unknown): string | null {
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (raw instanceof Uint8Array) {
+    return Buffer.from(raw).toString("utf8");
+  }
+  if (raw instanceof ArrayBuffer) {
+    return Buffer.from(new Uint8Array(raw)).toString("utf8");
+  }
+  if (Array.isArray(raw)) {
+    const chunks: string[] = [];
+    for (const chunk of raw) {
+      if (typeof chunk === "string") {
+        chunks.push(chunk);
+        continue;
+      }
+      if (chunk instanceof Uint8Array) {
+        chunks.push(Buffer.from(chunk).toString("utf8"));
+        continue;
+      }
+      if (chunk instanceof ArrayBuffer) {
+        chunks.push(Buffer.from(new Uint8Array(chunk)).toString("utf8"));
+        continue;
+      }
+      return null;
+    }
+    return chunks.join("");
+  }
+  return null;
+}
+
+function toPosixRelativePath(input: string): string {
+  return input.replaceAll("\\", "/");
+}
+
+function resolveWorkspaceWritePath(params: {
+  workspaceRoot: string;
+  relativePath: string;
+  path: Path.Path;
+}): Effect.Effect<{ absolutePath: string; relativePath: string }, RouteRequestError> {
+  const normalizedInputPath = params.relativePath.trim();
+  if (params.path.isAbsolute(normalizedInputPath)) {
+    return Effect.fail(
+      new RouteRequestError({
+        message: "Workspace file path must be relative to the project root.",
+      }),
+    );
+  }
+
+  const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
+  const relativeToRoot = toPosixRelativePath(
+    params.path.relative(params.workspaceRoot, absolutePath),
+  );
+  if (
+    relativeToRoot.length === 0 ||
+    relativeToRoot === "." ||
+    relativeToRoot.startsWith("../") ||
+    relativeToRoot === ".." ||
+    params.path.isAbsolute(relativeToRoot)
+  ) {
+    return Effect.fail(
+      new RouteRequestError({
+        message: "Workspace file path must stay within the project root.",
+      }),
+    );
+  }
+
+  return Effect.succeed({
+    absolutePath,
+    relativePath: relativeToRoot,
+  });
+}
+
+function stripRequestTag<T extends { _tag: string }>(body: T) {
+  return Struct.omit(body, ["_tag"]);
+}
+
+function browserActionSummary(action: { readonly kind: string }): string {
+  switch (action.kind) {
+    case "navigate":
+      return "Navigated browser";
+    case "click":
+    case "clickAt":
+    case "clickTargetOrAt":
+      return "Clicked page";
+    case "type":
+    case "typeFocused":
+      return "Typed into page";
+    case "press":
+      return "Pressed key";
+    case "scroll":
+      return "Scrolled page";
+    case "resize":
+      return "Resized browser viewport";
+    case "evaluate":
+      return "Evaluated page";
+    case "wait":
+    case "waitFor":
+      return "Refreshed screenshot evidence";
+    default:
+      return "Updated browser observation";
+  }
+}
+
+function evidenceArtifactContentResult(input: {
+  readonly artifact: {
+    readonly artifactId: EvidenceArtifactContentResult["artifactId"];
+    readonly kind: EvidenceArtifactContentResult["metadata"]["kind"];
+    readonly contentType: string;
+    readonly byteSize: number;
+    readonly sha256: EvidenceArtifactContentResult["metadata"]["sha256"];
+    readonly sensitivity: EvidenceArtifactContentResult["metadata"]["sensitivity"];
+    readonly access: EvidenceArtifactContentResult["metadata"]["access"];
+    readonly storageUri: string;
+    readonly createdAt: string;
+  };
+  readonly contentText: string;
+}): EvidenceArtifactContentResult {
+  const metadata = {
+    artifactId: input.artifact.artifactId,
+    kind: input.artifact.kind,
+    contentType: input.artifact.contentType,
+    byteSize: input.artifact.byteSize,
+    sha256: input.artifact.sha256,
+    sensitivity: input.artifact.sensitivity,
+    access: input.artifact.access,
+    createdAt: input.artifact.createdAt,
+  };
+
+  if (input.artifact.contentType.startsWith("image/")) {
+    const parsed = parseBase64DataUrl(input.contentText);
+    if (parsed) {
+      return {
+        artifactId: input.artifact.artifactId,
+        contentType: parsed.mimeType,
+        encoding: "base64",
+        content: parsed.base64,
+        metadata: {
+          ...metadata,
+          contentType: parsed.mimeType,
+        },
+      };
+    }
+  }
+
+  return {
+    artifactId: input.artifact.artifactId,
+    contentType: input.artifact.contentType,
+    encoding: "utf8",
+    content: input.contentText,
+    metadata,
+  };
+}
+
+function browserApprovalFromRow(row: {
+  readonly approvalId: BrowserApprovalRequest["id"];
+  readonly browserSessionId: BrowserApprovalRequest["browserSessionId"];
+  readonly desktopClientId: string | null;
+  readonly actionJson: string;
+  readonly actionHash: string;
+  readonly reason: string;
+  readonly risk: BrowserApprovalRequest["risk"];
+  readonly preApprovalObservationRef: string | null;
+  readonly observedUrl: string | null;
+  readonly origin: string | null;
+  readonly status: BrowserApprovalRequest["status"];
+  readonly evidenceRefsJson: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly expiresAt: string | null;
+  readonly consumedAt: string | null;
+  readonly executedActionRef: string | null;
+  readonly decisionReason: string | null;
+}): BrowserApprovalRequest {
+  const action = JSON.parse(row.actionJson) as BrowserAction;
+  return {
+    id: row.approvalId,
+    browserSessionId: row.browserSessionId,
+    ...(row.desktopClientId ? { desktopClientId: row.desktopClientId } : {}),
+    action,
+    actionHash: row.actionHash || createHash("sha256").update(JSON.stringify(action)).digest("hex"),
+    reason: row.reason,
+    risk: row.risk,
+    ...(row.preApprovalObservationRef
+      ? { preApprovalObservationRef: row.preApprovalObservationRef }
+      : {}),
+    ...(row.observedUrl ? { observedUrl: row.observedUrl } : {}),
+    ...(row.origin ? { origin: row.origin } : {}),
+    status: row.status,
+    evidenceRefs: JSON.parse(row.evidenceRefsJson) as string[],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    ...(row.expiresAt ? { expiresAt: row.expiresAt } : {}),
+    ...(row.consumedAt ? { consumedAt: row.consumedAt } : {}),
+    ...(row.executedActionRef ? { executedActionRef: row.executedActionRef } : {}),
+    ...(row.decisionReason ? { decisionReason: row.decisionReason } : {}),
+  };
+}
+
+function browserSessionEventPayload(input: {
+  readonly eventId?: SessionEventId | string;
+  readonly sessionId: string;
+  readonly workflowRunId?: string | null;
+  readonly type: string;
+  readonly actor: "system" | "agent" | "human" | "reviewer";
+  readonly artifactRefs?: ReadonlyArray<string>;
+  readonly payload: unknown;
+  readonly occurredAt?: string;
+}) {
+  return {
+    eventId:
+      typeof input.eventId === "string"
+        ? input.eventId
+        : (input.eventId ?? SessionEventId.makeUnsafe(`browser-session-event-${randomUUID()}`)),
+    sessionId: input.sessionId,
+    workflowRunId: input.workflowRunId ?? null,
+    type: input.type,
+    actor: input.actor,
+    artifactRefs: [...(input.artifactRefs ?? [])],
+    payload: input.payload,
+    occurredAt: input.occurredAt ?? new Date().toISOString(),
+  };
+}
+
+const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
+const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
+
+export type ServerCoreRuntimeServices =
+  | OrchestrationEngineService
+  | ProjectionSnapshotQuery
+  | CheckpointDiffQuery
+  | OrchestrationReactor
+  | ProviderService
+  | ProviderDiscoveryService
+  | ProviderHealth;
+
+export type ServerRuntimeServices =
+  | ServerCoreRuntimeServices
+  | GitManager
+  | GitCore
+  | TerminalManager
+  | Keybindings
+  | Open
+  | AnalyticsService
+  | BrowserRuntimeService
+  | BrowserWorkflowManager
+  | BrowserAnnotationService
+  | BrowserControlLeaseService
+  | BrowserOrchestrationEvidenceRepository
+  | PreviewService
+  | ReviewerDecisionService;
+
+export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
+  "ServerLifecycleError",
+  {
+    operation: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("RouteRequestError", {
+  message: Schema.String,
+}) {}
+
+// Summarize noisy websocket pushes so explicit debug logging stays useful
+// without dumping ANSI-heavy terminal redraw traffic into the server logs.
+function summarizePushForLog(push: WsPushEnvelopeBase): unknown {
+  if (push.channel !== WS_CHANNELS.terminalEvent || typeof push.data !== "object" || !push.data) {
+    return push.data;
+  }
+
+  const event = push.data as Record<string, unknown>;
+  const threadId = typeof event.threadId === "string" ? event.threadId : undefined;
+  const terminalId = typeof event.terminalId === "string" ? event.terminalId : undefined;
+  const createdAt = typeof event.createdAt === "string" ? event.createdAt : undefined;
+  const type = typeof event.type === "string" ? event.type : "unknown";
+
+  if (type === "output") {
+    const data = typeof event.data === "string" ? event.data : "";
+    return {
+      type,
+      threadId,
+      terminalId,
+      createdAt,
+      outputBytes: Buffer.byteLength(data),
+      preview: "redacted",
+    };
+  }
+
+  const snapshot =
+    typeof event.snapshot === "object" && event.snapshot
+      ? (event.snapshot as Record<string, unknown>)
+      : null;
+
+  if (type === "started" || type === "restarted") {
+    const history = typeof snapshot?.history === "string" ? snapshot.history : "";
+    return {
+      type,
+      threadId,
+      terminalId,
+      createdAt,
+      snapshot: {
+        cwd: typeof snapshot?.cwd === "string" ? snapshot.cwd : undefined,
+        status: typeof snapshot?.status === "string" ? snapshot.status : undefined,
+        pid: typeof snapshot?.pid === "number" ? snapshot.pid : null,
+        historyBytes: Buffer.byteLength(history),
+      },
+    };
+  }
+
+  return {
+    ...event,
+    ...(snapshot
+      ? {
+          snapshot: {
+            cwd: typeof snapshot.cwd === "string" ? snapshot.cwd : undefined,
+            status: typeof snapshot.status === "string" ? snapshot.status : undefined,
+            pid: typeof snapshot.pid === "number" ? snapshot.pid : null,
+          },
+        }
+      : {}),
+  };
+}
+
+export const createServer = Effect.fn(function* (): Effect.fn.Return<
+  http.Server,
+  ServerLifecycleError,
+  Scope.Scope | ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
+> {
+  const serverConfig = yield* ServerConfig;
+  const {
+    port,
+    cwd,
+    homeDir,
+    keybindingsConfigPath,
+    staticDir,
+    devUrl,
+    authToken,
+    host,
+    logWebSocketEvents,
+    autoBootstrapProjectFromCwd,
+  } = serverConfig;
+  const availableEditors = resolveAvailableEditors();
+
+  const gitManager = yield* GitManager;
+  const terminalManager = yield* TerminalManager;
+  const keybindingsManager = yield* Keybindings;
+  const providerHealth = yield* ProviderHealth;
+  const providerDiscoveryService = yield* ProviderDiscoveryService;
+  const browserRuntime = yield* BrowserRuntimeService;
+  const browserWorkflows = yield* BrowserWorkflowManager;
+  const browserAnnotations = yield* BrowserAnnotationService;
+  const browserControlLeases = yield* BrowserControlLeaseService;
+  const browserEvidenceRepository = yield* BrowserOrchestrationEvidenceRepository;
+  const previewService = yield* PreviewService;
+  const reviewerDecisionService = yield* ReviewerDecisionService;
+  const git = yield* GitCore;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("failed to sync keybindings defaults on startup", {
+        path: error.configPath,
+        detail: error.detail,
+        cause: error.cause,
+      }),
+    ),
+  );
+
+  const providerStatuses = (yield* providerHealth.getStatuses).map((provider) => ({
+    provider: provider.provider,
+    enabled: provider.available,
+    installed: provider.available,
+    available: provider.available,
+    version: null,
+    status: provider.status,
+    auth: { status: provider.authStatus },
+    authStatus: provider.authStatus,
+    checkedAt: provider.checkedAt,
+    ...(provider.message ? { message: provider.message } : {}),
+    models: [],
+  }));
+
+  const clients = yield* Ref.make(new Set<WebSocket>());
+  const desktopBridgeClientIdsBySocket = new WeakMap<WebSocket, string>();
+  const logger = createLogger("ws");
+  const readiness = yield* makeServerReadiness;
+
+  function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
+    if (!logWebSocketEvents) return;
+    logger.event("outgoing push", {
+      channel: push.channel,
+      sequence: push.sequence,
+      recipients,
+      payload: summarizePushForLog(push),
+    });
+  }
+
+  const pushBus = yield* makeServerPushBus({
+    clients,
+    logOutgoingPush,
+    // ORC-045: log structured overflow events so operators see when the
+    // bounded push queue is shedding load. The push is dropped (matches
+    // the bus's dropping-queue policy) but the operator now sees it
+    // instead of an OOM crash.
+    onOverflow: (info) => {
+      logger.warn(
+        {
+          event: "wsserver.pushbus.overflow",
+          channel: info.channel,
+          target: info.target,
+          maxQueueDepth: info.maxQueueDepth,
+        },
+        "ws push queue full; dropping push",
+      );
+    },
+    // ORC-055: surface per-client backpressure. The push is skipped for
+    // this client to keep healthy clients moving; the operator sees the
+    // skip via this structured log so a stuck client can be investigated
+    // before it accumulates further state.
+    onSlowClient: (info) => {
+      logger.warn(
+        {
+          event: "wsserver.pushbus.slow-client",
+          channel: info.channel,
+          bufferedAmount: info.bufferedAmount,
+          maxBufferedBytesPerClient: info.maxBufferedBytesPerClient,
+        },
+        "ws client buffered-amount over threshold; skipping push to that client",
+      );
+    },
+    // ORC-247: escalate after the grace window. close(1008) signals
+    // "policy violation" with our slow_consumer reason; terminate()
+    // afterwards is a belt-and-braces guarantee that the socket is
+    // released even if the peer's TCP receive window is closed and
+    // the close frame would otherwise hang.
+    disconnectSlowClient: (client, info) => {
+      logger.warn(
+        {
+          event: "wsserver.pushbus.slow-client-disconnect",
+          reason: info.reason,
+          bufferedAmount: info.bufferedAmount,
+          durationMs: info.durationMs,
+        },
+        "ws client over backpressure threshold beyond grace window; terminating",
+      );
+      try {
+        client.close(1008, info.reason);
+      } catch {
+        // close() can throw if the socket is mid-close; fall through.
+      }
+      try {
+        client.terminate();
+      } catch {
+        // Already destroyed; nothing to do.
+      }
+    },
+  });
+  setDesktopBrowserBridgePublisher((clientId, channel, data) =>
+    Effect.gen(function* () {
+      const connectedClients = yield* Ref.get(clients);
+      for (const client of connectedClients) {
+        if (desktopBridgeClientIdsBySocket.get(client) === clientId) {
+          return yield* pushBus.publishClient(client, channel, data);
+        }
+      }
+      return false;
+    }),
+  );
+  yield* readiness.markPushBusReady;
+  yield* keybindingsManager.start.pipe(
+    Effect.mapError(
+      (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
+    ),
+  );
+  yield* readiness.markKeybindingsReady;
+
+  const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
+    readonly command: ClientOrchestrationCommand;
+  }) {
+    const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
+      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
+      const workspaceStat = yield* fileSystem
+        .stat(normalizedWorkspaceRoot)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!workspaceStat) {
+        return yield* new RouteRequestError({
+          message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
+        });
+      }
+      if (workspaceStat.type !== "Directory") {
+        return yield* new RouteRequestError({
+          message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
+        });
+      }
+      return normalizedWorkspaceRoot;
+    });
+
+    if (input.command.type === "project.create") {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
+    if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
+    if (input.command.type !== "thread.turn.start") {
+      return input.command as OrchestrationCommand;
+    }
+    const turnStartCommand = input.command;
+
+    const normalizedAttachments = yield* Effect.forEach(
+      turnStartCommand.message.attachments,
+      (attachment) =>
+        Effect.gen(function* () {
+          const parsed = parseBase64DataUrl(attachment.dataUrl);
+          if (!parsed || !parsed.mimeType.startsWith("image/")) {
+            return yield* new RouteRequestError({
+              message: `Invalid image attachment payload for '${attachment.name}'.`,
+            });
+          }
+
+          const bytes = Buffer.from(parsed.base64, "base64");
+          if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+            return yield* new RouteRequestError({
+              message: `Image attachment '${attachment.name}' is empty or too large.`,
+            });
+          }
+
+          const attachmentId = createAttachmentId(turnStartCommand.threadId);
+          if (!attachmentId) {
+            return yield* new RouteRequestError({
+              message: "Failed to create a safe attachment id.",
+            });
+          }
+
+          const persistedAttachment = {
+            type: "image" as const,
+            id: attachmentId,
+            name: attachment.name,
+            mimeType: parsed.mimeType.toLowerCase(),
+            sizeBytes: bytes.byteLength,
+          };
+
+          const attachmentPath = resolveAttachmentPath({
+            attachmentsDir: serverConfig.attachmentsDir,
+            attachment: persistedAttachment,
+          });
+          if (!attachmentPath) {
+            return yield* new RouteRequestError({
+              message: `Failed to resolve persisted path for '${attachment.name}'.`,
+            });
+          }
+
+          yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
+            Effect.mapError(
+              () =>
+                new RouteRequestError({
+                  message: `Failed to create attachment directory for '${attachment.name}'.`,
+                }),
+            ),
+          );
+          yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
+            Effect.mapError(
+              () =>
+                new RouteRequestError({
+                  message: `Failed to persist attachment '${attachment.name}'.`,
+                }),
+            ),
+          );
+
+          return persistedAttachment;
+        }),
+      { concurrency: 1 },
+    );
+
+    return {
+      ...turnStartCommand,
+      message: {
+        ...turnStartCommand.message,
+        attachments: normalizedAttachments,
+      },
+    } satisfies OrchestrationCommand;
+  });
+  const terminalTitleTracker = new TerminalThreadTitleTracker();
+  // Terminal auto-titles are best-effort metadata and must never block terminal writes.
+  const maybeAutoRenameTerminalThread = Effect.fnUntraced(function* (input: {
+    threadId: string;
+    terminalId: string;
+    data: string;
+  }) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === input.threadId);
+    if (!thread) {
+      return;
+    }
+    const nextTitle = terminalTitleTracker.consumeWrite({
+      currentTitle: thread.title,
+      data: input.data,
+      terminalId: input.terminalId,
+      threadId: input.threadId,
+    });
+    if (!nextTitle) {
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+      threadId: ThreadId.makeUnsafe(input.threadId),
+      title: nextTitle,
+    });
+  });
+
+  // HTTP server — serves static files or redirects to Vite dev server
+  const httpServer = http.createServer((req, res) => {
+    const respond = (
+      statusCode: number,
+      headers: Record<string, string>,
+      body?: string | Uint8Array,
+    ) => {
+      res.writeHead(statusCode, headers);
+      res.end(body);
+    };
+
+    void Effect.runPromise(
+      Effect.gen(function* () {
+        const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+        if (tryHandleProjectFaviconRequest(url, res)) {
+          return;
+        }
+
+        if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
+          const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
+          const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
+          if (!normalizedRelativePath) {
+            respond(400, { "Content-Type": "text/plain" }, "Invalid attachment path");
+            return;
+          }
+
+          const isIdLookup =
+            !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".");
+          const filePath = isIdLookup
+            ? resolveAttachmentPathById({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachmentId: normalizedRelativePath,
+              })
+            : resolveAttachmentRelativePath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                relativePath: normalizedRelativePath,
+              });
+          if (!filePath) {
+            respond(
+              isIdLookup ? 404 : 400,
+              { "Content-Type": "text/plain" },
+              isIdLookup ? "Not Found" : "Invalid attachment path",
+            );
+            return;
+          }
+
+          const fileInfo = yield* fileSystem
+            .stat(filePath)
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (!fileInfo || fileInfo.type !== "File") {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+
+          const contentType = Mime.getType(filePath) ?? "application/octet-stream";
+          res.writeHead(200, {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=31536000, immutable",
+          });
+          const streamExit = yield* Stream.runForEach(fileSystem.stream(filePath), (chunk) =>
+            Effect.sync(() => {
+              if (!res.destroyed) {
+                res.write(chunk);
+              }
+            }),
+          ).pipe(Effect.exit);
+          if (Exit.isFailure(streamExit)) {
+            if (!res.destroyed) {
+              res.destroy();
+            }
+            return;
+          }
+          if (!res.writableEnded) {
+            res.end();
+          }
+          return;
+        }
+
+        // In dev mode, redirect to Vite dev server
+        if (devUrl) {
+          respond(302, { Location: devUrl.href });
+          return;
+        }
+
+        // Serve static files from the web app build
+        if (!staticDir) {
+          respond(
+            503,
+            { "Content-Type": "text/plain" },
+            "No static directory configured and no dev URL set.",
+          );
+          return;
+        }
+
+        const staticRoot = path.resolve(staticDir);
+        const staticRequestPath = url.pathname === "/" ? "/index.html" : url.pathname;
+        const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
+        const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
+        const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
+        const hasPathTraversalSegment = staticRelativePath.startsWith("..");
+        if (
+          staticRelativePath.length === 0 ||
+          hasRawLeadingParentSegment ||
+          hasPathTraversalSegment ||
+          staticRelativePath.includes("\0")
+        ) {
+          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+          return;
+        }
+
+        const isWithinStaticRoot = (candidate: string) =>
+          candidate === staticRoot ||
+          candidate.startsWith(
+            staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`,
+          );
+
+        let filePath = path.resolve(staticRoot, staticRelativePath);
+        if (!isWithinStaticRoot(filePath)) {
+          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+          return;
+        }
+
+        const ext = path.extname(filePath);
+        if (!ext) {
+          filePath = path.resolve(filePath, "index.html");
+          if (!isWithinStaticRoot(filePath)) {
+            respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+            return;
+          }
+        }
+
+        const fileInfo = yield* fileSystem
+          .stat(filePath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        if (!fileInfo || fileInfo.type !== "File") {
+          const indexPath = path.resolve(staticRoot, "index.html");
+          const indexData = yield* fileSystem
+            .readFile(indexPath)
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (!indexData) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+          respond(200, { "Content-Type": "text/html; charset=utf-8" }, indexData);
+          return;
+        }
+
+        const contentType = Mime.getType(filePath) ?? "application/octet-stream";
+        const data = yield* fileSystem
+          .readFile(filePath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        if (!data) {
+          respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
+          return;
+        }
+        respond(200, { "Content-Type": contentType }, data);
+      }),
+    ).catch(() => {
+      if (!res.headersSent) {
+        respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
+      }
+    });
+  });
+
+  // WebSocket server — upgrades from the HTTP server
+  const wss = new WebSocketServer({ noServer: true });
+  // ORC-239: per-IP auth-attempt limiter. Default 5 fails before
+  // exponential backoff starting at 30s, clamped at 30 minutes.
+  const authAttemptLimiter = makeAuthAttemptLimiter();
+
+  const closeWebSocketServer = Effect.callback<void, ServerLifecycleError>((resume) => {
+    wss.close((error) => {
+      if (error && !isServerNotRunningError(error)) {
+        resume(
+          Effect.fail(
+            new ServerLifecycleError({ operation: "closeWebSocketServer", cause: error }),
+          ),
+        );
+      } else {
+        resume(Effect.void);
+      }
+    });
+  });
+
+  const closeAllClients = Ref.get(clients).pipe(
+    Effect.flatMap(Effect.forEach((client) => Effect.sync(() => client.close()))),
+    Effect.flatMap(() => Ref.set(clients, new Set())),
+  );
+
+  const listenOptions = host ? { host, port } : { port };
+
+  const orchestrationEngine = yield* OrchestrationEngineService;
+  const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
+  const checkpointDiffQuery = yield* CheckpointDiffQuery;
+  const orchestrationReactor = yield* OrchestrationReactor;
+  const { openInEditor } = yield* Open;
+
+  const subscriptionsScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
+
+  yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+    pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
+  yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
+    pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+      issues: event.issues,
+      providers: providerStatuses,
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
+  yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
+  yield* readiness.markOrchestrationSubscriptionsReady;
+
+  // Orphan-worker reaping: on server startup, any worker still in a non-terminal
+  // state in the read model is definitionally orphaned — the child provider
+  // process (Codex / Claude) was killed when the server exited. Mark those
+  // rows terminated so the UI and orchestrator don't see stale "running" agents.
+  yield* Effect.gen(function* () {
+    const engineReadModel = yield* orchestrationEngine.getReadModel();
+    const orphans = (engineReadModel.orchestratorWorkers ?? [])
+      .filter((w: { status: string }) => w.status !== "terminated")
+      .map((w: { workerId: string; threadId: string; status: string }) => ({
+        workerId: w.workerId,
+        threadId: w.threadId,
+        priorStatus: w.status,
+      }));
+    // ORC-223: previously every dispatch failure was silently swallowed
+    // by `.pipe(Effect.catch(() => Effect.void))`, so a locked DB or
+    // schema mismatch left every orphan permanently "running" with no
+    // operator signal. Delegate to `reapOrphanWorkers`, log each
+    // per-worker failure at warn, and surface a high-visibility error
+    // when every dispatch failed (likely systemic).
+    const summary = yield* reapOrphanWorkers({
+      orphans,
+      dispatchTerminate: (worker) =>
+        orchestrationEngine.dispatch({
+          type: "orchestrator.worker.terminate",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          workerId: worker.workerId as any,
+          reason: `Reclaimed on server restart (was ${worker.priorStatus})`,
+          createdAt: new Date().toISOString(),
+        }),
+      onFailure: (failure) =>
+        Effect.logWarning("orchestration.orphan-reap: dispatch failed").pipe(
+          Effect.annotateLogs({
+            workerId: failure.workerId,
+            threadId: failure.threadId,
+            priorStatus: failure.priorStatus,
+            reason: failure.reason,
+          }),
+        ),
+    });
+    if (summary.orphanCount > 0) {
+      yield* Effect.log(
+        `Orphan reap on startup: ${summary.reclaimed}/${summary.orphanCount} reclaimed`,
+      ).pipe(
+        Effect.annotateLogs({
+          orphanCount: summary.orphanCount,
+          reclaimed: summary.reclaimed,
+          failed: summary.failures.length,
+        }),
+      );
+    }
+    if (summary.failures.length > 0 && summary.failures.length === summary.orphanCount) {
+      // Every dispatch failed. Almost certainly a systemic issue
+      // (locked DB, schema mismatch, projection failure). Loud signal
+      // so the operator does not miss it amid normal startup logs.
+      yield* Effect.logError(
+        "orchestration.orphan-reap: ALL orphan-reap dispatches failed; orphaned workers remain non-terminal in the read model",
+      ).pipe(
+        Effect.annotateLogs({
+          orphanCount: summary.orphanCount,
+          firstReason: summary.failures[0]?.reason,
+        }),
+      );
+    }
+  }).pipe(Effect.catch(() => Effect.void));
+
+  let welcomeBootstrapProjectId: ProjectId | undefined;
+  let welcomeBootstrapThreadId: ThreadId | undefined;
+
+  if (autoBootstrapProjectFromCwd) {
+    yield* Effect.gen(function* () {
+      const snapshot = yield* projectionReadModelQuery.getSnapshot();
+      const mostRecentThread = getMostRecentBootstrapThread(snapshot);
+      const existingProject = snapshot.projects.find(
+        (project) => project.workspaceRoot === cwd && project.deletedAt === null,
+      );
+      let bootstrapProjectId: ProjectId;
+      let bootstrapProjectDefaultModelSelection;
+
+      if (!existingProject) {
+        const createdAt = new Date().toISOString();
+        bootstrapProjectId = ProjectId.makeUnsafe(crypto.randomUUID());
+        const bootstrapProjectTitle = path.basename(cwd) || "project";
+        bootstrapProjectDefaultModelSelection = {
+          provider: "claudeAgent" as const,
+          model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
+        };
+        yield* orchestrationEngine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          projectId: bootstrapProjectId,
+          title: bootstrapProjectTitle,
+          workspaceRoot: cwd,
+          defaultModelSelection: bootstrapProjectDefaultModelSelection,
+          createdAt,
+        });
+      } else {
+        bootstrapProjectId = existingProject.id;
+        bootstrapProjectDefaultModelSelection = existingProject.defaultModelSelection ?? {
+          provider: "claudeAgent" as const,
+          model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
+        };
+      }
+
+      if (mostRecentThread) {
+        welcomeBootstrapProjectId = mostRecentThread.projectId;
+        welcomeBootstrapThreadId = mostRecentThread.id;
+        return;
+      }
+
+      const existingThread = snapshot.threads.find(
+        (thread) => thread.projectId === bootstrapProjectId && thread.deletedAt === null,
+      );
+      if (!existingThread) {
+        const createdAt = new Date().toISOString();
+        const threadId = ThreadId.makeUnsafe(crypto.randomUUID());
+        yield* orchestrationEngine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          threadId,
+          projectId: bootstrapProjectId,
+          title: "New thread",
+          modelSelection: bootstrapProjectDefaultModelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          envMode: "local",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        welcomeBootstrapProjectId = bootstrapProjectId;
+        welcomeBootstrapThreadId = threadId;
+      } else {
+        welcomeBootstrapProjectId = bootstrapProjectId;
+        welcomeBootstrapThreadId = existingThread.id;
+      }
+    }).pipe(
+      Effect.mapError(
+        (cause) => new ServerLifecycleError({ operation: "autoBootstrapProject", cause }),
+      ),
+    );
+  }
+
+  const runtimeServices = yield* Effect.services<
+    ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
+  >();
+  const runPromise = Effect.runPromiseWith(runtimeServices);
+
+  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
+    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
+  yield* readiness.markTerminalSubscriptionsReady;
+
+  yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
+    Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
+  );
+  yield* readiness.markHttpListening;
+
+  yield* Effect.addFinalizer(() =>
+    // ORC-222: closeWebSocketServer's defects (Cause.Die) are now logged
+    // at error level with a tag, separate from typed failures which log
+    // at warn. Same swallow semantics as ignoreCause but loud about
+    // programmer bugs.
+    Effect.all([
+      closeAllClients,
+      closeWebSocketServer.pipe(
+        ignoreCauseDefectAware({ tag: "wsServer.closeWebSocketServer" }),
+      ),
+    ]),
+  );
+
+  const browserPreviewThreadBySocket = new WeakMap<WebSocket, ThreadId>();
+
+  const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
+    switch (request.body._tag) {
+      case ORCHESTRATION_WS_METHODS.getSnapshot: {
+        const projectionSnapshot = yield* projectionReadModelQuery.getSnapshot();
+        // Merge orchestrator data from the in-memory read model into the projection snapshot.
+        // The projection snapshot has threads/projects from SQLite, but orchestrator runs/tasks/workers
+        // live in the in-memory engine read model.
+        const engineReadModel = yield* orchestrationEngine.getReadModel();
+        return {
+          ...projectionSnapshot,
+          orchestratorRuns: engineReadModel.orchestratorRuns ?? [],
+          orchestratorTasks: engineReadModel.orchestratorTasks ?? [],
+          orchestratorWorkers: engineReadModel.orchestratorWorkers ?? [],
+          orchestratorMessages: engineReadModel.orchestratorMessages ?? [],
+          orchestratorDependencies: engineReadModel.orchestratorDependencies ?? [],
+        };
+      }
+
+      case ORCHESTRATION_WS_METHODS.dispatchCommand: {
+        const { command } = request.body;
+        const normalizedCommand = yield* normalizeDispatchCommand({ command });
+        return yield* orchestrationEngine.dispatch(normalizedCommand);
+      }
+
+      case ORCHESTRATION_WS_METHODS.getTurnDiff: {
+        const body = stripRequestTag(request.body);
+        return yield* checkpointDiffQuery.getTurnDiff(body);
+      }
+
+      case ORCHESTRATION_WS_METHODS.getFullThreadDiff: {
+        const body = stripRequestTag(request.body);
+        return yield* checkpointDiffQuery.getFullThreadDiff(body);
+      }
+
+      case ORCHESTRATION_WS_METHODS.replayEvents: {
+        const { fromSequenceExclusive } = request.body;
+        return yield* Stream.runCollect(
+          orchestrationEngine.readEvents(
+            clamp(fromSequenceExclusive, {
+              maximum: Number.MAX_SAFE_INTEGER,
+              minimum: 0,
+            }),
+          ),
+        ).pipe(Effect.map((events) => Array.from(events)));
+      }
+
+      case WS_METHODS.projectsSearchEntries: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => searchWorkspaceEntries(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to search workspace entries: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsWriteFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        yield* fileSystem
+          .makeDirectory(path.dirname(target.absolutePath), { recursive: true })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new RouteRequestError({
+                  message: `Failed to prepare workspace path: ${String(cause)}`,
+                }),
+            ),
+          );
+        yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to write workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.projectsReadFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        const contents = yield* fileSystem.readFileString(target.absolutePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to read workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        return { relativePath: target.relativePath, contents };
+      }
+
+      case WS_METHODS.shellOpenInEditor: {
+        const body = stripRequestTag(request.body);
+        return yield* openInEditor(body);
+      }
+
+      case WS_METHODS.gitStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.status(body);
+      }
+
+      case WS_METHODS.gitPull: {
+        const body = stripRequestTag(request.body);
+        return yield* git.pullCurrentBranch(body.cwd);
+      }
+
+      case WS_METHODS.gitRunStackedAction: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.runStackedAction(body, {
+          actionId: body.actionId,
+          progressReporter: {
+            publish: (event) =>
+              pushBus.publishClient(ws, WS_CHANNELS.gitActionProgress, event).pipe(Effect.asVoid),
+          },
+        });
+      }
+
+      case WS_METHODS.gitResolvePullRequest: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.resolvePullRequest(body);
+      }
+
+      case WS_METHODS.gitPreparePullRequestThread: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.preparePullRequestThread(body);
+      }
+
+      case WS_METHODS.gitListBranches: {
+        const body = stripRequestTag(request.body);
+        return yield* git.listBranches(body);
+      }
+
+      case WS_METHODS.gitCreateWorktree: {
+        const body = stripRequestTag(request.body);
+        return yield* git.createWorktree(body);
+      }
+
+      case WS_METHODS.gitCreateDetachedWorktree: {
+        const body = stripRequestTag(request.body);
+        return yield* git.createDetachedWorktree(body);
+      }
+
+      case WS_METHODS.gitRemoveWorktree: {
+        const body = stripRequestTag(request.body);
+        return yield* git.removeWorktree(body);
+      }
+
+      case WS_METHODS.gitCreateBranch: {
+        const body = stripRequestTag(request.body);
+        return yield* git.createBranch(body);
+      }
+
+      case WS_METHODS.gitCheckout: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.scoped(git.checkoutBranch(body));
+      }
+
+      case WS_METHODS.gitInit: {
+        const body = stripRequestTag(request.body);
+        return yield* git.initRepo(body);
+      }
+
+      case WS_METHODS.gitHandoffThread: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.handoffThread(body);
+      }
+
+      case WS_METHODS.terminalOpen: {
+        const body = stripRequestTag(request.body);
+        terminalTitleTracker.reset(body.threadId, body.terminalId ?? DEFAULT_TERMINAL_ID);
+        return yield* terminalManager.open(body);
+      }
+
+      case WS_METHODS.terminalWrite: {
+        const body = stripRequestTag(request.body);
+        yield* terminalManager.write(body);
+        yield* maybeAutoRenameTerminalThread({
+          threadId: body.threadId,
+          terminalId: body.terminalId ?? DEFAULT_TERMINAL_ID,
+          data: body.data,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
+
+      case WS_METHODS.terminalResize: {
+        const body = stripRequestTag(request.body);
+        return yield* terminalManager.resize(body);
+      }
+
+      case WS_METHODS.terminalClear: {
+        const body = stripRequestTag(request.body);
+        return yield* terminalManager.clear(body);
+      }
+
+      case WS_METHODS.terminalRestart: {
+        const body = stripRequestTag(request.body);
+        terminalTitleTracker.reset(body.threadId, body.terminalId ?? DEFAULT_TERMINAL_ID);
+        return yield* terminalManager.restart(body);
+      }
+
+      case WS_METHODS.terminalClose: {
+        const body = stripRequestTag(request.body);
+        terminalTitleTracker.reset(body.threadId, body.terminalId ?? null);
+        return yield* terminalManager.close(body);
+      }
+
+      case WS_METHODS.serverGetConfig:
+        const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        return {
+          cwd,
+          homeDir,
+          keybindingsConfigPath,
+          keybindings: keybindingsConfig.keybindings,
+          issues: keybindingsConfig.issues,
+          providers: providerStatuses,
+          availableEditors,
+        };
+
+      case WS_METHODS.serverUpsertKeybinding: {
+        const body = stripRequestTag(request.body);
+        const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
+        return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.browserOpenPreview: {
+        const body = stripRequestTag(request.body);
+        browserPreviewThreadBySocket.set(ws, body.threadId);
+        yield* pushBus.publishAll(WS_CHANNELS.browserOpenRequested, body);
+        return { opened: true, threadId: body.threadId, url: body.url ?? null };
+      }
+
+      case WS_METHODS.browserOpenSession: {
+        const requestBody = stripRequestTag(request.body);
+        const body = {
+          ...requestBody,
+          preferredRuntimeKind: requestBody.preferredRuntimeKind ?? "electron-visible",
+        };
+        const result = yield* browserRuntime.openSession(body);
+        const threadId = body.threadId ?? browserPreviewThreadBySocket.get(ws);
+        if (threadId) {
+          yield* pushBus.publishAll(WS_CHANNELS.browserObservationCaptured, {
+            threadId,
+            observation: result.observation,
+            actionSummary: "Opened browser session",
+          });
+        }
+        return result;
+      }
+
+      case WS_METHODS.browserInspect: {
+        const body = stripRequestTag(request.body);
+        return yield* browserRuntime.inspect(body);
+      }
+
+      case WS_METHODS.browserAct: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserRuntime.act(body);
+        const threadId = body.threadId ?? browserPreviewThreadBySocket.get(ws);
+        if (threadId) {
+          yield* pushBus.publishAll(WS_CHANNELS.browserObservationCaptured, {
+            threadId,
+            observation: result.observation,
+            actionSummary: browserActionSummary(body.action),
+          });
+        }
+        if (result.status === "requires-approval" && result.approvalRequestId) {
+          const approval = yield* browserEvidenceRepository.getBrowserApprovalRequest({
+            approvalId: result.approvalRequestId,
+          });
+          if (Option.isSome(approval)) {
+            const approvalSnapshot = browserApprovalFromRow(approval.value);
+            yield* pushBus.publishAll(
+              WS_CHANNELS.browserSessionEvent,
+              browserSessionEventPayload({
+                sessionId: approvalSnapshot.browserSessionId,
+                type: "BrowserApprovalRequestCreated",
+                actor: "agent",
+                artifactRefs: approvalSnapshot.evidenceRefs,
+                payload: {
+                  approvalId: approvalSnapshot.id,
+                  browserSessionId: approvalSnapshot.browserSessionId,
+                  action: approvalSnapshot.action,
+                  actionHash: approvalSnapshot.actionHash,
+                  reason: approvalSnapshot.reason,
+                  risk: approvalSnapshot.risk,
+                  status: approvalSnapshot.status,
+                  origin: approvalSnapshot.origin,
+                  observedUrl: approvalSnapshot.observedUrl,
+                  evidenceRefs: approvalSnapshot.evidenceRefs,
+                  approval: approvalSnapshot,
+                },
+              }),
+            );
+          }
+        } else if (body.approvalRef && result.status === "ok") {
+          const approval = yield* browserEvidenceRepository.getBrowserApprovalRequest({
+            approvalId: body.approvalRef,
+          });
+          if (Option.isSome(approval)) {
+            const approvalSnapshot = browserApprovalFromRow(approval.value);
+            yield* pushBus.publishAll(
+              WS_CHANNELS.browserSessionEvent,
+              browserSessionEventPayload({
+                sessionId: approvalSnapshot.browserSessionId,
+                type: "BrowserApprovalConsumed",
+                actor: "agent",
+                artifactRefs: approvalSnapshot.evidenceRefs,
+                payload: {
+                  approvalId: approvalSnapshot.id,
+                  browserSessionId: approvalSnapshot.browserSessionId,
+                  action: approvalSnapshot.action,
+                  actionHash: approvalSnapshot.actionHash,
+                  status: approvalSnapshot.status,
+                  risk: approvalSnapshot.risk,
+                  executedActionRef: approvalSnapshot.executedActionRef,
+                  evidenceRefs: approvalSnapshot.evidenceRefs,
+                  approval: approvalSnapshot,
+                },
+              }),
+            );
+          }
+        }
+        return result;
+      }
+
+      case WS_METHODS.browserCloseSession: {
+        const body = stripRequestTag(request.body);
+        yield* browserRuntime.closeSession(body);
+        return { closed: true, sessionId: body.sessionId };
+      }
+
+      case WS_METHODS.desktopBrowserBridgeResponse: {
+        const body = stripRequestTag(request.body);
+        handleDesktopBrowserBridgeResponse(body);
+        return { received: true, requestId: body.requestId };
+      }
+
+      case WS_METHODS.browserControlAcquire: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.acquire(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlLeaseAcquired",
+            actor: body.requestedBy,
+            payload: { lease: result.lease },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserControlRelease: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.release(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlLeaseReleased",
+            actor: result.lease.reason === "agent-action" ? "agent" : "human",
+            artifactRefs: body.snapshotAfterReleaseRef ? [body.snapshotAfterReleaseRef] : [],
+            payload: { lease: result.lease },
+          }),
+        );
+        if (result.lease.requiredSnapshotAfterRelease && !result.lease.snapshotAfterReleaseRef) {
+          yield* pushBus.publishAll(
+            WS_CHANNELS.browserSessionEvent,
+            browserSessionEventPayload({
+              sessionId: body.browserSessionId,
+              type: "BrowserControlFreshObservationRequired",
+              actor: "human",
+              payload: { lease: result.lease },
+            }),
+          );
+        }
+        return result;
+      }
+
+      case WS_METHODS.browserControlStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* browserControlLeases.status(body);
+      }
+
+      case WS_METHODS.browserControlTake: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.take(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlHumanControlTaken",
+            actor: "human",
+            payload: { lease: result.lease, reason: body.reason ?? "user-takeover" },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserControlPauseAgent: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.pauseAgent(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlAgentPaused",
+            actor: "human",
+            payload: { lease: result.lease, reason: body.reason ?? "manual-pause" },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserControlResumeAgent: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.resumeAgent(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlAgentResumed",
+            actor: "agent",
+            payload: { lease: result.lease },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserControlObserveFresh: {
+        const body = stripRequestTag(request.body);
+        const observed = yield* browserRuntime.observe({ sessionId: body.browserSessionId });
+        const observationRef =
+          observed.screenshotArtifactRef ??
+          observed.runtimeTruth?.screenshotArtifactRef ??
+          observed.observation.screenshotArtifactRef ??
+          observed.evidenceRefs?.[0];
+        if (!observationRef) {
+          throw new Error("Fresh browser observation did not produce evidence.");
+        }
+        const control = yield* browserControlLeases.observeFresh({
+          browserSessionId: body.browserSessionId,
+          observationRef: EvidenceArtifactId.makeUnsafe(observationRef),
+        });
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlFreshObservationSatisfied",
+            actor: "agent",
+            artifactRefs: [observationRef],
+            payload: { lease: control.lease, observationRef },
+          }),
+        );
+        return {
+          ...control,
+          observation: observed.observation,
+          evidenceRefs: observed.evidenceRefs ?? [],
+        };
+      }
+
+      case WS_METHODS.browserControlHumanInput: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserControlLeases.humanInput(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: body.browserSessionId,
+            type: "BrowserControlHumanInputDetected",
+            actor: "human",
+            payload: {
+              lease: result.lease,
+              kind: body.kind,
+              ...(body.url ? { url: body.url } : {}),
+              occurredAt: body.occurredAt,
+            },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserAddAnnotation: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserAnnotations.create(body);
+        if (result.annotation.browserSessionId ?? result.annotation.sessionId) {
+          yield* pushBus.publishAll(
+            WS_CHANNELS.browserSessionEvent,
+            browserSessionEventPayload({
+              sessionId:
+                result.annotation.browserSessionId ??
+                result.annotation.sessionId ??
+                result.annotation.threadId,
+              type: "BrowserAnnotationCreated",
+              actor: "human",
+              artifactRefs: result.annotation.artifactRefs ?? [],
+              payload: { annotationId: result.annotation.id, annotation: result.annotation },
+            }),
+          );
+        }
+        return result;
+      }
+
+      case WS_METHODS.browserResolveAnnotationTargetAtPoint: {
+        const body = stripRequestTag(request.body);
+        return yield* browserRuntime.resolveAnnotationTargetAtPoint(body);
+      }
+
+      case WS_METHODS.browserListAnnotations: {
+        const body = stripRequestTag(request.body);
+        return yield* browserAnnotations.list(body);
+      }
+
+      case WS_METHODS.browserGetAnnotation: {
+        const body = stripRequestTag(request.body);
+        return yield* browserAnnotations.get(body);
+      }
+
+      case WS_METHODS.browserResolveAnnotation: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserAnnotations.resolve(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId:
+              result.annotation.browserSessionId ??
+              result.annotation.sessionId ??
+              result.annotation.threadId,
+            type: "BrowserAnnotationResolved",
+            actor: "human",
+            artifactRefs: result.annotation.artifactRefs ?? [],
+            payload: { annotationId: result.annotation.id, annotation: result.annotation },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserReopenAnnotation: {
+        const body = stripRequestTag(request.body);
+        const result = yield* browserAnnotations.reopen(body);
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId:
+              result.annotation.browserSessionId ??
+              result.annotation.sessionId ??
+              result.annotation.threadId,
+            type: "BrowserAnnotationReopened",
+            actor: "human",
+            artifactRefs: result.annotation.artifactRefs ?? [],
+            payload: { annotationId: result.annotation.id, annotation: result.annotation },
+          }),
+        );
+        return result;
+      }
+
+      case WS_METHODS.browserWorkflowStart: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.start(body);
+      }
+
+      case WS_METHODS.browserWorkflowStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.status(body);
+      }
+
+      case WS_METHODS.browserWorkflowGet: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.get(body);
+      }
+
+      case WS_METHODS.browserWorkflowCancel: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.cancel(body);
+      }
+
+      case WS_METHODS.browserWorkflowList: {
+        const body = stripRequestTag(request.body);
+        return yield* browserWorkflows.list(body);
+      }
+
+      case WS_METHODS.browserApprovalGet: {
+        const body = stripRequestTag(request.body);
+        const approval = yield* browserEvidenceRepository.getBrowserApprovalRequest(body);
+        if (Option.isNone(approval)) {
+          return yield* new RouteRequestError({
+            message: `Browser approval request not found: ${body.approvalId}`,
+          });
+        }
+        return { approval: browserApprovalFromRow(approval.value) };
+      }
+
+      case WS_METHODS.browserApprovalList: {
+        const body = stripRequestTag(request.body);
+        const approvals = yield* browserEvidenceRepository.listBrowserApprovalRequests(body);
+        return { approvals: approvals.map(browserApprovalFromRow) };
+      }
+
+      case WS_METHODS.browserApprovalRespond: {
+        const body = stripRequestTag(request.body);
+        const existing = yield* browserEvidenceRepository.getBrowserApprovalRequest(body);
+        if (Option.isNone(existing)) {
+          return yield* new RouteRequestError({
+            message: `Browser approval request not found: ${body.approvalId}`,
+          });
+        }
+        yield* browserEvidenceRepository.updateBrowserApprovalStatus({
+          approvalId: body.approvalId,
+          status: body.decision,
+          updatedAt: new Date().toISOString(),
+          ...(body.reason ? { decisionReason: body.reason } : {}),
+        });
+        const updated = yield* browserEvidenceRepository.getBrowserApprovalRequest(body);
+        if (Option.isNone(updated)) {
+          return yield* new RouteRequestError({
+            message: `Browser approval request not found after update: ${body.approvalId}`,
+          });
+        }
+        const approval = browserApprovalFromRow(updated.value);
+        yield* browserEvidenceRepository.appendSessionEvent({
+          eventId: SessionEventId.makeUnsafe(`browser-approval-event-${randomUUID()}`),
+          sessionId: existing.value.browserSessionId,
+          workflowRunId: null,
+          type:
+            body.decision === "approved" ? "BrowserApprovalApproved" : "BrowserApprovalRejected",
+          actor: "human",
+          artifactRefsJson: existing.value.evidenceRefsJson,
+          payloadJson: JSON.stringify({
+            approvalId: body.approvalId,
+            browserSessionId: existing.value.browserSessionId,
+            decision: body.decision,
+            status: body.decision,
+            action: approval.action,
+            actionHash: approval.actionHash,
+            risk: approval.risk,
+            origin: approval.origin,
+            observedUrl: approval.observedUrl,
+            evidenceRefs: approval.evidenceRefs,
+            approval,
+            ...(body.reason ? { reason: body.reason } : {}),
+          }),
+          occurredAt: new Date().toISOString(),
+        });
+        yield* pushBus.publishAll(
+          WS_CHANNELS.browserSessionEvent,
+          browserSessionEventPayload({
+            sessionId: existing.value.browserSessionId,
+            type:
+              body.decision === "approved" ? "BrowserApprovalApproved" : "BrowserApprovalRejected",
+            actor: "human",
+            artifactRefs: approval.evidenceRefs,
+            payload: {
+              approvalId: body.approvalId,
+              browserSessionId: existing.value.browserSessionId,
+              decision: body.decision,
+              status: body.decision,
+              action: approval.action,
+              actionHash: approval.actionHash,
+              risk: approval.risk,
+              origin: approval.origin,
+              observedUrl: approval.observedUrl,
+              evidenceRefs: approval.evidenceRefs,
+              approval,
+              ...(body.reason ? { reason: body.reason } : {}),
+            },
+          }),
+        );
+        return { approval };
+      }
+
+      case WS_METHODS.evidenceArtifactGet: {
+        const body = stripRequestTag(request.body);
+        const artifactOption = yield* browserEvidenceRepository.getEvidenceArtifact(body);
+        if (Option.isNone(artifactOption)) {
+          return yield* new RouteRequestError({
+            message: `Evidence artifact not found: ${body.artifactId}`,
+          });
+        }
+        const artifact = artifactOption.value;
+        if (artifact.access === "never-display-raw") {
+          return yield* new RouteRequestError({
+            message: `Evidence artifact is not displayable: ${body.artifactId}`,
+          });
+        }
+        const contentOption = yield* browserEvidenceRepository.getEvidenceArtifactContent(body);
+        if (Option.isNone(contentOption)) {
+          return yield* new RouteRequestError({
+            message: `Evidence artifact content not found: ${body.artifactId}`,
+          });
+        }
+        return evidenceArtifactContentResult({
+          artifact,
+          contentText: contentOption.value.contentText,
+        });
+      }
+
+      case WS_METHODS.evidenceBundleCreate: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.createEvidenceBundle(body);
+      }
+
+      case WS_METHODS.evidenceBundleGet: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.getEvidenceBundle(body);
+      }
+
+      case WS_METHODS.reviewerDecisionCreate: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.createDecision(body);
+      }
+
+      case WS_METHODS.reviewerDecisionGet: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.getDecision(body);
+      }
+
+      case WS_METHODS.reviewerDecisionList: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.listDecisions(body);
+      }
+
+      case WS_METHODS.reviewerDecisionReworkStart: {
+        const body = stripRequestTag(request.body);
+        return yield* reviewerDecisionService.startRework(body);
+      }
+
+      case WS_METHODS.previewDetect: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.detect(body);
+      }
+
+      case WS_METHODS.previewStart: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.start(body);
+      }
+
+      case WS_METHODS.previewStop: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.stop(body);
+      }
+
+      case WS_METHODS.previewRestart: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.restart(body);
+      }
+
+      case WS_METHODS.previewStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.status(body);
+      }
+
+      case WS_METHODS.previewLogs: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.logs(body);
+      }
+
+      case WS_METHODS.previewTargetGet: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.getTarget(body);
+      }
+
+      case WS_METHODS.previewTargetList: {
+        const body = stripRequestTag(request.body);
+        return yield* previewService.listTargets(body);
+      }
+
+      case WS_METHODS.providerGetComposerCapabilities: {
+        const body = stripRequestTag(request.body);
+        return yield* providerDiscoveryService.getComposerCapabilities(body);
+      }
+
+      case WS_METHODS.providerListCommands: {
+        const body = stripRequestTag(request.body);
+        return yield* providerDiscoveryService.listCommands(body);
+      }
+
+      case WS_METHODS.providerListSkills: {
+        const body = stripRequestTag(request.body);
+        return yield* providerDiscoveryService.listSkills(body);
+      }
+
+      case WS_METHODS.providerListPlugins: {
+        const body = stripRequestTag(request.body);
+        return yield* providerDiscoveryService.listPlugins(body);
+      }
+
+      case WS_METHODS.providerReadPlugin: {
+        const body = stripRequestTag(request.body);
+        return yield* providerDiscoveryService.readPlugin(body);
+      }
+
+      case WS_METHODS.providerListModels: {
+        const body = stripRequestTag(request.body);
+        return yield* providerDiscoveryService.listModels(body);
+      }
+
+      default: {
+        const _exhaustiveCheck: never = request.body;
+        return yield* new RouteRequestError({
+          message: `Unknown method: ${String(_exhaustiveCheck)}`,
+        });
+      }
+    }
+  });
+
+  // ORC-031: best-effort send of an error envelope when the entire
+  // handleMessage body fails (defect or sendWsResponse failure). Used as a
+  // last-resort safety net so the client sees a frame instead of timing
+  // out. We swallow any further errors here because if even THIS path
+  // fails the WebSocket is not usable anyway.
+  const sendBestEffortErrorEnvelope = (
+    ws: WebSocket,
+    requestId: string,
+    message: string,
+  ): Effect.Effect<void> =>
+    Effect.sync(() => {
+      try {
+        if (ws.readyState !== ws.OPEN) return;
+        const envelope = JSON.stringify({ id: requestId, error: { message } });
+        ws.send(envelope);
+      } catch {
+        // best-effort; the caller has already logged the underlying cause
+      }
+    });
+
+  const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
+    const sendWsResponse = (response: WsResponseMessage) =>
+      encodeWsResponse(response).pipe(
+        Effect.tap((encodedResponse) => Effect.sync(() => ws.send(encodedResponse))),
+        Effect.asVoid,
+      );
+
+    const messageText = websocketRawToString(raw);
+    if (messageText === null) {
+      return yield* sendWsResponse({
+        id: "unknown",
+        error: { message: "Invalid request format: Failed to read message" },
+      });
+    }
+
+    const request = decodeWebSocketRequest(messageText);
+    if (Result.isFailure(request)) {
+      return yield* sendWsResponse({
+        id: "unknown",
+        error: { message: `Invalid request format: ${formatSchemaError(request.failure)}` },
+      });
+    }
+
+    // ORC-040: per-message auth gate. The handshake-level check stays primary,
+    // but if a future code path emits "connection" without running through it
+    // (refactor, test harness, third-party proxy), this rejects the message
+    // instead of executing it with full authority. When no auth token is
+    // configured, this passes through unchanged.
+    if (
+      !isMessageAllowed({
+        authRequired: typeof authToken === "string" && authToken.length > 0,
+        connectionAuthenticated: isConnectionAuthenticated(ws),
+      })
+    ) {
+      return yield* sendWsResponse({
+        id: request.success.id,
+        error: { message: "Connection is not authenticated. Reconnect with a valid token." },
+      });
+    }
+
+    // ORC-062: mint a per-arrival trace context so every downstream log
+    // line emitted while routing this request carries traceId/requestId/
+    // method annotations. Operators can then grep for a single traceId to
+    // reconstruct the full chain (request received -> command dispatched
+    // -> push enqueued -> response sent / failed).
+    const trace = buildTraceContext({
+      requestId: request.success.id,
+      method: request.success.body._tag,
+    });
+
+    return yield* withTraceContext(
+      trace,
+      Effect.gen(function* () {
+        const result = yield* Effect.exit(routeRequest(ws, request.success));
+        if (Exit.isFailure(result)) {
+          return yield* sendWsResponse({
+            id: request.success.id,
+            error: { message: Cause.pretty(result.cause) },
+          });
+        }
+
+        // ORC-031: if sending the success response fails (e.g. the WS
+        // connection went bad mid-write), best-effort send an error
+        // envelope with the original request id so the client sees a frame
+        // and can either retry or surface the failure. Without this, a
+        // failed send leaves the caller waiting until timeout.
+        return yield* sendWsResponse({
+          id: request.success.id,
+          result: result.value,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              yield* Effect.logError("ws.sendWsResponse failed", {
+                requestId: request.success.id,
+                cause: Cause.pretty(cause),
+              });
+              yield* sendBestEffortErrorEnvelope(
+                ws,
+                request.success.id,
+                "Internal server error while sending the response.",
+              );
+            }),
+          ),
+        );
+      }),
+    );
+  });
+
+  httpServer.on("upgrade", (request, socket, head) => {
+    // ORC-033: log upgrade-time socket errors at debug level instead of
+    // swallowing them. Without the listener Node would crash the process
+    // on EPIPE/ECONNRESET when a client disconnects mid-handshake; the
+    // listener prevents that crash but used to be empty so operators
+    // had no signal that clients were failing handshakes en masse.
+    socket.on("error", (err: NodeJS.ErrnoException) =>
+      logUpgradeSocketError(logger, err, socket),
+    );
+
+    if (authToken) {
+      // ORC-042: prefer Authorization header / Sec-WebSocket-Protocol over
+      // ?token= query string. Query strings leak via proxy access logs,
+      // browser history, /proc/PID/cmdline, and Referer headers. Headers
+      // do not. Legacy ?token= is still accepted for one release of
+      // backward compat.
+      const providedToken = extractWsAuthTokenFromUpgrade(
+        { url: request.url, headers: request.headers as Record<string, string | string[] | undefined> },
+        `http://localhost:${port}`,
+      );
+
+      // ORC-239: per-IP auth-attempt rate limit. Reject already-blocked
+      // IPs immediately with 429 + Retry-After. Record failures and
+      // log every bad attempt at warn so operators can spot brute-force.
+      const sourceIp =
+        (typeof request.socket.remoteAddress === "string" && request.socket.remoteAddress) ||
+        "unknown";
+      const blockState = authAttemptLimiter.isBlocked(sourceIp);
+      if (blockState.blocked) {
+        const retrySeconds = Math.ceil((blockState.retryAfterMs ?? 30_000) / 1000);
+        rejectUpgrade(
+          socket,
+          429,
+          "Too many failed auth attempts; retry after " + String(retrySeconds) + "s",
+          { "Retry-After": String(retrySeconds) },
+        );
+        logger.warn("ws.auth.blocked", {
+          sourceIp,
+          failureCount: blockState.failureCount,
+          retryAfterMs: blockState.retryAfterMs,
+        });
+        return;
+      }
+
+      if (providedToken !== authToken) {
+        const next = authAttemptLimiter.recordFailure(sourceIp);
+        logger.warn("ws.auth.failure", {
+          sourceIp,
+          failureCount: next.failureCount,
+          blocked: next.blocked,
+          retryAfterMs: next.retryAfterMs,
+        });
+        rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
+        return;
+      }
+      authAttemptLimiter.recordSuccess(sourceIp);
+    }
+
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      // Defense-in-depth (ORC-040): tag the connection as authenticated so
+      // handleMessage can refuse any future code path that emits "connection"
+      // without going through this upgrade gate.
+      markConnectionAuthenticated(ws);
+      wss.emit("connection", ws, request);
+    });
+  });
+
+  wss.on("connection", (ws) => {
+    const desktopBridgeClientId = `desktop-bridge-client-${randomUUID()}`;
+    desktopBridgeClientIdsBySocket.set(ws, desktopBridgeClientId);
+    registerDesktopBrowserBridgeClient(desktopBridgeClientId);
+    const segments = cwd.split(/[/\\]/).filter(Boolean);
+    const projectName = segments[segments.length - 1] ?? "project";
+
+    const welcomeData = {
+      cwd,
+      homeDir: OS.homedir(),
+      projectName,
+      ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
+      ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
+    };
+    // Send welcome before adding to broadcast set so publishAll calls
+    // cannot reach this client before the welcome arrives.
+    void runPromise(
+      readiness.awaitServerReady.pipe(
+        Effect.flatMap(() => pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData)),
+        Effect.flatMap((delivered) =>
+          delivered ? Ref.update(clients, (clients) => clients.add(ws)) : Effect.void,
+        ),
+      ),
+    );
+
+    ws.on("message", (raw) => {
+      // ORC-031: structured logging on outermost handler defects.
+      // handleMessage already converts known failures (parse errors,
+      // routeRequest failures) into error envelopes for the client.
+      // This catch is the safety net for unhandled defects (e.g.
+      // sendWsResponse itself throws); we log structurally so operators
+      // can investigate. We don't send a bonus error envelope here
+      // because we have no way to know the original request id at this
+      // outer level, and the test harness's "unknown" id catch-all
+      // would steal the envelope from subsequent legitimate requests.
+      void runPromise(
+        handleMessage(ws, raw).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("ws.handleMessage failed", { cause: Cause.pretty(cause) }),
+          ),
+        ),
+      );
+    });
+
+    ws.on("close", () => {
+      unregisterDesktopBrowserBridgeClient(desktopBridgeClientId);
+      clearDesktopBrowserBridgePendingRequests("Desktop browser bridge client disconnected.");
+      void runPromise(
+        Ref.update(clients, (clients) => {
+          clients.delete(ws);
+          return clients;
+        }),
+      );
+    });
+
+    ws.on("error", () => {
+      unregisterDesktopBrowserBridgeClient(desktopBridgeClientId);
+      clearDesktopBrowserBridgePendingRequests("Desktop browser bridge client disconnected.");
+      void runPromise(
+        Ref.update(clients, (clients) => {
+          clients.delete(ws);
+          return clients;
+        }),
+      );
+    });
+  });
+
+  return httpServer;
+});
+
+export const ServerLive = Layer.succeed(Server, {
+  start: createServer(),
+  stopSignal: Effect.never,
+} satisfies ServerShape);

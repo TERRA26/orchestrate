@@ -1,0 +1,29 @@
+import type { ThreadId } from "@orchestrate/contracts";
+
+interface TerminalRetentionThread {
+  id: ThreadId;
+  deletedAt: string | null;
+}
+
+interface CollectActiveTerminalThreadIdsInput {
+  snapshotThreads: readonly TerminalRetentionThread[];
+  draftThreadIds: Iterable<ThreadId>;
+  retainedThreadIds?: Iterable<ThreadId>;
+}
+
+export function collectActiveTerminalThreadIds(
+  input: CollectActiveTerminalThreadIdsInput,
+): Set<ThreadId> {
+  const activeThreadIds = new Set<ThreadId>();
+  for (const thread of input.snapshotThreads) {
+    if (thread.deletedAt !== null) continue;
+    activeThreadIds.add(thread.id);
+  }
+  for (const draftThreadId of input.draftThreadIds) {
+    activeThreadIds.add(draftThreadId);
+  }
+  for (const retainedThreadId of input.retainedThreadIds ?? []) {
+    activeThreadIds.add(retainedThreadId);
+  }
+  return activeThreadIds;
+}

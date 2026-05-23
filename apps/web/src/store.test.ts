@@ -1,0 +1,488 @@
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  ProjectId,
+  ThreadId,
+  TurnId,
+  type OrchestrationReadModel,
+} from "@orchestrate/contracts";
+import { describe, expect, it } from "vitest";
+
+import {
+  markThreadUnread,
+  reorderProjects,
+  selectMarkThreadVisited,
+  selectProjects,
+  selectSetError,
+  selectSetThreadWorkspace,
+  selectSyncServerReadModel,
+  selectThreads,
+  syncServerReadModel,
+  type AppState,
+} from "./store";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+
+function makeThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: ThreadId.makeUnsafe("thread-1"),
+    codexThreadId: null,
+    projectId: ProjectId.makeUnsafe("project-1"),
+    title: "Thread",
+    modelSelection: {
+      provider: "codex",
+      model: "gpt-5-codex",
+    },
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    session: null,
+    messages: [],
+    turnDiffSummaries: [],
+    activities: [],
+    proposedPlans: [],
+    error: null,
+    createdAt: "2026-02-13T00:00:00.000Z",
+    latestTurn: null,
+    envMode: "local",
+    branch: null,
+    worktreePath: null,
+    forkSourceThreadId: null,
+    handoff: null,
+    ...overrides,
+  };
+}
+
+function makeState(thread: Thread): AppState {
+  return {
+    projects: [
+      {
+        id: ProjectId.makeUnsafe("project-1"),
+        name: "Project",
+        cwd: "/tmp/project",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        expanded: true,
+        scripts: [],
+      },
+    ],
+    threads: [thread],
+    threadsHydrated: true,
+  };
+}
+
+function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"][number]>) {
+  return {
+    id: ThreadId.makeUnsafe("thread-1"),
+    projectId: ProjectId.makeUnsafe("project-1"),
+    title: "Thread",
+    modelSelection: {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+    },
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    envMode: "local",
+    branch: null,
+    worktreePath: null,
+    forkSourceThreadId: null,
+    latestTurn: null,
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    deletedAt: null,
+    archivedAt: null,
+    handoff: null,
+    messages: [],
+    activities: [],
+    proposedPlans: [],
+    checkpoints: [],
+    session: null,
+    ...overrides,
+  } satisfies OrchestrationReadModel["threads"][number];
+}
+
+function makeReadModel(thread: OrchestrationReadModel["threads"][number]): OrchestrationReadModel {
+  return {
+    snapshotSequence: 1,
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    projects: [
+      {
+        id: ProjectId.makeUnsafe("project-1"),
+        title: "Project",
+        workspaceRoot: "/tmp/project",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5.3-codex",
+        },
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:00.000Z",
+        deletedAt: null,
+        scripts: [],
+      },
+    ],
+    threads: [thread],
+  };
+}
+
+function makeReadModelProject(
+  overrides: Partial<OrchestrationReadModel["projects"][number]>,
+): OrchestrationReadModel["projects"][number] {
+  return {
+    id: ProjectId.makeUnsafe("project-1"),
+    title: "Project",
+    workspaceRoot: "/tmp/project",
+    defaultModelSelection: {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+    },
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    deletedAt: null,
+    scripts: [],
+    ...overrides,
+  };
+}
+
+describe("store pure functions", () => {
+  it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
+    const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
+    const initialState = makeState(
+      makeThread({
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "completed",
+          requestedAt: "2026-02-25T12:28:00.000Z",
+          startedAt: "2026-02-25T12:28:30.000Z",
+          completedAt: latestTurnCompletedAt,
+          assistantMessageId: null,
+        },
+        lastVisitedAt: "2026-02-25T12:35:00.000Z",
+      }),
+    );
+
+    const next = markThreadUnread(initialState, ThreadId.makeUnsafe("thread-1"));
+
+    const updatedThread = next.threads[0];
+    expect(updatedThread).toBeDefined();
+    expect(updatedThread?.lastVisitedAt).toBe("2026-02-25T12:29:59.999Z");
+    expect(Date.parse(updatedThread?.lastVisitedAt ?? "")).toBeLessThan(
+      Date.parse(latestTurnCompletedAt),
+    );
+  });
+
+  it("markThreadUnread does not change a thread without a completed turn", () => {
+    const initialState = makeState(
+      makeThread({
+        latestTurn: null,
+        lastVisitedAt: "2026-02-25T12:35:00.000Z",
+      }),
+    );
+
+    const next = markThreadUnread(initialState, ThreadId.makeUnsafe("thread-1"));
+
+    expect(next).toEqual(initialState);
+  });
+
+  it("reorderProjects moves a project to a target index", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const project3 = ProjectId.makeUnsafe("project-3");
+    const state: AppState = {
+      projects: [
+        {
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: project3,
+          name: "Project 3",
+          cwd: "/tmp/project-3",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const next = reorderProjects(state, project1, project3);
+
+    expect(next.projects.map((project) => project.id)).toEqual([project2, project3, project1]);
+  });
+});
+
+describe("store read model sync", () => {
+  it("preserves claude model slugs without an active session", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+        },
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.modelSelection.model).toBe("claude-opus-4-6");
+  });
+
+  it("resolves claude aliases when session provider is claudeAgent", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "sonnet",
+        },
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "claudeAgent",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-02-27T00:00:00.000Z",
+        },
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.modelSelection.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("preserves project and thread updatedAt timestamps from the read model", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        updatedAt: "2026-02-27T00:05:00.000Z",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:00.000Z");
+    expect(next.threads[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
+  });
+
+  it("preserves the current project order when syncing incoming read model updates", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const project3 = ProjectId.makeUnsafe("project-3");
+    const initialState: AppState = {
+      projects: [
+        {
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 2,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: project1,
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+        }),
+        makeReadModelProject({
+          id: project2,
+          title: "Project 2",
+          workspaceRoot: "/tmp/project-2",
+        }),
+        makeReadModelProject({
+          id: project3,
+          title: "Project 3",
+          workspaceRoot: "/tmp/project-3",
+        }),
+      ],
+      threads: [],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+  });
+
+  it("preserves expanded project state when a project briefly disappears from the snapshot", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const initialState: AppState = {
+      projects: [
+        {
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const snapshotWithoutProject2: OrchestrationReadModel = {
+      snapshotSequence: 2,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: project1,
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+        }),
+      ],
+      threads: [],
+    };
+    const snapshotWithProject2Restored: OrchestrationReadModel = {
+      snapshotSequence: 3,
+      updatedAt: "2026-02-27T00:01:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: project1,
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+        }),
+        makeReadModelProject({
+          id: project2,
+          title: "Project 2",
+          workspaceRoot: "/tmp/project-2",
+        }),
+      ],
+      threads: [],
+    };
+
+    const withoutProject2 = syncServerReadModel(initialState, snapshotWithoutProject2);
+    const restored = syncServerReadModel(withoutProject2, snapshotWithProject2Restored);
+
+    expect(restored.projects.find((project) => project.id === project2)?.expanded).toBe(true);
+  });
+});
+
+/**
+ * Pins the module-level top-of-state selectors introduced by ORC-289.
+ *
+ * Inline arrow selectors `useStore((s) => s.X)` are recreated every
+ * render; zustand's Object.is equality check passes for the value
+ * but the subscription callback identity changes each call, which
+ * forces the store to register a new listener on every render.
+ * Hoisting these to module-level constants keeps the listener
+ * identity stable and removes that hidden churn.
+ *
+ * @see ORC-289
+ */
+describe("ORC-289 module-level selectors", () => {
+  const buildSnapshot = (): {
+    threads: AppState["threads"];
+    projects: AppState["projects"];
+    markThreadVisited: () => void;
+    syncServerReadModel: () => void;
+    setError: () => void;
+    setThreadWorkspace: () => void;
+  } => ({
+    threads: [],
+    projects: [],
+    markThreadVisited: () => {},
+    syncServerReadModel: () => {},
+    setError: () => {},
+    setThreadWorkspace: () => {},
+  });
+
+  it("selectThreads returns state.threads", () => {
+    const state = buildSnapshot();
+    expect(selectThreads(state)).toBe(state.threads);
+  });
+
+  it("selectProjects returns state.projects", () => {
+    const state = buildSnapshot();
+    expect(selectProjects(state)).toBe(state.projects);
+  });
+
+  it("selectMarkThreadVisited returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectMarkThreadVisited(state)).toBe(state.markThreadVisited);
+  });
+
+  it("selectSyncServerReadModel returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectSyncServerReadModel(state)).toBe(state.syncServerReadModel);
+  });
+
+  it("selectSetError returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectSetError(state)).toBe(state.setError);
+  });
+
+  it("selectSetThreadWorkspace returns the action", () => {
+    const state = buildSnapshot();
+    expect(selectSetThreadWorkspace(state)).toBe(state.setThreadWorkspace);
+  });
+
+  it("selectors keep stable identity across calls (the whole point)", () => {
+    // The hoisting only matters because the selector reference
+    // itself is stable. If a maintainer ever wraps these in a
+    // factory that returns a new function each time, the
+    // performance benefit evaporates. Pin it.
+    expect(selectThreads).toBe(selectThreads);
+    expect(selectProjects).toBe(selectProjects);
+    expect(selectMarkThreadVisited).toBe(selectMarkThreadVisited);
+  });
+});

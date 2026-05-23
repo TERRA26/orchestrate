@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  # ORC-266: a manual trigger lets an operator run the pipeline
+  # against a known-risky branch checkpoint without forcing a PR or
+  # push. Useful for tag-prep dry runs and pre-release validation.
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: Format, Lint, Typecheck, Test, Browser Test, Build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Cache Bun and Turbo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.bun/install/cache
+            .turbo
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-${{ hashFiles('turbo.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # ORC-093: surface known vulnerabilities in transitive deps before
+      # they reach production. We fail on high+critical only so a low /
+      # moderate finding does not block a hotfix; weekly Dependabot PRs
+      # carry the longer tail.
+      - name: Dependency audit
+        run: bun audit --audit-level=high
+
+      - name: Format
+        run: bun run fmt:check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
+
+      # ORC-092: orchestrator-level integration smoke. Catches breakage in the
+      # decider/projector/reactor pipeline that the unit suite alone misses.
+      # Mirrored as a longer end-to-end variant in release.yml's release_smoke.
+      - name: Orchestrator smoke
+        run: bun run test:orchestrator-smoke
+
+      - name: Install browser test runtime
+        run: |
+          cd apps/web
+          bunx playwright install --with-deps chromium
+
+      - name: Browser test
+        run: bun run --cwd apps/web test:browser
+
+      - name: Build desktop pipeline
+        run: bun run build:desktop
+
+      # ORC-266: catch marketing-app regressions (Astro config, MDX
+      # content, asset pipeline) at PR time. Previously this only ran
+      # in release.yml so a broken build only surfaced at tag time.
+      - name: Build marketing pipeline
+        run: bun run build:marketing
+
+      - name: Verify preload bundle output
+        run: |
+          test -f apps/desktop/dist-electron/preload.js
+          grep -nE "desktopBridge|getWsUrl|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.js
+
+  release_smoke:
+    name: Release Smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Exercise release-only workflow steps
+        run: node scripts/release-smoke.ts

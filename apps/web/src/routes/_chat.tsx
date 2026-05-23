@@ -1,0 +1,242 @@
+import { type ResolvedKeybindingsConfig } from "@orchestrate/contracts";
+import { useQuery } from "@tanstack/react-query";
+import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
+
+import ThreadSidebar from "../components/Sidebar";
+import { isElectron } from "../env";
+import { isMacPlatform } from "../lib/utils";
+import { useDisposableThreadLifecycle } from "../hooks/useDisposableThreadLifecycle";
+import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { resolveThreadEnvironmentMode } from "../lib/threadEnvironment";
+import { isTerminalFocused } from "../lib/terminalFocus";
+import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { resolveShortcutCommand } from "../keybindings";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useThreadSelectionStore } from "../threadSelectionStore";
+import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
+import { useAppSettings } from "~/appSettings";
+import {
+  Sidebar,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "~/components/ui/sidebar";
+import { useAppTypography } from "~/hooks/useAppTypography";
+import { useNativeFontSmoothing } from "~/hooks/useNativeFontSmoothing";
+import { useUIFont } from "~/hooks/useUIFont";
+
+const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
+const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
+const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
+
+function ChatRouteGlobalShortcuts() {
+  const navigate = useNavigate();
+  const { toggleSidebar } = useSidebar();
+  const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
+  const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
+  const {
+    activeContextThreadId,
+    activeDraftThread,
+    activeProjectId,
+    activeThread,
+    handleNewThread,
+    projects,
+  } = useHandleNewThread();
+  useDisposableThreadLifecycle(activeContextThreadId);
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
+  const terminalOpen = useTerminalStateStore((state) =>
+    activeContextThreadId
+      ? selectThreadTerminalState(state.terminalStateByThreadId, activeContextThreadId).terminalOpen
+      : false,
+  );
+  const { settings: appSettings } = useAppSettings();
+
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
+      if (event.key === "Escape" && selectedThreadIdsSize > 0) {
+        event.preventDefault();
+        clearSelection();
+        return;
+      }
+
+      // Cmd/Ctrl + 1..9 — quick-jump to the Nth visible thread (dpcode parity).
+      // Uses the actual keyboard layout digit, not the localized one, so the
+      // shortcut is the same on every layout. Skip when an editable element
+      // has focus so it doesn't fight with text input shortcuts.
+      const usesPrimaryModifier = isMacPlatform(navigator.platform)
+        ? event.metaKey && !event.ctrlKey && !event.altKey
+        : event.ctrlKey && !event.metaKey && !event.altKey;
+      if (usesPrimaryModifier && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        const target = document.activeElement;
+        const isEditable =
+          target instanceof HTMLElement &&
+          (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+        if (!isEditable) {
+          const index = Number.parseInt(event.key, 10) - 1;
+          // Look up the Nth thread row rendered in the sidebar by data-attr.
+          const rows = document.querySelectorAll<HTMLElement>("[data-sidebar-thread-row]");
+          const row = rows[index];
+          if (row) {
+            event.preventDefault();
+            event.stopPropagation();
+            row.click();
+          }
+        }
+      }
+
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen,
+        },
+      });
+      if (command === "sidebar.toggle") {
+        if (!isElectron) return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSidebar();
+        return;
+      }
+
+      if (!command) return;
+
+      if (command === "chat.newLocal") {
+        const projectId = activeProjectId ?? projects[0]?.id;
+        if (!projectId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void handleNewThread(projectId, {
+          envMode: resolveSidebarNewThreadEnvMode({
+            defaultEnvMode: appSettings.defaultThreadEnvMode,
+          }),
+        });
+        return;
+      }
+
+      if (command === "chat.newTerminal") {
+        const projectId = activeProjectId ?? projects[0]?.id;
+        if (!projectId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void handleNewThread(projectId, {
+          branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+          worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+          envMode:
+            activeDraftThread?.envMode ??
+            resolveThreadEnvironmentMode({
+              envMode: activeThread?.envMode,
+              worktreePath: activeThread?.worktreePath ?? null,
+            }),
+          entryPoint: "terminal",
+        });
+        return;
+      }
+
+      if (command !== "chat.new") return;
+      const projectId = activeProjectId ?? projects[0]?.id;
+      if (!projectId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void handleNewThread(projectId, {
+        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        envMode:
+          activeDraftThread?.envMode ??
+          resolveThreadEnvironmentMode({
+            envMode: activeThread?.envMode,
+            worktreePath: activeThread?.worktreePath ?? null,
+          }),
+      });
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onWindowKeyDown, { capture: true });
+    };
+  }, [
+    activeDraftThread,
+    activeProjectId,
+    activeThread,
+    clearSelection,
+    handleNewThread,
+    keybindings,
+    projects,
+    selectedThreadIdsSize,
+    terminalOpen,
+    toggleSidebar,
+    appSettings.defaultThreadEnvMode,
+  ]);
+
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") {
+      return;
+    }
+
+    const unsubscribe = onMenuAction((action) => {
+      if (action === "toggle-sidebar") {
+        toggleSidebar();
+        return;
+      }
+      if (action !== "open-settings") return;
+      void navigate({ to: "/settings" });
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [navigate, toggleSidebar]);
+
+  return null;
+}
+
+function CollapsedSidebarStrip() {
+  const { open } = useSidebar();
+  if (open) return null;
+
+  return (
+    <div className="flex h-dvh w-10 shrink-0 flex-col items-center border-r border-border/30 bg-background/80 pt-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/80 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+      <SidebarTrigger className="size-7 text-muted-foreground/75 hover:text-foreground" />
+    </div>
+  );
+}
+
+function ChatRouteLayout() {
+  useUIFont();
+  useAppTypography();
+  useNativeFontSmoothing();
+  return (
+    <SidebarProvider defaultOpen>
+      <ChatRouteGlobalShortcuts />
+      <Sidebar
+        side="left"
+        collapsible="offcanvas"
+        className="text-foreground"
+        gapClassName="overflow-hidden after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-black/[0.03] dark:after:bg-white/[0.015] before:absolute before:inset-0 before:bg-[radial-gradient(90%_75%_at_0%_0%,rgba(255,255,255,0.06),transparent_58%),linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.008))] dark:before:bg-[radial-gradient(90%_75%_at_0%_0%,rgba(255,255,255,0.04),transparent_58%),linear-gradient(180deg,rgba(255,255,255,0.018),rgba(255,255,255,0.006))]"
+        innerClassName="border-r border-border/30 bg-background/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-xl backdrop-saturate-150 dark:border-white/[0.03] dark:bg-background/80 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]"
+        transparentSurface
+        resizable={{
+          minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+          shouldAcceptWidth: ({ nextWidth, wrapper }) =>
+            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+          storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+        }}
+      >
+        <ThreadSidebar />
+        <SidebarRail />
+      </Sidebar>
+      <CollapsedSidebarStrip />
+      <Outlet />
+    </SidebarProvider>
+  );
+}
+
+export const Route = createFileRoute("/_chat")({
+  component: ChatRouteLayout,
+});

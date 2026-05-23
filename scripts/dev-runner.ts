@@ -1,0 +1,620 @@
+#!/usr/bin/env node
+
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { NetService } from "@orchestrate/shared/Net";
+import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
+import { Argument, Command, Flag } from "effect/unstable/cli";
+import { ChildProcess } from "effect/unstable/process";
+
+const BASE_SERVER_PORT = 3773;
+const BASE_WEB_PORT = 5733;
+const MAX_HASH_OFFSET = 3000;
+const MAX_PORT = 65535;
+
+export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
+  path.join(homedir(), ".t3"),
+);
+
+const SERVER_WORKSPACE_FILTER = "--filter=orchestrate";
+const SERVER_WORKSPACE_PACKAGE_URL = new URL("../apps/server/package.json", import.meta.url);
+
+const MODE_TEMPLATES = {
+  dev: [
+    "run",
+    "dev",
+    "--ui=stream",
+    "--filter=@orchestrate/contracts",
+    "--filter=@orchestrate/web",
+    "--parallel",
+  ],
+  "dev:server": ["run", "dev"],
+  "dev:web": ["run", "dev", "--filter=@orchestrate/web"],
+  "dev:desktop": [
+    "run",
+    "dev",
+    "--filter=@orchestrate/desktop",
+    "--filter=@orchestrate/web",
+    "--parallel",
+  ],
+} as const satisfies Record<string, ReadonlyArray<string>>;
+
+type DevMode = keyof typeof MODE_TEMPLATES;
+type PortAvailabilityCheck<R = never> = (port: number) => Effect.Effect<boolean, never, R>;
+
+const DEV_RUNNER_MODES = Object.keys(MODE_TEMPLATES) as Array<DevMode>;
+
+class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
+  Config.string(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
+const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined> =>
+  Config.boolean(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
+const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
+  Config.port(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
+const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
+  Config.int(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
+const optionalUrlConfig = (name: string): Config.Config<URL | undefined> =>
+  Config.url(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
+
+export const hasServerWorkspace = (): boolean => existsSync(SERVER_WORKSPACE_PACKAGE_URL);
+
+export function resolveTurboModeArgs(
+  mode: DevMode,
+  options: { readonly hasServerWorkspace: boolean },
+): ReadonlyArray<string> {
+  const baseArgs: Array<string> = [...MODE_TEMPLATES[mode]];
+
+  if (options.hasServerWorkspace && (mode === "dev" || mode === "dev:server")) {
+    const insertionIndex = mode === "dev" ? baseArgs.length - 1 : baseArgs.length;
+    baseArgs.splice(insertionIndex, 0, SERVER_WORKSPACE_FILTER);
+  }
+
+  return baseArgs;
+}
+
+export function getMissingServerWorkspaceErrorMessage(mode: DevMode): string | null {
+  if (mode === "dev") {
+    return "Cannot run dev because apps/server/package.json is missing in this checkout. Restore the server workspace or use `bun run dev:web` for a UI-only session.";
+  }
+
+  if (mode === "dev:server") {
+    return "Cannot run dev:server because apps/server/package.json is missing in this checkout.";
+  }
+
+  return null;
+}
+
+const OffsetConfig = Config.all({
+  portOffset: optionalIntegerConfig("ORCHESTRATE_PORT_OFFSET"),
+  devInstance: optionalStringConfig("ORCHESTRATE_DEV_INSTANCE"),
+});
+
+export function resolveOffset(config: {
+  readonly portOffset: number | undefined;
+  readonly devInstance: string | undefined;
+}): { readonly offset: number; readonly source: string } {
+  if (config.portOffset !== undefined) {
+    if (config.portOffset < 0) {
+      throw new Error(`Invalid ORCHESTRATE_PORT_OFFSET: ${config.portOffset}`);
+    }
+    return {
+      offset: config.portOffset,
+      source: `ORCHESTRATE_PORT_OFFSET=${config.portOffset}`,
+    };
+  }
+
+  const seed = config.devInstance?.trim();
+  if (!seed) {
+    return { offset: 0, source: "default ports" };
+  }
+
+  if (/^\d+$/.test(seed)) {
+    return { offset: Number(seed), source: `numeric ORCHESTRATE_DEV_INSTANCE=${seed}` };
+  }
+
+  const offset = ((Hash.string(seed) >>> 0) % MAX_HASH_OFFSET) + 1;
+  return { offset, source: `hashed ORCHESTRATE_DEV_INSTANCE=${seed}` };
+}
+
+function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
+  return Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const configured = baseDir?.trim();
+
+    if (configured) {
+      return path.resolve(configured);
+    }
+
+    return yield* DEFAULT_T3_HOME;
+  });
+}
+
+interface CreateDevRunnerEnvInput {
+  readonly mode: DevMode;
+  readonly baseEnv: NodeJS.ProcessEnv;
+  readonly serverOffset: number;
+  readonly webOffset: number;
+  readonly t3Home: string | undefined;
+  readonly authToken: string | undefined;
+  readonly noBrowser: boolean | undefined;
+  readonly autoBootstrapProjectFromCwd: boolean | undefined;
+  readonly logWebSocketEvents: boolean | undefined;
+  readonly host: string | undefined;
+  readonly port: number | undefined;
+  readonly devUrl: URL | undefined;
+}
+
+export function createDevRunnerEnv({
+  mode,
+  baseEnv,
+  serverOffset,
+  webOffset,
+  t3Home,
+  authToken,
+  noBrowser,
+  autoBootstrapProjectFromCwd,
+  logWebSocketEvents,
+  host,
+  port,
+  devUrl,
+}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
+  return Effect.gen(function* () {
+    const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
+    const webPort = BASE_WEB_PORT + webOffset;
+    const resolvedBaseDir = yield* resolveBaseDir(t3Home);
+    const isDesktopMode = mode === "dev:desktop";
+
+    const output: NodeJS.ProcessEnv = {
+      ...baseEnv,
+      PORT: String(webPort),
+      ELECTRON_RENDERER_PORT: String(webPort),
+      VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://localhost:${webPort}`,
+      ORCHESTRATE_HOME: resolvedBaseDir,
+    };
+
+    if (!isDesktopMode) {
+      output.ORCHESTRATE_PORT = String(serverPort);
+      output.VITE_WS_URL = `ws://localhost:${serverPort}`;
+    } else {
+      delete output.ORCHESTRATE_PORT;
+      delete output.VITE_WS_URL;
+      delete output.ORCHESTRATE_AUTH_TOKEN;
+      delete output.ORCHESTRATE_MODE;
+      delete output.ORCHESTRATE_NO_BROWSER;
+      delete output.ORCHESTRATE_HOST;
+    }
+
+    if (!isDesktopMode && host !== undefined) {
+      output.ORCHESTRATE_HOST = host;
+    }
+
+    if (!isDesktopMode && authToken !== undefined) {
+      output.ORCHESTRATE_AUTH_TOKEN = authToken;
+    } else if (!isDesktopMode) {
+      delete output.ORCHESTRATE_AUTH_TOKEN;
+    }
+
+    if (!isDesktopMode) {
+      const resolvedNoBrowser = noBrowser ?? true;
+      output.ORCHESTRATE_NO_BROWSER = resolvedNoBrowser ? "1" : "0";
+    }
+
+    if (autoBootstrapProjectFromCwd !== undefined) {
+      output.ORCHESTRATE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
+    } else {
+      delete output.ORCHESTRATE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD;
+    }
+
+    if (logWebSocketEvents !== undefined) {
+      output.ORCHESTRATE_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
+    } else {
+      delete output.ORCHESTRATE_LOG_WS_EVENTS;
+    }
+
+    if (mode === "dev") {
+      output.ORCHESTRATE_MODE = "web";
+      delete output.ORCHESTRATE_DESKTOP_WS_URL;
+    }
+
+    if (mode === "dev:server" || mode === "dev:web") {
+      output.ORCHESTRATE_MODE = "web";
+      delete output.ORCHESTRATE_DESKTOP_WS_URL;
+    }
+
+    if (isDesktopMode) {
+      delete output.ORCHESTRATE_DESKTOP_WS_URL;
+    }
+
+    return output;
+  });
+}
+
+function portPairForOffset(offset: number): {
+  readonly serverPort: number;
+  readonly webPort: number;
+} {
+  return {
+    serverPort: BASE_SERVER_PORT + offset,
+    webPort: BASE_WEB_PORT + offset,
+  };
+}
+
+const defaultCheckPortAvailability: PortAvailabilityCheck<NetService> = (port) =>
+  Effect.gen(function* () {
+    const net = yield* NetService;
+    return yield* net.isPortAvailableOnLoopback(port);
+  });
+
+interface FindFirstAvailableOffsetInput<R = NetService> {
+  readonly startOffset: number;
+  readonly requireServerPort: boolean;
+  readonly requireWebPort: boolean;
+  readonly checkPortAvailability?: PortAvailabilityCheck<R>;
+}
+
+export function findFirstAvailableOffset<R = NetService>({
+  startOffset,
+  requireServerPort,
+  requireWebPort,
+  checkPortAvailability,
+}: FindFirstAvailableOffsetInput<R>): Effect.Effect<number, DevRunnerError, R> {
+  return Effect.gen(function* () {
+    const checkPort = (checkPortAvailability ??
+      defaultCheckPortAvailability) as PortAvailabilityCheck<R>;
+
+    for (let candidate = startOffset; ; candidate += 1) {
+      const { serverPort, webPort } = portPairForOffset(candidate);
+      const serverPortOutOfRange = serverPort > MAX_PORT;
+      const webPortOutOfRange = webPort > MAX_PORT;
+
+      if (
+        (requireServerPort && serverPortOutOfRange) ||
+        (requireWebPort && webPortOutOfRange) ||
+        (!requireServerPort && !requireWebPort && (serverPortOutOfRange || webPortOutOfRange))
+      ) {
+        break;
+      }
+
+      const checks: Array<Effect.Effect<boolean, never, R>> = [];
+      if (requireServerPort) {
+        checks.push(checkPort(serverPort));
+      }
+      if (requireWebPort) {
+        checks.push(checkPort(webPort));
+      }
+
+      if (checks.length === 0) {
+        return candidate;
+      }
+
+      const availability = yield* Effect.all(checks);
+      if (availability.every(Boolean)) {
+        return candidate;
+      }
+    }
+
+    return yield* new DevRunnerError({
+      message: `No available dev ports found from offset ${startOffset}. Tried server=${BASE_SERVER_PORT}+n web=${BASE_WEB_PORT}+n up to port ${MAX_PORT}.`,
+    });
+  });
+}
+
+interface ResolveModePortOffsetsInput<R = NetService> {
+  readonly mode: DevMode;
+  readonly startOffset: number;
+  readonly hasExplicitServerPort: boolean;
+  readonly hasExplicitDevUrl: boolean;
+  readonly checkPortAvailability?: PortAvailabilityCheck<R>;
+}
+
+export function resolveModePortOffsets<R = NetService>({
+  mode,
+  startOffset,
+  hasExplicitServerPort,
+  hasExplicitDevUrl,
+  checkPortAvailability,
+}: ResolveModePortOffsetsInput<R>): Effect.Effect<
+  { readonly serverOffset: number; readonly webOffset: number },
+  DevRunnerError,
+  R
+> {
+  return Effect.gen(function* () {
+    const checkPort = (checkPortAvailability ??
+      defaultCheckPortAvailability) as PortAvailabilityCheck<R>;
+
+    if (mode === "dev:web") {
+      if (hasExplicitDevUrl) {
+        return { serverOffset: startOffset, webOffset: startOffset };
+      }
+
+      const webOffset = yield* findFirstAvailableOffset({
+        startOffset,
+        requireServerPort: false,
+        requireWebPort: true,
+        checkPortAvailability: checkPort,
+      });
+      return { serverOffset: startOffset, webOffset };
+    }
+
+    if (mode === "dev:server") {
+      if (hasExplicitServerPort) {
+        return { serverOffset: startOffset, webOffset: startOffset };
+      }
+
+      const serverOffset = yield* findFirstAvailableOffset({
+        startOffset,
+        requireServerPort: true,
+        requireWebPort: false,
+        checkPortAvailability: checkPort,
+      });
+      return { serverOffset, webOffset: serverOffset };
+    }
+
+    const sharedOffset = yield* findFirstAvailableOffset({
+      startOffset,
+      requireServerPort: !hasExplicitServerPort,
+      requireWebPort: !hasExplicitDevUrl,
+      checkPortAvailability: checkPort,
+    });
+
+    return { serverOffset: sharedOffset, webOffset: sharedOffset };
+  });
+}
+
+interface DevRunnerCliInput {
+  readonly mode: DevMode;
+  readonly t3Home: string | undefined;
+  readonly authToken: string | undefined;
+  readonly noBrowser: boolean | undefined;
+  readonly autoBootstrapProjectFromCwd: boolean | undefined;
+  readonly logWebSocketEvents: boolean | undefined;
+  readonly host: string | undefined;
+  readonly port: number | undefined;
+  readonly devUrl: URL | undefined;
+  readonly dryRun: boolean;
+  readonly turboArgs: ReadonlyArray<string>;
+}
+
+const readOptionalBooleanEnv = (name: string): boolean | undefined => {
+  const value = process.env[name];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "1" || value.toLowerCase() === "true") {
+    return true;
+  }
+  if (value === "0" || value.toLowerCase() === "false") {
+    return false;
+  }
+  return undefined;
+};
+
+const resolveOptionalBooleanOverride = (
+  explicitValue: boolean | undefined,
+  envValue: boolean | undefined,
+): boolean | undefined => {
+  if (explicitValue === true) {
+    return true;
+  }
+
+  if (explicitValue === false) {
+    return envValue;
+  }
+
+  return envValue;
+};
+
+export function runDevRunnerWithInput(input: DevRunnerCliInput) {
+  return Effect.gen(function* () {
+    const serverWorkspaceAvailable = hasServerWorkspace();
+    const missingServerWorkspaceMessage = serverWorkspaceAvailable
+      ? null
+      : getMissingServerWorkspaceErrorMessage(input.mode);
+
+    if (missingServerWorkspaceMessage !== null) {
+      return yield* new DevRunnerError({
+        message: missingServerWorkspaceMessage,
+      });
+    }
+
+    const { portOffset, devInstance } = yield* OffsetConfig.asEffect().pipe(
+      Effect.mapError(
+        (cause) =>
+          new DevRunnerError({
+            message:
+              "Failed to read ORCHESTRATE_PORT_OFFSET/ORCHESTRATE_DEV_INSTANCE configuration.",
+            cause,
+          }),
+      ),
+    );
+
+    const { offset, source } = yield* Effect.try({
+      try: () => resolveOffset({ portOffset, devInstance }),
+      catch: (cause) =>
+        new DevRunnerError({
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+    });
+
+    const envOverrides = {
+      noBrowser: readOptionalBooleanEnv("ORCHESTRATE_NO_BROWSER"),
+      autoBootstrapProjectFromCwd: readOptionalBooleanEnv(
+        "ORCHESTRATE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD",
+      ),
+      logWebSocketEvents: readOptionalBooleanEnv("ORCHESTRATE_LOG_WS_EVENTS"),
+    };
+
+    const { serverOffset, webOffset } = yield* resolveModePortOffsets({
+      mode: input.mode,
+      startOffset: offset,
+      hasExplicitServerPort: input.port !== undefined,
+      hasExplicitDevUrl: input.devUrl !== undefined,
+    });
+
+    const env = yield* createDevRunnerEnv({
+      mode: input.mode,
+      baseEnv: process.env,
+      serverOffset,
+      webOffset,
+      t3Home: input.t3Home,
+      authToken: input.authToken,
+      noBrowser: resolveOptionalBooleanOverride(input.noBrowser, envOverrides.noBrowser),
+      autoBootstrapProjectFromCwd: resolveOptionalBooleanOverride(
+        input.autoBootstrapProjectFromCwd,
+        envOverrides.autoBootstrapProjectFromCwd,
+      ),
+      logWebSocketEvents: resolveOptionalBooleanOverride(
+        input.logWebSocketEvents,
+        envOverrides.logWebSocketEvents,
+      ),
+      host: input.host,
+      port: input.port,
+      devUrl: input.devUrl,
+    });
+
+    const selectionSuffix =
+      serverOffset !== offset || webOffset !== offset
+        ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
+        : "";
+
+    yield* Effect.logInfo(
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.ORCHESTRATE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.ORCHESTRATE_HOME)}`,
+    );
+
+    if (input.dryRun) {
+      return;
+    }
+
+    const turboModeArgs = resolveTurboModeArgs(input.mode, {
+      hasServerWorkspace: serverWorkspaceAvailable,
+    });
+
+    const child = yield* ChildProcess.make("turbo", [...turboModeArgs, ...input.turboArgs], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+      env,
+      extendEnv: false,
+      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+      shell: process.platform === "win32",
+      // Keep turbo in the same process group so terminal signals (Ctrl+C)
+      // reach it directly. Effect defaults to detached: true on non-Windows,
+      // which would put turbo in a new group and require manual forwarding.
+      detached: false,
+      forceKillAfter: "1500 millis",
+    });
+
+    const exitCode = yield* child.exitCode;
+    if (exitCode !== 0) {
+      return yield* new DevRunnerError({
+        message: `turbo exited with code ${exitCode}`,
+      });
+    }
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof DevRunnerError
+        ? cause
+        : new DevRunnerError({
+            message: cause instanceof Error ? cause.message : "dev-runner failed",
+            cause,
+          }),
+    ),
+  );
+}
+
+const devRunnerCli = Command.make("dev-runner", {
+  mode: Argument.choice("mode", DEV_RUNNER_MODES).pipe(
+    Argument.withDescription("Development mode to run."),
+  ),
+  t3Home: Flag.string("home-dir").pipe(
+    Flag.withDescription(
+      "Base directory for all Orchestrate data (equivalent to ORCHESTRATE_HOME).",
+    ),
+    Flag.withFallbackConfig(optionalStringConfig("ORCHESTRATE_HOME")),
+  ),
+  authToken: Flag.string("auth-token").pipe(
+    Flag.withDescription("Auth token (forwards to ORCHESTRATE_AUTH_TOKEN)."),
+    Flag.withAlias("token"),
+    Flag.withFallbackConfig(optionalStringConfig("ORCHESTRATE_AUTH_TOKEN")),
+  ),
+  noBrowser: Flag.boolean("no-browser").pipe(
+    Flag.withDescription("Browser auto-open toggle (equivalent to ORCHESTRATE_NO_BROWSER)."),
+    Flag.withFallbackConfig(optionalBooleanConfig("ORCHESTRATE_NO_BROWSER")),
+  ),
+  autoBootstrapProjectFromCwd: Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
+    Flag.withDescription(
+      "Auto-bootstrap toggle (equivalent to ORCHESTRATE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
+    ),
+    Flag.withFallbackConfig(optionalBooleanConfig("ORCHESTRATE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
+  ),
+  logWebSocketEvents: Flag.boolean("log-websocket-events").pipe(
+    Flag.withDescription(
+      "WebSocket event logging toggle (equivalent to ORCHESTRATE_LOG_WS_EVENTS).",
+    ),
+    Flag.withAlias("log-ws-events"),
+    Flag.withFallbackConfig(optionalBooleanConfig("ORCHESTRATE_LOG_WS_EVENTS")),
+  ),
+  host: Flag.string("host").pipe(
+    Flag.withDescription("Server host/interface override (forwards to ORCHESTRATE_HOST)."),
+    Flag.withFallbackConfig(optionalStringConfig("ORCHESTRATE_HOST")),
+  ),
+  port: Flag.integer("port").pipe(
+    Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
+    Flag.withDescription("Server port override (forwards to ORCHESTRATE_PORT)."),
+    Flag.withFallbackConfig(optionalPortConfig("ORCHESTRATE_PORT")),
+  ),
+  devUrl: Flag.string("dev-url").pipe(
+    Flag.withSchema(Schema.URLFromString),
+    Flag.withDescription("Web dev URL override (forwards to VITE_DEV_SERVER_URL)."),
+    Flag.withFallbackConfig(optionalUrlConfig("VITE_DEV_SERVER_URL")),
+  ),
+  dryRun: Flag.boolean("dry-run").pipe(
+    Flag.withDescription("Resolve mode/ports/env and print, but do not spawn turbo."),
+    Flag.withDefault(false),
+  ),
+  turboArgs: Argument.string("turbo-arg").pipe(
+    Argument.withDescription("Additional turbo args (pass after `--`)."),
+    Argument.variadic(),
+  ),
+}).pipe(
+  Command.withDescription("Run monorepo development modes with deterministic port/env wiring."),
+  Command.withHandler((input) => runDevRunnerWithInput(input)),
+);
+
+const cliRuntimeLayer = Layer.mergeAll(
+  Logger.layer([Logger.consolePretty()]),
+  NodeServices.layer,
+  NetService.layer,
+);
+
+const runtimeProgram = Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
+  Effect.scoped,
+  Effect.provide(cliRuntimeLayer),
+);
+
+if (import.meta.main) {
+  NodeRuntime.runMain(runtimeProgram);
+}

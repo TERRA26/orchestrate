@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "configurations": [
+    {
+      "id": "web",
+      "name": "Web app",
+      "cwd": ".",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "dev:web"],
+      "port": 5734,
+      "autoPort": true,
+      "defaultRoute": "/",
+      "healthCheck": {
+        "path": "/",
+        "timeoutMs": 30000,
+        "expectedStatus": [200, 304]
+      },
+      "autoVerify": true,
+      "tags": ["web", "local-preview"]
+    }
+  ]
+}

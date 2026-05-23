@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "types": ["node", "bun"],
+    "lib": ["ES2023", "esnext.disposable"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/browser/**/*.ts",
+    "src/browserAnnotations/**/*.ts",
+    "src/browserControl/**/*.ts",
+    "src/browserEvidence/**/*.ts",
+    "src/browserRuntime/**/*.ts",
+    "src/browserWorkflow/**/*.ts",
+    "src/config.ts",
+    "src/persistence/Layers/BrowserOrchestrationEvidence.ts",
+    "src/persistence/Migrations.ts",
+    "src/persistence/Migrations/**/*.ts",
+    "src/persistence/Services/BrowserOrchestrationEvidence.ts",
+    "src/preview/**/*.ts",
+    "src/provider/providerSnapshot.ts",
+    "src/reviewer/**/*.ts",
+    "src/serverSettings.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.integration.test.ts",
+    "integration",
+    "scripts",
+    "src/codexAppServerManager.ts",
+    "src/git/**",
+    "src/orchestration/**",
+    "src/persistence/NodeSqliteClient.ts",
+    "src/provider/Layers/ClaudeAdapter.ts"
+  ]
+}

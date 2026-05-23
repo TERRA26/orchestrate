@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MRCRY — Automotive</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=DM+Sans:wght@300;400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* ── Reset & Variables ─────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg-deep: #0a0a0a;
+        --bg-card: #111111;
+        --bg-subtle: #161616;
+        --amber: #d4a853;
+        --amber-dim: #b8923f;
+        --amber-glow: rgba(212, 168, 83, 0.12);
+        --steel: #8a8a8a;
+        --steel-light: #c2c2c2;
+        --white: #f0ece4;
+        --font-display: "Playfair Display", Georgia, serif;
+        --font-body: "DM Sans", system-ui, sans-serif;
+        --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      html {
+        scroll-behavior: smooth;
+        background: var(--bg-deep);
+        color: var(--white);
+      }
+
+      body {
+        font-family: var(--font-body);
+        font-weight: 300;
+        line-height: 1.7;
+        overflow-x: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── Grain Overlay ─────────────────────────────── */
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 9999;
+        opacity: 0.035;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        background-size: 200px;
+      }
+
+      /* ── Scroll Reveal Animations ──────────────────── */
+      .reveal {
+        opacity: 0;
+        transform: translateY(40px);
+        transition:
+          opacity 0.9s var(--ease-out),
+          transform 0.9s var(--ease-out);
+      }
+      .reveal.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      /* ── Navigation ────────────────────────────────── */
+      nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 100;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1.5rem 3rem;
+        background: linear-gradient(to bottom, rgba(10, 10, 10, 0.95), transparent);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      .nav-logo {
+        font-family: var(--font-display);
+        font-weight: 900;
+        font-size: 1.3rem;
+        letter-spacing: 0.35em;
+        color: var(--amber);
+        text-transform: uppercase;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 2.5rem;
+        list-style: none;
+      }
+
+      .nav-links a {
+        font-family: var(--font-body);
+        font-size: 0.8rem;
+        font-weight: 500;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--steel);
+        text-decoration: none;
+        transition: color 0.3s;
+      }
+
+      .nav-links a:hover {
+        color: var(--amber);
+      }
+
+      /* ── Hero Section ──────────────────────────────── */
+      .hero {
+        position: relative;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        padding: 6rem 2rem 4rem;
+        overflow: hidden;
+      }
+
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(ellipse 80% 60% at 50% 40%, rgba(212, 168, 83, 0.06) 0%, transparent 70%),
+          radial-gradient(ellipse 50% 80% at 80% 80%, rgba(212, 168, 83, 0.04) 0%, transparent 50%);
+        pointer-events: none;
+      }
+
+      .hero-overline {
+        font-family: var(--font-body);
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.4em;
+        text-transform: uppercase;
+        color: var(--amber);
+        margin-bottom: 2rem;
+        opacity: 0;
+        animation: fadeUp 1s var(--ease-out) 0.2s forwards;
+      }
+
+      .hero h1 {
+        font-family: var(--font-display);
+        font-weight: 900;
+        font-size: clamp(3.5rem, 10vw, 9rem);
+        line-height: 0.95;
+        letter-spacing: -0.02em;
+        color: var(--white);
+        margin-bottom: 1.5rem;
+        opacity: 0;
+        animation: fadeUp 1.2s var(--ease-out) 0.4s forwards;
+      }
+
+      .hero h1 em {
+        font-style: italic;
+        color: var(--amber);
+      }
+
+      .hero-sub {
+        font-family: var(--font-body);
+        font-size: clamp(1rem, 2vw, 1.25rem);
+        font-weight: 300;
+        color: var(--steel);
+        max-width: 520px;
+        margin-bottom: 3rem;
+        opacity: 0;
+        animation: fadeUp 1s var(--ease-out) 0.7s forwards;
+      }
+
+      .hero-scroll {
+        position: absolute;
+        bottom: 2.5rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--steel);
+        font-size: 0.65rem;
+        letter-spacing: 0.3em;
+        text-transform: uppercase;
+        opacity: 0;
+        animation: fadeUp 1s var(--ease-out) 1.2s forwards;
+      }
+
+      .hero-scroll .line {
+        width: 1px;
+        height: 48px;
+        background: linear-gradient(to bottom, var(--amber), transparent);
+        animation: scrollPulse 2s ease-in-out infinite;
+      }
+
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(30px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes scrollPulse {
+        0%,
+        100% {
+          opacity: 0.3;
+          transform: scaleY(0.6);
+        }
+        50% {
+          opacity: 1;
+          transform: scaleY(1);
+        }
+      }
+
+      /* ── Section Common ────────────────────────────── */
+      section {
+        padding: 7rem 2rem;
+      }
+
+      .section-label {
+        font-family: var(--font-body);
+        font-size: 0.7rem;
+        font-weight: 500;
+        letter-spacing: 0.4em;
+        text-transform: uppercase;
+        color: var(--amber);
+        margin-bottom: 1rem;
+      }
+
+      .section-title {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: clamp(2rem, 4.5vw, 3.5rem);
+        line-height: 1.15;
+        color: var(--white);
+        margin-bottom: 1rem;
+      }
+
+      .section-desc {
+        color: var(--steel);
+        font-size: 1.05rem;
+        max-width: 560px;
+        margin-bottom: 3.5rem;
+      }
+
+      .container {
+        max-width: 1280px;
+        margin: 0 auto;
+      }
+
+      /* ── Showcase Grid ─────────────────────────────── */
+      .showcase {
+        background: var(--bg-deep);
+      }
+
+      .car-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+      }
+
+      .car-card {
+        position: relative;
+        border-radius: 16px;
+        overflow: hidden;
+        background: var(--bg-card);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        transition:
+          transform 0.5s var(--ease-out),
+          box-shadow 0.5s var(--ease-out);
+        cursor: pointer;
+      }
+
+      .car-card:hover {
+        transform: translateY(-6px);
+        box-shadow:
+          0 24px 60px rgba(0, 0, 0, 0.5),
+          0 0 80px var(--amber-glow);
+      }
+
+      .car-card__img-wrap {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+      }
+
+      .car-card__img-wrap img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition:
+          transform 0.7s var(--ease-out),
+          filter 0.7s var(--ease-out);
+        filter: brightness(0.85) contrast(1.05);
+      }
+
+      .car-card:hover .car-card__img-wrap img {
+        transform: scale(1.06);
+        filter: brightness(0.95) contrast(1.1);
+      }
+
+      .car-card__img-wrap::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, var(--bg-card) 0%, transparent 50%);
+        pointer-events: none;
+      }
+
+      .car-card__body {
+        padding: 1.4rem 1.6rem 1.8rem;
+        position: relative;
+      }
+
+      .car-card__year {
+        font-size: 0.7rem;
+        font-weight: 500;
+        letter-spacing: 0.2em;
+        color: var(--amber);
+        text-transform: uppercase;
+        margin-bottom: 0.4rem;
+      }
+
+      .car-card__name {
+        font-family: var(--font-display);
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: var(--white);
+        margin-bottom: 0.6rem;
+        line-height: 1.2;
+      }
+
+      .car-card__desc {
+        font-size: 0.88rem;
+        color: var(--steel);
+        line-height: 1.6;
+      }
+
+      .car-card__stat {
+        display: flex;
+        gap: 1.5rem;
+        margin-top: 1.2rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .car-card__stat div {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .car-card__stat span:first-child {
+        font-size: 0.6rem;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--steel);
+      }
+
+      .car-card__stat span:last-child {
+        font-family: var(--font-display);
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--white);
+      }
+
+      /* ── Facts Section ─────────────────────────────── */
+      .facts {
+        background: var(--bg-subtle);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .facts::before {
+        content: "";
+        position: absolute;
+        top: -200px;
+        right: -200px;
+        width: 600px;
+        height: 600px;
+        border-radius: 50%;
+        background: radial-gradient(circle, var(--amber-glow) 0%, transparent 70%);
+        pointer-events: none;
+      }
+
+      .facts-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 2rem;
+      }
+
+      .fact-item {
+        padding: 2rem;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        transition:
+          border-color 0.4s,
+          background 0.4s;
+      }
+
+      .fact-item:hover {
+        border-color: rgba(212, 168, 83, 0.2);
+        background: rgba(212, 168, 83, 0.03);
+      }
+
+      .fact-number {
+        font-family: var(--font-display);
+        font-weight: 900;
+        font-size: 2.8rem;
+        color: var(--amber);
+        line-height: 1;
+        margin-bottom: 0.6rem;
+      }
+
+      .fact-label {
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: var(--white);
+        margin-bottom: 0.4rem;
+      }
+
+      .fact-desc {
+        font-size: 0.82rem;
+        color: var(--steel);
+        line-height: 1.6;
+      }
+
+      /* ── Marquee Strip ─────────────────────────────── */
+      .marquee-strip {
+        overflow: hidden;
+        padding: 1.8rem 0;
+        background: var(--bg-deep);
+        border-top: 1px solid rgba(255, 255, 255, 0.04);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      }
+
+      .marquee-track {
+        display: flex;
+        width: max-content;
+        animation: marquee 30s linear infinite;
+      }
+
+      .marquee-track span {
+        font-family: var(--font-display);
+        font-weight: 900;
+        font-size: 1.2rem;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.06);
+        white-space: nowrap;
+        padding: 0 2rem;
+      }
+
+      .marquee-track span .dot {
+        color: var(--amber-dim);
+        opacity: 0.4;
+      }
+
+      @keyframes marquee {
+        from {
+          transform: translateX(0);
+        }
+        to {
+          transform: translateX(-50%);
+        }
+      }
+
+      /* ── Footer ────────────────────────────────────── */
+      footer {
+        padding: 4rem 2rem 2.5rem;
+        background: var(--bg-deep);
+        border-top: 1px solid rgba(255, 255, 255, 0.04);
+      }
+
+      .footer-inner {
+        max-width: 1280px;
+        margin: 0 auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 2rem;
+      }
+
+      .footer-brand {
+        font-family: var(--font-display);
+        font-weight: 900;
+        font-size: 1.1rem;
+        letter-spacing: 0.35em;
+        color: var(--amber);
+        text-transform: uppercase;
+        margin-bottom: 0.6rem;
+      }
+
+      .footer-tagline {
+        font-size: 0.85rem;
+        color: var(--steel);
+        max-width: 280px;
+      }
+
+      .footer-links {
+        display: flex;
+        gap: 3rem;
+      }
+
+      .footer-col h4 {
+        font-size: 0.7rem;
+        font-weight: 500;
+        letter-spacing: 0.25em;
+        text-transform: uppercase;
+        color: var(--steel-light);
+        margin-bottom: 0.8rem;
+      }
+
+      .footer-col ul {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+      }
+
+      .footer-col a {
+        font-size: 0.85rem;
+        color: var(--steel);
+        text-decoration: none;
+        transition: color 0.3s;
+      }
+
+      .footer-col a:hover {
+        color: var(--amber);
+      }
+
+      .footer-bottom {
+        max-width: 1280px;
+        margin: 3rem auto 0;
+        padding-top: 1.5rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.04);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+      }
+
+      .footer-bottom span {
+        font-size: 0.75rem;
+        color: rgba(255, 255, 255, 0.2);
+      }
+
+      /* ── Responsive ────────────────────────────────── */
+      @media (max-width: 768px) {
+        nav {
+          padding: 1rem 1.5rem;
+        }
+        .nav-links {
+          display: none;
+        }
+        section {
+          padding: 4rem 1.2rem;
+        }
+        .car-grid {
+          grid-template-columns: 1fr;
+        }
+        .footer-links {
+          flex-direction: column;
+          gap: 1.5rem;
+        }
+        .footer-inner {
+          flex-direction: column;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .hero h1 {
+          font-size: 3rem;
+        }
+        .facts-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ─── Navigation ──────────────────────────────── -->
+    <nav>
+      <div class="nav-logo">MRCRY</div>
+      <ul class="nav-links">
+        <li><a href="#showcase">Collection</a></li>
+        <li><a href="#facts">Numbers</a></li>
+        <li><a href="#footer">Contact</a></li>
+      </ul>
+    </nav>
+
+    <!-- ─── Hero ────────────────────────────────────── -->
+    <section class="hero">
+      <p class="hero-overline">Curated Automotive Excellence</p>
+      <h1>Drive the<br /><em>Extraordinary</em></h1>
+      <p class="hero-sub">
+        Where engineering meets artistry. Explore the machines that defined eras, broke records, and
+        ignited imaginations.
+      </p>
+      <div class="hero-scroll">
+        <div class="line"></div>
+        Scroll
+      </div>
+    </section>
+
+    <!-- ─── Marquee ─────────────────────────────────── -->
+    <div class="marquee-strip">
+      <div class="marquee-track">
+        <span>Porsche <span class="dot">&bull;</span></span>
+        <span>Ferrari <span class="dot">&bull;</span></span>
+        <span>McLaren <span class="dot">&bull;</span></span>
+        <span>Lamborghini <span class="dot">&bull;</span></span>
+        <span>Aston Martin <span class="dot">&bull;</span></span>
+        <span>Mercedes-AMG <span class="dot">&bull;</span></span>
+        <span>BMW M <span class="dot">&bull;</span></span>
+        <span>Bugatti <span class="dot">&bull;</span></span>
+        <span>Koenigsegg <span class="dot">&bull;</span></span>
+        <span>Pagani <span class="dot">&bull;</span></span>
+        <!-- duplicate for seamless loop -->
+        <span>Porsche <span class="dot">&bull;</span></span>
+        <span>Ferrari <span class="dot">&bull;</span></span>
+        <span>McLaren <span class="dot">&bull;</span></span>
+        <span>Lamborghini <span class="dot">&bull;</span></span>
+        <span>Aston Martin <span class="dot">&bull;</span></span>
+        <span>Mercedes-AMG <span class="dot">&bull;</span></span>
+        <span>BMW M <span class="dot">&bull;</span></span>
+        <span>Bugatti <span class="dot">&bull;</span></span>
+        <span>Koenigsegg <span class="dot">&bull;</span></span>
+        <span>Pagani <span class="dot">&bull;</span></span>
+      </div>
+    </div>
+
+    <!-- ─── Showcase ────────────────────────────────── -->
+    <section class="showcase" id="showcase">
+      <div class="container">
+        <p class="section-label reveal">The Collection</p>
+        <h2 class="section-title reveal">Icons of the Road</h2>
+        <p class="section-desc reveal">
+          Four machines that represent the pinnacle of automotive design, performance, and raw
+          emotional power.
+        </p>
+
+        <div class="car-grid">
+          <!-- Card 1 -->
+          <article class="car-card reveal">
+            <div class="car-card__img-wrap">
+              <img
+                src="https://picsum.photos/seed/porsche911/640/480"
+                alt="Porsche 911 GT3"
+                loading="lazy"
+              />
+            </div>
+            <div class="car-card__body">
+              <p class="car-card__year">2024 &mdash; Germany</p>
+              <h3 class="car-card__name">Porsche 911 GT3 RS</h3>
+              <p class="car-card__desc">
+                A naturally aspirated masterpiece. The flat-six screams to 9,000 rpm while
+                aerodynamics borrowed from motorsport pin you to the tarmac.
+              </p>
+              <div class="car-card__stat">
+                <div><span>Power</span><span>518 hp</span></div>
+                <div><span>0-60</span><span>3.0s</span></div>
+                <div><span>Top</span><span>184 mph</span></div>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 2 -->
+          <article class="car-card reveal">
+            <div class="car-card__img-wrap">
+              <img
+                src="https://picsum.photos/seed/ferrari296/640/480"
+                alt="Ferrari 296 GTB"
+                loading="lazy"
+              />
+            </div>
+            <div class="car-card__body">
+              <p class="car-card__year">2024 &mdash; Italy</p>
+              <h3 class="car-card__name">Ferrari 296 GTB</h3>
+              <p class="car-card__desc">
+                Maranello's hybrid revolution. A twin-turbo V6 fused with an electric motor creates
+                819 combined horses of pure Italian theatre.
+              </p>
+              <div class="car-card__stat">
+                <div><span>Power</span><span>819 hp</span></div>
+                <div><span>0-60</span><span>2.9s</span></div>
+                <div><span>Top</span><span>205 mph</span></div>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 3 -->
+          <article class="car-card reveal">
+            <div class="car-card__img-wrap">
+              <img
+                src="https://picsum.photos/seed/mclaren750/640/480"
+                alt="McLaren 750S"
+                loading="lazy"
+              />
+            </div>
+            <div class="car-card__body">
+              <p class="car-card__year">2024 &mdash; England</p>
+              <h3 class="car-card__name">McLaren 750S</h3>
+              <p class="car-card__desc">
+                Surgical precision meets savage power. Carbon fiber monocoque, twin-turbo V8, and
+                hydraulic steering that speaks directly to your fingertips.
+              </p>
+              <div class="car-card__stat">
+                <div><span>Power</span><span>740 hp</span></div>
+                <div><span>0-60</span><span>2.7s</span></div>
+                <div><span>Top</span><span>206 mph</span></div>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 4 -->
+          <article class="car-card reveal">
+            <div class="car-card__img-wrap">
+              <img
+                src="https://picsum.photos/seed/amggt63/640/480"
+                alt="Mercedes-AMG GT 63"
+                loading="lazy"
+              />
+            </div>
+            <div class="car-card__body">
+              <p class="car-card__year">2024 &mdash; Germany</p>
+              <h3 class="car-card__name">Mercedes-AMG GT 63</h3>
+              <p class="car-card__desc">
+                Handcrafted twin-turbo V8 wrapped in muscular grand touring luxury. One man, one
+                engine &mdash; Affalterbach's creed made manifest.
+              </p>
+              <div class="car-card__stat">
+                <div><span>Power</span><span>577 hp</span></div>
+                <div><span>0-60</span><span>3.1s</span></div>
+                <div><span>Top</span><span>196 mph</span></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Facts ───────────────────────────────────── -->
+    <section class="facts" id="facts">
+      <div class="container">
+        <p class="section-label reveal">By the Numbers</p>
+        <h2 class="section-title reveal">Automotive in Perspective</h2>
+        <p class="section-desc reveal">
+          The car industry is staggering in scale. Here are some numbers that put it all in context.
+        </p>
+
+        <div class="facts-grid">
+          <div class="fact-item reveal">
+            <p class="fact-number">1.4B</p>
+            <p class="fact-label">Cars on Earth</p>
+            <p class="fact-desc">
+              Over 1.4 billion cars are currently in operation worldwide &mdash; roughly one for
+              every five people alive.
+            </p>
+          </div>
+          <div class="fact-item reveal">
+            <p class="fact-number">270</p>
+            <p class="fact-label">MPH &mdash; Top Speed Record</p>
+            <p class="fact-desc">
+              The Bugatti Chiron Super Sport 300+ broke 300 mph (304.77), shattering production car
+              limits in 2019.
+            </p>
+          </div>
+          <div class="fact-item reveal">
+            <p class="fact-number">1886</p>
+            <p class="fact-label">Year of the First Car</p>
+            <p class="fact-desc">
+              Karl Benz patented the Benz Patent-Motorwagen, widely considered the world's first
+              true automobile.
+            </p>
+          </div>
+          <div class="fact-item reveal">
+            <p class="fact-number">14M+</p>
+            <p class="fact-label">EVs Sold in 2023</p>
+            <p class="fact-desc">
+              Electric vehicle sales surged past 14 million globally, making up roughly 18% of all
+              new car sales.
+            </p>
+          </div>
+          <div class="fact-item reveal">
+            <p class="fact-number">3.5M</p>
+            <p class="fact-label">Parts per Car</p>
+            <p class="fact-desc">
+              A modern car contains approximately 30,000 individual parts, assembled from 3.5
+              million raw components.
+            </p>
+          </div>
+          <div class="fact-item reveal">
+            <p class="fact-number">$70M</p>
+            <p class="fact-label">Most Expensive Car Sold</p>
+            <p class="fact-desc">
+              A 1955 Mercedes-Benz 300 SLR Uhlenhaut Coup&eacute; sold at auction for $143 million
+              in 2022 &mdash; the most ever.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Footer ──────────────────────────────────── -->
+    <footer id="footer">
+      <div class="footer-inner">
+        <div>
+          <p class="footer-brand">MRCRY</p>
+          <p class="footer-tagline">
+            A curated lens on the world's most extraordinary automobiles. Built for enthusiasts, by
+            enthusiasts.
+          </p>
+        </div>
+        <div class="footer-links">
+          <div class="footer-col">
+            <h4>Explore</h4>
+            <ul>
+              <li><a href="#showcase">Collection</a></li>
+              <li><a href="#facts">Numbers</a></li>
+            </ul>
+          </div>
+          <div class="footer-col">
+            <h4>Connect</h4>
+            <ul>
+              <li><a href="#">Instagram</a></li>
+              <li><a href="#">YouTube</a></li>
+              <li><a href="#">Newsletter</a></li>
+            </ul>
+          </div>
+          <div class="footer-col">
+            <h4>Legal</h4>
+            <ul>
+              <li><a href="#">Privacy</a></li>
+              <li><a href="#">Terms</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>&copy; 2026 MRCRY. All rights reserved.</span>
+        <span>Crafted with obsession</span>
+      </div>
+    </footer>
+
+    <!-- ─── Scroll Reveal Script ────────────────────── -->
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const reveals = document.querySelectorAll(".reveal");
+        const observer = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry, i) => {
+              if (entry.isIntersecting) {
+                // Stagger siblings
+                const siblings = [...entry.target.parentElement.querySelectorAll(".reveal")];
+                const index = siblings.indexOf(entry.target);
+                entry.target.style.transitionDelay = `${index * 0.08}s`;
+                entry.target.classList.add("visible");
+                observer.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.1, rootMargin: "0px 0px -40px 0px" },
+        );
+        reveals.forEach((el) => observer.observe(el));
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,45 @@
+<svg width="1200" height="900" viewBox="0 0 1200 900" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Abstract AI hero illustration</title>
+  <desc id="desc">Gradient grid with floating nodes and signal waves</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827" />
+      <stop offset="50%" stop-color="#312e81" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="pulse" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#a5b4fc" stop-opacity="0" />
+      <stop offset="40%" stop-color="#a5b4fc" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#a5b4fc" stop-opacity="0" />
+    </linearGradient>
+    <radialGradient id="node" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fef9c3" />
+      <stop offset="100%" stop-color="#818cf8" />
+    </radialGradient>
+    <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60 0H0V60" fill="none" stroke="#475569" stroke-width="0.5" stroke-opacity="0.4" />
+    </pattern>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bg)"/>
+  <rect width="1200" height="900" fill="url(#grid)" opacity="0.55"/>
+  <g opacity="0.85">
+    <circle cx="200" cy="160" r="14" fill="url(#node)" />
+    <circle cx="420" cy="320" r="10" fill="#fbcfe8" />
+    <circle cx="740" cy="260" r="18" fill="#bfdbfe" />
+    <circle cx="980" cy="520" r="22" fill="#c7d2fe" />
+    <circle cx="640" cy="640" r="12" fill="#fecdd3" />
+    <circle cx="320" cy="560" r="16" fill="#c4b5fd" />
+  </g>
+  <g opacity="0.5">
+    <ellipse cx="640" cy="460" rx="420" ry="160" fill="url(#pulse)" />
+    <ellipse cx="640" cy="520" rx="320" ry="110" fill="url(#pulse)" />
+  </g>
+  <path d="M120 640C220 560 300 540 420 590C540 640 640 620 760 540C880 460 980 470 1080 520" fill="none" stroke="#f472b6" stroke-width="4" stroke-linecap="round" stroke-opacity="0.55" />
+  <path d="M80 520C200 420 360 400 520 440C680 480 860 420 1120 360" fill="none" stroke="#22d3ee" stroke-width="3" stroke-linecap="round" stroke-opacity="0.4" />
+  <g fill="#fef9c3" opacity="0.5">
+    <circle cx="320" cy="340" r="4" />
+    <circle cx="560" cy="260" r="4" />
+    <circle cx="860" cy="420" r="4" />
+    <circle cx="940" cy="200" r="3" />
+  </g>
+</svg>

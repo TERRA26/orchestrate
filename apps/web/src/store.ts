@@ -1,0 +1,570 @@
+import { Fragment, type ReactNode, createElement, useEffect } from "react";
+import {
+  type ProviderKind,
+  ThreadId,
+  type OrchestrationReadModel,
+  type OrchestrationSessionStatus,
+} from "@orchestrate/contracts";
+import { resolveModelSlugForProvider } from "@orchestrate/shared/model";
+import { create } from "zustand";
+import { type ChatMessage, type Project, type Thread, type ThreadWorkspacePatch } from "./types";
+import { Debouncer } from "@tanstack/react-pacer";
+
+// ── State ────────────────────────────────────────────────────────────
+
+export interface AppState {
+  projects: Project[];
+  threads: Thread[];
+  threadsHydrated: boolean;
+}
+
+const PERSISTED_STATE_KEY = "orchestrate:renderer-state:v8";
+const LEGACY_PERSISTED_STATE_KEYS = [
+  "t3code:renderer-state:v8",
+  "t3code:renderer-state:v7",
+  "t3code:renderer-state:v6",
+  "t3code:renderer-state:v5",
+  "t3code:renderer-state:v4",
+  "t3code:renderer-state:v3",
+  "codething:renderer-state:v4",
+  "codething:renderer-state:v3",
+  "codething:renderer-state:v2",
+  "codething:renderer-state:v1",
+] as const;
+
+const initialState: AppState = {
+  projects: [],
+  threads: [],
+  threadsHydrated: false,
+};
+const persistedExpandedProjectCwds = new Set<string>();
+const persistedProjectOrderCwds: string[] = [];
+
+function rememberProjectUiState(projects: ReadonlyArray<Pick<Project, "cwd" | "expanded">>): void {
+  for (const project of projects) {
+    if (project.expanded) {
+      persistedExpandedProjectCwds.add(project.cwd);
+    } else {
+      persistedExpandedProjectCwds.delete(project.cwd);
+    }
+    if (!persistedProjectOrderCwds.includes(project.cwd)) {
+      persistedProjectOrderCwds.push(project.cwd);
+    }
+  }
+}
+
+// ── Persist helpers ──────────────────────────────────────────────────
+
+function readPersistedState(): AppState {
+  if (typeof window === "undefined") return initialState;
+  try {
+    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
+    if (!raw) return initialState;
+    const parsed = JSON.parse(raw) as {
+      expandedProjectCwds?: string[];
+      projectOrderCwds?: string[];
+    };
+    persistedExpandedProjectCwds.clear();
+    persistedProjectOrderCwds.length = 0;
+    for (const cwd of parsed.expandedProjectCwds ?? []) {
+      if (typeof cwd === "string" && cwd.length > 0) {
+        persistedExpandedProjectCwds.add(cwd);
+      }
+    }
+    for (const cwd of parsed.projectOrderCwds ?? []) {
+      if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwds.includes(cwd)) {
+        persistedProjectOrderCwds.push(cwd);
+      }
+    }
+    return { ...initialState };
+  } catch {
+    return initialState;
+  }
+}
+
+let legacyKeysCleanedUp = false;
+
+function persistState(state: AppState): void {
+  if (typeof window === "undefined") return;
+  try {
+    rememberProjectUiState(state.projects);
+    window.localStorage.setItem(
+      PERSISTED_STATE_KEY,
+      JSON.stringify({
+        expandedProjectCwds: state.projects
+          .filter((project) => project.expanded)
+          .map((project) => project.cwd),
+        projectOrderCwds: state.projects.map((project) => project.cwd),
+      }),
+    );
+    if (!legacyKeysCleanedUp) {
+      legacyKeysCleanedUp = true;
+      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+        window.localStorage.removeItem(legacyKey);
+      }
+    }
+  } catch {
+    // Ignore quota/storage errors to avoid breaking chat UX.
+  }
+}
+const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+
+// ── Pure helpers ──────────────────────────────────────────────────────
+
+function updateThread(
+  threads: Thread[],
+  threadId: ThreadId,
+  updater: (t: Thread) => Thread,
+): Thread[] {
+  let changed = false;
+  const next = threads.map((t) => {
+    if (t.id !== threadId) return t;
+    const updated = updater(t);
+    if (updated !== t) changed = true;
+    return updated;
+  });
+  return changed ? next : threads;
+}
+
+function mapProjectsFromReadModel(
+  incoming: OrchestrationReadModel["projects"],
+  previous: Project[],
+): Project[] {
+  const previousById = new Map(previous.map((project) => [project.id, project] as const));
+  const previousByCwd = new Map(previous.map((project) => [project.cwd, project] as const));
+  const previousOrderById = new Map(previous.map((project, index) => [project.id, index] as const));
+  const previousOrderByCwd = new Map(
+    previous.map((project, index) => [project.cwd, index] as const),
+  );
+  const persistedOrderByCwd = new Map(
+    persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
+  );
+  const usePersistedOrder = previous.length === 0;
+
+  const mappedProjects = incoming.map((project) => {
+    const existing = previousById.get(project.id) ?? previousByCwd.get(project.workspaceRoot);
+    return {
+      id: project.id,
+      name: project.title,
+      cwd: project.workspaceRoot,
+      defaultModelSelection:
+        existing?.defaultModelSelection ??
+        (project.defaultModelSelection
+          ? {
+              ...project.defaultModelSelection,
+              model: resolveModelSlugForProvider(
+                project.defaultModelSelection.provider,
+                project.defaultModelSelection.model,
+              ),
+            }
+          : null),
+      expanded:
+        existing?.expanded ??
+        (persistedExpandedProjectCwds.size > 0
+          ? persistedExpandedProjectCwds.has(project.workspaceRoot)
+          : true),
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      scripts: project.scripts.map((script) => ({ ...script })),
+    } satisfies Project;
+  });
+
+  return mappedProjects
+    .map((project, incomingIndex) => {
+      const previousIndex =
+        previousOrderById.get(project.id) ?? previousOrderByCwd.get(project.cwd);
+      const persistedIndex = usePersistedOrder ? persistedOrderByCwd.get(project.cwd) : undefined;
+      const orderIndex =
+        previousIndex ??
+        persistedIndex ??
+        (usePersistedOrder ? persistedProjectOrderCwds.length : previous.length) + incomingIndex;
+      return { project, incomingIndex, orderIndex };
+    })
+    .toSorted((a, b) => {
+      const byOrder = a.orderIndex - b.orderIndex;
+      if (byOrder !== 0) return byOrder;
+      return a.incomingIndex - b.incomingIndex;
+    })
+    .map((entry) => entry.project);
+}
+
+function toLegacySessionStatus(
+  status: OrchestrationSessionStatus,
+): "connecting" | "ready" | "running" | "error" | "closed" {
+  switch (status) {
+    case "starting":
+      return "connecting";
+    case "running":
+      return "running";
+    case "error":
+      return "error";
+    case "ready":
+    case "interrupted":
+      return "ready";
+    case "idle":
+    case "stopped":
+      return "closed";
+  }
+}
+
+function toLegacyProvider(providerName: string | null): ProviderKind {
+  if (providerName === "codex" || providerName === "claudeAgent") {
+    return providerName;
+  }
+  return "codex";
+}
+
+function resolveWsHttpOrigin(): string {
+  if (typeof window === "undefined") return "";
+  const bridgeWsUrl = window.desktopBridge?.getWsUrl?.();
+  const envWsUrl = import.meta.env.VITE_WS_URL as string | undefined;
+  const wsCandidate =
+    typeof bridgeWsUrl === "string" && bridgeWsUrl.length > 0
+      ? bridgeWsUrl
+      : typeof envWsUrl === "string" && envWsUrl.length > 0
+        ? envWsUrl
+        : null;
+  if (!wsCandidate) return window.location.origin;
+  try {
+    const wsUrl = new URL(wsCandidate);
+    const protocol =
+      wsUrl.protocol === "wss:" ? "https:" : wsUrl.protocol === "ws:" ? "http:" : wsUrl.protocol;
+    return `${protocol}//${wsUrl.host}`;
+  } catch {
+    return window.location.origin;
+  }
+}
+
+function toAttachmentPreviewUrl(rawUrl: string): string {
+  if (rawUrl.startsWith("/")) {
+    return `${resolveWsHttpOrigin()}${rawUrl}`;
+  }
+  return rawUrl;
+}
+
+function attachmentPreviewRoutePath(attachmentId: string): string {
+  return `/attachments/${encodeURIComponent(attachmentId)}`;
+}
+
+// ── Pure state transition functions ────────────────────────────────────
+
+export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
+  rememberProjectUiState(state.projects);
+  const projects = mapProjectsFromReadModel(
+    readModel.projects.filter((project) => project.deletedAt === null),
+    state.projects,
+  );
+  const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
+  const threads = readModel.threads
+    .filter((thread) => thread.deletedAt === null)
+    .map((thread) => {
+      const existing = existingThreadById.get(thread.id);
+      return {
+        id: thread.id,
+        codexThreadId: null,
+        projectId: thread.projectId,
+        title: thread.title,
+        ...(thread.threadType ? { threadType: thread.threadType } : {}),
+        parentThreadId: thread.parentThreadId ?? null,
+        modelSelection: {
+          ...thread.modelSelection,
+          model: resolveModelSlugForProvider(
+            thread.modelSelection.provider,
+            thread.modelSelection.model,
+          ),
+        },
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        session: thread.session
+          ? {
+              provider: toLegacyProvider(thread.session.providerName),
+              status: toLegacySessionStatus(thread.session.status),
+              orchestrationStatus: thread.session.status,
+              activeTurnId: thread.session.activeTurnId ?? undefined,
+              createdAt: thread.session.updatedAt,
+              updatedAt: thread.session.updatedAt,
+              ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
+            }
+          : null,
+        messages: thread.messages.map((message) => {
+          const attachments = message.attachments?.map((attachment) => ({
+            type: "image" as const,
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            previewUrl: toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachment.id)),
+          }));
+          const normalizedMessage: ChatMessage = {
+            id: message.id,
+            role: message.role,
+            text: message.text,
+            createdAt: message.createdAt,
+            streaming: message.streaming,
+            ...(message.source ? { source: message.source } : {}),
+            turnId: message.turnId,
+            ...(message.streaming ? {} : { completedAt: message.updatedAt }),
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
+          };
+          return normalizedMessage;
+        }),
+        proposedPlans: thread.proposedPlans.map((proposedPlan) => ({
+          id: proposedPlan.id,
+          turnId: proposedPlan.turnId,
+          planMarkdown: proposedPlan.planMarkdown,
+          implementedAt: proposedPlan.implementedAt,
+          implementationThreadId: proposedPlan.implementationThreadId,
+          createdAt: proposedPlan.createdAt,
+          updatedAt: proposedPlan.updatedAt,
+        })),
+        error: thread.session?.lastError ?? null,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        latestTurn: thread.latestTurn,
+        lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+        envMode: thread.envMode ?? "local",
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        associatedWorktreePath: thread.associatedWorktreePath ?? null,
+        associatedWorktreeBranch: thread.associatedWorktreeBranch ?? null,
+        associatedWorktreeRef: thread.associatedWorktreeRef ?? null,
+        forkSourceThreadId: thread.forkSourceThreadId ?? null,
+        handoff: thread.handoff,
+        turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
+          turnId: checkpoint.turnId,
+          completedAt: checkpoint.completedAt,
+          status: checkpoint.status,
+          assistantMessageId: checkpoint.assistantMessageId ?? undefined,
+          checkpointTurnCount: checkpoint.checkpointTurnCount,
+          checkpointRef: checkpoint.checkpointRef,
+          files: checkpoint.files.map((file) => ({ ...file })),
+        })),
+        activities: thread.activities.map((activity) => ({ ...activity })),
+      };
+    });
+  return {
+    ...state,
+    projects,
+    threads,
+    threadsHydrated: true,
+  };
+}
+
+export function markThreadVisited(
+  state: AppState,
+  threadId: ThreadId,
+  visitedAt?: string,
+): AppState {
+  const at = visitedAt ?? new Date().toISOString();
+  const visitedAtMs = Date.parse(at);
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    const previousVisitedAtMs = thread.lastVisitedAt ? Date.parse(thread.lastVisitedAt) : NaN;
+    if (
+      Number.isFinite(previousVisitedAtMs) &&
+      Number.isFinite(visitedAtMs) &&
+      previousVisitedAtMs >= visitedAtMs
+    ) {
+      return thread;
+    }
+    return { ...thread, lastVisitedAt: at };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function markThreadUnread(state: AppState, threadId: ThreadId): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (!thread.latestTurn?.completedAt) return thread;
+    const latestTurnCompletedAtMs = Date.parse(thread.latestTurn.completedAt);
+    if (Number.isNaN(latestTurnCompletedAtMs)) return thread;
+    const unreadVisitedAt = new Date(latestTurnCompletedAtMs - 1).toISOString();
+    if (thread.lastVisitedAt === unreadVisitedAt) return thread;
+    return { ...thread, lastVisitedAt: unreadVisitedAt };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function toggleProject(state: AppState, projectId: Project["id"]): AppState {
+  return {
+    ...state,
+    projects: state.projects.map((p) => (p.id === projectId ? { ...p, expanded: !p.expanded } : p)),
+  };
+}
+
+export function setProjectExpanded(
+  state: AppState,
+  projectId: Project["id"],
+  expanded: boolean,
+): AppState {
+  let changed = false;
+  const projects = state.projects.map((p) => {
+    if (p.id !== projectId || p.expanded === expanded) return p;
+    changed = true;
+    return { ...p, expanded };
+  });
+  return changed ? { ...state, projects } : state;
+}
+
+export function reorderProjects(
+  state: AppState,
+  draggedProjectId: Project["id"],
+  targetProjectId: Project["id"],
+): AppState {
+  if (draggedProjectId === targetProjectId) return state;
+  const draggedIndex = state.projects.findIndex((project) => project.id === draggedProjectId);
+  const targetIndex = state.projects.findIndex((project) => project.id === targetProjectId);
+  if (draggedIndex < 0 || targetIndex < 0) return state;
+  const projects = [...state.projects];
+  const [draggedProject] = projects.splice(draggedIndex, 1);
+  if (!draggedProject) return state;
+  projects.splice(targetIndex, 0, draggedProject);
+  return { ...state, projects };
+}
+
+export function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
+  const threads = updateThread(state.threads, threadId, (t) => {
+    if (t.error === error) return t;
+    return { ...t, error };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setThreadWorkspace(
+  state: AppState,
+  threadId: ThreadId,
+  patch: ThreadWorkspacePatch,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (t) => {
+    const nextEnvMode = patch.envMode !== undefined ? patch.envMode : t.envMode;
+    const nextBranch = patch.branch !== undefined ? patch.branch : t.branch;
+    const nextWorktreePath = patch.worktreePath !== undefined ? patch.worktreePath : t.worktreePath;
+    const nextAssociatedWorktreePath =
+      patch.associatedWorktreePath !== undefined
+        ? patch.associatedWorktreePath
+        : (t.associatedWorktreePath ?? null);
+    const nextAssociatedWorktreeBranch =
+      patch.associatedWorktreeBranch !== undefined
+        ? patch.associatedWorktreeBranch
+        : (t.associatedWorktreeBranch ?? null);
+    const nextAssociatedWorktreeRef =
+      patch.associatedWorktreeRef !== undefined
+        ? patch.associatedWorktreeRef
+        : (t.associatedWorktreeRef ?? null);
+    if (
+      t.envMode === nextEnvMode &&
+      t.branch === nextBranch &&
+      t.worktreePath === nextWorktreePath &&
+      (t.associatedWorktreePath ?? null) === nextAssociatedWorktreePath &&
+      (t.associatedWorktreeBranch ?? null) === nextAssociatedWorktreeBranch &&
+      (t.associatedWorktreeRef ?? null) === nextAssociatedWorktreeRef
+    ) {
+      return t;
+    }
+    const cwdChanged = t.worktreePath !== nextWorktreePath;
+    return {
+      ...t,
+      envMode: nextEnvMode,
+      branch: nextBranch,
+      worktreePath: nextWorktreePath,
+      associatedWorktreePath: nextAssociatedWorktreePath,
+      associatedWorktreeBranch: nextAssociatedWorktreeBranch,
+      associatedWorktreeRef: nextAssociatedWorktreeRef,
+      ...(cwdChanged ? { session: null } : {}),
+    };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+// ── Zustand store ────────────────────────────────────────────────────
+
+interface AppStore extends AppState {
+  syncServerReadModel: (readModel: OrchestrationReadModel) => void;
+  markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
+  markThreadUnread: (threadId: ThreadId) => void;
+  toggleProject: (projectId: Project["id"]) => void;
+  setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
+  reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
+  setError: (threadId: ThreadId, error: string | null) => void;
+  setThreadWorkspace: (threadId: ThreadId, patch: ThreadWorkspacePatch) => void;
+}
+
+export const useStore = create<AppStore>((set) => ({
+  ...readPersistedState(),
+  syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
+  markThreadVisited: (threadId, visitedAt) =>
+    set((state) => markThreadVisited(state, threadId, visitedAt)),
+  markThreadUnread: (threadId) => set((state) => markThreadUnread(state, threadId)),
+  toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
+  setProjectExpanded: (projectId, expanded) =>
+    set((state) => setProjectExpanded(state, projectId, expanded)),
+  reorderProjects: (draggedProjectId, targetProjectId) =>
+    set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
+  setError: (threadId, error) => set((state) => setError(state, threadId, error)),
+  setThreadWorkspace: (threadId, patch) =>
+    set((state) => setThreadWorkspace(state, threadId, patch)),
+}));
+
+// Persist state changes with debouncing to avoid localStorage thrashing
+useStore.subscribe((state) => {
+  rememberProjectUiState(state.projects);
+  debouncedPersistState.maybeExecute(state);
+});
+
+// Flush pending writes synchronously before page unload to prevent data loss.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    debouncedPersistState.flush();
+  });
+}
+
+// Expose the store to the browser console in dev mode so the team can inspect
+// projects/threads/etc. while debugging without wiring devtools each time.
+// Production builds skip this — Vite's `import.meta.env.DEV` is false there.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as { __orchestrateStore: typeof useStore }).__orchestrateStore = useStore;
+}
+
+// ── Memoized selectors ──────────────────────────────────────────────
+
+export function selectProjectById(projectId: Project["id"] | null | undefined) {
+  return (state: AppState): Project | undefined =>
+    projectId == null ? undefined : state.projects.find((p) => p.id === projectId);
+}
+
+export function selectThreadById(threadId: ThreadId | null | undefined) {
+  return (state: AppState): Thread | undefined =>
+    threadId == null ? undefined : state.threads.find((t) => t.id === threadId);
+}
+
+// ── Module-level top-of-state selectors (ORC-289) ───────────────────
+//
+// Inline arrow selectors `useStore((s) => s.X)` are recreated every
+// render. zustand checks the selector OUTPUT with Object.is, but
+// the selector identity itself drives the subscription callback,
+// so a fresh closure on every render forces an internal listener
+// re-register churn. Hoisting these to module-level constants
+// keeps the listener identity stable across renders. Component
+// code uses `useStore(selectThreads)` instead of
+// `useStore((s) => s.threads)`.
+
+export const selectThreads = (state: { readonly threads: AppState["threads"] }) =>
+  state.threads;
+export const selectProjects = (state: { readonly projects: AppState["projects"] }) =>
+  state.projects;
+export const selectMarkThreadVisited = (state: {
+  readonly markThreadVisited: AppStore["markThreadVisited"];
+}) => state.markThreadVisited;
+export const selectSyncServerReadModel = (state: {
+  readonly syncServerReadModel: AppStore["syncServerReadModel"];
+}) => state.syncServerReadModel;
+export const selectSetError = (state: { readonly setError: AppStore["setError"] }) =>
+  state.setError;
+export const selectSetThreadWorkspace = (state: {
+  readonly setThreadWorkspace: AppStore["setThreadWorkspace"];
+}) => state.setThreadWorkspace;
+
+export function StoreProvider({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    persistState(useStore.getState());
+  }, []);
+  return createElement(Fragment, null, children);
+}

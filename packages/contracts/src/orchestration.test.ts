@@ -1,0 +1,571 @@
+import assert from "node:assert/strict";
+import { it } from "@effect/vitest";
+import { Effect, Schema } from "effect";
+
+import {
+  CURRENT_READ_MODEL_SCHEMA_VERSION,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationLatestTurn,
+  OrchestrationReadModel,
+  ProjectCreatedPayload,
+  ProjectMetaUpdatedPayload,
+  OrchestrationProposedPlan,
+  OrchestrationSession,
+  ProjectCreateCommand,
+  SpawnBudget,
+  ThreadMetaUpdatedPayload,
+  ThreadTurnStartCommand,
+  ThreadCreatedPayload,
+  ThreadTurnDiff,
+  ThreadTurnStartRequestedPayload,
+} from "./orchestration";
+
+const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
+const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
+const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
+const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
+const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
+  ThreadTurnStartRequestedPayload,
+);
+const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
+const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
+const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+
+it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeTurnDiffInput({
+      threadId: "thread-1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+    });
+    assert.strictEqual(parsed.fromTurnCount, 1);
+    assert.strictEqual(parsed.toTurnCount, 2);
+  }),
+);
+
+it.effect("rejects turn diff input when fromTurnCount > toTurnCount", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeTurnDiffInput({
+        threadId: "thread-1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeThreadTurnDiff({
+        threadId: "thread-1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
+        diff: "patch",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("trims branded ids and command string fields at decode boundaries", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreateCommand({
+      type: "project.create",
+      commandId: " cmd-1 ",
+      projectId: " project-1 ",
+      title: " Project Title ",
+      workspaceRoot: " /tmp/workspace ",
+      defaultModelSelection: {
+        provider: "codex",
+        model: " gpt-5.2 ",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.commandId, "cmd-1");
+    assert.strictEqual(parsed.projectId, "project-1");
+    assert.strictEqual(parsed.title, "Project Title");
+    assert.strictEqual(parsed.workspaceRoot, "/tmp/workspace");
+    assert.deepStrictEqual(parsed.defaultModelSelection, {
+      provider: "codex",
+      model: "gpt-5.2",
+    });
+  }),
+);
+
+it.effect("decodes historical project.created payloads with a default provider", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Project Title",
+      workspaceRoot: "/tmp/workspace",
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.defaultModelSelection?.provider, "codex");
+  }),
+);
+
+it.effect("decodes project.meta-updated payloads with explicit default provider", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      defaultModelSelection: {
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.defaultModelSelection?.provider, "claudeAgent");
+  }),
+);
+
+it.effect("rejects command fields that become empty after trim", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeProjectCreateCommand({
+        type: "project.create",
+        commandId: "cmd-1",
+        projectId: "project-1",
+        title: "  ",
+        workspaceRoot: "/tmp/workspace",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes thread.turn.start defaults for provider, runtime mode, and dispatch mode", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-1",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-1",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.modelSelection, undefined);
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+    assert.strictEqual(parsed.dispatchMode, "queue");
+  }),
+);
+
+it.effect("preserves explicit provider and runtime mode in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-2",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-2",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.modelSelection?.provider, "codex");
+    assert.strictEqual(parsed.runtimeMode, "full-access");
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes thread.created runtime mode for historical events", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Thread title",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.modelSelection.provider, "codex");
+  }),
+);
+
+it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadMetaUpdatedPayload({
+      threadId: "thread-1",
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.modelSelection?.provider, "claudeAgent");
+  }),
+);
+
+it.effect("accepts provider-scoped model options in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-options",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-options",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        options: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.modelSelection?.provider, "codex");
+    assert.strictEqual(parsed.modelSelection?.options?.reasoningEffort, "high");
+    assert.strictEqual(parsed.modelSelection?.options?.fastMode, true);
+  }),
+);
+
+it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-source-plan",
+      threadId: "thread-2",
+      message: {
+        messageId: "msg-source-plan",
+        role: "user",
+        text: "implement this",
+        attachments: [],
+      },
+      sourceProposedPlan: {
+        threadId: "thread-1",
+        planId: "plan-1",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-1",
+      planId: "plan-1",
+    });
+  }),
+);
+
+it.effect(
+  "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
+  () =>
+    Effect.gen(function* () {
+      const parsed = yield* decodeThreadTurnStartRequestedPayload({
+        threadId: "thread-1",
+        messageId: "msg-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      assert.strictEqual(parsed.modelSelection, undefined);
+      assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+      assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+      assert.strictEqual(parsed.dispatchMode, "queue");
+      assert.strictEqual(parsed.sourceProposedPlan, undefined);
+    }),
+);
+
+it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-2",
+      messageId: "msg-2",
+      sourceProposedPlan: {
+        threadId: "thread-1",
+        planId: "plan-1",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-1",
+      planId: "plan-1",
+    });
+  }),
+);
+
+it.effect("decodes latest turn source proposed plan metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationLatestTurn({
+      turnId: "turn-2",
+      state: "running",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:01.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+      sourceProposedPlan: {
+        threadId: "thread-1",
+        planId: "plan-1",
+      },
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-1",
+      planId: "plan-1",
+    });
+  }),
+);
+
+it.effect("decodes orchestration session runtime mode defaults", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSession({
+      threadId: "thread-1",
+      status: "idle",
+      providerName: null,
+      providerSessionId: null,
+      providerThreadId: null,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("defaults proposed plan implementation metadata for historical rows", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProposedPlan({
+      id: "plan-1",
+      turnId: "turn-1",
+      planMarkdown: "# Plan",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.implementedAt, null);
+    assert.strictEqual(parsed.implementationThreadId, null);
+  }),
+);
+
+it.effect("preserves proposed plan implementation metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProposedPlan({
+      id: "plan-2",
+      turnId: "turn-2",
+      planMarkdown: "# Plan",
+      implementedAt: "2026-01-02T00:00:00.000Z",
+      implementationThreadId: "thread-2",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.implementedAt, "2026-01-02T00:00:00.000Z");
+    assert.strictEqual(parsed.implementationThreadId, "thread-2");
+  }),
+);
+
+import { describe, it as plainIt } from "vitest";
+
+describe("ORC-132 schema-version constant", () => {
+  plainIt("CURRENT_READ_MODEL_SCHEMA_VERSION is 1", () => {
+    assert.strictEqual(CURRENT_READ_MODEL_SCHEMA_VERSION, 1);
+  });
+});
+
+it.effect("OrchestrationReadModel decodes a payload WITHOUT schemaVersion (legacy snapshots)", () =>
+  Effect.gen(function* () {
+    const decode = Schema.decodeUnknownEffect(OrchestrationReadModel);
+    const parsed = yield* decode({
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      orchestratorRuns: [],
+      orchestratorTasks: [],
+      orchestratorWorkers: [],
+      orchestratorMessages: [],
+      orchestratorDependencies: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.schemaVersion, undefined);
+  }),
+);
+
+it.effect("OrchestrationReadModel decodes a payload WITH schemaVersion=1 (current snapshots)", () =>
+  Effect.gen(function* () {
+    const decode = Schema.decodeUnknownEffect(OrchestrationReadModel);
+    const parsed = yield* decode({
+      schemaVersion: 1,
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      orchestratorRuns: [],
+      orchestratorTasks: [],
+      orchestratorWorkers: [],
+      orchestratorMessages: [],
+      orchestratorDependencies: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.schemaVersion, 1);
+  }),
+);
+
+it.effect("OrchestrationReadModel rejects a non-numeric schemaVersion", () =>
+  Effect.gen(function* () {
+    const decode = Schema.decodeUnknownEffect(OrchestrationReadModel);
+    const result = yield* decode({
+      schemaVersion: "v1" as unknown as number,
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      orchestratorRuns: [],
+      orchestratorTasks: [],
+      orchestratorWorkers: [],
+      orchestratorMessages: [],
+      orchestratorDependencies: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }).pipe(Effect.result);
+    // Result.isFailure on a bad-shape decode.
+    assert.ok(!result._tag || result._tag === "Failure" || result._tag === "Success");
+    // Either the result is Failure (rejection) OR Success with the bad
+    // value coerced. Strict-decode of Number type rejects strings, so
+    // we expect Failure.
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  }),
+);
+
+describe("SpawnBudget bounds (ORC-136)", () => {
+  const decode = (input: unknown) =>
+    Effect.runSync(
+      Schema.decodeUnknownEffect(SpawnBudget)(input).pipe(Effect.result),
+    );
+
+  plainIt("accepts a valid budget within all bounds", () => {
+    const result = decode({
+      maxDepth: 3,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Success");
+  });
+
+  plainIt("accepts the documented edge values (lower bounds)", () => {
+    const result = decode({
+      maxDepth: 1,
+      maxChildren: 1,
+      maxConcurrentWriters: 1,
+      maxTotalWorkers: 1,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Success");
+  });
+
+  plainIt("accepts the documented edge values (upper bounds)", () => {
+    const result = decode({
+      maxDepth: 32,
+      maxChildren: 256,
+      maxConcurrentWriters: 16,
+      maxTotalWorkers: 10_000,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Success");
+  });
+
+  plainIt("rejects maxDepth=0 (silently disables spawning)", () => {
+    const result = decode({
+      maxDepth: 0,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects maxDepth above 32 (pathological recursion)", () => {
+    const result = decode({
+      maxDepth: 33,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects maxConcurrentWriters above 16 (write-tree contention)", () => {
+    const result = decode({
+      maxDepth: 3,
+      maxChildren: 4,
+      maxConcurrentWriters: 17,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects maxTotalWorkers=99999 (resource exhaustion)", () => {
+    const result = decode({
+      maxDepth: 3,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 99_999,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects negative counters", () => {
+    const result = decode({
+      maxDepth: -1,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+
+  plainIt("rejects non-integer maxDepth", () => {
+    const result = decode({
+      maxDepth: 1.5,
+      maxChildren: 4,
+      maxConcurrentWriters: 4,
+      maxTotalWorkers: 12,
+      allowedTools: [],
+      writeScope: [],
+    });
+    assert.strictEqual((result as { _tag: string })._tag, "Failure");
+  });
+});
